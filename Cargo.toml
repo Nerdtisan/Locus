@@ -21,16 +21,20 @@ anyhow = "1"
 tracing = "0.1"
 ron = "0.12"
 locus-geom = { path = "crates/locus-geom" }
+locus-doc = { path = "crates/locus-doc" }
 
 # GUI (ADR 0001): only locus-app may use these. Same feature set as Parchment:
 # wgpu backend only, bundled fonts, winit's Linux backends (no-ops elsewhere).
 eframe = { version = "0.35", default-features = false, features = [
     "wgpu",
     "default_fonts",
+    "persistence",
     "x11",
     "wayland",
 ] }
 egui = "0.35"
+egui_dock = { version = "0.20", features = ["serde"] }
+serde_json = "1"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"
@@ -49,6 +53,10 @@ expect_used = "warn"
 [profile.dev.package.locus-solver]
 opt-level = 3
 
+# Release .exe is 29.6 MB unstripped vs 14.6 MB stripped (spike A).
+[profile.release]
+strip = true
+
 # The web build (#38): size over speed. `trunk build --release --cargo-profile wasm-release`.
 [profile.wasm-release]
 inherits = "release"
@@ -56,3 +64,9 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# `paste` is archived (RUSTSEC-2024-0436). Every crate that depends on it gets
+# our SHIM instead (not a fork), which forwards to the maintained `pastey` fork.
+# See third_party/paste/README.md; removal is tracked in #99.
+[patch.crates-io]
+paste = { path = "third_party/paste" }

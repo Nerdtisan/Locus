@@ -16,8 +16,14 @@ name = "locus"
 path = "src/main.rs"
 
 [dependencies]
+locus-geom.workspace = true
+locus-doc.workspace = true
 eframe.workspace = true
 egui.workspace = true
+egui_dock.workspace = true
+serde.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

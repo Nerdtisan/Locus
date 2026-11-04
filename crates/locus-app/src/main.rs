@@ -1,22 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Desktop + web GUI shell (SPEC §3), on eframe + egui_dock + wgpu (ADR 0001).
-//!
-//! For now this is a placeholder screen so the web pipeline (#38) has
-//! something real to build and deploy. The app shell proper is M1 (#65).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod canvas;
+mod demo;
+mod fonts;
+mod grid;
+mod render;
+mod scene;
+mod settings;
+mod view;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1024.0, 700.0])
+            .with_inner_size([1280.0, 800.0])
             .with_title("Locus"),
         ..Default::default()
     };
-    eframe::run_native("locus", options, Box::new(|_cc| Ok(Box::new(app::App))))
+    eframe::run_native(
+        "locus",
+        options,
+        Box::new(|cc| {
+            let mut app = app::App::new(cc);
+            // Dev aid: `locus --stress` opens the 5 000-curve sample.
+            if std::env::args().any(|a| a == "--stress") {
+                app.load_stress();
+            }
+            Ok(Box::new(app))
+        }),
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -35,7 +51,7 @@ fn main() {
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|_cc| Ok(Box::new(app::App))),
+                Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
             )
             .await;
         if let Err(e) = started {

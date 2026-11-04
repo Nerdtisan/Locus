@@ -263,3 +263,4 @@ After **any correction** from the user:
 - **Logging** — never log document contents, file names, tokens or plugin payloads.
 - **Atomic saves** — temp file + rename on desktop; never destroy the existing file on a failed write. On the web, never drop the autosave copy until the new one is committed.
 - **Dependencies** — `cargo deny check` (licences + advisories) in CI from day one (§2).
+- **Shims in `third_party/`** — `third_party/paste` is a **shim**, not a fork: a crate named `paste` that re-exports the maintained `pastey`, patched in via `[patch.crates-io]` because `egui_dock` and `gemm` still depend on the archived `paste` (RUSTSEC-2024-0436). Don't add code to it or remove it casually; remove it per #99 once nothing depends on `paste`.

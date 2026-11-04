@@ -1,0 +1,19 @@
+# Shim that stands in for the archived `paste` crate (RUSTSEC-2024-0436,
+# unmaintained) and forwards to `pastey`, its maintained drop-in fork, which the
+# advisory itself recommends. The root Cargo.toml's [patch.crates-io] points
+# every `paste` dependency here: egui_dock (ADR 0001) and faer -> gemm, used by
+# ezpz (ADR 0002). Owner decision, 2026-11-04.
+#
+# The version stays 1.0.x so dependents' `paste = "1"` requirements resolve to
+# this crate. Delete it once nothing in the graph depends on `paste` (#99,
+# see README.md).
+[package]
+name = "paste"
+version = "1.0.15"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Locus shim: forwards paste! to the maintained pastey fork"
+publish = false
+
+[dependencies]
+pastey = "0.2"
