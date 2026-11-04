@@ -13,6 +13,11 @@ pub enum DocError {
     UnknownEntity(EntityId),
     #[error("unknown constraint {0}")]
     UnknownConstraint(ConstraintId),
+    #[error("layer {layer} cannot be deleted: {} entity(ies) on other layers are built on it", .entities.len())]
+    LayerInUse {
+        layer: LayerId,
+        entities: Vec<EntityId>,
+    },
     #[error("layer {0} is locked")]
     LayerLocked(LayerId),
     #[error("unknown layer {0}")]

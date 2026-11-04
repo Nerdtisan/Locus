@@ -355,3 +355,95 @@ fn check_lock_on_an_unconstrained_layer_is_empty() {
     ));
     let _ = l2;
 }
+
+// ── #117: delete layer ─────────────────────────────────────────────────
+
+#[test]
+fn delete_layer_drops_geometry_and_constraints_atomically_and_undoes_exactly() {
+    let (mut s, l1, l2, a, b) = two_layer_pair();
+    // A second constraint inside l2, and one that bridges to l1.
+    let c = pt(&mut s, l2, 3.0, 3.0);
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Distance {
+            a: b,
+            b: c,
+            dim: Dimension::driving(4.0),
+        },
+    })
+    .unwrap();
+    let before = s.document().clone();
+    let plan = s.document().layer_deletion(l2).unwrap();
+    assert_eq!(plan.entities, vec![b, c]);
+    assert_eq!(plan.constraints.len(), 2);
+    assert_eq!(
+        plan.touched_elsewhere,
+        vec![a],
+        "names the other-layer entity"
+    );
+    assert!(plan.blocked_by.is_empty());
+
+    s.apply(&Command::DeleteLayer { id: l2 }).unwrap();
+    let d = s.document();
+    assert!(d.layer(l2).is_none());
+    assert!(d.entity(b).is_none() && d.entity(c).is_none());
+    assert!(d.entity(a).is_some());
+    assert!(d.constraints().is_empty());
+    assert_eq!(d.layer(l1).map(|l| l.locked), Some(false));
+
+    // One undo brings everything back, bit for bit.
+    s.undo().unwrap();
+    assert_eq!(s.document(), &before);
+    s.redo().unwrap();
+    assert!(s.document().layer(l2).is_none());
+    s.undo().unwrap();
+    assert_eq!(s.document(), &before);
+}
+
+#[test]
+fn delete_layer_refusals_change_nothing() {
+    let (mut s, l1, l2, a, b) = two_layer_pair();
+    // A line on l1 that ends at `b` (on l2): l2 can't go without it.
+    let line = s
+        .apply(&Command::AddEntity {
+            layer: l1,
+            construction: false,
+            geom: Geom::Line { start: a, end: b },
+        })
+        .unwrap()
+        .entities[0];
+    let before = s.document().clone();
+    assert_eq!(
+        s.apply(&Command::DeleteLayer { id: l2 }),
+        Err(DocError::LayerInUse {
+            layer: l2,
+            entities: vec![line]
+        })
+    );
+    assert_eq!(
+        s.document().layer_deletion(l2).unwrap().blocked_by,
+        vec![line]
+    );
+    // Locked and unknown layers.
+    lock(&mut s, l2, true).unwrap();
+    assert_eq!(
+        s.apply(&Command::DeleteLayer { id: l2 }),
+        Err(DocError::LayerLocked(l2))
+    );
+    assert!(matches!(
+        s.apply(&Command::DeleteLayer {
+            id: LayerId::new(999)
+        }),
+        Err(DocError::UnknownLayer(_))
+    ));
+    lock(&mut s, l2, false).unwrap();
+    assert_eq!(s.document(), &before);
+
+    // The last layer stays.
+    let mut solo = Sketcher::new(Document::new());
+    assert!(matches!(
+        solo.apply(&Command::DeleteLayer {
+            id: Document::default_layer()
+        }),
+        Err(DocError::Invalid(_))
+    ));
+}

@@ -83,6 +83,14 @@ pub enum Command {
         id: LayerId,
         locked: bool,
     },
+    /// Delete a layer together with its geometry and every constraint that
+    /// touches that geometry, as one atomic step (SPEC §4 rule 4). Preview it
+    /// with [`Document::layer_deletion`]. Undo restores layer, geometry and
+    /// constraints with their original IDs. Refused for the last layer, a
+    /// locked layer, or while entities on other layers are built on it.
+    DeleteLayer {
+        id: LayerId,
+    },
     /// Move entities to another layer. Constraints reference entities, not
     /// layers, so every constraint is kept (SPEC §4 rule 1).
     MoveToLayer {
@@ -120,6 +128,7 @@ impl Command {
             Command::AddLayer { .. } => "Add layer".to_owned(),
             Command::SetLayerProps { .. } => "Change layer".to_owned(),
             Command::MoveToLayer { .. } => "Move to layer".to_owned(),
+            Command::DeleteLayer { .. } => "Delete layer".to_owned(),
             Command::SetLayerLocked { locked: true, .. } => "Lock layer".to_owned(),
             Command::SetLayerLocked { locked: false, .. } => "Unlock layer".to_owned(),
             Command::Compound { label, .. } => label.clone(),
@@ -416,6 +425,55 @@ fn exec(
                     },
                 );
             }
+        }
+        Command::DeleteLayer { id } => {
+            let plan = doc.layer_deletion(*id)?;
+            doc.check_unlocked(*id)?;
+            if doc.layers.len() == 1 {
+                return Err(DocError::Invalid(
+                    "a document needs at least one layer".to_owned(),
+                ));
+            }
+            if !plan.blocked_by.is_empty() {
+                return Err(DocError::LayerInUse {
+                    layer: *id,
+                    entities: plan.blocked_by,
+                });
+            }
+            for cid in &plan.constraints {
+                let before = doc.constraint(*cid).cloned();
+                record(
+                    doc,
+                    patches,
+                    Patch::Constraint {
+                        id: *cid,
+                        before,
+                        after: None,
+                    },
+                );
+            }
+            for eid in &plan.entities {
+                let before = doc.entity(*eid).cloned();
+                record(
+                    doc,
+                    patches,
+                    Patch::Entity {
+                        id: *eid,
+                        before,
+                        after: None,
+                    },
+                );
+            }
+            let before = doc.layer(*id).cloned();
+            record(
+                doc,
+                patches,
+                Patch::Layer {
+                    id: *id,
+                    before,
+                    after: None,
+                },
+            );
         }
         Command::MoveToLayer { entities, layer } => {
             doc.check_unlocked(*layer)?;

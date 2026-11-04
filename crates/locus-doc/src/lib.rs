@@ -23,7 +23,7 @@ mod testutil;
 
 pub use command::{Applied, Command, Editor, LayerProps};
 pub use constraint::{Constraint, Dimension};
-pub use document::{Document, EntityStore, Layer, Parameter, View};
+pub use document::{Document, EntityStore, Layer, LayerDeletion, Parameter, View};
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
 pub use file::FileError;

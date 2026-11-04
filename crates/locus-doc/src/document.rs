@@ -13,7 +13,7 @@ use crate::ids::{ConstraintId, EntityId, LayerId, MAX_ID};
 use crate::operation::{CutParams, Operation};
 use locus_geom::{Arc, Circle, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Longest accepted layer name, in characters.
 pub const MAX_LAYER_NAME: usize = 128;
@@ -89,6 +89,22 @@ impl EntityStore {
     pub(crate) fn get_mut(&mut self, id: EntityId) -> Option<&mut Entity> {
         self.map.get_mut(&id)
     }
+}
+
+/// What deleting a layer removes (SPEC §4 rule 4).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LayerDeletion {
+    /// The layer's own geometry, which goes with it.
+    pub entities: Vec<EntityId>,
+    /// Every constraint that touches that geometry: all are dropped, and all
+    /// come back on undo.
+    pub constraints: Vec<ConstraintId>,
+    /// Entities on **other** layers those constraints also touch.
+    pub touched_elsewhere: Vec<EntityId>,
+    /// Entities on other layers built on this layer's points (a line on
+    /// another layer ending at one of them). Deletion is refused while any
+    /// exist: move them first, so no geometry is lost silently.
+    pub blocked_by: Vec<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -251,6 +267,51 @@ impl Document {
             .map(|(i, _)| *i)
             .collect();
         (ents, cons)
+    }
+
+    /// What deleting `layer` would remove (SPEC §4 rule 4). Read-only; the
+    /// UI shows it as the warning, and [`Command::DeleteLayer`] removes
+    /// exactly this.
+    ///
+    /// [`Command::DeleteLayer`]: crate::Command::DeleteLayer
+    ///
+    /// # Errors
+    /// [`DocError::UnknownLayer`].
+    pub fn layer_deletion(&self, layer: LayerId) -> Result<LayerDeletion, DocError> {
+        if !self.layers.contains_key(&layer) {
+            return Err(DocError::UnknownLayer(layer));
+        }
+        let doomed: BTreeSet<EntityId> = self
+            .entities
+            .iter()
+            .filter(|(_, e)| e.layer == layer)
+            .map(|(i, _)| i)
+            .collect();
+        let mut out = LayerDeletion {
+            entities: doomed.iter().copied().collect(),
+            ..LayerDeletion::default()
+        };
+        for (id, c) in &self.constraints {
+            let refs = c.references();
+            if refs.iter().any(|r| doomed.contains(r)) {
+                out.constraints.push(*id);
+                out.touched_elsewhere.extend(
+                    refs.into_iter()
+                        .filter(|r| !doomed.contains(r) && self.entities.contains(*r)),
+                );
+            }
+        }
+        out.touched_elsewhere.sort_unstable();
+        out.touched_elsewhere.dedup();
+        out.blocked_by = self
+            .entities
+            .iter()
+            .filter(|(i, e)| {
+                !doomed.contains(i) && e.geom.point_refs().iter().any(|r| doomed.contains(r))
+            })
+            .map(|(i, _)| i)
+            .collect();
+        Ok(out)
     }
 
     // ── Crate-private building blocks ────────────────────────────────────
