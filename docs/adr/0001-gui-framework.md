@@ -9,7 +9,7 @@
 
 Locus needs a GUI that draws a precise 2D canvas at millimetre scale (0.001 mm to 2 m visible extents), gives native-feeling docked panels, packages for Windows, macOS and Linux, and runs as a full editor in the browser (§0, §1). The owner's two existing Rust apps use different egui-based stacks, so both were spiked with the same scope, scene and measurement protocol:
 
-- **Spike A** (#44): `eframe 0.35` + `egui_dock 0.20` + `wgpu 29`, as in Parchment. Results: [`spikes/gui-eframe/RESULTS.md`](../../spikes/gui-eframe/RESULTS.md).
+- **Spike A** (#44): `eframe 0.35` + `egui_dock 0.20` + `wgpu 29`, as in Parchment. Results: [`spikes/gui-eframe/RESULTS.md`](https://github.com/Nerdtisan/Locus/blob/c7379f9/spikes/gui-eframe/RESULTS.md) (folder deleted in #67; linked at commit `c7379f9`).
 - **Spike B** (#45): `bevy 0.17.3` + `bevy_egui 0.38` + `egui_dock 0.18`, as in the DD-L0 simulator. Results: [`spikes/gui-bevy/RESULTS.md` at tag `archive/spike-gui-bevy`](https://github.com/Nerdtisan/Locus/blob/archive/spike-gui-bevy/spikes/gui-bevy/RESULTS.md).
 
 Both drew the same 5 000-segment seeded scene, with pan/zoom about the cursor, an adaptive grid, click-click lines, hover hit-testing and egui_dock panels. Their axes, grid labels and line-tool marker were matched afterwards (#90) so the owner could compare them side by side.
@@ -55,7 +55,7 @@ Not measured or not differentiating: dock-tab dragging by hand (synthetic drags 
 ## Consequences
 
 - `locus-app` depends on `eframe` (wgpu backend, `default_fonts`, `x11`, `wayland`), `egui` and `egui_dock`. Core crates stay GUI-free (§3).
-- The M1 app shell (#65) starts from `spikes/gui-eframe/`: its f64 view maths (`view.rs`), adaptive grid and rulers (`grid.rs`) and dock layout move into `locus-app`. The spike folder is deleted when that lands.
+- The M1 app shell (#65) starts from `spikes/gui-eframe/`: its f64 view maths (`view.rs`), adaptive grid and rulers (`grid.rs`) and dock layout move into `locus-app`. The spike folder was deleted with #67.
 - Spike B is archived: removed from `dev` in this PR and kept at the git tag `archive/spike-gui-bevy`.
 - The web build (#38) uses trunk with the same `wasm-opt` flags as the spike; eframe picks WebGPU and falls back to WebGL2.
 - Bundle a font with CAD symbols (`µ`, `°`, `Ø`, `±`, `→`) under an OFL-compatible licence (§9).
