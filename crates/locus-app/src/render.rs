@@ -222,6 +222,26 @@ impl Frame<'_> {
         }
     }
 
+    /// A small constraint glyph beside the cursor: what inference will add.
+    pub fn draw_hint(&self, at: Vec2, label: &str) {
+        let c = self.s(at) + EVec2::new(-14.0, -14.0);
+        let r = Rect::from_center_size(c, EVec2::splat(16.0));
+        self.painter.rect_filled(r, 3.0, self.pal.glyph_fill);
+        self.painter.rect_stroke(
+            r,
+            3.0,
+            Stroke::new(1.0, self.pal.hover),
+            egui::StrokeKind::Inside,
+        );
+        self.painter.text(
+            c,
+            Align2::CENTER_CENTER,
+            label,
+            FontId::monospace(11.0),
+            self.pal.glyph_text,
+        );
+    }
+
     /// Ring marking the existing point a tool will snap to.
     pub fn draw_snap(&self, p: Vec2) {
         self.painter

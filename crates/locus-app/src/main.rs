@@ -9,6 +9,7 @@ mod demo;
 mod fonts;
 mod grid;
 mod hit;
+mod infer;
 mod render;
 mod scene;
 mod settings;

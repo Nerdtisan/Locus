@@ -4,6 +4,7 @@
 
 use crate::app::Status;
 use crate::hit::{self, BoxMode, Mods, Selection};
+use crate::infer;
 use crate::render::{Emphasis, Frame, Palette};
 use crate::scene::Scene;
 use crate::settings::{Settings, Units};
@@ -269,7 +270,7 @@ impl Canvas {
         if self.draft.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect);
         } else {
-            self.tool_input(ui, &resp, rect, settings.units);
+            self.tool_input(ui, &resp, rect, settings);
         }
 
         let painter = painter.with_clip_rect(rect);
@@ -303,32 +304,46 @@ impl Canvas {
         status.grid = grid::label(grid::minor_step(self.view.pt_per_mm).0);
     }
 
-    /// Snap a world position to the nearest existing point (#68).
-    fn snap(&self, world: Vec2, tol: f64) -> Pick {
-        match hit::pick_point(&self.scene.items, world, tol) {
-            Some((id, pos)) => Pick {
-                pos,
-                point: Some(id),
-            },
-            None => Pick {
-                pos: world,
-                point: None,
-            },
-        }
+    /// What the cursor designates for the active tool: snapped onto a point,
+    /// or with inferred constraints (#68, #69). Holding Alt suppresses
+    /// inference for the moment, like the global toggle.
+    fn designate(&self, world: Vec2, auto: bool) -> Pick {
+        let opts = infer::Options {
+            enabled: auto,
+            tol: HIT_TOL_PT / self.view.pt_per_mm,
+        };
+        let anchor = self
+            .draft
+            .line_anchor()
+            .map(|(pos, point)| infer::Anchor { pos, point });
+        infer::infer(
+            &self.scene.items,
+            opts,
+            self.draft.tool(),
+            anchor,
+            self.draft.curve_snap(),
+            world,
+        )
     }
 
     /// Clicks, typed values and keys while a drawing tool is active (#68).
-    fn tool_input(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, units: Units) {
+    fn tool_input(
+        &mut self,
+        ui: &egui::Ui,
+        resp: &egui::Response,
+        rect: egui::Rect,
+        settings: &Settings,
+    ) {
         self.hover = None;
-        let tol = HIT_TOL_PT / self.view.pt_per_mm;
+        let auto = settings.auto_constrain && !ui.input(|i| i.modifiers.alt);
         self.cursor = resp
             .hover_pos()
-            .map(|p| self.snap(self.view.to_world(p, rect), tol));
+            .map(|p| self.designate(self.view.to_world(p, rect), auto));
         if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
         if resp.hovered() || !self.typed.is_empty() {
-            self.tool_keys(ui, units);
+            self.tool_keys(ui, settings.units);
         }
         if resp.clicked_by(PointerButton::Primary)
             && let Some(pick) = self.cursor
@@ -374,7 +389,7 @@ impl Canvas {
                     Units::Mm => v,
                     Units::Inch => v * 25.4,
                 };
-                let at = self.cursor.map_or(Vec2::ZERO, |p| p.pos);
+                let at = self.cursor.unwrap_or_else(|| Pick::free(Vec2::ZERO));
                 let out = self.draft.typed(mm, at, self.sketcher.document().next_id());
                 self.run(out);
             } else {
@@ -415,6 +430,15 @@ impl Canvas {
         frame.draw_preview(&self.draft.preview(pick.pos));
         if pick.point.is_some() {
             frame.draw_snap(pick.pos);
+        }
+        // Inference hint glyph (#69): what the shape will be constrained to.
+        let badge = match (pick.line, pick.on_curve) {
+            (Some(h), _) => Some(h.badge()),
+            (None, Some(_)) => Some("o"),
+            (None, None) => pick.point.map(|_| "•"),
+        };
+        if let Some(b) = badge {
+            frame.draw_hint(pick.pos, b);
         }
         let label = if self.typed.is_empty() {
             self.draft

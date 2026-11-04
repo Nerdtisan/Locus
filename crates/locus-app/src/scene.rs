@@ -39,6 +39,8 @@ pub struct Item {
     pub constrained: bool,
     /// A point that belongs to a line, circle or arc (an endpoint or centre).
     pub owned_point: bool,
+    /// The defining end points of a line or arc, for inference (#69).
+    pub ends: Option<(EntityId, EntityId)>,
     pub bbox: Aabb,
 }
 
@@ -164,6 +166,10 @@ impl Scene {
                 construction: e.construction,
                 constrained,
                 owned_point: matches!(shape, Shape::Point(_)) && owned.contains(&id),
+                ends: match e.geom {
+                    Geom::Line { start, end } | Geom::Arc { start, end, .. } => Some((start, end)),
+                    _ => None,
+                },
                 bbox,
             });
         }
