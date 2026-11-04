@@ -1,38 +1,78 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The sketch canvas: background, adaptive grid, axes and rulers, plus
-//! zoom/pan input. Entity drawing (#66) and picking (#67) build on this.
+//! The sketch canvas: owns the document (behind the command API), its
+//! render scene and the view, and handles zoom/pan input.
+//!
+//! Picking and selection arrive with #67.
 
 use crate::app::Status;
-use crate::grid;
-use crate::math::V2;
+use crate::render::{Emphasis, Frame, Palette};
+use crate::scene::Scene;
 use crate::settings::Settings;
 use crate::view::View;
-use egui::{Color32, PointerButton, Sense};
+use crate::{demo, grid};
+use egui::{PointerButton, Sense};
+use locus_doc::{Command, DocError, Document, Editor};
+use locus_geom::Vec2;
 
-#[derive(Debug)]
 pub struct Canvas {
+    /// Every document change goes through `Editor::apply` (SPEC §11).
+    editor: Editor,
+    scene: Scene,
     view: View,
     /// Keep the view fitted to the content, re-fitting when the canvas
     /// resizes, until the user pans or zooms (the web canvas is not at its
     /// final size on the first frame).
     auto_fit: bool,
     fit_size: egui::Vec2,
+    drawn: usize,
 }
 
 impl Default for Canvas {
     fn default() -> Self {
-        Self {
+        let mut c = Self {
+            editor: Editor::new(Document::new()),
+            scene: Scene::default(),
             view: View::default(),
             auto_fit: true,
             fit_size: egui::Vec2::ZERO,
-        }
+            drawn: 0,
+        };
+        c.load(demo::sketch());
+        c
     }
 }
 
 impl Canvas {
+    /// Replace the document (new / sample). Clears the undo history.
+    pub fn load(&mut self, doc: Document) {
+        self.editor = Editor::new(doc);
+        self.rebuild();
+        self.request_fit();
+    }
+
+    /// Run a command and refresh the derived scene.
+    #[allow(dead_code)] // first caller: tools and the properties panel (M1)
+    pub fn apply(&mut self, cmd: &Command) -> Result<(), DocError> {
+        self.editor.apply(cmd)?;
+        self.rebuild();
+        Ok(())
+    }
+
+    fn rebuild(&mut self) {
+        self.scene = Scene::build(self.editor.document());
+    }
+
     /// World bounds of the content; a sheet-sized default while empty.
-    fn bounds(&self) -> (V2, V2) {
-        (V2::new(0.0, 0.0), V2::new(300.0, 200.0))
+    fn bounds(&self) -> (Vec2, Vec2) {
+        let (lo, hi) = self
+            .scene
+            .bounds
+            .map_or((Vec2::new(0.0, 0.0), Vec2::new(300.0, 200.0)), |b| {
+                (b.min, b.max)
+            });
+        // Room for dimension lines and glyphs, which sit outside the geometry.
+        let pad = (hi - lo) * 0.08;
+        (lo - pad, hi + pad)
     }
 
     pub fn request_fit(&mut self) {
@@ -45,26 +85,20 @@ impl Canvas {
     pub fn clear_selection(&mut self) {}
 
     pub fn summary(&self) -> String {
-        "0 entities".to_owned()
+        let n = self.editor.document().entities().len();
+        format!("{n} entities · {} drawn", self.drawn)
     }
 
     pub fn properties_ui(&mut self, ui: &mut egui::Ui, _settings: &Settings) {
         ui.weak("Nothing selected.");
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, _settings: &Settings, status: &mut Status) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, settings: &Settings, status: &mut Status) {
         let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let rect = resp.rect;
         let dark = ui.visuals().dark_mode;
-        painter.rect_filled(
-            rect,
-            0.0,
-            if dark {
-                Color32::from_gray(24)
-            } else {
-                Color32::from_gray(250)
-            },
-        );
+        let pal = Palette::new(dark);
+        painter.rect_filled(rect, 0.0, pal.background);
 
         if self.auto_fit && rect.size() != self.fit_size && rect.width() > 10.0 {
             let (lo, hi) = self.bounds();
@@ -89,6 +123,15 @@ impl Canvas {
 
         let painter = painter.with_clip_rect(rect);
         grid::draw(&painter, &self.view, rect, dark);
+        let frame = Frame {
+            painter: &painter,
+            view: &self.view,
+            rect,
+            pal,
+            units: settings.units,
+        };
+        self.drawn = frame.draw_items(&self.scene, |_| Emphasis::None);
+        frame.draw_annotations(&self.scene);
         grid::rulers(&painter, &self.view, rect);
 
         status.cursor = hover.map(|p| self.view.to_world(p, rect));

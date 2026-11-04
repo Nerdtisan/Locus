@@ -6,9 +6,9 @@
 //! edit goes through its command API (SPEC §11).
 
 use crate::canvas::Canvas;
-use crate::math::V2;
 use crate::settings::{Settings, Theme, Units};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
 
 const LAYOUT_KEY: &str = "locus.layout.v1";
@@ -53,10 +53,12 @@ fn parse_layout(json: &str) -> DockState<Tab> {
 /// What the status bar shows, refreshed by the canvas each frame.
 #[derive(Debug, Default)]
 pub struct Status {
-    pub cursor: Option<V2>,
+    pub cursor: Option<Vec2>,
     pub extent_mm: f64,
     /// Minor grid step, already formatted ("10 mm").
     pub grid: String,
+    /// Smoothed CPU time per frame in ms (the 5 000-entity smoothness check, #66).
+    pub frame_ms: f32,
 }
 
 pub struct App {
@@ -83,6 +85,11 @@ impl App {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_stress(&mut self) {
+        self.canvas.load(crate::demo::stress(5000));
+    }
+
     fn toggle_tab(&mut self, tab: Tab) {
         if let Some(loc) = self.dock.find_tab(&tab) {
             self.dock.remove_tab(loc);
@@ -97,6 +104,17 @@ impl App {
                 for name in ["New", "Open…", "Save", "Save As…", "Export…"] {
                     stub(ui, name);
                 }
+                ui.separator();
+                ui.menu_button("Samples", |ui| {
+                    if ui.button("Demo sketch").clicked() {
+                        self.canvas.load(crate::demo::sketch());
+                        ui.close();
+                    }
+                    if ui.button("Stress scene (5 000 curves)").clicked() {
+                        self.canvas.load(crate::demo::stress(5000));
+                        ui.close();
+                    }
+                });
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     ui.separator();
@@ -204,6 +222,8 @@ impl App {
             ui.separator();
             ui.label(self.canvas.summary());
             ui.separator();
+            ui.label(format!("CPU {:.1} ms/frame", self.status.frame_ms));
+            ui.separator();
             ui.label("DOF —");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(if self.settings.auto_constrain {
@@ -260,7 +280,15 @@ impl TabViewer for Viewer<'_> {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if let Some(cpu) = frame.info().cpu_usage {
+            let ms = cpu * 1000.0;
+            self.status.frame_ms = if self.status.frame_ms == 0.0 {
+                ms
+            } else {
+                self.status.frame_ms * 0.9 + ms * 0.1
+            };
+        }
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {

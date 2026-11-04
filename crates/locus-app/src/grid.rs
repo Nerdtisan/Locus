@@ -2,9 +2,9 @@
 //! Adaptive decade grid: minor lines every 10^n mm, major every 10^(n+1) mm,
 //! with the minor lines fading in as they spread apart (Fusion-style).
 
-use crate::math::V2;
 use crate::view::View;
 use egui::{Color32, Painter, Rect, Stroke};
+use locus_geom::Vec2;
 
 /// Minor lines closer than this many points are not drawn.
 const MIN_MINOR_PT: f64 = 8.0;
@@ -48,7 +48,7 @@ pub fn draw(painter: &Painter, view: &View, rect: Rect, dark: bool) {
         } else {
             continue;
         };
-        let sx = view.to_screen(V2::new(x, 0.0), rect).x;
+        let sx = view.to_screen(Vec2::new(x, 0.0), rect).x;
         painter.line_segment(
             [egui::pos2(sx, rect.top()), egui::pos2(sx, rect.bottom())],
             Stroke::new(1.0, c),
@@ -65,7 +65,7 @@ pub fn draw(painter: &Painter, view: &View, rect: Rect, dark: bool) {
         } else {
             continue;
         };
-        let sy = view.to_screen(V2::new(0.0, y), rect).y;
+        let sy = view.to_screen(Vec2::new(0.0, y), rect).y;
         painter.line_segment(
             [egui::pos2(rect.left(), sy), egui::pos2(rect.right(), sy)],
             Stroke::new(1.0, c),
@@ -99,7 +99,7 @@ pub fn rulers(painter: &Painter, view: &View, rect: Rect) {
     let range = |a: f64, b: f64| (a / step).ceil() as i64..=(b / step).floor() as i64;
     for k in range(lo.x, hi.x) {
         let x = k as f64 * step;
-        let sx = view.to_screen(V2::new(x, 0.0), rect).x;
+        let sx = view.to_screen(Vec2::new(x, 0.0), rect).x;
         painter.text(
             egui::pos2(sx + 3.0, rect.top() + 2.0),
             egui::Align2::LEFT_TOP,
@@ -110,7 +110,7 @@ pub fn rulers(painter: &Painter, view: &View, rect: Rect) {
     }
     for k in range(lo.y, hi.y) {
         let y = k as f64 * step;
-        let sy = view.to_screen(V2::new(0.0, y), rect).y;
+        let sy = view.to_screen(Vec2::new(0.0, y), rect).y;
         painter.text(
             egui::pos2(rect.left() + 3.0, sy - 2.0),
             egui::Align2::LEFT_BOTTOM,

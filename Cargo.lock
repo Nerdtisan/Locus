@@ -1503,6 +1503,8 @@ dependencies = [
  "eframe",
  "egui",
  "egui_dock",
+ "locus-doc",
+ "locus-geom",
  "serde",
  "serde_json",
  "tracing",
