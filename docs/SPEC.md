@@ -1,13 +1,32 @@
-# Constraint Vector Editor — Initial Spec (v0.1)
+# Locus — Specification
 
-> Working name: **TBD** (placeholder `cve` used for crate names below).
-> Status: idea stage. This document is the brief for Claude Code to scaffold the workspace and execute Milestone 0–1.
+> **Living spec.** This is the contract for the project: code, issues and ADRs cite it by section (e.g. `docs/SPEC.md §11`). Section numbers are stable — add new material inside existing sections or append new ones; never renumber.
+> Status: pre-code. Milestone 0 (spikes & scaffolding) is next. Decisions are recorded in §0 and, once spikes complete, in ADRs under [`docs/adr/`](adr/).
+> Working agreement for Claude Code: see [`CLAUDE.md`](../CLAUDE.md).
+
+---
+
+## 0. Decisions log
+
+Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where an item is still being spiked, §12 notes the ADR that will close it.
+
+| Topic | Decision |
+|---|---|
+| GUI | Spike both in M0: (A) `eframe` 0.35 + `egui_dock` + `wgpu` (as in Parchment), (B) Bevy 0.17 + `bevy_egui` + `egui_dock` (as in the author's simulator). Pick by ADR. |
+| Platforms | Windows, macOS, Linux and web. Web = full editor; plugins (`wasmtime`) and the MCP server are desktop-only at first; a browser plugin runtime is a later epic. |
+| Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. |
+| Toolchain | Both: Parchment-style Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`), plus a native macOS runner in CI. No host Rust toolchain. |
+| Naming | App **Locus**: `locus-*` crates, binary `locus`, `.locus` files, `.locusplugin` archives, WIT package `locus:plugin@1.0.0`. Replaces the earlier placeholder name. |
+| Licence | As §2 / §15.6: AGPL-3.0-or-later core, MIT OR Apache-2.0 `locus-plugin-api`, CLA, plugin exception, `cargo-deny`. |
+| Web hosting | GitHub Pages; browser open/download plus OPFS/IndexedDB autosave. |
+| Packaging | Windows Inno Setup + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`. |
+| Input | Mouse + keyboard first; touch/pen is an M4 epic. |
 
 ---
 
 ## 1. Purpose
 
-A cross-platform Rust desktop app for creating precise 2D vector designs using **Fusion 360–style constrained sketching**, outputting **SVG, PDF and DXF** for:
+A cross-platform Rust app (desktop and web) for creating precise 2D vector designs using **Fusion 360–style constrained sketching**, outputting **SVG, PDF and DXF** for:
 
 - Pen plotters
 - Vinyl cutters / Cricut-class machines
@@ -20,6 +39,8 @@ It replaces the Inkscape/Affinity workflow where precision is achieved by eye an
 - Machine-oriented output: layers map to **operations** (cut / score / engrave / draw), not visual styles.
 - Clean, validated exports that machines and their host software (LightBurn, Cricut Design Space, plotter tools) accept first time.
 - Native desktop on Linux, Windows, macOS.
+- **Web**: the full editor runs in the browser (`wasm32-unknown-unknown`, hosted on GitHub Pages) with browser open/download and OPFS/IndexedDB autosave. Plugins and the MCP server are desktop-only at first (§3).
+- Mouse + keyboard first; touch/pen input follows in M4 (§13).
 
 ### Non-goals (explicit)
 - General illustration / Illustrator replacement (no gradients, effects, raster editing, artboards for print design).
@@ -40,21 +61,23 @@ It replaces the Inkscape/Affinity workflow where precision is achieved by eye an
 
 ## 3. Architecture
 
-Cargo workspace. Core is UI-agnostic and headless-testable; must also compile to `wasm32-unknown-unknown` (no filesystem/threads assumptions in core crates).
+Cargo workspace. Core is UI-agnostic and headless-testable; must also compile to `wasm32-unknown-unknown` (no filesystem/threads assumptions in core crates). The web build ships the same core crates plus the GUI shell; it is a first-class target, not a demo.
+
+**Desktop-only at first:** `locus-plugin-host` (`wasmtime` does not run inside a browser) and `locus-mcp` (needs a local process / loopback socket). The web build compiles without them; a browser plugin runtime is a later epic (§13).
 
 ```
 crates/
-  cve-geom/      # Entities, math, tolerances, arc/line/spline primitives (f64, mm)
-  cve-solver/    # Solver trait + backend(s); DOF analysis; conflict reporting
-  cve-doc/       # Document model, layers, IDs, undo/redo command stack, file format (de)serialisation
-  cve-region/    # Closed-profile/region detection, non-destructive booleans, offsets
-  cve-export/    # Validation pipeline + SVG / PDF / DXF writers, kerf/tool offset application
-  cve-text/      # Single-line (Hershey/EMS) + outline font → geometry
-  cve-plugin-api/# WIT interface definitions + Rust guest SDK for plugin authors (see §15)
-  cve-plugin-host/# wasmtime-based plugin runtime, capability enforcement, plugin registry
-  cve-mcp/       # MCP server exposing document/sketch operations to external AI clients (see §16)
-  cve-app/       # Desktop GUI shell (framework TBD — see §12)
-  cve-cli/       # Headless: validate/export a .cve file (used in tests + CI)
+  locus-geom/        # Entities, math, tolerances, arc/line/spline primitives (f64, mm)
+  locus-solver/      # Solver trait + backend(s); DOF analysis; conflict reporting
+  locus-doc/         # Document model, layers, IDs, undo/redo command stack, file format (de)serialisation
+  locus-region/      # Closed-profile/region detection, non-destructive booleans, offsets
+  locus-export/      # Validation pipeline + SVG / PDF / DXF writers, kerf/tool offset application
+  locus-text/        # Single-line (Hershey/EMS) + outline font → geometry
+  locus-plugin-api/  # WIT interface definitions + Rust guest SDK for plugin authors (see §15)
+  locus-plugin-host/ # wasmtime-based plugin runtime, capability enforcement, plugin registry
+  locus-mcp/         # MCP server exposing document/sketch operations to external AI clients (see §16)
+  locus-app/         # GUI shell for desktop + web (framework chosen by ADR — see §12)
+  locus-cli/         # Headless: validate/export a .locus file (used in tests + CI); builds the `locus` binary
 ```
 
 ### Key crate candidates (verify licences + maintenance before adopting)
@@ -70,12 +93,12 @@ crates/
 | Serialisation | `serde` + `ron` (or JSON) |
 
 ### Solver backend
-- Define a `Solver` trait in `cve-solver`; backends are swappable.
-- **Spike both** in Milestone 0, pick one:
-  - **libslvs** (SolveSpace, GPLv3+) — stable C API (`slvs.h`), simplest FFI via `bindgen`.
-  - **PlaneGCS** (FreeCAD, LGPL-2.1+) — C++, needs `cxx` bridge, richer 2D constraint set, Eigen dependency.
-  - **SolidCraft's sketch solver** (pure Rust, MIT OR Apache-2.0 — see §18). **Spike this first.** If its 2D sketch/constraint code is separable (or can be extracted as a crate), it removes C/C++ FFI entirely and keeps the whole stack Rust/WASM-friendly. Assess: crate boundaries, coupling to its 3D kernel, robustness on the §5 constraint set, drag performance, test coverage. Project is young and largely AI-assisted, so verify quality with our own test suite rather than trusting it. Retain upstream copyright/licence notices on any reused code.
-  - Also check for any other mature pure-Rust 2D GCS; adopt only if it handles the constraint set in §5 with acceptable robustness.
+- Define a `Solver` trait in `locus-solver`; backends are swappable.
+- **Pure Rust only (decided 2026-11-04).** The solver must build for `wasm32-unknown-unknown` with the rest of the core, so C/C++ backends are out. The earlier libslvs (SolveSpace, GPLv3+) and PlaneGCS (FreeCAD, LGPL-2.1+) FFI spikes are **dropped**; both remain behaviour references (§18).
+- Spike in Milestone 0, pick one by ADR:
+  - **SolidCraft's sketch solver** (pure Rust, MIT OR Apache-2.0 — see §18). **Spike this first.** Determine whether its 2D sketch/constraint code is separable (or can be extracted as a crate). Assess: crate boundaries, coupling to its 3D kernel, robustness on the §5 constraint set, drag performance, test coverage. Project is young and largely AI-assisted, so verify quality with our own test suite rather than trusting it. Retain upstream copyright/licence notices on any reused code.
+  - Any other mature pure-Rust 2D GCS; adopt only if it handles the constraint set in §5 with acceptable robustness.
+  - **Our own** solver in `locus-solver` (e.g. Newton / Levenberg–Marquardt over constraint residuals with graph decomposition), if neither of the above is good enough.
 - Solver requirements: incremental re-solve during drag (target < 16 ms for 500 entities), DOF count, identification of over-constrained / redundant / conflicting constraints.
 
 ---
@@ -244,48 +267,56 @@ Export is always one-way. Native file is the source of truth.
 
 ## 10. Native file format
 
-- Extension: `.cve` (placeholder).
+- Extension: `.locus`.
 - Human-readable **RON** (or JSON) for clean git diffs and easy debugging.
 - Top-level: `format_version`, `units`, `parameters`, `layers`, `entities`, `constraints`, `regions/booleans`, `view` (optional, can be ignored by diff tools).
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
-- Versioned migrations in `cve-doc` (`v1 → v2 …`), tested with fixture files.
+- Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.
 - Deterministic serialisation (stable ordering) so unchanged documents produce identical files.
 
 ---
 
 ## 11. Undo/redo
 
-- **Architectural requirement (from M1):** every mutation goes through a **serialisable command API** in `cve-doc` (serde-derived, schema-describable). The GUI, CLI, plugins and MCP server are all just clients of this API. Never mutate the document from UI code directly — retrofitting this later is what makes MCP/automation painful.
-- Command pattern in `cve-doc`. Every user action = one command; compound commands for multi-step ops (fillet, layer delete, pattern).
+- **Architectural requirement (from M1):** every mutation goes through a **serialisable command API** in `locus-doc` (serde-derived, schema-describable). The GUI, CLI, plugins and MCP server are all just clients of this API. Never mutate the document from UI code directly — retrofitting this later is what makes MCP/automation painful.
+- Command pattern in `locus-doc`. Every user action = one command; compound commands for multi-step ops (fillet, layer delete, pattern).
 - Solver results are not part of command state; re-solve after undo/redo.
 
 ---
 
-## 12. Open decisions (resolve in Milestone 0)
+## 12. Decisions (resolve in Milestone 0)
 
-1. **GUI framework** — evaluate against: precise custom 2D canvas rendering, native-feeling panels, cross-platform packaging, WASM option. Candidates: `egui`, `iced`, `Slint`, `Xilem`/`vello`. Align with the stack used in my existing Rust desktop apps if it meets the criteria.
-2. **Canvas renderer** — `vello`, `wgpu` + `lyon`, or framework-native.
-3. **Solver backend** — libslvs vs PlaneGCS (see §3).
-4. **Entity ID scheme** — UUIDv7 vs u64.
-5. **RON vs JSON** for file format.
-6. App name.
-7. Plugin licence exception wording (see §15.6).
-8. MCP SDK version + MCP spec revision to target (see §16).
+Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR in `docs/adr/` containing measured results (see [`docs/adr/README.md`](adr/README.md)); ADR numbers are assigned when each ADR is written.
+
+1. **GUI framework** — **Spiking.** Two candidates, both on `wgpu` + `egui_dock`: (A) `eframe` 0.35, (B) Bevy 0.17 + `bevy_egui`. Criteria: precise custom 2D canvas rendering, native-feeling docked panels, cross-platform packaging, **web build quality** (now a required target), binary/wasm size. Closed by the GUI framework ADR.
+2. **Canvas renderer** — **Spiking** with item 1 (`wgpu` + `lyon`, `vello`, or framework-native). Closed by the GUI framework ADR or a separate canvas-renderer ADR.
+3. **Solver backend** — **Decided in part:** pure Rust only (§3). **Spiking** which one: SolidCraft extract, another Rust GCS, or our own. Closed by the solver ADR.
+4. **Entity ID scheme** — **Open:** UUIDv7 vs u64. Closed by an ADR in M0.
+5. **RON vs JSON** for the file format — **Open.** Closed by an ADR in M0.
+6. **App name** — **Decided:** Locus (§0).
+7. **Plugin licence exception wording** (see §15.6) — **Decided in principle:** the exception will exist and the licence split is as §0. Wording drafted in an ADR; legal review before the first public release.
+8. **MCP SDK version + MCP spec revision** (see §16) — **Open** (desktop-only). Closed by an ADR in M0; verify the current `rmcp` version then.
+9. **Toolchain** — **Decided:** Docker dev container + native macOS CI runner, no host Rust toolchain (§0).
+10. **Web hosting & browser storage** — **Decided:** GitHub Pages; open/download + OPFS/IndexedDB autosave (§0).
+11. **Packaging formats** — **Decided:** see §0 and M4 (§13).
 
 ---
 
 ## 13. Milestones
 
 **M0 — Spikes & scaffolding**
-- Workspace, CI (fmt, clippy, test, `cargo-deny`), licence headers, CLA config.
-- Solver spike: bind libslvs and PlaneGCS; solve a fixed test sketch (rect + filleted corners + circle concentric to arc + dimension); measure drag re-solve time at 500 entities.
-- GUI spike: pan/zoom canvas at mm scale, draw lines, hit-testing.
+- Workspace, CI (fmt, clippy, test, `cargo-deny`, `wasm32` check of core crates), licence headers, CLA config.
+- Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`); native macOS runner in CI.
+- Solver spike (pure-Rust candidates, §3): solve a fixed test sketch (rect + filleted corners + circle concentric to arc + dimension); measure drag re-solve time at 500 entities, natively and in `wasm32`.
+- GUI spike, both stacks (§12.1): pan/zoom canvas at mm scale, draw lines, hit-testing — on desktop **and** in the browser.
+- Web build skeleton: `trunk` build of the GUI shell, deployed to GitHub Pages from CI.
 - Decision record for each §12 item (`docs/adr/`).
 
 **M1 — Core sketcher**
 - Points, lines, circles, arcs; geometric + dimensional constraints; live solve on drag; DOF display; conflict detection.
 - Native save/load; undo/redo.
 - Plain SVG export (no validation yet).
+- Web: the M1 sketcher runs on GitHub Pages, with browser open/download of `.locus` files and OPFS/IndexedDB autosave.
 
 **M2 — Layers, regions, export**
 - Layers with operations and the §4 rules (lock/delete checks).
@@ -302,13 +333,19 @@ Export is always one-way. Native file is the source of truth.
 **M4 — Polish**
 - **MCP server** (§16): stdio + localhost HTTP, read/write scopes, approval UI, preview rendering.
 - Plugin importers + validators; plugin manager UI (install from file, enable/disable, view granted capabilities).
-- Machine profiles, stroke-edge constraints, bed bounds, import reference geometry (SVG/DXF as locked reference layer), packaging/installers for all three OSes.
+- Machine profiles, stroke-edge constraints, bed bounds, import reference geometry (SVG/DXF as locked reference layer).
+- Packaging/installers: Windows Inno Setup installer + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`.
+- **Touch/pen input** epic (tablet and stylus interaction on the canvas).
+
+**Later (after M4)**
+- Browser plugin runtime epic (run `.locusplugin` components in the web build).
+- MCP for the web build, if a safe transport exists.
 
 ---
 
 ## 14. Testing strategy
 
-- **Golden-file tests**: `.cve` fixture → export → compare against committed SVG/DXF output (normalised).
+- **Golden-file tests**: `.locus` fixture → export → compare against committed SVG/DXF output (normalised).
 - **Solver property tests** (`proptest`): random valid constraint sets converge; adding then removing a constraint returns to same DOF.
 - **Round-trip tests**: save → load → save is byte-identical.
 - **Migration tests** for every format version.
@@ -339,7 +376,7 @@ Out of scope for v1: plugins adding arbitrary UI, new sketch tools with custom i
 - Plugins **never touch the document directly**. Host passes immutable snapshots in, plugin returns data out; host turns the result into an undoable command.
 - Generators/modifiers declare a **parameter schema** (number with unit + range, integer, bool, enum, string, document-parameter reference). Host renders the panel — no plugin UI code.
 - Generator output geometry can be anchored by constraints like any other entity (the generated group gets a constrainable origin/frame).
-- Interface is **versioned** (`cve:plugin@1.0.0`). Host supports current major + previous major. Breaking changes only on major bumps.
+- Interface is **versioned** (`locus:plugin@1.0.0`). Host supports current major + previous major. Breaking changes only on major bumps.
 
 ### 15.4 Security model (capability-based, deny by default)
 - No filesystem, network, clock, env or random access unless declared in the manifest **and** granted by the user at install time.
@@ -356,18 +393,18 @@ Out of scope for v1: plugins adding arbitrary UI, new sketch tools with custom i
 
 ### 15.6 Licensing
 - The core is AGPL-3.0. Whether a WASM component talking over a defined interface is a derivative work is legally unclear.
-- **Decision required:** add an explicit **plugin exception** (in the style of the GCC Runtime / Classpath exceptions) stating that plugins communicating solely through the published `cve-plugin-api` WIT interface may use any licence. This keeps the ecosystem open to permissive and proprietary plugins while the core stays AGPL.
-- `cve-plugin-api` (WIT + guest SDK) itself is licensed **MIT/Apache-2.0** so plugin authors don't inherit AGPL obligations by depending on the SDK.
+- **Decision required:** add an explicit **plugin exception** (in the style of the GCC Runtime / Classpath exceptions) stating that plugins communicating solely through the published `locus-plugin-api` WIT interface may use any licence. This keeps the ecosystem open to permissive and proprietary plugins while the core stays AGPL.
+- `locus-plugin-api` (WIT + guest SDK) itself is licensed **MIT/Apache-2.0** so plugin authors don't inherit AGPL obligations by depending on the SDK.
 - Not legal advice — have the exception wording reviewed before the first public release.
 
 ### 15.7 Distribution
-- v1: install from a local `.cveplugin` archive (manifest + `.wasm` + optional icon/readme).
+- v1: install from a local `.locusplugin` archive (manifest + `.wasm` + optional icon/readme).
 - Later: optional index/registry (Git-based list is sufficient initially). No auto-update without user consent.
 
 ### 15.8 Testing
 - Host test suite with fixture plugins: well-behaved, panicking, infinite-loop, memory-hog, wrong-API-version, malformed output.
 - Golden tests for first-party plugins.
-- `cve-cli` can run a generator headlessly: `cve plugin run <plugin> --params params.ron --out out.svg`.
+- `locus-cli` can run a generator headlessly: `locus plugin run <plugin> --params params.ron --out out.svg`.
 
 ---
 
@@ -377,10 +414,10 @@ Out of scope for v1: plugins adding arbitrary UI, new sketch tools with custom i
 Let users connect **their own AI client of choice** (Claude Desktop, Claude Code, other MCP-capable clients, local LLM front-ends) to drive the app: create and constrain geometry, apply generator plugins, inspect DOF/validation, and export. The app ships **no AI model and no cloud dependency**.
 
 ### 16.2 Implementation
-- Crate `cve-mcp`, using the official Rust MCP SDK (`rmcp`) — verify current version and spec revision at M0.
-- Thin adapter over the §11 command API; no business logic in `cve-mcp`.
+- Crate `locus-mcp`, using the official Rust MCP SDK (`rmcp`) — verify current version and spec revision at M0.
+- Thin adapter over the §11 command API; no business logic in `locus-mcp`.
 - Transports:
-  - **stdio** — `cve-cli mcp --doc file.cve` runs headless against a file (no GUI needed; good for scripting and CI).
+  - **stdio** — `locus mcp --doc file.locus` runs headless against a file (no GUI needed; good for scripting and CI).
   - **Streamable HTTP, localhost only** — attaches to the running GUI so the user watches edits live.
 - Reference: SolidCraft ships a built-in MCP server — review its tool design.
 
@@ -414,7 +451,7 @@ Resources: current document (RON snapshot), layer list, plugin catalogue. Errors
 - Plugins **cannot** call MCP or see MCP sessions.
 
 ### 16.5 Testing
-- Integration tests driving `cve-cli mcp` over stdio with scripted tool calls → golden documents.
+- Integration tests driving `locus mcp` over stdio with scripted tool calls → golden documents.
 - Security tests: non-loopback bind rejected, missing/invalid token rejected, bad `Origin` rejected, scope enforcement, approval-mode enforcement.
 
 ---
@@ -426,6 +463,7 @@ Resources: current document (RON snapshot), layer list, plugin catalogue. Errors
 - Keep core crates free of GUI dependencies and WASM-compatible.
 - Run `cargo-deny` and reject any dependency violating §2.
 - Flag (don't silently resolve) any conflict between this spec and what the spikes reveal.
+- The full working agreement — environment, branching, code style, testing, Definition of Done, off-limits list — lives in [`CLAUDE.md`](../CLAUDE.md). Where the two disagree, flag it.
 
 ---
 
