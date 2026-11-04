@@ -119,7 +119,7 @@ In wasm at 1,000 curves, SolidCraft's drag frames end inside its per-frame work 
 
 **Not measured:** branch preservation on large dimension edits (SolidCraft has explicit "fold" handling; ezpz relies on starting from the previous solution). Sketches that do not decompose constructively (our generated sketch is a chain, which suits SolidCraft's constructive seed). Firefox and Safari timings. macOS natively. Each is a follow-up below.
 
-**Reproduce:** see [`spikes/solver/README.md`](../../spikes/solver/README.md). Run `cargo run --release --bin table [cells]` or `cargo bench` in the container, and open `web/index.html` for wasm.
+**Reproduce:** at git tag `archive/spike-solver`, see `spikes/solver/README.md`. Run `cargo run --release --bin table [cells]` or `cargo bench` in the container, and open `web/index.html` for wasm.
 
 ## Decision
 

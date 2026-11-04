@@ -12,5 +12,12 @@ publish.workspace = true
 locus-geom = { path = "../locus-geom" }
 thiserror.workspace = true
 
+[dev-dependencies]
+proptest = "1"
+
 [lints]
 workspace = true
+
+[[bench]]
+name = "table"
+harness = false
