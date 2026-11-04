@@ -7,6 +7,7 @@
 pub mod analysis;
 #[cfg(feature = "ezpz")]
 pub mod ezpz_backend;
+pub mod own;
 #[cfg(feature = "solidcraft")]
 pub mod solidcraft;
 
@@ -27,6 +28,9 @@ pub fn run_all(clock: &dyn Clock, cells: usize) -> String {
         reports.push(measured(&ezpz_backend::Ezpz, clock, cells));
         reports.push(measured(&ezpz_backend::EzpzRank, clock, cells));
     }
+    reports.push(measured(&own::Own::LDL, clock, cells));
+    #[cfg(feature = "nalgebra")]
+    reports.push(measured(&own::Own::NALGEBRA, clock, cells));
     let _ = (clock, cells);
     table(&reports)
 }

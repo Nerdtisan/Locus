@@ -19,10 +19,14 @@ solidcraft-sketch = { git = "https://github.com/tangency-labs/solidcraft", rev =
 solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f", optional = true }
 # KittyCAD/Zoo's sketch solver (MIT).
 ezpz = { version = "=0.2.29", optional = true }
+# ADR 0007: sparse Cholesky for the own-LM candidate (no `paste` in its tree).
+nalgebra-sparse = { version = "0.12", optional = true, default-features = false }
+nalgebra = { version = "0.35", optional = true, default-features = false, features = ["std"] }
 
 [features]
 # One feature per candidate, so each backend's wasm size can be measured alone.
-default = ["solidcraft", "ezpz"]
+default = ["solidcraft", "ezpz", "nalgebra"]
+nalgebra = ["dep:nalgebra-sparse", "dep:nalgebra"]
 solidcraft = ["dep:solidcraft-sketch", "dep:solidcore-record"]
 ezpz = ["dep:ezpz"]
 
