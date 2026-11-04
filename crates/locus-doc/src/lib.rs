@@ -13,6 +13,7 @@ pub mod constraint;
 pub mod document;
 pub mod entity;
 pub mod error;
+pub mod file;
 pub mod ids;
 
 #[cfg(test)]
@@ -23,4 +24,5 @@ pub use constraint::{Constraint, Dimension};
 pub use document::{Document, EntityStore, Layer, Operation, Parameter, View};
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
+pub use file::FileError;
 pub use ids::{ConstraintId, EntityId, LayerId};
