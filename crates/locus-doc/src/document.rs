@@ -15,6 +15,9 @@ use locus_geom::{Arc, Circle, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Longest accepted layer name, in characters.
+pub const MAX_LAYER_NAME: usize = 128;
+
 /// A layer (SPEC §4). Its operation carries the SPEC §7 parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
@@ -310,6 +313,17 @@ impl Document {
             }
         }
         Ok(())
+    }
+
+    /// A layer's own invariants: a usable name and a valid operation (SPEC §7).
+    pub(crate) fn check_layer(l: &Layer) -> Result<(), DocError> {
+        let name = l.name.trim();
+        if name.is_empty() || l.name.chars().count() > MAX_LAYER_NAME {
+            return Err(DocError::Invalid(
+                "a layer name must be 1 to 128 characters".to_owned(),
+            ));
+        }
+        l.operation.validate()
     }
 
     /// Refuse to remove an entity something else still depends on (SPEC §4

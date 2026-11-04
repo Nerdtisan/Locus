@@ -16,10 +16,11 @@
 //! state: re-solve after every apply, undo and redo.
 
 use crate::constraint::Constraint;
-use crate::document::Document;
+use crate::document::{Document, Layer};
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{ConstraintId, EntityId, LayerId};
+use crate::operation::Operation;
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +63,25 @@ pub enum Command {
         id: ConstraintId,
         driven: bool,
     },
+    /// Create a layer (SPEC §4). The document assigns the ID (see
+    /// [`Applied::layers`]) and puts it last in the export order.
+    AddLayer {
+        name: String,
+        colour: [u8; 3],
+        operation: Operation,
+    },
+    /// Change a layer's properties. Lock state has its own command; hiding
+    /// has no solver effect (SPEC §4 rule 2).
+    SetLayerProps {
+        id: LayerId,
+        props: LayerProps,
+    },
+    /// Move entities to another layer. Constraints reference entities, not
+    /// layers, so every constraint is kept (SPEC §4 rule 1).
+    MoveToLayer {
+        entities: Vec<EntityId>,
+        layer: LayerId,
+    },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
         label: String,
@@ -90,6 +110,9 @@ impl Command {
             Command::RemoveConstraint { .. } => "Remove constraint".to_owned(),
             Command::SetDimension { .. } => "Set dimension".to_owned(),
             Command::SetDriven { .. } => "Set driven".to_owned(),
+            Command::AddLayer { .. } => "Add layer".to_owned(),
+            Command::SetLayerProps { .. } => "Change layer".to_owned(),
+            Command::MoveToLayer { .. } => "Move to layer".to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -101,6 +124,18 @@ impl Command {
 pub struct Applied {
     pub entities: Vec<EntityId>,
     pub constraints: Vec<ConstraintId>,
+    pub layers: Vec<LayerId>,
+}
+
+/// New values for a layer's editable properties; `None` leaves a field alone.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LayerProps {
+    pub name: Option<String>,
+    pub colour: Option<[u8; 3]>,
+    pub operation: Option<Operation>,
+    pub export_order: Option<u32>,
+    pub visible: Option<bool>,
+    pub export_enabled: Option<bool>,
 }
 
 /// One reversible state change: the state of an item before and after.
@@ -117,11 +152,22 @@ enum Patch {
         before: Option<Constraint>,
         after: Option<Constraint>,
     },
+    Layer {
+        id: LayerId,
+        before: Option<Layer>,
+        after: Option<Layer>,
+    },
 }
 
 impl Patch {
     fn set(&self, doc: &mut Document, forward: bool) {
         match self {
+            Patch::Layer { id, before, after } => {
+                match if forward { after } else { before }.clone() {
+                    Some(l) => doc.layers.insert(*id, l),
+                    None => doc.layers.remove(id),
+                };
+            }
             Patch::Entity { id, before, after } => {
                 match if forward { after } else { before }.clone() {
                     Some(e) => doc.entities.insert(*id, e),
@@ -271,6 +317,96 @@ fn exec(
         }
         Command::SetDriven { id, driven } => {
             edit_dimension(doc, *id, patches, |d| d.driven = *driven)?;
+        }
+        Command::AddLayer {
+            name,
+            colour,
+            operation,
+        } => {
+            let layer = Layer {
+                name: name.clone(),
+                colour: *colour,
+                operation: *operation,
+                export_order: doc
+                    .layers
+                    .values()
+                    .map(|l| l.export_order)
+                    .max()
+                    .map_or(0, |m| m.saturating_add(1)),
+                visible: true,
+                locked: false,
+                export_enabled: true,
+            };
+            Document::check_layer(&layer)?;
+            let id = LayerId::new(doc.alloc_id()?);
+            record(
+                doc,
+                patches,
+                Patch::Layer {
+                    id,
+                    before: None,
+                    after: Some(layer),
+                },
+            );
+            out.layers.push(id);
+        }
+        Command::SetLayerProps { id, props } => {
+            let before = doc.layer(*id).ok_or(DocError::UnknownLayer(*id))?.clone();
+            let mut after = before.clone();
+            if let Some(v) = &props.name {
+                after.name.clone_from(v);
+            }
+            if let Some(v) = props.colour {
+                after.colour = v;
+            }
+            if let Some(v) = props.operation {
+                after.operation = v;
+            }
+            if let Some(v) = props.export_order {
+                after.export_order = v;
+            }
+            if let Some(v) = props.visible {
+                after.visible = v;
+            }
+            if let Some(v) = props.export_enabled {
+                after.export_enabled = v;
+            }
+            Document::check_layer(&after)?;
+            if after != before {
+                record(
+                    doc,
+                    patches,
+                    Patch::Layer {
+                        id: *id,
+                        before: Some(before),
+                        after: Some(after),
+                    },
+                );
+            }
+        }
+        Command::MoveToLayer { entities, layer } => {
+            if !doc.layers.contains_key(layer) {
+                return Err(DocError::UnknownLayer(*layer));
+            }
+            for id in entities {
+                let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+                if before.layer == *layer {
+                    continue;
+                }
+                let after = Entity {
+                    layer: *layer,
+                    ..before.clone()
+                };
+                record(
+                    doc,
+                    patches,
+                    Patch::Entity {
+                        id: *id,
+                        before: Some(before),
+                        after: Some(after),
+                    },
+                );
+            }
         }
         Command::Compound { commands, .. } => {
             for c in commands {

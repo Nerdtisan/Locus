@@ -21,7 +21,7 @@ pub mod solve;
 #[cfg(test)]
 mod testutil;
 
-pub use command::{Applied, Command, Editor};
+pub use command::{Applied, Command, Editor, LayerProps};
 pub use constraint::{Constraint, Dimension};
 pub use document::{Document, EntityStore, Layer, Parameter, View};
 pub use entity::{Entity, EntityKind, Geom};
