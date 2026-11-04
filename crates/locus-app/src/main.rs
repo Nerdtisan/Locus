@@ -8,6 +8,7 @@ mod canvas;
 mod demo;
 mod fonts;
 mod grid;
+mod hit;
 mod render;
 mod scene;
 mod settings;

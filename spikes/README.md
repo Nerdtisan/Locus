@@ -15,6 +15,6 @@ docker run --rm -e CARGO_HOME=/workspace/.cargo-home -v "${PWD}:/workspace" `
 
 | Folder | Issue | What |
 |---|---|---|
-| `gui-eframe/` | #44 | GUI spike A: reference canvas on eframe 0.35 + egui_dock + wgpu — see its `RESULTS.md` |
+| ~~`gui-eframe/`~~ | #44 | GUI spike A (eframe). Chosen ([ADR 0001](../docs/adr/0001-gui-framework.md)); its view maths, grid and rulers now live in `crates/locus-app`, and the folder was removed in #67. Results are in the ADR; the code is in git history. |
 | ~~`solver/`~~ | #39–#42, #43 | Solver spike: harness, SolidCraft, ezpz and the own sparse LM ([ADR 0002](../docs/adr/0002-solver-backend.md), [ADR 0007](../docs/adr/0007-solver-backend-without-paste.md)). Absorbed into `locus-solver` (its tests and `cargo bench -p locus-solver`); removed from `dev`, kept at git tag `archive/spike-solver`. |
 | ~~`gui-bevy/`~~ | #45 | GUI spike B (Bevy). Not chosen ([ADR 0001](../docs/adr/0001-gui-framework.md)); removed from `dev`, kept at git tag `archive/spike-gui-bevy`. |
