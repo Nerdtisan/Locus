@@ -27,10 +27,13 @@ locus-geom = { path = "crates/locus-geom" }
 eframe = { version = "0.35", default-features = false, features = [
     "wgpu",
     "default_fonts",
+    "persistence",
     "x11",
     "wayland",
 ] }
 egui = "0.35"
+egui_dock = { version = "0.20", features = ["serde"] }
+serde_json = "1"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"
@@ -44,6 +47,10 @@ all = { level = "warn", priority = -1 }
 unwrap_used = "warn"
 expect_used = "warn"
 
+# Release .exe is 29.6 MB unstripped vs 14.6 MB stripped (spike A).
+[profile.release]
+strip = true
+
 # The web build (#38): size over speed. `trunk build --release --cargo-profile wasm-release`.
 [profile.wasm-release]
 inherits = "release"
@@ -51,3 +58,9 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = true
+
+# `paste` is archived (RUSTSEC-2024-0436). Every crate that depends on it gets
+# our shim instead, which forwards to the maintained `pastey` fork. See
+# third_party/paste/Cargo.toml.
+[patch.crates-io]
+paste = { path = "third_party/paste" }
