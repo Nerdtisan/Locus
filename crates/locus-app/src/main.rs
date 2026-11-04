@@ -7,6 +7,7 @@ mod app;
 mod canvas;
 mod constrain;
 mod demo;
+mod file_io;
 mod fonts;
 mod grid;
 mod hit;

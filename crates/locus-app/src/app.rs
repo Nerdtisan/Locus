@@ -7,6 +7,7 @@
 
 use crate::canvas::Canvas;
 use crate::constrain::Kind;
+use crate::file_io::FileIo;
 use crate::settings::{Settings, Theme, Units};
 use crate::tools::Tool;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
@@ -68,6 +69,7 @@ pub struct App {
     settings: Settings,
     canvas: Canvas,
     status: Status,
+    files: FileIo,
 }
 
 impl App {
@@ -84,6 +86,7 @@ impl App {
             settings,
             canvas: Canvas::default(),
             status: Status::default(),
+            files: FileIo::new(&cc.egui_ctx, cc.storage),
         }
     }
 
@@ -103,17 +106,19 @@ impl App {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                for name in ["New", "Open…", "Save", "Save As…", "Export…"] {
-                    stub(ui, name);
-                }
+                self.files.file_menu(ui, &mut self.canvas);
                 ui.separator();
                 ui.menu_button("Samples", |ui| {
                     if ui.button("Demo sketch").clicked() {
-                        self.canvas.load(crate::demo::sketch());
+                        let ctx = ui.ctx().clone();
+                        self.files
+                            .open_sample(&ctx, &mut self.canvas, crate::demo::sketch());
                         ui.close();
                     }
                     if ui.button("Stress scene (5 000 curves)").clicked() {
-                        self.canvas.load(crate::demo::stress(5000));
+                        let ctx = ui.ctx().clone();
+                        self.files
+                            .open_sample(&ctx, &mut self.canvas, crate::demo::stress(5000));
                         ui.close();
                     }
                 });
@@ -406,6 +411,7 @@ impl eframe::App for App {
             };
         }
         self.history_shortcuts(ui.ctx());
+        self.files.update(ui.ctx(), &mut self.canvas);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::top("constraints").show(ui, |ui| self.constraint_bar(ui));
@@ -422,6 +428,7 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.save(storage);
+        self.files.save_state(storage);
         if let Ok(json) = serde_json::to_string(&self.dock) {
             storage.set_string(LAYOUT_KEY, json);
         }

@@ -1,0 +1,167 @@
+(
+  format_version: 1,
+  units: Mm,
+  next_id: 21,
+  parameters: {
+    "width": (
+      expr: "60",
+      value: 60.0,
+    ),
+  },
+  layers: {
+    1: (
+      name: "Layer 1",
+      colour: (0, 0, 0),
+      operation: Cut,
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    2: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    3: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    4: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 40.0,
+        ),
+      ),
+    ),
+    5: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 40.0,
+        ),
+      ),
+    ),
+    6: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 2,
+        end: 3,
+      ),
+    ),
+    7: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 3,
+        end: 4,
+      ),
+    ),
+    8: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 4,
+        end: 5,
+      ),
+    ),
+    9: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 5,
+        end: 2,
+      ),
+    ),
+    10: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 30.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    11: (
+      layer: 1,
+      construction: false,
+      geom: Circle(
+        center: 10,
+        radius: 5.0,
+      ),
+    ),
+    12: (
+      layer: 1,
+      construction: true,
+      geom: Point(
+        pos: (
+          x: 0.30000000000000004,
+          y: 13.333333333333334,
+        ),
+      ),
+    ),
+  },
+  constraints: {
+    13: Fix(
+      point: 2,
+    ),
+    14: Horizontal(
+      line: 6,
+    ),
+    15: Vertical(
+      line: 7,
+    ),
+    16: Horizontal(
+      line: 8,
+    ),
+    17: Vertical(
+      line: 9,
+    ),
+    18: Distance(
+      a: 2,
+      b: 3,
+      dim: (
+        value: 60.0,
+        driven: false,
+      ),
+    ),
+    19: Radius(
+      curve: 11,
+      dim: (
+        value: 5.0,
+        driven: false,
+      ),
+    ),
+    20: Midpoint(
+      point: 10,
+      line: 6,
+    ),
+  },
+  view: Some((
+    center: (
+      x: 30.0,
+      y: 20.0,
+    ),
+    scale: 4.0,
+  )),
+)
