@@ -12,6 +12,7 @@ mod hit;
 mod render;
 mod scene;
 mod settings;
+mod tools;
 mod view;
 
 #[cfg(not(target_arch = "wasm32"))]

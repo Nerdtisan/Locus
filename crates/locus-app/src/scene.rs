@@ -265,6 +265,13 @@ mod tests {
     }
 
     #[test]
+    fn demo_sketch_has_no_redundant_or_conflicting_constraints() {
+        let s = locus_doc::Sketcher::new(demo::sketch());
+        assert!(s.state().converged);
+        assert!(s.state().redundant.is_empty() && s.state().conflicts.is_empty());
+    }
+
+    #[test]
     fn owned_points_are_flagged_and_free_points_are_not() {
         let scene = Scene::build(&demo::sketch(), &BTreeSet::new());
         let free = scene

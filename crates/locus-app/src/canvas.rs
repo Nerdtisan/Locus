@@ -7,6 +7,7 @@ use crate::hit::{self, BoxMode, Mods, Selection};
 use crate::render::{Emphasis, Frame, Palette};
 use crate::scene::Scene;
 use crate::settings::{Settings, Units};
+use crate::tools::{Draft, Outcome, Pick, Tool};
 use crate::view::View;
 use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
@@ -35,6 +36,14 @@ pub struct Canvas {
     hover: Option<EntityId>,
     /// Screen position where a rubber-band box started.
     rubber: Option<Pos2>,
+    /// The active drawing tool and its clicks so far (#68).
+    draft: Draft,
+    /// Digits typed while drawing: a length or radius (SPEC §6.1).
+    typed: String,
+    /// Last cursor position over the canvas, snapped to a point if near one.
+    cursor: Option<Pick>,
+    /// Last refusal or error, shown in the status bar until the next action.
+    notice: Option<String>,
 }
 
 impl Default for Canvas {
@@ -49,6 +58,10 @@ impl Default for Canvas {
             selection: Selection::default(),
             hover: None,
             rubber: None,
+            draft: Draft::new(Tool::Select),
+            typed: String::new(),
+            cursor: None,
+            notice: None,
         };
         c.load(demo::sketch());
         c
@@ -60,8 +73,55 @@ impl Canvas {
     pub fn load(&mut self, doc: Document) {
         self.sketcher = Sketcher::new(doc);
         self.selection.clear();
+        self.draft.cancel();
+        self.typed.clear();
+        self.notice = None;
         self.rebuild();
         self.request_fit();
+    }
+
+    pub fn tool(&self) -> Tool {
+        self.draft.tool()
+    }
+
+    pub fn set_tool(&mut self, tool: Tool) {
+        self.draft.set_tool(tool);
+        self.typed.clear();
+        self.notice = None;
+    }
+
+    /// What to tell the user: the last problem, else the tool's next step.
+    pub fn hint(&self) -> String {
+        match &self.notice {
+            Some(n) => n.clone(),
+            None => self.draft.tool().prompt(self.draft.clicks()).to_owned(),
+        }
+    }
+
+    /// DOF and solve status for the status bar.
+    pub fn solve_summary(&self) -> String {
+        let st = self.sketcher.state();
+        match st.status {
+            locus_doc::Status::FullyConstrained => "Fully constrained".to_owned(),
+            locus_doc::Status::UnderConstrained => format!("Under-constrained · DOF {}", st.dof),
+            _ => "Over-constrained".to_owned(),
+        }
+    }
+
+    /// Run a tool outcome through the command API (SPEC §11).
+    fn run(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::Pending => {}
+            Outcome::Rejected(why) => self.notice = Some(why.to_owned()),
+            Outcome::Commit(cmd) => match self.apply(&cmd) {
+                Ok(()) => self.notice = None,
+                Err(e) => {
+                    // The draft's predicted IDs are void after a failure.
+                    self.draft.cancel();
+                    self.notice = Some(e.to_string());
+                }
+            },
+        }
     }
 
     /// Run a command and refresh the derived scene.
@@ -74,12 +134,15 @@ impl Canvas {
 
     /// Undo the last step (SPEC §11); returns its label.
     pub fn undo(&mut self) -> Option<String> {
+        // A half-drawn shape may refer to what was just undone.
+        self.draft.cancel();
         let label = self.sketcher.undo().ok()?;
         self.rebuild();
         Some(label)
     }
 
     pub fn redo(&mut self) -> Option<String> {
+        self.draft.cancel();
         let label = self.sketcher.redo().ok()?;
         self.rebuild();
         Some(label)
@@ -203,7 +266,11 @@ impl Canvas {
             self.auto_fit = false;
         }
 
-        self.pick_and_select(ui, &resp, rect);
+        if self.draft.tool() == Tool::Select {
+            self.pick_and_select(ui, &resp, rect);
+        } else {
+            self.tool_input(ui, &resp, rect, settings.units);
+        }
 
         let painter = painter.with_clip_rect(rect);
         grid::draw(&painter, &self.view, rect, dark);
@@ -225,6 +292,7 @@ impl Canvas {
             }
         });
         frame.draw_annotations(&self.scene);
+        self.draw_tool_overlay(&frame, &painter);
         if let (Some(start), Some(now)) = (self.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -233,6 +301,152 @@ impl Canvas {
         status.cursor = hover.map(|p| self.view.to_world(p, rect));
         status.extent_mm = self.view.extent_mm(rect);
         status.grid = grid::label(grid::minor_step(self.view.pt_per_mm).0);
+    }
+
+    /// Snap a world position to the nearest existing point (#68).
+    fn snap(&self, world: Vec2, tol: f64) -> Pick {
+        match hit::pick_point(&self.scene.items, world, tol) {
+            Some((id, pos)) => Pick {
+                pos,
+                point: Some(id),
+            },
+            None => Pick {
+                pos: world,
+                point: None,
+            },
+        }
+    }
+
+    /// Clicks, typed values and keys while a drawing tool is active (#68).
+    fn tool_input(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, units: Units) {
+        self.hover = None;
+        let tol = HIT_TOL_PT / self.view.pt_per_mm;
+        self.cursor = resp
+            .hover_pos()
+            .map(|p| self.snap(self.view.to_world(p, rect), tol));
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+        if resp.hovered() || !self.typed.is_empty() {
+            self.tool_keys(ui, units);
+        }
+        if resp.clicked_by(PointerButton::Primary)
+            && let Some(pick) = self.cursor
+        {
+            let out = self.draft.click(pick, self.sketcher.document().next_id());
+            self.typed.clear();
+            self.run(out);
+        }
+    }
+
+    fn tool_keys(&mut self, ui: &egui::Ui, units: Units) {
+        use egui::Key;
+        let (text, enter, esc, back, plain) = ui.input(|i| {
+            let text: String = i
+                .events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect();
+            (
+                text,
+                i.key_pressed(Key::Enter),
+                i.key_pressed(Key::Escape),
+                i.key_pressed(Key::Backspace),
+                !(i.modifiers.command || i.modifiers.alt),
+            )
+        });
+        if self.draft.is_drawing() {
+            self.typed
+                .extend(text.chars().filter(|c| c.is_ascii_digit() || *c == '.'));
+        }
+        if back {
+            self.typed.pop();
+        }
+        if enter {
+            let value = std::mem::take(&mut self.typed);
+            if value.is_empty() {
+                self.draft.finish();
+            } else if let Ok(v) = value.parse::<f64>() {
+                let mm = match units {
+                    Units::Mm => v,
+                    Units::Inch => v * 25.4,
+                };
+                let at = self.cursor.map_or(Vec2::ZERO, |p| p.pos);
+                let out = self.draft.typed(mm, at, self.sketcher.document().next_id());
+                self.run(out);
+            } else {
+                self.notice = Some(format!("\"{value}\" is not a number"));
+            }
+        }
+        if esc {
+            if !self.typed.is_empty() {
+                self.typed.clear();
+            } else if self.draft.is_drawing() {
+                self.draft.cancel();
+            } else {
+                self.set_tool(Tool::Select);
+            }
+        }
+        // Single-key tool shortcuts, unless a value is being typed.
+        if plain && self.typed.is_empty() {
+            let picked = ui.input(|i| {
+                [Tool::Select].into_iter().chain(Tool::DRAWING).find(|t| {
+                    t.key()
+                        .and_then(|c| Key::from_name(&c.to_string()))
+                        .is_some_and(|k| i.key_pressed(k))
+                })
+            });
+            if let Some(t) = picked {
+                self.set_tool(t);
+            }
+        }
+    }
+
+    fn draw_tool_overlay(&self, frame: &Frame<'_>, painter: &egui::Painter) {
+        if self.draft.tool() == Tool::Select {
+            return;
+        }
+        let Some(pick) = self.cursor else {
+            return;
+        };
+        frame.draw_preview(&self.draft.preview(pick.pos));
+        if pick.point.is_some() {
+            frame.draw_snap(pick.pos);
+        }
+        let label = if self.typed.is_empty() {
+            self.draft
+                .readout(pick.pos)
+                .map(|(what, mm)| format!("{what} {}", frame.units.format_len(mm)))
+        } else {
+            let what = self.draft.readout(pick.pos).map_or("Value", |(w, _)| w);
+            Some(format!("{what} {}▏", self.typed))
+        };
+        if let Some(text) = label {
+            let at = frame.view.to_screen(pick.pos, frame.rect) + egui::vec2(14.0, -14.0);
+            // Keep the label on the canvas near the right edge.
+            let anchor = if at.x > frame.rect.right() - 170.0 {
+                egui::Align2::RIGHT_BOTTOM
+            } else {
+                egui::Align2::LEFT_BOTTOM
+            };
+            painter.text(
+                at - egui::vec2(
+                    if anchor == egui::Align2::RIGHT_BOTTOM {
+                        28.0
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                ),
+                anchor,
+                text,
+                egui::FontId::monospace(13.0),
+                frame.pal.hover,
+            );
+        }
     }
 
     /// Hover, click and box selection (#67). Left-drag is a rubber-band box;

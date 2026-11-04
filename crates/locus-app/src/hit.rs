@@ -51,6 +51,22 @@ pub fn pick(items: &[Item], p: Vec2, tol: f64) -> Option<EntityId> {
     best_point.or(best_curve).map(|(_, id)| id)
 }
 
+/// The nearest point entity within `tol` mm of `p`, with its position: the
+/// snap target for drawing tools (#68).
+pub fn pick_point(items: &[Item], p: Vec2, tol: f64) -> Option<(EntityId, Vec2)> {
+    let mut best: Option<(f64, EntityId, Vec2)> = None;
+    for item in items {
+        let Shape::Point(q) = item.shape else {
+            continue;
+        };
+        let d = p.distance(q);
+        if d <= tol && best.is_none_or(|(bd, bid, _)| d < bd || (d == bd && item.id < bid)) {
+            best = Some((d, item.id, q));
+        }
+    }
+    best.map(|(_, id, q)| (id, q))
+}
+
 fn bbox_near(b: &Aabb, probe: &Aabb, tol: f64) -> bool {
     b.max.x + tol >= probe.min.x
         && b.min.x - tol <= probe.max.x
@@ -238,6 +254,18 @@ mod tests {
 
     fn line(id: u64, a: Vec2, b: Vec2) -> Item {
         item(id, Shape::Line(Line::new(a, b)))
+    }
+
+    #[test]
+    fn pick_point_ignores_curves_and_takes_the_nearest_point() {
+        let items = [
+            line(1, v(0.0, 0.0), v(10.0, 0.0)),
+            item(2, Shape::Point(v(5.0, 0.4))),
+            item(3, Shape::Point(v(5.0, 0.2))),
+        ];
+        let hit = pick_point(&items, v(5.0, 0.0), 1.0);
+        assert_eq!(hit, Some((EntityId::new(3), v(5.0, 0.2))));
+        assert_eq!(pick_point(&items, v(5.0, 5.0), 1.0), None);
     }
 
     fn quarter_arc(id: u64) -> Item {

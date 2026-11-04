@@ -75,10 +75,10 @@ fn build_sketch(b: &mut Builder) -> Option<()> {
         },
     )?;
 
-    // A rounded notch: a quarter arc about (220, 140)'s neighbour.
-    let ac = b.point(180.0, 100.0)?;
-    let a0 = b.point(200.0, 100.0)?;
-    let a1 = b.point(180.0, 120.0)?;
+    // A quarter arc centred on the middle of the construction diagonal.
+    let ac = b.point(120.0, 80.0)?;
+    let a0 = b.point(140.0, 80.0)?;
+    let a1 = b.point(120.0, 100.0)?;
     let arc = b.add(
         false,
         Geom::Arc {
@@ -90,12 +90,10 @@ fn build_sketch(b: &mut Builder) -> Option<()> {
     let _free = b.point(130.0, 110.0)?;
 
     b.constrain(Constraint::Fix { point: p00 });
-    b.constrain(Constraint::Fix { point: p10 });
     b.constrain(Constraint::Horizontal { line: bottom });
     b.constrain(Constraint::Horizontal { line: top });
     b.constrain(Constraint::Vertical { line: right });
     b.constrain(Constraint::Vertical { line: left });
-    b.constrain(Constraint::Parallel { a: bottom, b: top });
     b.constrain(Constraint::HorizontalDistance {
         a: p00,
         b: p10,

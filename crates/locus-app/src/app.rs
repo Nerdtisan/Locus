@@ -7,6 +7,7 @@
 
 use crate::canvas::Canvas;
 use crate::settings::{Settings, Theme, Units};
+use crate::tools::Tool;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
@@ -190,9 +191,20 @@ impl App {
                 });
             });
             ui.menu_button("Sketch", |ui| {
-                for name in ["Line", "Circle", "Arc", "Point", "Rectangle"] {
-                    stub(ui, name);
+                for tool in Tool::DRAWING {
+                    let label = match tool.key() {
+                        Some(k) => format!("{}  ({k})", tool.label()),
+                        None => tool.label().to_owned(),
+                    };
+                    if ui
+                        .selectable_label(self.canvas.tool() == tool, label)
+                        .clicked()
+                    {
+                        self.canvas.set_tool(tool);
+                        ui.close();
+                    }
                 }
+                stub(ui, "Rectangle");
             });
             ui.menu_button("Constrain", |ui| {
                 for name in [
@@ -217,6 +229,26 @@ impl App {
                 ui.hyperlink_to("Locus on GitHub", "https://github.com/Nerdtisan/Locus");
                 ui.label(format!("Locus v{}", env!("CARGO_PKG_VERSION")));
             });
+        });
+    }
+
+    /// The tool strip under the menu (#68): Select plus the drawing tools.
+    fn tool_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            for tool in [Tool::Select].into_iter().chain(Tool::DRAWING) {
+                let text = match tool.key() {
+                    Some(k) => format!("{} ({k})", tool.label()),
+                    None => tool.label().to_owned(),
+                };
+                if ui
+                    .selectable_label(self.canvas.tool() == tool, text)
+                    .clicked()
+                {
+                    self.canvas.set_tool(tool);
+                }
+            }
+            ui.separator();
+            ui.weak(self.canvas.hint());
         });
     }
 
@@ -263,7 +295,7 @@ impl App {
             ui.separator();
             ui.label(format!("CPU {:.1} ms/frame", self.status.frame_ms));
             ui.separator();
-            ui.label("DOF —");
+            ui.label(self.canvas.solve_summary());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(if self.settings.auto_constrain {
                     "Auto-constrain on"
@@ -345,6 +377,7 @@ impl eframe::App for App {
         }
         self.history_shortcuts(ui.ctx());
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
             canvas: &mut self.canvas,
