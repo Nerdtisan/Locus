@@ -16,6 +16,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Platforms | Windows, macOS, Linux and web. Web = full editor; plugins (`wasmtime`) and the MCP server are desktop-only at first; a browser plugin runtime is a later epic. |
 | Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. Backend chosen 2026-11-04 by [ADR 0002](adr/0002-solver-backend.md): `ezpz` for solving, Locus's own Jacobian-rank analysis for DOF and redundancy. |
 | Toolchain | Both: Parchment-style Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`), plus a native macOS runner in CI. No host Rust toolchain. |
+| Rust version | Always the latest stable Rust (1.99 today) and the newest edition (2024). `rust-version`, the dev container and the macOS CI job move together; no separate MSRV (decided 2026-11-04). |
 | Naming | App **Locus**: `locus-*` crates, GUI binary `locus`, headless CLI binary `locus-cli` (decided 2026-11-04, PR #78), `.locus` files, `.locusplugin` archives, WIT package `locus:plugin@1.0.0`. Replaces the earlier placeholder name. |
 | Licence | As §2 / §15.6: AGPL-3.0-or-later core, MIT OR Apache-2.0 `locus-plugin-api`, CLA, plugin exception, `cargo-deny`. MPL-2.0 dependencies allowed (decided 2026-11-04, PR #80). |
 | Web hosting | GitHub Pages; browser open/download plus OPFS/IndexedDB autosave. |
