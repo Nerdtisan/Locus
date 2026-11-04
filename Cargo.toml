@@ -22,6 +22,7 @@ tracing = "0.1"
 ron = "0.12"
 locus-geom = { path = "crates/locus-geom" }
 locus-doc = { path = "crates/locus-doc" }
+locus-solver = { path = "crates/locus-solver" }
 
 # GUI (ADR 0001): only locus-app may use these. Same feature set as Parchment:
 # wgpu backend only, bundled fonts, winit's Linux backends (no-ops elsewhere).

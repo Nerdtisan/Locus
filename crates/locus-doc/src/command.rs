@@ -467,6 +467,143 @@ impl Editor {
     pub fn redo_label(&self) -> Option<&str> {
         self.redo.last().map(|t| t.label.as_str())
     }
+
+    /// Apply `cmd`, then `solve` the result, as **one** undo step: the solver's
+    /// moves are recorded in the same transaction, so undo puts the geometry
+    /// back exactly (SPEC §11). If the command or the solve fails, the
+    /// document and the history are exactly as they were.
+    pub(crate) fn apply_solved(
+        &mut self,
+        cmd: &Command,
+        solve: impl FnOnce(&Document) -> Result<Solution, DocError>,
+    ) -> Result<Applied, DocError> {
+        let mut patches = Vec::new();
+        let mut out = Applied::default();
+        let result = exec(&mut self.doc, cmd, &mut patches, &mut out)
+            .and_then(|()| solve(&self.doc))
+            .and_then(|sol| solution_patches(&mut self.doc, &sol, &mut patches));
+        if let Err(e) = result {
+            for p in patches.iter().rev() {
+                p.set(&mut self.doc, false);
+            }
+            return Err(e);
+        }
+        if !patches.is_empty() {
+            self.undo.push(Transaction {
+                label: cmd.label(),
+                patches,
+            });
+            self.redo.clear();
+        }
+        Ok(out)
+    }
+
+    /// Write solver output without an undo step, e.g. the first solve after
+    /// opening a file (SPEC §10: stored positions are derived state).
+    pub(crate) fn apply_solution_unrecorded(&mut self, sol: &Solution) -> Result<(), DocError> {
+        let mut patches = Vec::new();
+        solution_patches(&mut self.doc, sol, &mut patches)
+    }
+}
+
+/// Solver output in document terms (`crate::solve`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Solution {
+    pub points: Vec<(EntityId, Vec2)>,
+    pub radii: Vec<(EntityId, f64)>,
+    /// Measured values of driven (reference) dimensions.
+    pub driven: Vec<(ConstraintId, f64)>,
+}
+
+/// Turn a [`Solution`] into recorded patches. Everything is validated before
+/// anything is written; unchanged values produce no patch.
+fn solution_patches(
+    doc: &mut Document,
+    sol: &Solution,
+    patches: &mut Vec<Patch>,
+) -> Result<(), DocError> {
+    let mut new = Vec::new();
+    for (id, p) in &sol.points {
+        let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+        if !p.is_finite() {
+            return Err(DocError::BadValue {
+                what: "solved position",
+                value: if p.x.is_finite() { p.y } else { p.x },
+            });
+        }
+        let mut after = before.clone();
+        match &mut after.geom {
+            Geom::Point { pos } if *pos == *p => continue,
+            Geom::Point { pos } => *pos = *p,
+            other => {
+                return Err(DocError::WrongKind {
+                    what: "solved position",
+                    entity: *id,
+                    expected: "point",
+                    found: other.kind(),
+                });
+            }
+        }
+        new.push(Patch::Entity {
+            id: *id,
+            before: Some(before),
+            after: Some(after),
+        });
+    }
+    for (id, r) in &sol.radii {
+        let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+        if !(r.is_finite() && *r > 0.0) {
+            return Err(DocError::BadValue {
+                what: "solved radius",
+                value: *r,
+            });
+        }
+        let mut after = before.clone();
+        match &mut after.geom {
+            Geom::Circle { radius, .. } if *radius == *r => continue,
+            Geom::Circle { radius, .. } => *radius = *r,
+            other => {
+                return Err(DocError::WrongKind {
+                    what: "solved radius",
+                    entity: *id,
+                    expected: "circle",
+                    found: other.kind(),
+                });
+            }
+        }
+        new.push(Patch::Entity {
+            id: *id,
+            before: Some(before),
+            after: Some(after),
+        });
+    }
+    for (id, v) in &sol.driven {
+        let before = doc
+            .constraint(*id)
+            .ok_or(DocError::UnknownConstraint(*id))?
+            .clone();
+        if !v.is_finite() {
+            return Err(DocError::BadValue {
+                what: "measured dimension",
+                value: *v,
+            });
+        }
+        let mut after = before.clone();
+        let dim = after.dimension_mut().ok_or(DocError::NotADimension(*id))?;
+        if dim.value == *v {
+            continue;
+        }
+        dim.value = *v;
+        new.push(Patch::Constraint {
+            id: *id,
+            before: Some(before),
+            after: Some(after),
+        });
+    }
+    for p in new {
+        record(doc, patches, p);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

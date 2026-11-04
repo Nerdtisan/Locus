@@ -15,6 +15,7 @@ pub mod entity;
 pub mod error;
 pub mod file;
 pub mod ids;
+pub mod solve;
 
 #[cfg(test)]
 mod testutil;
@@ -26,3 +27,4 @@ pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
 pub use file::FileError;
 pub use ids::{ConstraintId, EntityId, LayerId};
+pub use solve::{ConstraintGroup, Sketcher, SolveState, Status};
