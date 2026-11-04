@@ -10,7 +10,7 @@ use crate::settings::{Settings, Units};
 use crate::view::View;
 use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
-use locus_doc::{Command, DocError, Document, Editor, EntityId, Geom};
+use locus_doc::{Command, DocError, Document, EntityId, Geom, Sketcher};
 use locus_geom::{Aabb, Vec2};
 
 /// Pick radius in screen points (converted to mm by the zoom).
@@ -19,8 +19,9 @@ const HIT_TOL_PT: f64 = 6.0;
 const MIN_BOX_PT: f32 = 4.0;
 
 pub struct Canvas {
-    /// Every document change goes through `Editor::apply` (SPEC §11).
-    editor: Editor,
+    /// Every document change goes through `Sketcher::apply` (SPEC §11): the
+    /// command and the re-solve are one undo step.
+    sketcher: Sketcher,
     scene: Scene,
     view: View,
     /// Keep the view fitted to the content, re-fitting when the canvas
@@ -39,7 +40,7 @@ pub struct Canvas {
 impl Default for Canvas {
     fn default() -> Self {
         let mut c = Self {
-            editor: Editor::new(Document::new()),
+            sketcher: Sketcher::new(Document::new()),
             scene: Scene::default(),
             view: View::default(),
             auto_fit: true,
@@ -57,22 +58,46 @@ impl Default for Canvas {
 impl Canvas {
     /// Replace the document (new / sample). Clears the undo history.
     pub fn load(&mut self, doc: Document) {
-        self.editor = Editor::new(doc);
+        self.sketcher = Sketcher::new(doc);
         self.selection.clear();
         self.rebuild();
         self.request_fit();
     }
 
     /// Run a command and refresh the derived scene.
-    #[allow(dead_code)] // first caller: tools and the properties panel (M1)
+    #[allow(dead_code)] // first caller: the sketch tools (#68)
     pub fn apply(&mut self, cmd: &Command) -> Result<(), DocError> {
-        self.editor.apply(cmd)?;
+        self.sketcher.apply(cmd)?;
         self.rebuild();
         Ok(())
     }
 
+    /// Undo the last step (SPEC §11); returns its label.
+    pub fn undo(&mut self) -> Option<String> {
+        let label = self.sketcher.undo().ok()?;
+        self.rebuild();
+        Some(label)
+    }
+
+    pub fn redo(&mut self) -> Option<String> {
+        let label = self.sketcher.redo().ok()?;
+        self.rebuild();
+        Some(label)
+    }
+
+    pub fn undo_label(&self) -> Option<&str> {
+        self.sketcher.editor().undo_label()
+    }
+
+    pub fn redo_label(&self) -> Option<&str> {
+        self.sketcher.editor().redo_label()
+    }
+
     fn rebuild(&mut self) {
-        self.scene = Scene::build(self.editor.document());
+        self.scene = Scene::build(
+            self.sketcher.document(),
+            &self.sketcher.state().fully_constrained,
+        );
         let scene = &self.scene;
         self.selection
             .retain(|id| scene.items.iter().any(|i| i.id == id));
@@ -107,7 +132,7 @@ impl Canvas {
     }
 
     pub fn summary(&self) -> String {
-        let n = self.editor.document().entities().len();
+        let n = self.sketcher.document().entities().len();
         format!(
             "{n} entities · {} drawn · {} selected",
             self.drawn,
@@ -116,7 +141,7 @@ impl Canvas {
     }
 
     pub fn properties_ui(&mut self, ui: &mut egui::Ui, settings: &Settings) {
-        let doc = self.editor.document();
+        let doc = self.sketcher.document();
         match self.selection.len() {
             0 => {
                 ui.weak("Nothing selected.");
@@ -383,12 +408,39 @@ mod tests {
     }
 
     #[test]
+    fn undo_restores_the_document_exactly_and_redo_reapplies() {
+        let mut c = Canvas::default();
+        let before = c.sketcher.document().clone();
+        let cmd = Command::AddEntity {
+            layer: Document::default_layer(),
+            construction: false,
+            geom: Geom::Point {
+                pos: Vec2::new(1.0, 2.0),
+            },
+        };
+        assert!(c.apply(&cmd).is_ok());
+        let after = c.sketcher.document().clone();
+        assert_ne!(after, before);
+        assert_eq!(c.undo_label(), Some("Add entity"));
+        assert_eq!(c.undo().as_deref(), Some("Add entity"));
+        // IDs are never reused, so only the contents are compared.
+        let same = |a: &Document, b: &Document| {
+            a.entities() == b.entities() && a.constraints() == b.constraints()
+        };
+        assert!(same(c.sketcher.document(), &before));
+        assert_eq!(c.redo_label(), Some("Add entity"));
+        c.redo();
+        assert!(same(c.sketcher.document(), &after));
+        assert_eq!(c.scene.items.len(), after.entities().len());
+    }
+
+    #[test]
     fn selection_does_not_touch_the_document() {
         let mut c = Canvas::default();
-        let before = c.editor.document().clone();
+        let before = c.sketcher.document().clone();
         c.select_all();
         assert!(c.selection.len() > 1);
         c.clear_selection();
-        assert_eq!(c.editor.document(), &before);
+        assert_eq!(c.sketcher.document(), &before);
     }
 }

@@ -124,8 +124,28 @@ impl App {
                 }
             });
             ui.menu_button("Edit", |ui| {
-                stub(ui, "Undo");
-                stub(ui, "Redo");
+                let undo = history_label("Undo", self.canvas.undo_label());
+                if ui
+                    .add_enabled(
+                        self.canvas.undo_label().is_some(),
+                        egui::Button::new(undo).shortcut_text(ui.ctx().format_shortcut(&UNDO)),
+                    )
+                    .clicked()
+                {
+                    self.canvas.undo();
+                    ui.close();
+                }
+                let redo = history_label("Redo", self.canvas.redo_label());
+                if ui
+                    .add_enabled(
+                        self.canvas.redo_label().is_some(),
+                        egui::Button::new(redo).shortcut_text(ui.ctx().format_shortcut(&REDO)),
+                    )
+                    .clicked()
+                {
+                    self.canvas.redo();
+                    ui.close();
+                }
                 ui.separator();
                 if ui.button("Select all").clicked() {
                     self.canvas.select_all();
@@ -200,6 +220,25 @@ impl App {
         });
     }
 
+    /// Not while a text field has focus: it owns its own undo.
+    fn history_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        // The shift variant first: a plain-Z match ignores extra shift.
+        let (redo, undo) = ctx.input_mut(|i| {
+            (
+                i.consume_shortcut(&REDO) || i.consume_shortcut(&REDO_ALT),
+                i.consume_shortcut(&UNDO),
+            )
+        });
+        if redo {
+            self.canvas.redo();
+        } else if undo {
+            self.canvas.undo();
+        }
+    }
+
     fn status_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let u = self.settings.units;
@@ -234,6 +273,21 @@ impl App {
             });
         });
     }
+}
+
+/// Undo (Cmd/Ctrl+Z) and redo (Cmd+Shift+Z, Ctrl+Y) shortcuts (#73).
+const UNDO: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+const REDO: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+    egui::Key::Z,
+);
+const REDO_ALT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
+
+/// "Undo Add Line" / plain "Undo" when there is nothing to undo.
+fn history_label(verb: &str, label: Option<&str>) -> String {
+    label.map_or_else(|| verb.to_owned(), |l| format!("{verb} {l}"))
 }
 
 fn stub(ui: &mut egui::Ui, label: &str) {
@@ -289,6 +343,7 @@ impl eframe::App for App {
                 self.status.frame_ms * 0.9 + ms * 0.1
             };
         }
+        self.history_shortcuts(ui.ctx());
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
@@ -312,6 +367,12 @@ impl eframe::App for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_labels() {
+        assert_eq!(history_label("Undo", None), "Undo");
+        assert_eq!(history_label("Redo", Some("Add Line")), "Redo Add Line");
+    }
 
     #[test]
     fn layout_round_trips() {
