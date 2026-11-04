@@ -197,3 +197,161 @@ fn hiding_a_layer_does_not_change_the_solve() {
     .unwrap();
     assert_eq!(pos(&s), before);
 }
+
+// ── #116: lock ─────────────────────────────────────────────────────────
+
+fn lock(s: &mut Sketcher, id: LayerId, locked: bool) -> Result<(), DocError> {
+    s.apply(&Command::SetLayerLocked { id, locked }).map(|_| ())
+}
+
+/// `a` on layer 1 at the origin, `b` on layer 2, 10 mm apart.
+fn two_layer_pair() -> (Sketcher, LayerId, LayerId, EntityId, EntityId) {
+    let mut s = Sketcher::new(Document::new());
+    let l1 = Document::default_layer();
+    let l2 = add_layer(&mut s, "Other", Operation::Score);
+    let a = pt(&mut s, l1, 0.0, 0.0);
+    let b = pt(&mut s, l2, 7.0, 1.0);
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Distance {
+            a,
+            b,
+            dim: Dimension::driving(10.0),
+        },
+    })
+    .unwrap();
+    (s, l1, l2, a, b)
+}
+
+#[test]
+fn locked_geometry_is_fixed_for_the_solver_and_refuses_edits() {
+    let (mut s, l1, _l2, a, b) = two_layer_pair();
+    let a_at = s.document().point_pos(a).unwrap();
+    lock(&mut s, l1, true).unwrap();
+    assert!(s.document().layer(l1).unwrap().locked);
+
+    // Re-dimensioning must move the free point, never the locked one.
+    let dim = *s.document().constraints().keys().next().unwrap();
+    s.apply(&Command::SetDimension {
+        id: dim,
+        value: 25.0,
+    })
+    .unwrap();
+    assert_eq!(s.document().point_pos(a).unwrap(), a_at);
+    let d = (s.document().point_pos(b).unwrap() - a_at).length();
+    assert!((d - 25.0).abs() < 1e-6, "{d}");
+    assert!(s.state().fully_constrained.contains(&a));
+
+    // Direct edits of locked geometry are refused, with no history.
+    let depth = s.editor().can_undo();
+    for cmd in [
+        Command::ModifyEntity {
+            id: a,
+            geom: Geom::Point {
+                pos: Vec2::new(1.0, 1.0),
+            },
+        },
+        Command::ToggleConstruction { id: a },
+        Command::AddEntity {
+            layer: l1,
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        },
+        Command::MoveToLayer {
+            entities: vec![a],
+            layer: Document::default_layer(),
+        },
+    ] {
+        assert_eq!(s.apply(&cmd), Err(DocError::LayerLocked(l1)), "{cmd:?}");
+    }
+    assert_eq!(depth, s.editor().can_undo());
+
+    // Unlock is undoable and frees the geometry again.
+    lock(&mut s, l1, false).unwrap();
+    s.apply(&Command::ModifyEntity {
+        id: a,
+        geom: Geom::Point {
+            pos: Vec2::new(1.0, 1.0),
+        },
+    })
+    .unwrap();
+}
+
+#[test]
+fn lock_and_unlock_undo_exactly() {
+    let (mut s, l1, _, _, _) = two_layer_pair();
+    let before = s.document().clone();
+    lock(&mut s, l1, true).unwrap();
+    s.undo().unwrap();
+    assert_eq!(s.document(), &before);
+    s.redo().unwrap();
+    assert!(s.document().layer(l1).unwrap().locked);
+}
+
+#[test]
+fn a_new_constraint_against_locked_geometry_names_the_conflict() {
+    let (mut s, l1, _, a, b) = two_layer_pair();
+    lock(&mut s, l1, true).unwrap();
+    // `b` is 10 from the locked `a`; a second, different distance conflicts.
+    let err = s
+        .apply(&Command::AddConstraint {
+            constraint: Constraint::Distance {
+                a,
+                b,
+                dim: Dimension::driving(20.0),
+            },
+        })
+        .unwrap_err();
+    assert!(matches!(err, DocError::Conflict { .. }), "{err:?}");
+}
+
+#[test]
+fn pre_lock_check_lists_constraints_the_lock_would_make_redundant() {
+    let (mut s, l1, _, a, b) = two_layer_pair();
+    // Pin `b` too: with `a` locked, the distance then adds nothing.
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Fix { point: b },
+    })
+    .ok();
+    let dist = *s.document().constraints().keys().next().unwrap();
+    let report = s.check_lock(l1).unwrap();
+    assert!(report.conflicts.is_empty());
+    let listed: Vec<_> = report
+        .redundant
+        .iter()
+        .flat_map(|g| g.constraints.iter().copied())
+        .collect();
+    assert!(listed.contains(&dist), "{report:?}");
+    assert!(
+        report
+            .redundant
+            .iter()
+            .any(|g| g.entities.contains(&a) || g.entities.contains(&b))
+    );
+    // Nothing changed, and the lock is still allowed (redundant ≠ conflict).
+    assert!(!s.document().layer(l1).unwrap().locked);
+    lock(&mut s, l1, true).unwrap();
+    // The lock's own constraints never leak into the user-visible state.
+    for g in &s.state().redundant {
+        assert!(
+            g.constraints
+                .iter()
+                .all(|c| s.document().constraint(*c).is_some())
+        );
+    }
+}
+
+#[test]
+fn check_lock_on_an_unconstrained_layer_is_empty() {
+    let (mut s, _l1, l2, _, _) = two_layer_pair();
+    let lone = add_layer(&mut s, "Lone", Operation::Reference);
+    pt(&mut s, lone, 50.0, 50.0);
+    assert_eq!(
+        s.check_lock(lone).unwrap(),
+        locus_doc::LockReport::default()
+    );
+    assert!(matches!(
+        s.check_lock(LayerId::new(999)),
+        Err(DocError::UnknownLayer(_))
+    ));
+    let _ = l2;
+}

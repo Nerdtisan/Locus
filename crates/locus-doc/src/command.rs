@@ -76,6 +76,13 @@ pub enum Command {
         id: LayerId,
         props: LayerProps,
     },
+    /// Lock or unlock a layer. A locked layer's geometry is fixed for the
+    /// solver and refuses edits (SPEC §4 rule 3); [`Sketcher`](crate::Sketcher)
+    /// refuses a lock that would conflict with other constraints.
+    SetLayerLocked {
+        id: LayerId,
+        locked: bool,
+    },
     /// Move entities to another layer. Constraints reference entities, not
     /// layers, so every constraint is kept (SPEC §4 rule 1).
     MoveToLayer {
@@ -113,6 +120,8 @@ impl Command {
             Command::AddLayer { .. } => "Add layer".to_owned(),
             Command::SetLayerProps { .. } => "Change layer".to_owned(),
             Command::MoveToLayer { .. } => "Move to layer".to_owned(),
+            Command::SetLayerLocked { locked: true, .. } => "Lock layer".to_owned(),
+            Command::SetLayerLocked { locked: false, .. } => "Unlock layer".to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -204,6 +213,7 @@ fn exec(
             construction,
             geom,
         } => {
+            doc.check_unlocked(*layer)?;
             let e = Entity {
                 layer: *layer,
                 construction: *construction,
@@ -224,6 +234,7 @@ fn exec(
         }
         Command::ModifyEntity { id, geom } => {
             let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+            doc.check_unlocked(before.layer)?;
             if before.geom.kind() != geom.kind() {
                 return Err(DocError::WrongKind {
                     what: "modify",
@@ -257,6 +268,9 @@ fn exec(
         Command::DeleteEntity { id } => {
             doc.check_removable(*id)?;
             let before = doc.entity(*id).cloned();
+            if let Some(e) = &before {
+                doc.check_unlocked(e.layer)?;
+            }
             record(
                 doc,
                 patches,
@@ -269,6 +283,7 @@ fn exec(
         }
         Command::ToggleConstruction { id } => {
             let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+            doc.check_unlocked(before.layer)?;
             let after = Entity {
                 construction: !before.construction,
                 ..before.clone()
@@ -384,12 +399,32 @@ fn exec(
                 );
             }
         }
+        Command::SetLayerLocked { id, locked } => {
+            let before = doc.layer(*id).ok_or(DocError::UnknownLayer(*id))?.clone();
+            if before.locked != *locked {
+                let after = Layer {
+                    locked: *locked,
+                    ..before.clone()
+                };
+                record(
+                    doc,
+                    patches,
+                    Patch::Layer {
+                        id: *id,
+                        before: Some(before),
+                        after: Some(after),
+                    },
+                );
+            }
+        }
         Command::MoveToLayer { entities, layer } => {
+            doc.check_unlocked(*layer)?;
             if !doc.layers.contains_key(layer) {
                 return Err(DocError::UnknownLayer(*layer));
             }
             for id in entities {
                 let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+                doc.check_unlocked(before.layer)?;
                 if before.layer == *layer {
                     continue;
                 }

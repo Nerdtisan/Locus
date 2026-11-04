@@ -315,6 +315,15 @@ impl Document {
         Ok(())
     }
 
+    /// Refuse to edit geometry on a locked layer (SPEC §4 rule 3).
+    pub(crate) fn check_unlocked(&self, layer: LayerId) -> Result<(), DocError> {
+        if self.layer(layer).is_some_and(|l| l.locked) {
+            Err(DocError::LayerLocked(layer))
+        } else {
+            Ok(())
+        }
+    }
+
     /// A layer's own invariants: a usable name and a valid operation (SPEC §7).
     pub(crate) fn check_layer(l: &Layer) -> Result<(), DocError> {
         let name = l.name.trim();

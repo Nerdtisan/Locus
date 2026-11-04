@@ -31,4 +31,4 @@ pub use ids::{ConstraintId, EntityId, LayerId};
 pub use operation::{
     Compensation, CutParams, DragKnifeParams, DrawParams, EngraveParams, Operation, OperationKind,
 };
-pub use solve::{ConstraintGroup, DragFrame, Sketcher, SolveState, Status};
+pub use solve::{ConstraintGroup, DragFrame, LockReport, Sketcher, SolveState, Status};

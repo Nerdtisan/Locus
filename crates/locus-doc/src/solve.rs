@@ -22,7 +22,7 @@ use crate::constraint::Constraint;
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
 use crate::error::DocError;
-use crate::ids::{ConstraintId, EntityId};
+use crate::ids::{ConstraintId, EntityId, LayerId, MAX_ID};
 use locus_geom::Vec2;
 use locus_solver::{self as ls, Check, Solver as _};
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +35,19 @@ pub struct ConstraintGroup {
     pub constraints: Vec<ConstraintId>,
     /// The points and curves those constraints touch.
     pub entities: Vec<EntityId>,
+}
+
+/// The effect locking a layer would have on constraints from other layers
+/// (SPEC §4 rule 3). Structured so a UI can warn and list them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LockReport {
+    /// Constraints that could no longer hold together once the layer is
+    /// fixed. [`Sketcher::apply`] refuses the lock while any exist
+    /// ([`DocError::Conflict`]).
+    pub conflicts: Vec<ConstraintGroup>,
+    /// Constraints the locked geometry makes redundant (over-constrained but
+    /// consistent). The lock is allowed; the user is warned.
+    pub redundant: Vec<ConstraintGroup>,
 }
 
 /// The sketch's solve status after the last change (§5 Solver UX).
@@ -306,10 +319,76 @@ impl Sketcher {
         }
     }
 
+    /// What locking `layer` would do to the constraints that reach into it
+    /// (SPEC §4 rule 3): its geometry becomes fixed, so a constraint on
+    /// geometry that stays free may stop holding (`conflicts`) or stop
+    /// restricting anything (`redundant`). Only constraints touching at
+    /// least one entity on a layer that stays unlocked are listed, and only
+    /// groups the lock itself causes. Nothing is changed.
+    ///
+    /// # Errors
+    /// [`DocError::UnknownLayer`], or a solver-input error.
+    pub fn check_lock(&mut self, layer: LayerId) -> Result<LockReport, DocError> {
+        let doc = self.editor.document();
+        if doc.layer(layer).is_none() {
+            return Err(DocError::UnknownLayer(layer));
+        }
+        let low = lower_locking(doc, Some(layer))?;
+        let a = self.solver.analyse(&low.sketch).map_err(solver_err)?;
+        let stays_free = |id: &ConstraintId| {
+            doc.constraint(*id).is_some_and(|c| {
+                c.references().iter().any(|e| {
+                    doc.entity(*e).is_some_and(|e| {
+                        e.layer != layer && !doc.layer(e.layer).is_some_and(|l| l.locked)
+                    })
+                })
+            })
+        };
+        let groups = |sets: &[ls::ConstraintSet]| -> Vec<ConstraintGroup> {
+            sets.iter()
+                .filter(|s| has_lock(s))
+                .map(|s| ConstraintGroup {
+                    constraints: s
+                        .constraints
+                        .iter()
+                        .filter_map(|k| doc_constraint(*k))
+                        .filter(|id| stays_free(id))
+                        .collect(),
+                    entities: entities(s),
+                })
+                .filter(|g| !g.constraints.is_empty())
+                .collect()
+        };
+        Ok(LockReport {
+            conflicts: groups(&a.conflicts),
+            redundant: groups(&a.redundant),
+        })
+    }
+
     /// Refuse a driving constraint that can't add a real restriction, before
     /// anything changes. Only single commands are pre-checked; a compound is
     /// guarded by the solve that follows it.
     fn precheck(&mut self, cmd: &Command) -> Result<(), DocError> {
+        if let Command::SetLayerLocked { id, locked: true } = cmd {
+            let report = self.check_lock(*id)?;
+            if report.conflicts.is_empty() {
+                return Ok(());
+            }
+            let mut constraints = Vec::new();
+            let mut entities = Vec::new();
+            for g in &report.conflicts {
+                constraints.extend(&g.constraints);
+                entities.extend(&g.entities);
+            }
+            constraints.sort_unstable();
+            constraints.dedup();
+            entities.sort_unstable();
+            entities.dedup();
+            return Err(DocError::Conflict {
+                constraints,
+                entities,
+            });
+        }
         let doc = self.editor.document();
         let check = match cmd {
             Command::AddConstraint { constraint } => {
@@ -391,6 +470,27 @@ fn solver_err(e: ls::SketchError) -> DocError {
 }
 
 fn lower(doc: &Document) -> Result<Lowered, DocError> {
+    lower_locking(doc, None)
+}
+
+/// Keys at or above this belong to the lock constraints [`lower_locking`]
+/// adds (document IDs stay below `MAX_ID`, ADR-0003); they never reach a
+/// caller as a [`ConstraintId`].
+const LOCK_KEY_BASE: u64 = MAX_ID;
+
+/// The document constraint a solver key stands for; `None` for a lock
+/// constraint.
+fn doc_constraint(k: ls::Key) -> Option<ConstraintId> {
+    (k.0 < LOCK_KEY_BASE).then(|| ConstraintId::new(k.0))
+}
+
+fn has_lock(set: &ls::ConstraintSet) -> bool {
+    set.constraints.iter().any(|k| doc_constraint(*k).is_none())
+}
+
+/// [`lower`], additionally treating `also_locked` as locked (the pre-lock
+/// check, SPEC §4 rule 3).
+fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered, DocError> {
     let mut low = Lowered {
         sketch: ls::Sketch::default(),
         point_index: BTreeMap::new(),
@@ -444,6 +544,39 @@ fn lower(doc: &Document) -> Result<Lowered, DocError> {
             driven: c.dimension().is_some_and(|d| d.driven),
         });
         low.constraints.push(*id);
+    }
+    // SPEC §4 rule 3: geometry on a locked layer is fixed. These constraints
+    // are appended last, so document-constraint indices are unchanged.
+    let mut pinned = BTreeSet::new();
+    for (id, e) in doc.entities().iter() {
+        let locked = also_locked == Some(e.layer) || doc.layer(e.layer).is_some_and(|l| l.locked);
+        if !locked {
+            continue;
+        }
+        pinned.extend(e.geom.point_refs());
+        match e.geom {
+            Geom::Point { .. } => {
+                pinned.insert(id);
+            }
+            Geom::Circle { radius, .. } => {
+                let c = low.curve(id)?;
+                low.sketch.constraints.push(ls::Constraint {
+                    key: key(LOCK_KEY_BASE + id.get()),
+                    kind: ls::ConstraintKind::Radius { c, r: radius },
+                    driven: false,
+                });
+            }
+            Geom::Line { .. } | Geom::Arc { .. } => {}
+        }
+    }
+    for id in pinned {
+        let p = low.point(id)?;
+        let at = doc.point_pos(id).ok_or(DocError::UnknownEntity(id))?;
+        low.sketch.constraints.push(ls::Constraint {
+            key: key(LOCK_KEY_BASE + id.get()),
+            kind: ls::ConstraintKind::Fix { p, at },
+            driven: false,
+        });
     }
     Ok(low)
 }
@@ -587,7 +720,7 @@ fn solve(solver: &mut ls::LmSolver, doc: &Document) -> Result<Solution, DocError
             unsatisfied: report
                 .unsatisfied
                 .iter()
-                .map(|k| ConstraintId::new(k.0))
+                .filter_map(|k| doc_constraint(*k))
                 .collect(),
         });
     }
@@ -629,7 +762,7 @@ fn analyse(solver: &mut ls::LmSolver, doc: &Document) -> SolveState {
         constraints: s
             .constraints
             .iter()
-            .map(|k| ConstraintId::new(k.0))
+            .filter_map(|k| doc_constraint(*k))
             .collect(),
         entities: entities(s),
     };
@@ -638,8 +771,18 @@ fn analyse(solver: &mut ls::LmSolver, doc: &Document) -> SolveState {
         dof: a.dof,
         status: a.status,
         fully_constrained,
-        redundant: a.redundant.iter().map(group).collect(),
-        conflicts: a.conflicts.iter().map(group).collect(),
+        redundant: a
+            .redundant
+            .iter()
+            .filter(|s| !has_lock(s))
+            .map(group)
+            .collect(),
+        conflicts: a
+            .conflicts
+            .iter()
+            .map(group)
+            .filter(|g| !g.constraints.is_empty())
+            .collect(),
     }
 }
 
@@ -648,7 +791,7 @@ fn existing(set: &ls::ConstraintSet) -> Vec<ConstraintId> {
     set.constraints
         .iter()
         .filter(|k| **k != set.constraint)
-        .map(|k| ConstraintId::new(k.0))
+        .filter_map(|k| doc_constraint(*k))
         .collect()
 }
 

@@ -13,6 +13,8 @@ pub enum DocError {
     UnknownEntity(EntityId),
     #[error("unknown constraint {0}")]
     UnknownConstraint(ConstraintId),
+    #[error("layer {0} is locked")]
+    LayerLocked(LayerId),
     #[error("unknown layer {0}")]
     UnknownLayer(LayerId),
     #[error("{what} on entity {entity}: expected {expected}, found {found:?}")]
