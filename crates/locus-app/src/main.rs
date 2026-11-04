@@ -5,6 +5,7 @@
 
 mod app;
 mod canvas;
+mod constrain;
 mod demo;
 mod fonts;
 mod grid;

@@ -3,6 +3,7 @@
 //! render scene, the view and the selection, and handles pointer input.
 
 use crate::app::Status;
+use crate::constrain::{self, DimSpec, Kind};
 use crate::hit::{self, BoxMode, Mods, Selection};
 use crate::infer;
 use crate::render::{Emphasis, Frame, Palette};
@@ -12,13 +13,33 @@ use crate::tools::{Draft, Outcome, Pick, Tool};
 use crate::view::View;
 use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
-use locus_doc::{Command, DocError, Document, EntityId, Geom, Sketcher};
+use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, Sketcher};
 use locus_geom::{Aabb, Vec2};
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
 /// A drag shorter than this is a click, not a box.
 const MIN_BOX_PT: f32 = 4.0;
+
+/// What an inline dimension editor will do on Enter (#70).
+#[derive(Clone, Copy, Debug)]
+enum DimTarget {
+    New(DimSpec),
+    Existing(ConstraintId),
+}
+
+/// The inline value box shown over the canvas while a dimension is typed.
+#[derive(Debug)]
+struct DimEdit {
+    target: DimTarget,
+    what: &'static str,
+    angle: bool,
+    text: String,
+    /// World position the box hangs from.
+    at: Vec2,
+    /// First frame: take focus and select the text.
+    fresh: bool,
+}
 
 pub struct Canvas {
     /// Every document change goes through `Sketcher::apply` (SPEC §11): the
@@ -45,6 +66,10 @@ pub struct Canvas {
     cursor: Option<Pick>,
     /// Last refusal or error, shown in the status bar until the next action.
     notice: Option<String>,
+    /// The inline dimension editor, while open (#70).
+    dim_edit: Option<DimEdit>,
+    /// Screen rectangles of the dimension labels drawn last frame.
+    dim_rects: Vec<(ConstraintId, egui::Rect)>,
 }
 
 impl Default for Canvas {
@@ -63,6 +88,8 @@ impl Default for Canvas {
             typed: String::new(),
             cursor: None,
             notice: None,
+            dim_edit: None,
+            dim_rects: Vec::new(),
         };
         c.load(demo::sketch());
         c
@@ -77,6 +104,7 @@ impl Canvas {
         self.draft.cancel();
         self.typed.clear();
         self.notice = None;
+        self.dim_edit = None;
         self.rebuild();
         self.request_fit();
     }
@@ -106,6 +134,196 @@ impl Canvas {
             locus_doc::Status::FullyConstrained => "Fully constrained".to_owned(),
             locus_doc::Status::UnderConstrained => format!("Under-constrained · DOF {}", st.dof),
             _ => "Over-constrained".to_owned(),
+        }
+    }
+
+    fn selected(&self) -> Vec<EntityId> {
+        self.selection.iter().collect()
+    }
+
+    /// Does the current selection support this constraint (#70)?
+    pub fn can_constrain(&self, kind: Kind) -> bool {
+        constrain::plan(kind, self.sketcher.document(), &self.selected()).is_ok()
+    }
+
+    /// Apply a geometric constraint to the selection (#70). A refusal (wrong
+    /// selection, or the solver's conflict pre-check) is explained in the
+    /// status bar.
+    pub fn constrain(&mut self, kind: Kind) {
+        match constrain::plan(kind, self.sketcher.document(), &self.selected()) {
+            Ok(cmd) => self.apply_reporting(&cmd),
+            Err(why) => self.notice = Some(why),
+        }
+    }
+
+    pub fn can_dimension(&self) -> bool {
+        constrain::infer_dimension(self.sketcher.document(), &self.selected()).is_ok()
+    }
+
+    /// The dimension tool: infer the dimension from the selection and open
+    /// the inline value editor (#70).
+    pub fn start_dimension(&mut self, units: Units) {
+        match constrain::infer_dimension(self.sketcher.document(), &self.selected()) {
+            Ok((spec, value)) => {
+                self.dim_edit = Some(DimEdit {
+                    target: DimTarget::New(spec),
+                    what: spec.label(),
+                    angle: spec.is_angle(),
+                    text: format_value(value, spec.is_angle(), units),
+                    at: constrain::dim_anchor(self.sketcher.document(), spec),
+                    fresh: true,
+                });
+                self.notice = None;
+            }
+            Err(why) => self.notice = Some(why),
+        }
+    }
+
+    /// Double-click on a dimension: edit its value in place.
+    fn edit_existing_dimension(&mut self, id: ConstraintId, units: Units) {
+        let doc = self.sketcher.document();
+        let Some(c) = doc.constraint(id) else {
+            return;
+        };
+        let Some(dim) = c.dimension() else {
+            return;
+        };
+        if dim.driven {
+            self.notice = Some("A driven dimension is measured; it can't be edited".to_owned());
+            return;
+        }
+        let angle = matches!(c, locus_doc::Constraint::Angle { .. });
+        let at = c
+            .references()
+            .first()
+            .and_then(|&r| match doc.entity(r)?.geom {
+                Geom::Point { pos } => Some(pos),
+                Geom::Line { .. } => doc.line(r).map(|l| l.eval(0.5)),
+                Geom::Circle { .. } => doc.circle(r).map(|c| c.center),
+                Geom::Arc { .. } => doc.arc(r).map(|a| a.center),
+            })
+            .unwrap_or(Vec2::ZERO);
+        self.dim_edit = Some(DimEdit {
+            target: DimTarget::Existing(id),
+            what: c.name(),
+            angle,
+            text: format_value(dim.value, angle, units),
+            at,
+            fresh: true,
+        });
+    }
+
+    /// Run a command; on failure, explain in the status bar (SPEC §11).
+    fn apply_reporting(&mut self, cmd: &Command) {
+        match self.apply(cmd) {
+            Ok(()) => self.notice = None,
+            Err(e) => self.notice = Some(e.to_string()),
+        }
+    }
+
+    /// Enter in the inline editor: parse, convert units, apply.
+    fn commit_dimension(&mut self, edit: &DimEdit, units: Units) {
+        let Some(v) = parse_number(&edit.text) else {
+            self.notice = Some(format!("\"{}\" is not a number", edit.text.trim()));
+            return;
+        };
+        let value = if edit.angle {
+            v.to_radians()
+        } else if units == Units::Inch {
+            v * 25.4
+        } else {
+            v
+        };
+        let cmd = match edit.target {
+            DimTarget::New(spec) => Command::AddConstraint {
+                constraint: spec.constraint(value, false),
+            },
+            DimTarget::Existing(id) => Command::SetDimension { id, value },
+        };
+        self.apply_reporting(&cmd);
+    }
+
+    /// The inline value box (#70).
+    fn dimension_editor(&mut self, ui: &egui::Ui, rect: egui::Rect, units: Units) {
+        let Some(edit) = self.dim_edit.as_mut() else {
+            return;
+        };
+        let id = egui::Id::new("dim-edit-text");
+        let at = self.view.to_screen(edit.at, rect) + egui::vec2(14.0, -34.0);
+        let (mut commit, mut cancel) = (false, false);
+        egui::Area::new(egui::Id::new("dim-edit"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(edit.what);
+                        let out = egui::TextEdit::singleline(&mut edit.text)
+                            .id(id)
+                            .desired_width(84.0)
+                            .show(ui);
+                        if edit.fresh {
+                            out.response.request_focus();
+                            let mut state = out.state.clone();
+                            let end = edit.text.chars().count();
+                            state
+                                .cursor
+                                .set_char_range(Some(egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(0),
+                                    egui::text::CCursor::new(end),
+                                )));
+                            state.store(ui.ctx(), id);
+                            edit.fresh = false;
+                        } else if out.response.lost_focus() {
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                commit = true;
+                            } else {
+                                cancel = true;
+                            }
+                        }
+                        ui.weak(if edit.angle { "°" } else { units.label() });
+                    });
+                });
+            });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        if commit && let Some(edit) = self.dim_edit.take() {
+            self.commit_dimension(&edit, units);
+        } else if cancel {
+            self.dim_edit = None;
+        }
+    }
+
+    /// Single-key shortcuts: tools anywhere, constraints in Select mode (#68,
+    /// #70). Not while typing a value or in a text field.
+    fn hotkeys(&mut self, ui: &egui::Ui, units: Units) {
+        use egui::Key;
+        if self.dim_edit.is_some() || !self.typed.is_empty() || ui.ctx().egui_wants_keyboard_input()
+        {
+            return;
+        }
+        let pressed = |c: char| {
+            ui.input(|i| {
+                !(i.modifiers.command || i.modifiers.alt)
+                    && Key::from_name(&c.to_string()).is_some_and(|k| i.key_pressed(k))
+            })
+        };
+        if let Some(t) = [Tool::Select]
+            .into_iter()
+            .chain(Tool::DRAWING)
+            .find(|t| t.key().is_some_and(pressed))
+        {
+            self.set_tool(t);
+            return;
+        }
+        if self.draft.tool() != Tool::Select {
+            return;
+        }
+        if pressed('D') {
+            self.start_dimension(units);
+        } else if let Some(k) = Kind::ALL.into_iter().find(|k| pressed(k.key())) {
+            self.constrain(k);
         }
     }
 
@@ -267,8 +485,11 @@ impl Canvas {
             self.auto_fit = false;
         }
 
+        if resp.hovered() {
+            self.hotkeys(ui, settings.units);
+        }
         if self.draft.tool() == Tool::Select {
-            self.pick_and_select(ui, &resp, rect);
+            self.pick_and_select(ui, &resp, rect, settings.units);
         } else {
             self.tool_input(ui, &resp, rect, settings);
         }
@@ -292,12 +513,13 @@ impl Canvas {
                 Emphasis::None
             }
         });
-        frame.draw_annotations(&self.scene);
+        self.dim_rects = frame.draw_annotations(&self.scene);
         self.draw_tool_overlay(&frame, &painter);
         if let (Some(start), Some(now)) = (self.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
         grid::rulers(&painter, &self.view, rect);
+        self.dimension_editor(ui, rect, settings.units);
 
         status.cursor = hover.map(|p| self.view.to_world(p, rect));
         status.extent_mm = self.view.extent_mm(rect);
@@ -356,7 +578,7 @@ impl Canvas {
 
     fn tool_keys(&mut self, ui: &egui::Ui, units: Units) {
         use egui::Key;
-        let (text, enter, esc, back, plain) = ui.input(|i| {
+        let (text, enter, esc, back) = ui.input(|i| {
             let text: String = i
                 .events
                 .iter()
@@ -370,7 +592,6 @@ impl Canvas {
                 i.key_pressed(Key::Enter),
                 i.key_pressed(Key::Escape),
                 i.key_pressed(Key::Backspace),
-                !(i.modifiers.command || i.modifiers.alt),
             )
         });
         if self.draft.is_drawing() {
@@ -403,19 +624,6 @@ impl Canvas {
                 self.draft.cancel();
             } else {
                 self.set_tool(Tool::Select);
-            }
-        }
-        // Single-key tool shortcuts, unless a value is being typed.
-        if plain && self.typed.is_empty() {
-            let picked = ui.input(|i| {
-                [Tool::Select].into_iter().chain(Tool::DRAWING).find(|t| {
-                    t.key()
-                        .and_then(|c| Key::from_name(&c.to_string()))
-                        .is_some_and(|k| i.key_pressed(k))
-                })
-            });
-            if let Some(t) = picked {
-                self.set_tool(t);
             }
         }
     }
@@ -475,7 +683,13 @@ impl Canvas {
 
     /// Hover, click and box selection (#67). Left-drag is a rubber-band box;
     /// pan stays on middle/right-drag.
-    fn pick_and_select(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect) {
+    fn pick_and_select(
+        &mut self,
+        ui: &egui::Ui,
+        resp: &egui::Response,
+        rect: egui::Rect,
+        units: Units,
+    ) {
         let mods = ui.input(|i| Mods {
             add: i.modifiers.shift,
             toggle: i.modifiers.command,
@@ -498,7 +712,12 @@ impl Canvas {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
 
-        if resp.clicked_by(PointerButton::Primary)
+        if resp.double_clicked_by(PointerButton::Primary)
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some(&(id, _)) = self.dim_rects.iter().find(|(_, r)| r.contains(p))
+        {
+            self.edit_existing_dimension(id, units);
+        } else if resp.clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
         {
             self.selection.click(pick_at(self, p), mods);
@@ -533,6 +752,29 @@ impl Canvas {
             }
         }
     }
+}
+
+/// The number shown in the dimension editor: mm or inches, degrees for angles.
+fn format_value(value: f64, angle: bool, units: Units) -> String {
+    let v = if angle {
+        value.to_degrees()
+    } else if units == Units::Inch {
+        value / 25.4
+    } else {
+        value
+    };
+    let s = format!("{v:.4}");
+    // Trim trailing zeros: "20.0000" → "20".
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    s.to_owned()
+}
+
+/// A plain decimal, optionally followed by a unit suffix the box shows.
+fn parse_number(text: &str) -> Option<f64> {
+    let t = text
+        .trim()
+        .trim_end_matches(|c: char| c.is_alphabetic() || c == '°' || c == '"');
+    t.trim().parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 /// Window boxes are solid blue, crossing boxes dashed green (Fusion style).
@@ -670,6 +912,58 @@ mod tests {
         c.redo();
         assert!(same(c.sketcher.document(), &after));
         assert_eq!(c.scene.items.len(), after.entities().len());
+    }
+
+    #[test]
+    fn dimension_text_round_trips_in_each_unit() {
+        assert_eq!(format_value(20.0, false, Units::Mm), "20");
+        assert_eq!(format_value(25.4, false, Units::Inch), "1");
+        assert_eq!(
+            format_value(std::f64::consts::FRAC_PI_2, true, Units::Mm),
+            "90"
+        );
+        assert_eq!(parse_number(" 12.5 "), Some(12.5));
+        assert_eq!(parse_number("90°"), Some(90.0));
+        assert_eq!(parse_number("3 mm"), Some(3.0));
+        assert_eq!(parse_number("abc"), None);
+        assert_eq!(parse_number("NaN"), None);
+    }
+
+    #[test]
+    fn constraining_through_the_canvas_is_one_undo_step_and_refusals_explain() {
+        let mut c = Canvas::default();
+        // Nothing selected: refused with what is needed.
+        c.constrain(Kind::Parallel);
+        assert!(c.notice.as_deref().is_some_and(|n| n.contains("two lines")));
+        let lines: Vec<_> = c
+            .sketcher
+            .document()
+            .entities()
+            .iter()
+            .filter(|(_, e)| matches!(e.geom, Geom::Line { .. }) && !e.construction)
+            .map(|(id, _)| id)
+            .collect();
+        c.selection.set_all([lines[0]]);
+        assert!(c.can_dimension());
+        let before = c.sketcher.document().constraints().len();
+        // The demo's frame is fully constrained, so this is already implied.
+        c.selection.set_all([lines[1], lines[3]]);
+        c.constrain(Kind::Equal);
+        assert!(c.notice.as_deref().is_some_and(|n| n.contains("implied")));
+        assert_eq!(c.sketcher.document().constraints().len(), before);
+        // The loose point can be fixed: one undo step.
+        let free = c
+            .scene
+            .items
+            .iter()
+            .find(|i| matches!(i.shape, crate::scene::Shape::Point(_)) && !i.owned_point)
+            .map(|i| i.id);
+        c.selection.set_all(free);
+        c.constrain(Kind::Fix);
+        assert_eq!(c.sketcher.document().constraints().len(), before + 1);
+        assert_eq!(c.undo_label(), Some("Add fix constraint"));
+        c.undo();
+        assert_eq!(c.sketcher.document().constraints().len(), before);
     }
 
     #[test]

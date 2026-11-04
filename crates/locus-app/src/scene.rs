@@ -6,7 +6,7 @@
 //! point-entity indirection every frame. The scene is rebuilt after every
 //! successful command; it is derived state and never edited (SPEC §11).
 
-use locus_doc::{Constraint, Document, EntityId, Geom};
+use locus_doc::{Constraint, ConstraintId, Document, EntityId, Geom};
 use locus_geom::{Aabb, Arc, Circle, Line, Vec2};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -82,6 +82,7 @@ pub enum Annot {
         label: &'static str,
     },
     Dim {
+        id: ConstraintId,
         kind: DimKind,
         value: f64,
         driven: bool,
@@ -176,7 +177,7 @@ impl Scene {
 
         let mut annots = Vec::new();
         let mut slots: HashMap<EntityId, u8> = HashMap::new();
-        for c in doc.constraints().values() {
+        for (&cid, c) in doc.constraints() {
             if let Some(label) = glyph_label(c) {
                 if let Some(&first) = c.references().first()
                     && let Some(at) = Self::anchor(doc, first)
@@ -212,6 +213,7 @@ impl Scene {
             };
             if let (Some(kind), Some(dim)) = (kind, dim) {
                 annots.push(Annot::Dim {
+                    id: cid,
                     kind,
                     value: dim.value,
                     driven: dim.driven,
