@@ -15,4 +15,5 @@ docker run --rm -e CARGO_HOME=/workspace/.cargo-home -v "${PWD}:/workspace" `
 
 | Folder | Issue | What |
 |---|---|---|
+| `gui-eframe/` | #44 | GUI spike A: reference canvas on eframe 0.35 + egui_dock + wgpu — see its `RESULTS.md` |
 | `gui-bevy/` | #45 | GUI spike B: reference canvas on Bevy 0.17 + bevy_egui + egui_dock — see its `RESULTS.md` |

@@ -1,0 +1,66 @@
+# Spike A (#44, SPEC §12.1, §12.2, §13 M0): the reference canvas on
+# eframe 0.35 + egui_dock + wgpu. Throwaway code that feeds the GUI ADR (#46).
+#
+# The empty [workspace] table keeps this crate out of the root workspace, its
+# Cargo.lock and the CI gate.
+[workspace]
+
+[package]
+name = "spike-gui-eframe"
+version = "0.0.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+rust-version = "1.92"
+publish = false
+
+[[bin]]
+name = "spike-eframe"
+path = "src/main.rs"
+
+[dependencies]
+# Same feature set as Parchment: wgpu backend only, bundled fonts, and the
+# winit Linux backends (no-ops elsewhere).
+eframe = { version = "0.35", default-features = false, features = [
+    "wgpu",
+    "default_fonts",
+    "x11",
+    "wayland",
+] }
+egui = "0.35"
+egui_dock = "0.20"
+# Renderer B: CPU stroke tessellation into an egui mesh.
+lyon_tessellation = "1"
+bytemuck = { version = "1", features = ["derive"] }
+# std::time::Instant panics on wasm32; this is the drop-in that works on both.
+web-time = "1"
+
+# Native only: PNG encoding for the scripted screenshots (`--shot`).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+png = "0.18"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "Location",
+    "console",
+] }
+
+# Same profiles as spike B (spikes/gui-bevy) so the sizes and build times in
+# RESULTS.md compare like for like.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+strip = true
+
+# The web build: size over speed (`trunk build --release --cargo-profile wasm-release`).
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
