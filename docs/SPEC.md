@@ -21,6 +21,10 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Web hosting | GitHub Pages; browser open/download plus OPFS/IndexedDB autosave. |
 | Packaging | Windows Inno Setup + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`. |
 | Input | Mouse + keyboard first; touch/pen is an M4 epic. |
+| Entity IDs | Document-scoped monotonic `u64` (`next_id` saved in the file, never reused); plugins and paste/import get IDs remapped by the host. [ADR-0003](adr/0003-entity-ids.md), 2026-11-04. |
+| File format | `.locus` is RON (`ron` 0.12), `BTreeMap`-ordered, finite floats only; JSON only as an export view. [ADR-0004](adr/0004-file-format.md), 2026-11-04. |
+| MCP SDK | `rmcp` 3.8; target MCP revision 2026-07-28, also accept 2025-11-25 clients. [ADR-0005](adr/0005-mcp-sdk.md), 2026-11-04. |
+| Plugin exception | Classpath-style "Locus Plugin Exception" drafted in [ADR-0006](adr/0006-plugin-licence-exception.md), 2026-11-04; not in effect until legal review (#83). |
 
 ---
 
@@ -110,7 +114,7 @@ crates/
 - Display units selectable (mm default; cm, m; inch display allowed but stored as mm).
 - Global tolerance constant for coincidence/closure checks (default 1e-6 mm for solver, 0.001 mm for export validation).
 
-### Entities (all have stable `EntityId` — UUIDv7 or monotonic u64, never reused)
+### Entities (all have stable `EntityId` — document-scoped monotonic u64, never reused; [ADR-0003](adr/0003-entity-ids.md))
 **v1**
 - Point
 - Line segment
@@ -268,8 +272,8 @@ Export is always one-way. Native file is the source of truth.
 ## 10. Native file format
 
 - Extension: `.locus`.
-- Human-readable **RON** (or JSON) for clean git diffs and easy debugging.
-- Top-level: `format_version`, `units`, `parameters`, `layers`, `entities`, `constraints`, `regions/booleans`, `view` (optional, can be ignored by diff tools).
+- Human-readable **RON** for clean git diffs and easy debugging ([ADR-0004](adr/0004-file-format.md); JSON only as an export view).
+- Top-level: `format_version`, `units`, `next_id` (ID counter, [ADR-0003](adr/0003-entity-ids.md)), `parameters`, `layers`, `entities`, `constraints`, `regions/booleans`, `view` (optional, can be ignored by diff tools).
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
 - Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.
 - Deterministic serialisation (stable ordering) so unchanged documents produce identical files.
@@ -291,11 +295,11 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 1. **GUI framework** — **Spiking.** Two candidates, both on `wgpu` + `egui_dock`: (A) `eframe` 0.35, (B) Bevy 0.17 + `bevy_egui`. Criteria: precise custom 2D canvas rendering, native-feeling docked panels, cross-platform packaging, **web build quality** (now a required target), binary/wasm size. Closed by the GUI framework ADR.
 2. **Canvas renderer** — **Spiking** with item 1 (`wgpu` + `lyon`, `vello`, or framework-native). Closed by the GUI framework ADR or a separate canvas-renderer ADR.
 3. **Solver backend** — **Decided in part:** pure Rust only (§3). **Spiking** which one: SolidCraft extract, another Rust GCS, or our own. Closed by the solver ADR.
-4. **Entity ID scheme** — **Open:** UUIDv7 vs u64. Closed by an ADR in M0.
-5. **RON vs JSON** for the file format — **Open.** Closed by an ADR in M0.
+4. **Entity ID scheme** — **Decided:** document-scoped monotonic `u64`. [ADR-0003](adr/0003-entity-ids.md).
+5. **RON vs JSON** for the file format — **Decided:** RON. [ADR-0004](adr/0004-file-format.md).
 6. **App name** — **Decided:** Locus (§0).
-7. **Plugin licence exception wording** (see §15.6) — **Decided in principle:** the exception will exist and the licence split is as §0. Wording drafted in an ADR; legal review before the first public release.
-8. **MCP SDK version + MCP spec revision** (see §16) — **Open** (desktop-only). Closed by an ADR in M0; verify the current `rmcp` version then.
+7. **Plugin licence exception wording** (see §15.6) — **Decided in principle:** the exception will exist and the licence split is as §0. Wording drafted in [ADR-0006](adr/0006-plugin-licence-exception.md); **legal review outstanding** before the first public release (#83).
+8. **MCP SDK version + MCP spec revision** (see §16) — **Decided** (desktop-only): `rmcp` 3.8, MCP revision 2026-07-28 with 2025-11-25 fallback. [ADR-0005](adr/0005-mcp-sdk.md).
 9. **Toolchain** — **Decided:** Docker dev container + native macOS CI runner, no host Rust toolchain (§0).
 10. **Web hosting & browser storage** — **Decided:** GitHub Pages; open/download + OPFS/IndexedDB autosave (§0).
 11. **Packaging formats** — **Decided:** see §0 and M4 (§13).
@@ -395,7 +399,7 @@ Out of scope for v1: plugins adding arbitrary UI, new sketch tools with custom i
 - The core is AGPL-3.0. Whether a WASM component talking over a defined interface is a derivative work is legally unclear.
 - **Decision required:** add an explicit **plugin exception** (in the style of the GCC Runtime / Classpath exceptions) stating that plugins communicating solely through the published `locus-plugin-api` WIT interface may use any licence. This keeps the ecosystem open to permissive and proprietary plugins while the core stays AGPL.
 - `locus-plugin-api` (WIT + guest SDK) itself is licensed **MIT/Apache-2.0** so plugin authors don't inherit AGPL obligations by depending on the SDK.
-- Not legal advice — have the exception wording reviewed before the first public release.
+- Draft wording: [ADR-0006](adr/0006-plugin-licence-exception.md). Not legal advice — have the exception wording reviewed before the first public release (#83).
 
 ### 15.7 Distribution
 - v1: install from a local `.locusplugin` archive (manifest + `.wasm` + optional icon/readme).
@@ -414,7 +418,7 @@ Out of scope for v1: plugins adding arbitrary UI, new sketch tools with custom i
 Let users connect **their own AI client of choice** (Claude Desktop, Claude Code, other MCP-capable clients, local LLM front-ends) to drive the app: create and constrain geometry, apply generator plugins, inspect DOF/validation, and export. The app ships **no AI model and no cloud dependency**.
 
 ### 16.2 Implementation
-- Crate `locus-mcp`, using the official Rust MCP SDK (`rmcp`) — verify current version and spec revision at M0.
+- Crate `locus-mcp`, using the official Rust MCP SDK (`rmcp`) 3.8, targeting MCP revision 2026-07-28 (2025-11-25 clients also accepted) — [ADR-0005](adr/0005-mcp-sdk.md).
 - Thin adapter over the §11 command API; no business logic in `locus-mcp`.
 - Transports:
   - **stdio** — `locus-cli mcp --doc file.locus` runs headless against a file (no GUI needed; good for scripting and CI).
