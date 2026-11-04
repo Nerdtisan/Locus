@@ -8,5 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[dependencies]
+locus-geom = { path = "../locus-geom" }
+thiserror.workspace = true
+
 [lints]
 workspace = true
