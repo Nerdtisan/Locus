@@ -1,6 +1,6 @@
 # Solver spike (M0)
 
-Benchmark harness and candidate backends for the solver decision: issues #41 (harness), #39 (SolidCraft), #40 (survey), #42 (rank-analysis prototype). Results and the decision are in [ADR 0002](../../docs/adr/0002-solver-backend.md). Spec: `docs/SPEC.md` §3, §5, §13.
+Benchmark harness and candidate backends for the solver decision: issues #41 (harness), #39 (SolidCraft), #40 (survey), #42 (rank-analysis prototype). Results and the decision are in [ADR 0002](../../docs/adr/0002-solver-backend.md), superseded by [ADR 0007](../../docs/adr/0007-solver-backend-without-paste.md) (no `paste`: a Locus-owned sparse LM). Spec: `docs/SPEC.md` §3, §5, §13.
 
 This is a standalone Cargo workspace, kept apart from the root one so candidate dependencies (a git dependency on SolidCraft, ezpz, criterion) stay out of the core crates and the root `Cargo.lock`. CI doesn't build it.
 
@@ -8,6 +8,8 @@ This is a standalone Cargo workspace, kept apart from the root one so candidate 
 |---|---|
 | `harness/` | `solver-harness`: no dependencies. The harness sketch model (§4 v1 curves, every §5 v1 constraint), an independent residual checker, the fixtures and the measurement suite behind a `Backend` trait. Written to move into `locus-solver` in M1. |
 | `spike/` | `solver-spike`: adapters for SolidCraft (`solidcraft.rs`) and ezpz (`ezpz_backend.rs`), the Jacobian-rank DOF/redundancy prototype (`analysis.rs`), the native table runner, the criterion bench and the wasm entry points. |
+| `spike/src/own/` | ADR 0007: the Locus-owned sparse Levenberg–Marquardt solver (dual-number gradients, `λI` damping, rank analysis), with two linear solves behind `LinSolve`: its own LDLᵀ (`ldl.rs`) and `nalgebra-sparse` (`nalg.rs`, feature `nalgebra`). Written to move into `locus-solver` in M1. |
+| `spike/src/bin/probe.rs` | Drag quality: how far geometry that should stay put moves during the drags. |
 | `web/index.html` | Loads the wasm build in a browser and prints the same table. |
 
 ## Fixtures
@@ -28,6 +30,8 @@ docker run --rm -e CARGO_HOME=/workspace/.cargo-home -v "${PWD}:/workspace" -w /
 # The table, then criterion timings of full solve and one drag frame
 docker run --rm -e CARGO_HOME=/workspace/.cargo-home -v "${PWD}:/workspace" -w /workspace/spikes/solver locus-dev cargo bench
 ```
+
+Without SolidCraft (git dependencies), as measured for ADR 0007: add `--no-default-features --features ezpz,nalgebra` to the `table`, `probe` and wasm builds. The `own` LDLᵀ candidate is always built (it has no dependencies).
 
 `cargo bench` runs inside this workspace. The issue #41 wording (`cargo bench -p locus-solver`) applies once the harness moves into `locus-solver` in M1.
 

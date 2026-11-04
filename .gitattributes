@@ -1,0 +1,2 @@
+# .locus fixtures are compared byte-for-byte; never let git rewrite line endings.
+*.locus text eol=lf

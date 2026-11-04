@@ -1,6 +1,6 @@
 # ADR-0002: Solver backend
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0007](0007-solver-backend-without-paste.md) (the owner declined the `paste` advisory; the harness and rank analysis carry over)
 - **Date:** 2026-11-04
 - **Spec:** `docs/SPEC.md §3` (Solver backend, Solver requirements), `§5`, closes `§12.3`
 - **Issue:** Nerdtisan/Locus#43 (spikes #41 harness, #39 SolidCraft, #40 survey, #42 own-solver prototype)
