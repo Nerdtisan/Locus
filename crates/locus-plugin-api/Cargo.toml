@@ -1,0 +1,12 @@
+[package]
+name = "locus-plugin-api"
+description = "WIT interface and Rust guest SDK for Locus plugins"
+version.workspace = true
+edition.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
