@@ -1,0 +1,52 @@
+// .devcontainer/devcontainer.json
+{
+  "name": "Locus",
+
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      // Match your host UID/GID to avoid permission issues on the bind-mounted
+      // checkout. Linux: `id -u` / `id -g`. Docker Desktop on Windows/macOS: 1000/1000.
+      "USER_UID": "1000",
+      "USER_GID": "1000"
+    }
+  },
+
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+
+  // Keep the crate registry inside the git-ignored workspace so it survives
+  // container rebuilds (CLAUDE.md, Environment Setup).
+  "containerEnv": {
+    "CARGO_HOME": "/workspace/.cargo-home"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb",
+        "usernamehw.errorlens"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "editor.formatOnSave": true,
+        "[rust]": {
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        }
+      }
+    }
+  },
+
+  // `trunk serve` for the web build listens on 8080; publish it when previewing.
+  "forwardPorts": [8080],
+
+  "postCreateCommand": "cargo fetch",
+
+  "remoteUser": "dev",
+
+  // No Docker socket mount: the container never spawns containers, and the
+  // socket is a privilege-escalation risk.
+  "mounts": []
+}
