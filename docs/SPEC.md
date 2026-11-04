@@ -16,7 +16,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Platforms | Windows, macOS, Linux and web. Web = full editor; plugins (`wasmtime`) and the MCP server are desktop-only at first; a browser plugin runtime is a later epic. |
 | Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. |
 | Toolchain | Both: Parchment-style Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`), plus a native macOS runner in CI. No host Rust toolchain. |
-| Naming | App **Locus**: `locus-*` crates, binary `locus`, `.locus` files, `.locusplugin` archives, WIT package `locus:plugin@1.0.0`. Replaces the earlier placeholder name. |
+| Naming | App **Locus**: `locus-*` crates, GUI binary `locus`, headless CLI binary `locus-cli` (decided 2026-11-04, PR #78), `.locus` files, `.locusplugin` archives, WIT package `locus:plugin@1.0.0`. Replaces the earlier placeholder name. |
 | Licence | As §2 / §15.6: AGPL-3.0-or-later core, MIT OR Apache-2.0 `locus-plugin-api`, CLA, plugin exception, `cargo-deny`. |
 | Web hosting | GitHub Pages; browser open/download plus OPFS/IndexedDB autosave. |
 | Packaging | Windows Inno Setup + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`. |
@@ -77,7 +77,7 @@ crates/
   locus-plugin-host/ # wasmtime-based plugin runtime, capability enforcement, plugin registry
   locus-mcp/         # MCP server exposing document/sketch operations to external AI clients (see §16)
   locus-app/         # GUI shell for desktop + web (framework chosen by ADR — see §12)
-  locus-cli/         # Headless: validate/export a .locus file (used in tests + CI); builds the `locus` binary
+  locus-cli/         # Headless: validate/export a .locus file (used in tests + CI); builds the `locus-cli` binary
 ```
 
 ### Key crate candidates (verify licences + maintenance before adopting)
@@ -404,7 +404,7 @@ Out of scope for v1: plugins adding arbitrary UI, new sketch tools with custom i
 ### 15.8 Testing
 - Host test suite with fixture plugins: well-behaved, panicking, infinite-loop, memory-hog, wrong-API-version, malformed output.
 - Golden tests for first-party plugins.
-- `locus-cli` can run a generator headlessly: `locus plugin run <plugin> --params params.ron --out out.svg`.
+- `locus-cli` can run a generator headlessly: `locus-cli plugin run <plugin> --params params.ron --out out.svg`.
 
 ---
 
@@ -417,7 +417,7 @@ Let users connect **their own AI client of choice** (Claude Desktop, Claude Code
 - Crate `locus-mcp`, using the official Rust MCP SDK (`rmcp`) — verify current version and spec revision at M0.
 - Thin adapter over the §11 command API; no business logic in `locus-mcp`.
 - Transports:
-  - **stdio** — `locus mcp --doc file.locus` runs headless against a file (no GUI needed; good for scripting and CI).
+  - **stdio** — `locus-cli mcp --doc file.locus` runs headless against a file (no GUI needed; good for scripting and CI).
   - **Streamable HTTP, localhost only** — attaches to the running GUI so the user watches edits live.
 - Reference: SolidCraft ships a built-in MCP server — review its tool design.
 
@@ -451,7 +451,7 @@ Resources: current document (RON snapshot), layer list, plugin catalogue. Errors
 - Plugins **cannot** call MCP or see MCP sessions.
 
 ### 16.5 Testing
-- Integration tests driving `locus mcp` over stdio with scripted tool calls → golden documents.
+- Integration tests driving `locus-cli mcp` over stdio with scripted tool calls → golden documents.
 - Security tests: non-loopback bind rejected, missing/invalid token rejected, bad `Origin` rejected, scope enforcement, approval-mode enforcement.
 
 ---

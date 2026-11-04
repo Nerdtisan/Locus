@@ -9,7 +9,7 @@ This file defines how Claude should behave in this project. Follow these guideli
 - **Project Name** — Locus
 - **Purpose** — A Fusion-360-style **constrained 2D vector editor** for pen plotters, vinyl cutters and laser cutters. Geometry is driven by a geometric constraint solver, layers map to machine operations (cut / score / engrave / draw), and output is clean SVG, PDF and DXF.
 - **Tech Stack** — Rust (edition 2021) Cargo workspace of `locus-*` crates (spec §3). GUI is **chosen by ADR after the M0 spike** (§12.1): (A) `eframe` 0.35 + `egui_dock` + `wgpu`, or (B) Bevy 0.17 + `bevy_egui` + `egui_dock`. Pure-Rust constraint solver (§3). `wasmtime` plugin host (§15) and `rmcp` MCP server (§16), both desktop-only at first.
-- **Architecture** — **UI-agnostic core crates** (`locus-geom`, `locus-solver`, `locus-doc`, `locus-region`, `locus-export`, `locus-text`) with no GUI dependencies, which **must build for `wasm32-unknown-unknown`**. Every document mutation goes through the serialisable command API in `locus-doc` (§11); the GUI, CLI, plugins and MCP server are all clients of it. `locus-app` is the GUI shell (desktop + web); `locus-cli` builds the headless `locus` binary.
+- **Architecture** — **UI-agnostic core crates** (`locus-geom`, `locus-solver`, `locus-doc`, `locus-region`, `locus-export`, `locus-text`) with no GUI dependencies, which **must build for `wasm32-unknown-unknown`**. Every document mutation goes through the serialisable command API in `locus-doc` (§11); the GUI, CLI, plugins and MCP server are all clients of it. `locus-app` is the GUI shell (desktop + web) and builds the `locus` binary; `locus-cli` builds the headless `locus-cli` binary.
 - **Target Environment** — Windows, macOS, Linux and **web** (full editor on GitHub Pages; browser open/download + OPFS/IndexedDB autosave). The Rust toolchain lives **only in the Docker dev container** — never installed on the host. macOS is built and tested on a native CI runner only.
 - **The spec is the contract** — [`docs/SPEC.md`](docs/SPEC.md). Read it before non-trivial work and **cite section numbers** (e.g. `§8`, `§15.4`) in code comments, commits, PRs and ADRs. Decisions taken so far are in §0; open items and their ADRs are in §12.
 
@@ -137,7 +137,7 @@ docker run --rm -e CARGO_HOME=/workspace/.cargo-home -v "${PWD}:/workspace" -w /
 - **Migrations** — a test for every file-format version.
 - **Validation** — fixtures with open paths, duplicates, self-intersections (§8).
 - **Plugin host** (§15.8) — fixture plugins: well-behaved, panicking, infinite-loop, memory-hog, wrong-API-version, malformed output. Limits abort cleanly; document state unchanged. Golden tests for first-party plugins.
-- **MCP** (§16.5) — integration tests driving `locus mcp` over stdio → golden documents. Security tests: non-loopback bind rejected, missing/invalid token rejected, bad `Origin` rejected, scope and approval-mode enforcement.
+- **MCP** (§16.5) — integration tests driving `locus-cli mcp` over stdio → golden documents. Security tests: non-loopback bind rejected, missing/invalid token rejected, bad `Origin` rejected, scope and approval-mode enforcement.
 - **Manual acceptance** each milestone — import exports into LightBurn, Cricut Design Space and a DXF viewer.
 - **New features ship with tests. Bug fixes ship with a regression test.**
 
