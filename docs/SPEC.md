@@ -21,6 +21,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Web hosting | GitHub Pages; browser open/download plus OPFS/IndexedDB autosave. |
 | Packaging | Windows Inno Setup + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`. |
 | Input | Mouse + keyboard first; touch/pen is an M4 epic. |
+| Fonts | `skrifa` + `harfrust` instead of the unmaintained `ttf-parser` / `rustybuzz` (decided 2026-11-04). |
 | Entity IDs | Document-scoped monotonic `u64` (`next_id` saved in the file, never reused); plugins and paste/import get IDs remapped by the host. [ADR-0003](adr/0003-entity-ids.md), 2026-11-04. |
 | File format | `.locus` is RON (`ron` 0.12), `BTreeMap`-ordered, finite floats only; JSON only as an export view. [ADR-0004](adr/0004-file-format.md), 2026-11-04. |
 | MCP SDK | `rmcp` 3.8; target MCP revision 2026-07-28, also accept 2025-11-25 clients. [ADR-0005](adr/0005-mcp-sdk.md), 2026-11-04. |
@@ -93,7 +94,7 @@ crates/
 | Tessellation for rendering | `lyon` |
 | DXF write | `dxf` crate |
 | PDF write | `krilla` or `printpdf` |
-| Font parsing | `ttf-parser` / `rustybuzz` |
+| Font parsing & shaping | `skrifa` (parsing, Google Fonts `fontations`) / `harfrust` (shaping, HarfBuzz port). Replaces `ttf-parser` / `rustybuzz`, which are unmaintained (RUSTSEC-2026-0192). |
 | Serialisation | `serde` + `ron` (or JSON) |
 
 ### Solver backend
