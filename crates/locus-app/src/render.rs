@@ -11,6 +11,7 @@ use crate::scene::{Annot, DimKind, Item, Scene, Shape};
 use crate::settings::Units;
 use crate::view::View;
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape as EShape, Stroke, Vec2 as EVec2};
+use locus_doc::ConstraintId;
 use locus_geom::{Aabb, Arc, Circle, Vec2};
 
 /// Colours for one theme. Fusion convention: under-constrained geometry in
@@ -222,6 +223,26 @@ impl Frame<'_> {
         }
     }
 
+    /// A small constraint glyph beside the cursor: what inference will add.
+    pub fn draw_hint(&self, at: Vec2, label: &str) {
+        let c = self.s(at) + EVec2::new(-14.0, -14.0);
+        let r = Rect::from_center_size(c, EVec2::splat(16.0));
+        self.painter.rect_filled(r, 3.0, self.pal.glyph_fill);
+        self.painter.rect_stroke(
+            r,
+            3.0,
+            Stroke::new(1.0, self.pal.hover),
+            egui::StrokeKind::Inside,
+        );
+        self.painter.text(
+            c,
+            Align2::CENTER_CENTER,
+            label,
+            FontId::monospace(11.0),
+            self.pal.glyph_text,
+        );
+    }
+
     /// Ring marking the existing point a tool will snap to.
     pub fn draw_snap(&self, p: Vec2) {
         self.painter
@@ -230,8 +251,11 @@ impl Frame<'_> {
 
     // ── Annotations ──────────────────────────────────────────────────────
 
-    pub fn draw_annotations(&self, scene: &Scene) {
+    /// Draw glyphs and dimensions. Returns each dimension's label rectangle
+    /// (screen points) so the canvas can hit-test it for editing (#70).
+    pub fn draw_annotations(&self, scene: &Scene) -> Vec<(ConstraintId, Rect)> {
         let (lo, hi) = self.visible(80.0);
+        let mut labels = Vec::new();
         for a in &scene.annots {
             match a {
                 Annot::Glyph { at, slot, label } => {
@@ -240,15 +264,21 @@ impl Frame<'_> {
                     }
                 }
                 Annot::Dim {
+                    id,
                     kind,
                     value,
                     driven,
-                } => self.dimension(*kind, *value, *driven, lo, hi),
+                } => {
+                    if let Some(r) = self.dimension(*kind, *value, *driven, lo, hi) {
+                        labels.push((*id, r));
+                    }
+                }
             }
         }
+        labels
     }
 
-    fn label(&self, at: Pos2, text: &str, colour: Color32) {
+    fn label(&self, at: Pos2, text: &str, colour: Color32) -> Rect {
         let font = FontId::proportional(12.0);
         let galley = self.painter.layout_no_wrap(text.to_owned(), font, colour);
         let rect = Align2::CENTER_CENTER
@@ -256,6 +286,7 @@ impl Frame<'_> {
             .expand(2.0);
         self.painter.rect_filled(rect, 3.0, self.pal.background);
         self.painter.galley(rect.shrink(2.0).min, galley, colour);
+        rect
     }
 
     fn glyph(&self, at: Vec2, slot: u8, label: &str) {
@@ -277,7 +308,14 @@ impl Frame<'_> {
         );
     }
 
-    fn dimension(&self, kind: DimKind, value: f64, driven: bool, lo: Vec2, hi: Vec2) {
+    fn dimension(
+        &self,
+        kind: DimKind,
+        value: f64,
+        driven: bool,
+        lo: Vec2,
+        hi: Vec2,
+    ) -> Option<Rect> {
         let colour = if driven {
             self.pal.dim_driven
         } else {
@@ -298,7 +336,7 @@ impl Frame<'_> {
             | DimKind::Horizontal { a, b }
             | DimKind::Vertical { a, b } => {
                 if !intersects(&Aabb::from_points(a, b), lo, hi) {
-                    return;
+                    return None;
                 }
                 let (sa, sb) = (self.s(a), self.s(b));
                 let (qa, qb) = match kind {
@@ -321,7 +359,7 @@ impl Frame<'_> {
                     }
                 };
                 self.dimension_line(sa, sb, qa, qb, stroke);
-                self.label(qa + (qb - qa) * 0.5, &text(value), colour);
+                Some(self.label(qa + (qb - qa) * 0.5, &text(value), colour))
             }
             DimKind::Radius { center, radius } | DimKind::Diameter { center, radius } => {
                 if !intersects(
@@ -329,7 +367,7 @@ impl Frame<'_> {
                     lo - Vec2::new(radius, radius),
                     hi + Vec2::new(radius, radius),
                 ) {
-                    return;
+                    return None;
                 }
                 let dia = matches!(kind, DimKind::Diameter { .. });
                 let c = self.s(center);
@@ -346,21 +384,24 @@ impl Frame<'_> {
                     self.arrow(start, dir, colour);
                 }
                 let prefix = if dia { "Ø " } else { "R " };
-                self.label(
+                Some(self.label(
                     tip + dir * 34.0,
                     &format!("{prefix}{}", text(value)),
                     colour,
-                );
+                ))
             }
             DimKind::Angle { at } => {
-                if intersects(&Aabb::from_point(at), lo, hi) {
+                if !intersects(&Aabb::from_point(at), lo, hi) {
+                    return None;
+                }
+                {
                     let deg = value.to_degrees();
                     let shown = if driven {
                         format!("({deg:.2}°)")
                     } else {
                         format!("{deg:.2}°")
                     };
-                    self.label(self.s(at) + EVec2::new(24.0, -18.0), &shown, colour);
+                    Some(self.label(self.s(at) + EVec2::new(24.0, -18.0), &shown, colour))
                 }
             }
         }

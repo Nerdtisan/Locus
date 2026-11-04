@@ -83,12 +83,53 @@ impl Tool {
     }
 }
 
-/// What the cursor designates: a position, and the existing point entity it
-/// snapped onto, if any.
+/// A constraint the line being drawn should be created with (#69).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineHint {
+    Horizontal,
+    Vertical,
+    /// Tangent to this arc at the line's start point.
+    Tangent(EntityId),
+}
+
+impl LineHint {
+    /// Badge shown beside the cursor.
+    pub fn badge(self) -> &'static str {
+        match self {
+            LineHint::Horizontal => "H",
+            LineHint::Vertical => "V",
+            LineHint::Tangent(_) => "T",
+        }
+    }
+}
+
+/// What the cursor designates: a position (already adjusted by inference),
+/// the existing point entity it snapped onto, the curve it lies on, and the
+/// constraint the line being drawn gets (#69).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pick {
     pub pos: Vec2,
     pub point: Option<EntityId>,
+    pub on_curve: Option<EntityId>,
+    pub line: Option<LineHint>,
+}
+
+impl Pick {
+    pub fn free(pos: Vec2) -> Self {
+        Self {
+            pos,
+            point: None,
+            on_curve: None,
+            line: None,
+        }
+    }
+
+    pub fn at_point(pos: Vec2, id: EntityId) -> Self {
+        Self {
+            point: Some(id),
+            ..Self::free(pos)
+        }
+    }
 }
 
 /// A clicked location: an existing point entity (reused, so the shapes share
@@ -97,26 +138,29 @@ pub struct Pick {
 enum Node {
     Existing(EntityId, Vec2),
     New(Vec2),
+    /// A new point constrained onto an existing curve.
+    OnCurve(Vec2, EntityId),
 }
 
 impl Node {
     fn from_pick(p: Pick) -> Self {
-        match p.point {
-            Some(id) => Node::Existing(id, p.pos),
-            None => Node::New(p.pos),
+        match (p.point, p.on_curve) {
+            (Some(id), _) => Node::Existing(id, p.pos),
+            (None, Some(curve)) => Node::OnCurve(p.pos, curve),
+            (None, None) => Node::New(p.pos),
         }
     }
 
     fn pos(self) -> Vec2 {
         match self {
-            Node::Existing(_, p) | Node::New(p) => p,
+            Node::Existing(_, p) | Node::New(p) | Node::OnCurve(p, _) => p,
         }
     }
 
     fn id(self) -> Option<EntityId> {
         match self {
             Node::Existing(id, _) => Some(id),
-            Node::New(_) => None,
+            Node::New(_) | Node::OnCurve(..) => None,
         }
     }
 }
@@ -169,6 +213,11 @@ impl Plan {
         match n {
             Node::Existing(id, _) => id,
             Node::New(pos) => self.point(pos),
+            Node::OnCurve(pos, curve) => {
+                let point = self.point(pos);
+                self.constrain(Constraint::PointOnCurve { point, curve });
+                point
+            }
         }
     }
 
@@ -213,6 +262,25 @@ impl Draft {
         self.cancel();
     }
 
+    /// The start of the line being drawn, for inference (#69).
+    pub fn line_anchor(&self) -> Option<(Vec2, Option<EntityId>)> {
+        match (self.tool, self.nodes.first()) {
+            (Tool::Line, Some(n)) => Some((n.pos(), n.id())),
+            _ => None,
+        }
+    }
+
+    /// May the next point snap onto a curve (becoming point-on-curve)?
+    pub fn curve_snap(&self) -> bool {
+        match self.tool {
+            Tool::Select => false,
+            Tool::Point | Tool::Line => true,
+            Tool::Circle | Tool::ArcCentre => self.nodes.is_empty(),
+            // The "through" click is only a guide.
+            Tool::ArcThreePoint => self.nodes.len() < 2,
+        }
+    }
+
     /// Clicks made so far for the current shape.
     pub fn clicks(&self) -> usize {
         self.nodes.len()
@@ -246,24 +314,31 @@ impl Draft {
                 plan.node(here);
                 Outcome::Commit(plan.finish("Add point"))
             }
-            Tool::Line => self.click_line(here, plan),
+            Tool::Line => self.click_line(here, plan, pick.line),
             Tool::Circle => self.click_circle(here, plan),
             Tool::ArcCentre => self.click_arc_centre(pick, here, plan),
             Tool::ArcThreePoint => self.click_arc_three(here, plan),
         }
     }
 
-    fn click_line(&mut self, here: Node, plan: Plan) -> Outcome {
+    fn click_line(&mut self, here: Node, plan: Plan, hint: Option<LineHint>) -> Outcome {
         let Some(&from) = self.nodes.first() else {
             self.nodes.push(here);
             self.chain_first = here.id();
             return Outcome::Pending;
         };
-        self.segment(from, here, plan, None)
+        self.segment(from, here, plan, None, hint)
     }
 
     /// Commit the segment `from → to` and carry on from `to` (or close).
-    fn segment(&mut self, from: Node, to: Node, mut plan: Plan, length: Option<f64>) -> Outcome {
+    fn segment(
+        &mut self,
+        from: Node,
+        to: Node,
+        mut plan: Plan,
+        length: Option<f64>,
+        hint: Option<LineHint>,
+    ) -> Outcome {
         if from.pos().distance(to.pos()) < MIN_SIZE_MM
             || (from.id().is_some() && from.id() == to.id())
         {
@@ -271,7 +346,13 @@ impl Draft {
         }
         let a = plan.node(from);
         let b = plan.node(to);
-        plan.add(Geom::Line { start: a, end: b });
+        let line = plan.add(Geom::Line { start: a, end: b });
+        match hint {
+            Some(LineHint::Horizontal) => plan.constrain(Constraint::Horizontal { line }),
+            Some(LineHint::Vertical) => plan.constrain(Constraint::Vertical { line }),
+            Some(LineHint::Tangent(arc)) => plan.constrain(Constraint::Tangent { a: line, b: arc }),
+            None => {}
+        }
         if let Some(d) = length {
             plan.constrain(Constraint::Distance {
                 a,
@@ -375,20 +456,21 @@ impl Draft {
     /// A number typed while drawing: the line's length, the circle's radius,
     /// or the centre-arc's radius, in the direction of the cursor. Lengths
     /// and radii typed this way become dimensions (SPEC §6.1).
-    pub fn typed(&mut self, value: f64, cursor: Vec2, doc_next_id: u64) -> Outcome {
+    pub fn typed(&mut self, value: f64, cursor: Pick, doc_next_id: u64) -> Outcome {
         if !(value.is_finite() && value > MIN_SIZE_MM) {
             return Outcome::Rejected("Enter a positive number");
         }
         let Some(&from) = self.nodes.first() else {
             return Outcome::Pending;
         };
-        let dir = (cursor - from.pos())
+        let dir = (cursor.pos - from.pos())
             .normalized(MIN_SIZE_MM)
             .unwrap_or(Vec2::new(1.0, 0.0));
         let at = Node::New(from.pos() + dir * value);
         let mut plan = Plan::new(doc_next_id);
         match self.tool {
-            Tool::Line => self.segment(from, at, plan, Some(value)),
+            // A typed length keeps the inferred direction and its constraint.
+            Tool::Line => self.segment(from, at, plan, Some(value), cursor.line),
             Tool::Circle => {
                 let c = plan.node(from);
                 let circle = plan.add(Geom::Circle {
@@ -492,10 +574,7 @@ mod tests {
     use locus_doc::Sketcher;
 
     fn at(x: f64, y: f64) -> Pick {
-        Pick {
-            pos: Vec2::new(x, y),
-            point: None,
-        }
+        Pick::free(Vec2::new(x, y))
     }
 
     fn run(s: &mut Sketcher, out: Outcome) -> locus_doc::Applied {
@@ -526,10 +605,7 @@ mod tests {
         let mut d = Draft::new(Tool::Point);
         let a = click(&mut d, &mut s, at(3.0, 4.0)).unwrap();
         assert_eq!(a.entities.len(), 1);
-        let again = Pick {
-            pos: Vec2::new(3.0, 4.0),
-            point: Some(a.entities[0]),
-        };
+        let again = Pick::at_point(Vec2::new(3.0, 4.0), a.entities[0]);
         assert!(click(&mut d, &mut s, again).is_none());
         assert_eq!(s.document().entities().len(), 1);
     }
@@ -557,10 +633,7 @@ mod tests {
         click(&mut d, &mut s, at(0.0, 0.0));
         let first = click(&mut d, &mut s, at(10.0, 0.0)).unwrap().entities[0];
         click(&mut d, &mut s, at(10.0, 10.0));
-        let close = Pick {
-            pos: Vec2::new(0.0, 0.0),
-            point: Some(first),
-        };
+        let close = Pick::at_point(Vec2::new(0.0, 0.0), first);
         let a = click(&mut d, &mut s, close).unwrap();
         assert_eq!(a.entities.len(), 1);
         assert!(!d.is_drawing());
@@ -573,7 +646,7 @@ mod tests {
         let mut s = Sketcher::new(Document::new());
         let mut d = Draft::new(Tool::Line);
         click(&mut d, &mut s, at(0.0, 0.0));
-        let out = d.typed(25.0, Vec2::new(3.0, 0.0), s.document().next_id());
+        let out = d.typed(25.0, at(3.0, 0.0), s.document().next_id());
         run(&mut s, out);
         let line = s
             .document()
@@ -599,7 +672,7 @@ mod tests {
             .unwrap();
         assert!((s.document().circle(c).unwrap().radius - 5.0).abs() < 1e-9);
         click(&mut d, &mut s, at(50.0, 0.0));
-        let out = d.typed(7.5, Vec2::new(60.0, 0.0), s.document().next_id());
+        let out = d.typed(7.5, at(60.0, 0.0), s.document().next_id());
         run(&mut s, out);
         assert_eq!(count(&s, |g| matches!(g, Geom::Circle { .. })), 2);
         assert_eq!(s.document().constraints().len(), 1);
@@ -669,9 +742,50 @@ mod tests {
         let mut d = Draft::new(Tool::Line);
         click(&mut d, &mut s, at(1.0, 1.0));
         assert!(click(&mut d, &mut s, at(1.0, 1.0)).is_none());
-        let bad = d.typed(-3.0, Vec2::new(5.0, 1.0), s.document().next_id());
+        let bad = d.typed(-3.0, at(5.0, 1.0), s.document().next_id());
         assert!(matches!(bad, Outcome::Rejected(_)));
         assert!(s.document().entities().is_empty());
+    }
+
+    #[test]
+    fn hints_become_constraints_in_the_same_undo_step() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Line);
+        click(&mut d, &mut s, at(0.0, 0.0));
+        let mut end = at(10.0, 0.0);
+        end.line = Some(LineHint::Horizontal);
+        let a = click(&mut d, &mut s, end).unwrap();
+        assert_eq!(a.constraints.len(), 1);
+        assert!(matches!(
+            s.document().constraint(a.constraints[0]),
+            Some(Constraint::Horizontal { .. })
+        ));
+        s.undo().unwrap();
+        assert!(s.document().entities().is_empty() && s.document().constraints().is_empty());
+    }
+
+    #[test]
+    fn a_point_on_a_curve_is_constrained_onto_it() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Line);
+        click(&mut d, &mut s, at(0.0, 0.0));
+        click(&mut d, &mut s, at(10.0, 0.0));
+        d.cancel();
+        let line = s
+            .document()
+            .entities()
+            .iter()
+            .find_map(|(id, e)| matches!(e.geom, Geom::Line { .. }).then_some(id))
+            .unwrap();
+        let mut d = Draft::new(Tool::Point);
+        let mut on = at(5.0, 0.0);
+        on.on_curve = Some(line);
+        let a = click(&mut d, &mut s, on).unwrap();
+        assert_eq!(a.constraints.len(), 1);
+        assert!(matches!(
+            s.document().constraint(a.constraints[0]),
+            Some(Constraint::PointOnCurve { curve, .. }) if *curve == line
+        ));
     }
 
     #[test]

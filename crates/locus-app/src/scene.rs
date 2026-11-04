@@ -6,7 +6,7 @@
 //! point-entity indirection every frame. The scene is rebuilt after every
 //! successful command; it is derived state and never edited (SPEC §11).
 
-use locus_doc::{Constraint, Document, EntityId, Geom};
+use locus_doc::{Constraint, ConstraintId, Document, EntityId, Geom};
 use locus_geom::{Aabb, Arc, Circle, Line, Vec2};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -39,6 +39,8 @@ pub struct Item {
     pub constrained: bool,
     /// A point that belongs to a line, circle or arc (an endpoint or centre).
     pub owned_point: bool,
+    /// The defining end points of a line or arc, for inference (#69).
+    pub ends: Option<(EntityId, EntityId)>,
     pub bbox: Aabb,
 }
 
@@ -80,6 +82,7 @@ pub enum Annot {
         label: &'static str,
     },
     Dim {
+        id: ConstraintId,
         kind: DimKind,
         value: f64,
         driven: bool,
@@ -164,13 +167,17 @@ impl Scene {
                 construction: e.construction,
                 constrained,
                 owned_point: matches!(shape, Shape::Point(_)) && owned.contains(&id),
+                ends: match e.geom {
+                    Geom::Line { start, end } | Geom::Arc { start, end, .. } => Some((start, end)),
+                    _ => None,
+                },
                 bbox,
             });
         }
 
         let mut annots = Vec::new();
         let mut slots: HashMap<EntityId, u8> = HashMap::new();
-        for c in doc.constraints().values() {
+        for (&cid, c) in doc.constraints() {
             if let Some(label) = glyph_label(c) {
                 if let Some(&first) = c.references().first()
                     && let Some(at) = Self::anchor(doc, first)
@@ -206,6 +213,7 @@ impl Scene {
             };
             if let (Some(kind), Some(dim)) = (kind, dim) {
                 annots.push(Annot::Dim {
+                    id: cid,
                     kind,
                     value: dim.value,
                     driven: dim.driven,

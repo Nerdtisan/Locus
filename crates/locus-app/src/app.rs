@@ -6,6 +6,7 @@
 //! edit goes through its command API (SPEC §11).
 
 use crate::canvas::Canvas;
+use crate::constrain::Kind;
 use crate::file_io::FileIo;
 use crate::settings::{Settings, Theme, Units};
 use crate::tools::Tool;
@@ -212,22 +213,32 @@ impl App {
                 stub(ui, "Rectangle");
             });
             ui.menu_button("Constrain", |ui| {
-                for name in [
-                    "Coincident",
-                    "Horizontal",
-                    "Vertical",
-                    "Parallel",
-                    "Perpendicular",
-                    "Tangent",
-                    "Equal",
-                    "Dimension",
-                ] {
-                    stub(ui, name);
+                for kind in Kind::ALL {
+                    let enabled = self.canvas.can_constrain(kind);
+                    let b = egui::Button::new(kind.label()).shortcut_text(kind.key().to_string());
+                    if ui
+                        .add_enabled(enabled, b)
+                        .on_disabled_hover_text(format!("Select {}", kind.needs()))
+                        .clicked()
+                    {
+                        self.canvas.constrain(kind);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                let b = egui::Button::new("Dimension").shortcut_text("D");
+                if ui
+                    .add_enabled(self.canvas.can_dimension(), b)
+                    .on_disabled_hover_text("Select a line, two points, a circle or arc…")
+                    .clicked()
+                {
+                    self.canvas.start_dimension(self.settings.units);
+                    ui.close();
                 }
                 ui.separator();
                 ui.checkbox(
                     &mut self.settings.auto_constrain,
-                    "Auto-constrain while drawing",
+                    "Auto-constrain while drawing (hold Alt to suppress)",
                 );
             });
             ui.menu_button("Help", |ui| {
@@ -254,6 +265,25 @@ impl App {
             }
             ui.separator();
             ui.weak(self.canvas.hint());
+        });
+    }
+
+    /// One button per constraint, enabled when the selection supports it (#70).
+    fn constraint_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            for kind in Kind::ALL {
+                let enabled = self.canvas.can_constrain(kind);
+                let b = ui.add_enabled(enabled, egui::Button::new(kind.label()));
+                let tip = format!("{} ({}): {}", kind.label(), kind.key(), kind.needs());
+                if b.on_hover_text(tip).clicked() {
+                    self.canvas.constrain(kind);
+                }
+            }
+            ui.separator();
+            let b = ui.add_enabled(self.canvas.can_dimension(), egui::Button::new("Dimension"));
+            if b.on_hover_text("Dimension (D)").clicked() {
+                self.canvas.start_dimension(self.settings.units);
+            }
         });
     }
 
@@ -384,6 +414,7 @@ impl eframe::App for App {
         self.files.update(ui.ctx(), &mut self.canvas);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
+        egui::Panel::top("constraints").show(ui, |ui| self.constraint_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
             canvas: &mut self.canvas,
