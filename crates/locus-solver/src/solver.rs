@@ -18,6 +18,10 @@ pub struct SolveReport {
     pub iterations: usize,
     /// Largest constraint residual reached, in mm.
     pub max_residual: f64,
+    /// The dragged point reached its target (always true for a plain solve).
+    /// False when the target is out of reach: the point then goes as near to
+    /// it as the constraints allow (#63).
+    pub at_target: bool,
     /// Constraints still violated by more than `SOLVER_TOL` at the closest
     /// geometry the solver found (empty on success).
     pub unsatisfied: Vec<Key>,
@@ -56,6 +60,10 @@ pub enum Check {
     Conflict(ConstraintSet),
 }
 
+/// Weight of a soft drag target against the constraints (all rows are in
+/// mm): small enough that the constraints win, large enough to pull.
+const SOFT_HOLD: f64 = 1e-2;
+
 /// A system and its symbolic factorisation, reused while the pattern holds.
 #[derive(Debug)]
 struct Cached {
@@ -84,9 +92,15 @@ impl LmSolver {
 
     /// Solve `sys` with the factorisation cached in `slot`, re-analysed only
     /// if the pattern changed.
-    fn run(slot: &mut Option<Cached>, sys: System, sk: &mut Sketch, x: &mut [f64]) -> SolveReport {
+    fn run(
+        slot: &mut Option<Cached>,
+        sys: System,
+        sk: &mut Sketch,
+        x: &mut [f64],
+        max_iter: usize,
+    ) -> SolveReport {
         let c = Self::cached(slot, sys);
-        Self::finish(c, sk, x)
+        Self::finish(c, sk, x, max_iter)
     }
 
     /// The cache entry for `sys`, re-analysed only if the pattern changed.
@@ -110,7 +124,7 @@ impl LmSolver {
         let sys = System::new(sk, None)?;
         let mut x = sys.x0(sk);
         let c = Self::cached(slot, sys);
-        let out = lm::solve(&c.sys, sk, &mut c.lin, &mut x);
+        let out = lm::solve(&c.sys, sk, &mut c.lin, &mut x, lm::MAX_ITER);
         Ok(analysis::analyse(&c.sys, sk, &x, out.converged))
     }
 
@@ -129,8 +143,8 @@ impl LmSolver {
         })
     }
 
-    fn finish(c: &mut Cached, sk: &mut Sketch, x: &mut [f64]) -> SolveReport {
-        let out = lm::solve(&c.sys, sk, &mut c.lin, x);
+    fn finish(c: &mut Cached, sk: &mut Sketch, x: &mut [f64], max_iter: usize) -> SolveReport {
+        let out = lm::solve(&c.sys, sk, &mut c.lin, x, max_iter);
         let max_residual = out.r.iter().fold(0.0f64, |m, v| m.max(v.abs()));
         let mut unsatisfied = Vec::new();
         if out.converged {
@@ -150,6 +164,7 @@ impl LmSolver {
         }
         SolveReport {
             converged: out.converged,
+            at_target: true,
             iterations: out.iterations,
             max_residual,
             unsatisfied,
@@ -171,19 +186,36 @@ impl Solver for LmSolver {
     fn solve(&mut self, sk: &mut Sketch) -> Result<SolveReport, SketchError> {
         let sys = System::new(sk, None)?;
         let mut x = sys.x0(sk);
-        Ok(Self::run(&mut self.base, sys, sk, &mut x))
+        Ok(Self::run(&mut self.base, sys, sk, &mut x, lm::MAX_ITER))
     }
 
     fn drag(&mut self, sk: &mut Sketch, p: PointId, to: Vec2) -> Result<SolveReport, SketchError> {
         if p.index() >= sk.points.len() || !to.is_finite() {
             return Err(SketchError::BadDrag);
         }
+        // Warm start: from the previous frame's geometry (the sketch), with the
+        // point already at the target, held there by two hard rows.
         let sys = System::new(sk, Some(Eq::Hold { p, at: to, w: 1.0 }))?;
         let mut x = sys.x0(sk);
-        // Start the frame with the point already at the target.
         x[2 * p.index()] = to.x;
         x[2 * p.index() + 1] = to.y;
-        Ok(Self::run(&mut self.drag, sys, sk, &mut x))
+        let hard = Self::run(&mut self.drag, sys, sk, &mut x, lm::DRAG_ITER);
+        if hard.converged {
+            return Ok(hard);
+        }
+        // Out of reach: the target becomes soft (weighted rows, same pattern,
+        // so the drag factorisation is reused) and pulls the point as near as
+        // the constraints allow; then a plain solve from there restores every
+        // constraint exactly.
+        let sys = System::new(sk, Some(Eq::Hold { p, at: to, w: SOFT_HOLD }))?;
+        let mut x = sys.x0(sk);
+        let c = Self::cached(&mut self.drag, sys);
+        let soft = lm::solve(&c.sys, sk, &mut c.lin, &mut x, lm::DRAG_ITER);
+        let sys = System::new(sk, None)?;
+        let mut report = Self::run(&mut self.base, sys, sk, &mut x, lm::DRAG_ITER);
+        report.iterations += hard.iterations + soft.iterations;
+        report.at_target = false;
+        Ok(report)
     }
 
     fn analyse(&mut self, sk: &Sketch) -> Result<Analysis, SketchError> {

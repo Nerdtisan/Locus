@@ -44,6 +44,11 @@ all = { level = "warn", priority = -1 }
 unwrap_used = "warn"
 expect_used = "warn"
 
+# The solver is optimised in dev builds too: interactive drags are unusable
+# unoptimised, and the SPEC §3 drag-budget test (#63) gates CI in `cargo test`.
+[profile.dev.package.locus-solver]
+opt-level = 3
+
 # The web build (#38): size over speed. `trunk build --release --cargo-profile wasm-release`.
 [profile.wasm-release]
 inherits = "release"

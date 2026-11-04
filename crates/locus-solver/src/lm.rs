@@ -16,7 +16,12 @@ use crate::system::System;
 /// orders tighter than `SOLVER_TOL` (SPEC §4), which LM's quadratic
 /// convergence makes nearly free.
 pub(crate) const TOL: f64 = 1e-10;
-const MAX_ITER: usize = 100;
+/// Iteration cap for a full solve.
+pub(crate) const MAX_ITER: usize = 100;
+/// Iteration cap for one drag frame (#63). A reachable target converges in
+/// a handful of iterations from the previous frame; an unreachable one would
+/// otherwise creep towards its least-squares point for the full cap.
+pub(crate) const DRAG_ITER: usize = 30;
 /// λ starts tiny: long chains have soft modes with σ² ≈ 1e-7, and a start of
 /// 1e-6 over-damped them (measured: 29 iterations per 1,000-curve drag frame,
 /// against 4 at 1e-9). λ rises by itself when a step fails or a pivot does.
@@ -61,7 +66,13 @@ fn jt_r(m: &System, j: &[f64], r: &[f64], g: &mut [f64]) {
 }
 
 /// Solve in place from `x`.
-pub(crate) fn solve<L: LinSolve>(m: &System, sk: &Sketch, lin: &mut L, x: &mut [f64]) -> Outcome {
+pub(crate) fn solve<L: LinSolve>(
+    m: &System,
+    sk: &Sketch,
+    lin: &mut L,
+    x: &mut [f64],
+    max_iter: usize,
+) -> Outcome {
     let (mut r, mut j) = (vec![0.0; m.m], vec![0.0; m.nj]);
     let (mut rn, mut jn) = (vec![0.0; m.m], vec![0.0; m.nj]);
     let mut g = vec![0.0; m.n];
@@ -72,7 +83,7 @@ pub(crate) fn solve<L: LinSolve>(m: &System, sk: &Sketch, lin: &mut L, x: &mut [
     let mut lambda = LAMBDA_START;
     let mut nu = 2.0;
     let mut it = 0;
-    while it < MAX_ITER {
+    while it < max_iter {
         if max_abs(&r) < TOL {
             return Outcome {
                 converged: true,

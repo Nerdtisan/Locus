@@ -1485,6 +1485,7 @@ name = "locus-solver"
 version = "0.0.0"
 dependencies = [
  "locus-geom",
+ "proptest",
  "thiserror 2.0.21",
 ]
 
