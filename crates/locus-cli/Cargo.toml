@@ -14,3 +14,8 @@ workspace = true
 [[bin]]
 name = "locus-cli"
 path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+locus-doc.workspace = true
+locus-export.workspace = true

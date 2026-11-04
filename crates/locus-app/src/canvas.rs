@@ -124,6 +124,11 @@ impl Canvas {
         }
     }
 
+    /// The document as it stands (read-only; changes go through commands).
+    pub fn document(&self) -> &Document {
+        self.sketcher.document()
+    }
+
     /// Run a command and refresh the derived scene.
     #[allow(dead_code)] // first caller: the sketch tools (#68)
     pub fn apply(&mut self, cmd: &Command) -> Result<(), DocError> {
