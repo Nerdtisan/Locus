@@ -43,4 +43,24 @@ pub enum DocError {
     NothingToDo(&'static str),
     #[error("command failed: {0}")]
     Invalid(String),
+    /// The constraint can't hold together with these (SPEC §5 Solver UX: refuse
+    /// it, highlight the set, offer it as a driven dimension).
+    #[error("conflicts with {} existing constraint(s)", .constraints.len())]
+    Conflict {
+        constraints: Vec<ConstraintId>,
+        entities: Vec<EntityId>,
+    },
+    /// The constraint is already implied by these: it would over-constrain the
+    /// sketch without restricting anything (SPEC §5). Offer it as driven.
+    #[error("already implied by {} existing constraint(s)", .constraints.len())]
+    Redundant {
+        constraints: Vec<ConstraintId>,
+        entities: Vec<EntityId>,
+    },
+    /// The solver could not satisfy these after the change, so it was undone.
+    #[error("the sketch cannot be solved with this change ({} constraint(s) unsatisfied)", .unsatisfied.len())]
+    Unsolvable { unsatisfied: Vec<ConstraintId> },
+    /// The document could not be turned into solver input.
+    #[error("solver input rejected: {0}")]
+    Solver(String),
 }

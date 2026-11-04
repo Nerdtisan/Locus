@@ -1,0 +1,513 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+//! The document and the constraint solver together (SPEC §3, §5, §10, §11;
+//! ADR 0007; #105).
+//!
+//! `locus-solver` knows nothing about documents. This module lowers a
+//! [`Document`] into a [`locus_solver::Sketch`] (keys are the document's own
+//! IDs), runs the solver, and maps the results back. [`Sketcher`] is the
+//! front end every client uses: an [`Editor`] plus one cached solver.
+//!
+//! - Every command is applied and solved as **one** undo step: the solver's
+//!   moves are recorded with the command, so undo restores the geometry
+//!   exactly (§11).
+//! - A driving constraint that would conflict with, or be implied by, the
+//!   existing ones is refused before anything changes, naming the
+//!   constraints involved (§5 Solver UX).
+//! - A command the solver can't satisfy is rolled back. Driven (reference)
+//!   dimensions get their measured values written back.
+
+use crate::command::{Applied, Command, Editor, Solution};
+use crate::constraint::Constraint;
+use crate::document::Document;
+use crate::entity::{EntityKind, Geom};
+use crate::error::DocError;
+use crate::ids::{ConstraintId, EntityId};
+use locus_solver::{self as ls, Check, Solver as _};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub use locus_solver::Status;
+
+/// Constraints that depend on each other, in document terms.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConstraintGroup {
+    pub constraints: Vec<ConstraintId>,
+    /// The points and curves those constraints touch.
+    pub entities: Vec<EntityId>,
+}
+
+/// The sketch's solve status after the last change (§5 Solver UX).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SolveState {
+    /// Whether every driving constraint is satisfied.
+    pub converged: bool,
+    /// Remaining degrees of freedom of the whole sketch.
+    pub dof: usize,
+    pub status: Status,
+    /// Points and curves that can no longer move (drawn in the
+    /// fully-constrained colour).
+    pub fully_constrained: BTreeSet<EntityId>,
+    pub redundant: Vec<ConstraintGroup>,
+    pub conflicts: Vec<ConstraintGroup>,
+}
+
+impl SolveState {
+    fn unknown() -> Self {
+        Self {
+            converged: false,
+            dof: 0,
+            status: Status::UnderConstrained,
+            fully_constrained: BTreeSet::new(),
+            redundant: Vec::new(),
+            conflicts: Vec::new(),
+        }
+    }
+}
+
+/// An [`Editor`] that keeps the sketch solved. The way clients change a
+/// document once solving matters.
+#[derive(Debug)]
+pub struct Sketcher {
+    editor: Editor,
+    // One solver per document: it caches factorisations between solves.
+    solver: ls::LmSolver,
+    state: SolveState,
+}
+
+impl Sketcher {
+    /// Wrap a document and solve it once. The result is written back without
+    /// an undo step. If it can't be solved (e.g. a file that was saved
+    /// over-constrained), the stored positions are kept and [`Self::state`]
+    /// says so (§10: files degrade gracefully).
+    #[must_use]
+    pub fn new(doc: Document) -> Self {
+        let mut s = Self {
+            editor: Editor::new(doc),
+            solver: ls::LmSolver::new(),
+            state: SolveState::unknown(),
+        };
+        if let Ok(sol) = solve(&mut s.solver, s.editor.document()) {
+            // Can only fail on a solver bug (non-finite output); the stored
+            // positions are then kept, which is the safe fallback.
+            let _ = s.editor.apply_solution_unrecorded(&sol);
+        }
+        s.refresh();
+        s
+    }
+
+    #[must_use]
+    pub fn document(&self) -> &Document {
+        self.editor.document()
+    }
+
+    /// The editor, for history queries (undo/redo labels).
+    #[must_use]
+    pub fn editor(&self) -> &Editor {
+        &self.editor
+    }
+
+    #[must_use]
+    pub fn into_document(self) -> Document {
+        self.editor.into_document()
+    }
+
+    #[must_use]
+    pub fn state(&self) -> &SolveState {
+        &self.state
+    }
+
+    /// Apply a command and re-solve, as one undo step.
+    ///
+    /// # Errors
+    /// [`DocError::Conflict`] / [`DocError::Redundant`] when a driving
+    /// constraint can't be added (or a dimension made driving);
+    /// [`DocError::Unsolvable`] when the solver can't satisfy the result;
+    /// otherwise whatever validation rejected. In every case the document and
+    /// the history are unchanged.
+    pub fn apply(&mut self, cmd: &Command) -> Result<Applied, DocError> {
+        self.precheck(cmd)?;
+        // A sketch that is already unsolvable (e.g. loaded that way) must
+        // still accept edits, or the user could never repair it: keep stored
+        // positions instead of refusing.
+        let strict = self.state.converged;
+        let solver = &mut self.solver;
+        let out = self
+            .editor
+            .apply_solved(cmd, |doc| match solve(solver, doc) {
+                Ok(sol) => Ok(sol),
+                Err(e) if strict => Err(e),
+                Err(_) => Ok(Solution::default()),
+            })?;
+        self.refresh();
+        Ok(out)
+    }
+
+    /// Undo the last step. Positions come back exactly from the history, so
+    /// no solve is needed.
+    ///
+    /// # Errors
+    /// [`DocError::NothingToDo`] when there is nothing to undo.
+    pub fn undo(&mut self) -> Result<String, DocError> {
+        let label = self.editor.undo()?;
+        self.refresh();
+        Ok(label)
+    }
+
+    /// Redo the last undone step.
+    ///
+    /// # Errors
+    /// [`DocError::NothingToDo`] when there is nothing to redo.
+    pub fn redo(&mut self) -> Result<String, DocError> {
+        let label = self.editor.redo()?;
+        self.refresh();
+        Ok(label)
+    }
+
+    /// Refuse a driving constraint that can't add a real restriction, before
+    /// anything changes. Only single commands are pre-checked; a compound is
+    /// guarded by the solve that follows it.
+    fn precheck(&mut self, cmd: &Command) -> Result<(), DocError> {
+        let doc = self.editor.document();
+        let check = match cmd {
+            Command::AddConstraint { constraint } => {
+                if constraint.dimension().is_some_and(|d| d.driven) {
+                    return Ok(());
+                }
+                constraint.validate(doc)?;
+                let low = lower(doc)?;
+                let kind = low.constraint_kind(doc, constraint)?;
+                // `next_id` is not yet allocated, so it can't clash with a key.
+                let probe = ls::Constraint {
+                    key: ls::Key(doc.next_id()),
+                    kind,
+                    driven: false,
+                };
+                self.solver
+                    .check_add(&low.sketch, probe)
+                    .map_err(solver_err)?
+            }
+            Command::SetDriven { id, driven: false } => {
+                let c = doc
+                    .constraint(*id)
+                    .ok_or(DocError::UnknownConstraint(*id))?;
+                if !c.dimension().is_some_and(|d| d.driven) {
+                    return Ok(());
+                }
+                let low = lower(doc)?;
+                let idx = low
+                    .constraints
+                    .iter()
+                    .position(|c| c == id)
+                    .ok_or(DocError::UnknownConstraint(*id))?;
+                let sid = ls::ConstraintId(u32::try_from(idx).map_err(|_| too_big())?);
+                self.solver
+                    .check_driving(&low.sketch, sid)
+                    .map_err(solver_err)?
+            }
+            _ => return Ok(()),
+        };
+        match check {
+            Check::Ok => Ok(()),
+            Check::Conflict(set) => Err(DocError::Conflict {
+                constraints: existing(&set),
+                entities: entities(&set),
+            }),
+            Check::Redundant(set) => Err(DocError::Redundant {
+                constraints: existing(&set),
+                entities: entities(&set),
+            }),
+        }
+    }
+
+    fn refresh(&mut self) {
+        self.state = analyse(&mut self.solver, self.editor.document());
+    }
+}
+
+/// A document lowered into solver input, with the maps back to document IDs.
+struct Lowered {
+    sketch: ls::Sketch,
+    point_index: BTreeMap<EntityId, ls::PointId>,
+    curve_index: BTreeMap<EntityId, ls::CurveId>,
+    points: Vec<EntityId>,
+    curves: Vec<EntityId>,
+    constraints: Vec<ConstraintId>,
+}
+
+fn key(raw: u64) -> ls::Key {
+    ls::Key(raw)
+}
+
+fn too_big() -> DocError {
+    DocError::Solver("sketch too large for the solver's index type".to_owned())
+}
+
+fn solver_err(e: ls::SketchError) -> DocError {
+    DocError::Solver(e.to_string())
+}
+
+fn lower(doc: &Document) -> Result<Lowered, DocError> {
+    let mut low = Lowered {
+        sketch: ls::Sketch::default(),
+        point_index: BTreeMap::new(),
+        curve_index: BTreeMap::new(),
+        points: Vec::new(),
+        curves: Vec::new(),
+        constraints: Vec::new(),
+    };
+    // Points first: curves refer to them by index.
+    for (id, e) in doc.entities().iter() {
+        if let Geom::Point { pos } = e.geom {
+            let pid = ls::PointId(u32::try_from(low.points.len()).map_err(|_| too_big())?);
+            low.sketch.points.push(ls::Point {
+                key: key(id.get()),
+                at: pos,
+            });
+            low.point_index.insert(id, pid);
+            low.points.push(id);
+        }
+    }
+    for (id, e) in doc.entities().iter() {
+        let kind = match &e.geom {
+            Geom::Point { .. } => continue,
+            Geom::Line { start, end } => ls::CurveKind::Line {
+                a: low.point(*start)?,
+                b: low.point(*end)?,
+            },
+            Geom::Circle { center, radius } => ls::CurveKind::Circle {
+                centre: low.point(*center)?,
+                r: *radius,
+            },
+            Geom::Arc { center, start, end } => ls::CurveKind::Arc {
+                centre: low.point(*center)?,
+                a: low.point(*start)?,
+                b: low.point(*end)?,
+            },
+        };
+        let cid = ls::CurveId(u32::try_from(low.curves.len()).map_err(|_| too_big())?);
+        low.sketch.curves.push(ls::Curve {
+            key: key(id.get()),
+            kind,
+        });
+        low.curve_index.insert(id, cid);
+        low.curves.push(id);
+    }
+    for (id, c) in doc.constraints() {
+        let kind = low.constraint_kind(doc, c)?;
+        low.sketch.constraints.push(ls::Constraint {
+            key: key(id.get()),
+            kind,
+            driven: c.dimension().is_some_and(|d| d.driven),
+        });
+        low.constraints.push(*id);
+    }
+    Ok(low)
+}
+
+impl Lowered {
+    fn point(&self, id: EntityId) -> Result<ls::PointId, DocError> {
+        self.point_index
+            .get(&id)
+            .copied()
+            .ok_or(DocError::UnknownEntity(id))
+    }
+
+    fn curve(&self, id: EntityId) -> Result<ls::CurveId, DocError> {
+        self.curve_index
+            .get(&id)
+            .copied()
+            .ok_or(DocError::UnknownEntity(id))
+    }
+
+    /// The solver's explicit constraint for a document constraint. The
+    /// document's generic `Equal` and `Distance` dispatch on entity kinds.
+    fn constraint_kind(
+        &self,
+        doc: &Document,
+        c: &Constraint,
+    ) -> Result<ls::ConstraintKind, DocError> {
+        use ls::ConstraintKind as K;
+        let kind_of = |id: EntityId| {
+            doc.entity(id)
+                .map(|e| e.geom.kind())
+                .ok_or(DocError::UnknownEntity(id))
+        };
+        let value = |c: &Constraint| c.dimension().map_or(0.0, |d| d.value);
+        Ok(match c {
+            Constraint::Coincident { a, b } => K::Coincident(self.point(*a)?, self.point(*b)?),
+            Constraint::PointOnCurve { point, curve } => {
+                K::PointOnCurve(self.point(*point)?, self.curve(*curve)?)
+            }
+            Constraint::Horizontal { line } => K::Horizontal(self.curve(*line)?),
+            Constraint::Vertical { line } => K::Vertical(self.curve(*line)?),
+            Constraint::Parallel { a, b } => K::Parallel(self.curve(*a)?, self.curve(*b)?),
+            Constraint::Perpendicular { a, b } => {
+                K::Perpendicular(self.curve(*a)?, self.curve(*b)?)
+            }
+            Constraint::Tangent { a, b } => K::Tangent(self.curve(*a)?, self.curve(*b)?),
+            Constraint::Collinear { a, b } => K::Collinear(self.curve(*a)?, self.curve(*b)?),
+            Constraint::Concentric { a, b } => K::Concentric(self.curve(*a)?, self.curve(*b)?),
+            Constraint::Equal { a, b } => {
+                if kind_of(*a)? == EntityKind::Line {
+                    K::EqualLength(self.curve(*a)?, self.curve(*b)?)
+                } else {
+                    K::EqualRadius(self.curve(*a)?, self.curve(*b)?)
+                }
+            }
+            Constraint::Symmetric { a, b, axis } => K::Symmetric {
+                p: self.point(*a)?,
+                q: self.point(*b)?,
+                about: self.curve(*axis)?,
+            },
+            Constraint::Midpoint { point, line } => K::Midpoint {
+                p: self.point(*point)?,
+                line: self.curve(*line)?,
+            },
+            // Document Fix means "stay where it is now".
+            Constraint::Fix { point } => K::Fix {
+                p: self.point(*point)?,
+                at: doc
+                    .point_pos(*point)
+                    .ok_or(DocError::UnknownEntity(*point))?,
+            },
+            Constraint::Distance { a, b, .. } => {
+                let d = value(c);
+                match (kind_of(*a)?, kind_of(*b)?) {
+                    (EntityKind::Point, EntityKind::Point) => K::Distance {
+                        p: self.point(*a)?,
+                        q: self.point(*b)?,
+                        d,
+                    },
+                    (EntityKind::Point, _) => K::PointLineDistance {
+                        p: self.point(*a)?,
+                        line: self.curve(*b)?,
+                        d,
+                    },
+                    (_, EntityKind::Point) => K::PointLineDistance {
+                        p: self.point(*b)?,
+                        line: self.curve(*a)?,
+                        d,
+                    },
+                    _ => K::LineLineDistance {
+                        l: self.curve(*a)?,
+                        m: self.curve(*b)?,
+                        d,
+                    },
+                }
+            }
+            Constraint::HorizontalDistance { a, b, .. } => K::HorizontalDistance {
+                p: self.point(*a)?,
+                q: self.point(*b)?,
+                d: value(c),
+            },
+            Constraint::VerticalDistance { a, b, .. } => K::VerticalDistance {
+                p: self.point(*a)?,
+                q: self.point(*b)?,
+                d: value(c),
+            },
+            Constraint::Angle { a, b, .. } => K::Angle {
+                l: self.curve(*a)?,
+                m: self.curve(*b)?,
+                rad: value(c),
+            },
+            Constraint::Radius { curve, .. } => K::Radius {
+                c: self.curve(*curve)?,
+                r: value(c),
+            },
+            Constraint::Diameter { curve, .. } => K::Diameter {
+                c: self.curve(*curve)?,
+                d: value(c),
+            },
+        })
+    }
+}
+
+/// Solve the document and return the result in document terms.
+fn solve(solver: &mut ls::LmSolver, doc: &Document) -> Result<Solution, DocError> {
+    let mut low = lower(doc)?;
+    let report = solver.solve(&mut low.sketch).map_err(solver_err)?;
+    if !report.converged {
+        return Err(DocError::Unsolvable {
+            unsatisfied: report
+                .unsatisfied
+                .iter()
+                .map(|k| ConstraintId::new(k.0))
+                .collect(),
+        });
+    }
+    let points = low
+        .points
+        .iter()
+        .zip(&low.sketch.points)
+        .map(|(id, p)| (*id, p.at))
+        .collect();
+    let radii = low
+        .curves
+        .iter()
+        .zip(&low.sketch.curves)
+        .filter_map(|(id, c)| match c.kind {
+            ls::CurveKind::Circle { r, .. } => Some((*id, r)),
+            _ => None,
+        })
+        .collect();
+    let driven = report
+        .driven
+        .iter()
+        .map(|(k, v)| (ConstraintId::new(k.0), *v))
+        .collect();
+    Ok(Solution {
+        points,
+        radii,
+        driven,
+    })
+}
+
+fn analyse(solver: &mut ls::LmSolver, doc: &Document) -> SolveState {
+    let Ok(low) = lower(doc) else {
+        return SolveState::unknown();
+    };
+    let Ok(a) = solver.analyse(&low.sketch) else {
+        return SolveState::unknown();
+    };
+    let fully_constrained = low
+        .points
+        .iter()
+        .zip(&a.points)
+        .chain(low.curves.iter().zip(&a.curves))
+        .filter(|(_, f)| f.is_fixed())
+        .map(|(id, _)| *id)
+        .collect();
+    let group = |s: &ls::ConstraintSet| ConstraintGroup {
+        constraints: s
+            .constraints
+            .iter()
+            .map(|k| ConstraintId::new(k.0))
+            .collect(),
+        entities: entities(s),
+    };
+    SolveState {
+        converged: a.converged,
+        dof: a.dof,
+        status: a.status,
+        fully_constrained,
+        redundant: a.redundant.iter().map(group).collect(),
+        conflicts: a.conflicts.iter().map(group).collect(),
+    }
+}
+
+/// The existing constraints of a pre-check set (the probe itself excluded).
+fn existing(set: &ls::ConstraintSet) -> Vec<ConstraintId> {
+    set.constraints
+        .iter()
+        .filter(|k| **k != set.constraint)
+        .map(|k| ConstraintId::new(k.0))
+        .collect()
+}
+
+fn entities(set: &ls::ConstraintSet) -> Vec<EntityId> {
+    set.points
+        .iter()
+        .chain(&set.curves)
+        .map(|k| EntityId::new(k.0))
+        .collect()
+}
