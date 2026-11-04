@@ -10,3 +10,11 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+locus-geom.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ron.workspace = true

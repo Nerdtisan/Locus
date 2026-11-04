@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+//! Sketch entities (SPEC §4, Entities v1).
+//!
+//! Points are entities in their own right; lines, circles and arcs reference
+//! them by `EntityId`, so coincidence of endpoints is shared identity and the
+//! solver sees one variable pair per point. Solved positions are stored here
+//! (SPEC §10).
+
+use crate::ids::{EntityId, LayerId};
+use locus_geom::Vec2;
+use serde::{Deserialize, Serialize};
+
+/// Which kind of geometry an entity is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EntityKind {
+    Point,
+    Line,
+    Circle,
+    Arc,
+}
+
+/// Geometry of one entity. References are always to `Point` entities.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Geom {
+    Point {
+        pos: Vec2,
+    },
+    Line {
+        start: EntityId,
+        end: EntityId,
+    },
+    Circle {
+        center: EntityId,
+        radius: f64,
+    },
+    /// Counter-clockwise from `start` to `end` about `center`.
+    Arc {
+        center: EntityId,
+        start: EntityId,
+        end: EntityId,
+    },
+}
+
+impl Geom {
+    #[must_use]
+    pub fn kind(&self) -> EntityKind {
+        match self {
+            Geom::Point { .. } => EntityKind::Point,
+            Geom::Line { .. } => EntityKind::Line,
+            Geom::Circle { .. } => EntityKind::Circle,
+            Geom::Arc { .. } => EntityKind::Arc,
+        }
+    }
+
+    /// The point entities this geometry is built from, in a fixed order.
+    #[must_use]
+    pub fn point_refs(&self) -> Vec<EntityId> {
+        match self {
+            Geom::Point { .. } => Vec::new(),
+            Geom::Line { start, end } => vec![*start, *end],
+            Geom::Circle { center, .. } => vec![*center],
+            Geom::Arc { center, start, end } => vec![*center, *start, *end],
+        }
+    }
+}
+
+/// An entity: geometry plus the per-entity flags every entity carries (SPEC §4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Entity {
+    pub layer: LayerId,
+    /// Never exported, drawn dashed; independent of the layer.
+    pub construction: bool,
+    pub geom: Geom,
+}
