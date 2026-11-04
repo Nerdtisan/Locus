@@ -5,9 +5,11 @@
 
 mod app;
 mod canvas;
+mod demo;
 mod fonts;
 mod grid;
-mod math;
+mod render;
+mod scene;
 mod settings;
 mod view;
 
@@ -22,7 +24,14 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "locus",
         options,
-        Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
+        Box::new(|cc| {
+            let mut app = app::App::new(cc);
+            // Dev aid: `locus --stress` opens the 5 000-curve sample.
+            if std::env::args().any(|a| a == "--stress") {
+                app.load_stress();
+            }
+            Ok(Box::new(app))
+        }),
     )
 }
 

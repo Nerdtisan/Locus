@@ -6,7 +6,7 @@
 //! at the very end, relative to the canvas centre, so a 0.001 mm view of a
 //! point 2 m from the origin stays exact.
 
-use crate::math::V2;
+use locus_geom::Vec2;
 
 /// Smallest and largest visible extent across the canvas's shorter side
 /// (issue #44: 0.001 mm to 2 m).
@@ -16,7 +16,7 @@ pub const MAX_EXTENT_MM: f64 = 2000.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
     /// World point shown at the centre of the canvas.
-    pub center: V2,
+    pub center: Vec2,
     /// Zoom: screen points per millimetre.
     pub pt_per_mm: f64,
 }
@@ -24,7 +24,7 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         Self {
-            center: V2::new(150.0, 100.0),
+            center: Vec2::new(150.0, 100.0),
             pt_per_mm: 2.0,
         }
     }
@@ -32,22 +32,22 @@ impl Default for View {
 
 impl View {
     /// World → screen, as an offset in points from the canvas centre.
-    pub fn to_screen_rel(self, p: V2) -> (f64, f64) {
-        let d = p.sub(self.center);
+    pub fn to_screen_rel(self, p: Vec2) -> (f64, f64) {
+        let d = p - self.center;
         (d.x * self.pt_per_mm, -d.y * self.pt_per_mm)
     }
 
-    pub fn to_screen(self, p: V2, rect: egui::Rect) -> egui::Pos2 {
+    pub fn to_screen(self, p: Vec2, rect: egui::Rect) -> egui::Pos2 {
         let (x, y) = self.to_screen_rel(p);
         let c = rect.center();
         egui::pos2((c.x as f64 + x) as f32, (c.y as f64 + y) as f32)
     }
 
-    pub fn to_world(self, s: egui::Pos2, rect: egui::Rect) -> V2 {
+    pub fn to_world(self, s: egui::Pos2, rect: egui::Rect) -> Vec2 {
         let c = rect.center();
         let dx = (s.x - c.x) as f64 / self.pt_per_mm;
         let dy = -(s.y - c.y) as f64 / self.pt_per_mm;
-        self.center.add(V2::new(dx, dy))
+        self.center + Vec2::new(dx, dy)
     }
 
     /// Zoom range allowed for a canvas of this size: the short side shows at
@@ -69,25 +69,25 @@ impl View {
         let (lo, hi) = Self::zoom_limits(rect);
         self.pt_per_mm = (self.pt_per_mm * factor).clamp(lo, hi);
         let after = self.to_world(anchor, rect);
-        self.center = self.center.add(before.sub(after));
+        self.center += before - after;
     }
 
     pub fn pan_points(&mut self, delta: egui::Vec2) {
-        self.center = self.center.add(V2::new(
+        self.center += Vec2::new(
             -delta.x as f64 / self.pt_per_mm,
             delta.y as f64 / self.pt_per_mm,
-        ));
+        );
     }
 
     /// Fit a world bounding box into the canvas with a small margin.
-    pub fn fit(&mut self, min: V2, max: V2, rect: egui::Rect) {
-        let size = max.sub(min);
+    pub fn fit(&mut self, min: Vec2, max: Vec2, rect: egui::Rect) {
+        let size = max - min;
         let w = size.x.max(MIN_EXTENT_MM);
         let h = size.y.max(MIN_EXTENT_MM);
         let k = (rect.width() as f64 / w).min(rect.height() as f64 / h) * 0.9;
         let (lo, hi) = Self::zoom_limits(rect);
         self.pt_per_mm = k.clamp(lo, hi);
-        self.center = min.add(size.scale(0.5));
+        self.center = min + size * 0.5;
     }
 }
 
@@ -107,7 +107,7 @@ mod tests {
         let w0 = v.to_world(anchor, r);
         v.zoom_about(anchor, 37.0, r);
         let w1 = v.to_world(anchor, r);
-        assert!(w0.sub(w1).len() < 1e-9);
+        assert!((w0 - w1).length() < 1e-9);
     }
 
     #[test]
@@ -125,24 +125,24 @@ mod tests {
     fn deep_zoom_far_from_origin_round_trips() {
         let r = rect();
         let mut v = View {
-            center: V2::new(1_999.123_456, -1500.0),
+            center: Vec2::new(1_999.123_456, -1500.0),
             pt_per_mm: 1.0,
         };
         v.zoom_about(r.center(), 1e9, r);
-        let p = V2::new(1_999.123_456 + 0.000_1, -1500.0);
+        let p = Vec2::new(1_999.123_456 + 0.000_1, -1500.0);
         let s = v.to_screen(p, r);
         let back = v.to_world(s, r);
         // One screen point at this zoom is 1/600 µm; allow a tenth of that.
-        assert!(back.sub(p).len() < 0.1 / v.pt_per_mm);
+        assert!((back - p).length() < 0.1 / v.pt_per_mm);
     }
 
     #[test]
     fn fit_centres_the_box() {
         let r = rect();
         let mut v = View::default();
-        v.fit(V2::new(0.0, 0.0), V2::new(100.0, 50.0), r);
-        assert!(v.center.dist(V2::new(50.0, 25.0)) < 1e-9);
-        let s = v.to_screen(V2::new(100.0, 50.0), r);
+        v.fit(Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0), r);
+        assert!(v.center.distance(Vec2::new(50.0, 25.0)) < 1e-9);
+        let s = v.to_screen(Vec2::new(100.0, 50.0), r);
         assert!(r.contains(s));
     }
 }
