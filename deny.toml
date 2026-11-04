@@ -41,6 +41,14 @@ allow = [
     "AGPL-3.0-or-later",
 ]
 
+# egui's bundled UI fonts (Ubuntu-Light, Hack, Noto Emoji, emoji-icon-font).
+# Both licences allow embedding fonts in software; SPEC §9 allows OFL fonts.
+# Scoped to this one crate, so any other OFL/Ubuntu-font crate still fails.
+# Approved by the project owner, 2026-11-04 (#38).
+[[licenses.exceptions]]
+crate = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+
 [licenses.private]
 # Our own crates are checked too, so a wrong `license` field fails CI.
 ignore = false

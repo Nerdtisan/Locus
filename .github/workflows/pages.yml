@@ -1,0 +1,90 @@
+# .github/workflows/pages.yml
+#
+# Web build of locus-app (#38, SPEC §0 Web hosting; ADR 0001).
+#
+# Every PR and every push to `dev` builds the web app, so a change that breaks
+# wasm fails before merge. Only pushes to `main` (a promoted release) deploy it
+# to GitHub Pages at https://nerdtisan.github.io/Locus/ (owner decision,
+# 2026-11-04).
+#
+# The build runs in the same locus-dev container as ci.yml (as root, CI only;
+# see the notes there). trunk downloads the wasm-bindgen CLI matching
+# Cargo.lock and wasm-opt on first use.
+
+name: pages
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Web build (trunk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache the crate registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            .cargo-home/registry/index
+            .cargo-home/registry/cache
+            .cargo-home/git/db
+          key: cargo-web-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-web-${{ runner.os }}-
+
+      - name: Build dev container image
+        run: docker build -t locus-dev .devcontainer
+
+      - name: trunk build (release, size-optimised)
+        # --public-url: Pages serves the site under /Locus/.
+        run: >-
+          docker run --rm --user root
+          -e CARGO_HOME=/workspace/.cargo-home -e CARGO_INCREMENTAL=0
+          -v ${{ github.workspace }}:/workspace -w /workspace/crates/locus-app
+          locus-dev trunk build --release --cargo-profile wasm-release
+          --public-url /Locus/
+
+      - name: Report bundle size
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" crates/locus-app/dist .cargo-home
+          wasm=$(ls crates/locus-app/dist/*.wasm)
+          raw=$(stat -c %s "$wasm")
+          gz=$(gzip -9 -c "$wasm" | wc -c)
+          {
+            echo "### Web bundle"
+            echo "| File | Raw | gzip -9 |"
+            echo "|---|---|---|"
+            echo "| \`$(basename "$wasm")\` | $((raw / 1024)) KiB | $((gz / 1024)) KiB |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the site
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: crates/locus-app/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

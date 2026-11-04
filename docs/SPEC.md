@@ -19,7 +19,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Rust version | Always the latest stable Rust (1.99 today) and the newest edition (2024). `rust-version`, the dev container and the macOS CI job move together; no separate MSRV (decided 2026-11-04). |
 | Naming | App **Locus**: `locus-*` crates, GUI binary `locus`, headless CLI binary `locus-cli` (decided 2026-11-04, PR #78), `.locus` files, `.locusplugin` archives, WIT package `locus:plugin@1.0.0`. Replaces the earlier placeholder name. |
 | Licence | As §2 / §15.6: AGPL-3.0-or-later core, MIT OR Apache-2.0 `locus-plugin-api`, CLA, plugin exception, `cargo-deny`. MPL-2.0 dependencies allowed (decided 2026-11-04, PR #80). |
-| Web hosting | GitHub Pages; browser open/download plus OPFS/IndexedDB autosave. |
+| Web hosting | GitHub Pages (https://nerdtisan.github.io/Locus/), deployed only from `main`; PRs and `dev` build the web app without publishing (decided 2026-11-04, #38). Browser open/download plus OPFS/IndexedDB autosave. |
 | Packaging | Windows Inno Setup + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`. |
 | Input | Mouse + keyboard first; touch/pen is an M4 epic. |
 | Fonts | `skrifa` + `harfrust` instead of the unmaintained `ttf-parser` / `rustybuzz` (decided 2026-11-04). |

@@ -1,0 +1,7 @@
+# Web build of locus-app (#38). Run from crates/locus-app:
+#   trunk build --release --cargo-profile wasm-release
+# GitHub Pages serves the site under /Locus/; the Pages workflow passes
+# --public-url /Locus/ so asset paths resolve there.
+[build]
+target = "index.html"
+dist = "dist"
