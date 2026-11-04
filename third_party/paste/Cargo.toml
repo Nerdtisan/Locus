@@ -5,7 +5,8 @@
 # ezpz (ADR 0002). Owner decision, 2026-11-04.
 #
 # The version stays 1.0.x so dependents' `paste = "1"` requirements resolve to
-# this crate. Delete it once nothing in the graph depends on `paste`.
+# this crate. Delete it once nothing in the graph depends on `paste` (#99,
+# see README.md).
 [package]
 name = "paste"
 version = "1.0.15"

@@ -60,7 +60,7 @@ codegen-units = 1
 strip = true
 
 # `paste` is archived (RUSTSEC-2024-0436). Every crate that depends on it gets
-# our shim instead, which forwards to the maintained `pastey` fork. See
-# third_party/paste/Cargo.toml.
+# our SHIM instead (not a fork), which forwards to the maintained `pastey` fork.
+# See third_party/paste/README.md; removal is tracked in #99.
 [patch.crates-io]
 paste = { path = "third_party/paste" }
