@@ -20,6 +20,19 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 
+# GUI (ADR 0001): only locus-app may use these. Same feature set as Parchment:
+# wgpu backend only, bundled fonts, winit's Linux backends (no-ops elsewhere).
+eframe = { version = "0.35", default-features = false, features = [
+    "wgpu",
+    "default_fonts",
+    "x11",
+    "wayland",
+] }
+egui = "0.35"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
@@ -28,3 +41,11 @@ missing_debug_implementations = "warn"
 all = { level = "warn", priority = -1 }
 unwrap_used = "warn"
 expect_used = "warn"
+
+# The web build (#38): size over speed. `trunk build --release --cargo-profile wasm-release`.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
