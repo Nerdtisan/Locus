@@ -208,3 +208,12 @@ docker run --rm -e CARGO_HOME=/workspace/.cargo-home -v "${PWD}\..\..:/workspace
 # web: trunk serve --release --cargo-profile wasm-release --address 0.0.0.0 --port 8092
 #      (publish -p 8092:8092), then open http://localhost:8092/?bench (add &webgl for WebGL2)
 ```
+
+## Visual parity update (after #89)
+
+At the owner's request, three visual details now match spike B, so the two can be judged side by side:
+red X axis and green Y axis through the origin (same colours as spike B), coordinate labels on the
+major grid lines along the top and left edges (same font, colour and placement), and the line tool's
+start-point circle with a 2 pt preview line. Finished lines have no end markers in either spike. The
+numbers above were measured before this change; the labels add about 10–20 short text runs per frame,
+which is negligible next to 5 000 lines.
