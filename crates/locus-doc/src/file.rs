@@ -17,6 +17,7 @@ use crate::document::{Document, EntityStore, Layer, Parameter, View};
 use crate::entity::{Entity, Geom};
 use crate::error::DocError;
 use crate::ids::{ConstraintId, EntityId, LayerId, MAX_ID};
+use crate::operation::{CutParams, DrawParams, EngraveParams, Operation};
 use locus_geom::Unit;
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -58,9 +59,79 @@ struct Header {
     format_version: u32,
 }
 
+/// v1 operation: no parameters. Frozen.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+enum OperationV1 {
+    Cut,
+    Score,
+    Engrave,
+    Draw,
+}
+
+/// v1 layer. Frozen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct LayerV1 {
+    name: String,
+    colour: [u8; 3],
+    operation: OperationV1,
+    export_order: u32,
+    visible: bool,
+    locked: bool,
+    export_enabled: bool,
+}
+
+impl From<LayerV1> for Layer {
+    /// v1 → v2: layers get the default parameters of their operation (SPEC §7).
+    fn from(l: LayerV1) -> Self {
+        Layer {
+            name: l.name,
+            colour: l.colour,
+            operation: match l.operation {
+                OperationV1::Cut => Operation::Cut(CutParams::default()),
+                OperationV1::Score => Operation::Score,
+                OperationV1::Engrave => Operation::Engrave(EngraveParams::default()),
+                OperationV1::Draw => Operation::Draw(DrawParams::default()),
+            },
+            export_order: l.export_order,
+            visible: l.visible,
+            locked: l.locked,
+            export_enabled: l.export_enabled,
+        }
+    }
+}
+
 /// Version 1, frozen. See the module docs before touching this.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FileV1 {
+struct FileV1 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, LayerV1>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+impl From<FileV1> for FileV2 {
+    fn from(f: FileV1) -> Self {
+        FileV2 {
+            format_version: 2,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers.into_iter().map(|(i, l)| (i, l.into())).collect(),
+            entities: f.entities,
+            constraints: f.constraints,
+            view: f.view,
+        }
+    }
+}
+
+/// Version 2: layer operations carry parameters (SPEC §7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FileV2 {
     format_version: u32,
     units: Unit,
     next_id: u64,
@@ -73,7 +144,7 @@ pub(crate) struct FileV1 {
 }
 
 /// The newest on-disk shape. When adding v2, point this at `FileV2`.
-type Latest = FileV1;
+type Latest = FileV2;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -97,7 +168,7 @@ fn finite(v: f64, what: &str) -> Result<(), FileError> {
 /// serialisation fails.
 pub fn save(doc: &Document) -> Result<String, FileError> {
     check_finite(doc).map_err(|e| FileError::Unsaveable(e.to_string()))?;
-    let file = FileV1 {
+    let file = FileV2 {
         format_version: CURRENT_VERSION,
         units: doc.units,
         next_id: doc.next_id,
@@ -124,7 +195,8 @@ pub fn load(text: &str) -> Result<Document, FileError> {
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
     let latest = match header.format_version {
         0 => return Err(FileError::UnknownVersion(0)),
-        1 => parse::<FileV1>(text)?,
+        1 => parse::<FileV1>(text)?.into(),
+        2 => parse::<FileV2>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -218,6 +290,9 @@ pub(crate) fn validate(doc: &Document) -> Result<(), FileError> {
     }
     if doc.layers.is_empty() {
         return Err(FileError::Invalid("document has no layers".to_owned()));
+    }
+    for l in doc.layers.values() {
+        l.operation.validate()?;
     }
     for (_, e) in doc.entities.iter() {
         doc.check_entity(e)?;
@@ -382,20 +457,94 @@ mod tests {
         assert_eq!(odd.x.to_bits(), (0.1f64 + 0.2).to_bits());
     }
 
+    /// The v2 sample: `sample()` plus one layer per remaining operation, each
+    /// with non-default parameters.
+    pub(crate) fn sample_v2() -> Document {
+        use crate::operation::{Compensation, DragKnifeParams};
+        let mut doc = sample();
+        doc.layers.get_mut(&L).unwrap().operation = Operation::Cut(CutParams {
+            kerf_width: 0.15,
+            compensation: Compensation::Outside,
+            passes: 2,
+        });
+        let ops = [
+            Operation::Score,
+            Operation::Engrave(EngraveParams {
+                hatch_spacing: 0.25,
+                hatch_angle: 45.0,
+            }),
+            Operation::Draw(DrawParams {
+                pen_number: 3,
+                pen_width: 0.7,
+            }),
+            Operation::DragKnife(DragKnifeParams { blade_offset: 0.5 }),
+            Operation::Reference,
+        ];
+        for (n, operation) in ops.into_iter().enumerate() {
+            let id = LayerId::new(doc.alloc_id().unwrap());
+            doc.layers.insert(
+                id,
+                Layer {
+                    name: format!("{} layer", operation.kind().name()),
+                    colour: [10 * n as u8, 20, 30],
+                    operation,
+                    export_order: n as u32 + 1,
+                    visible: true,
+                    locked: false,
+                    export_enabled: true,
+                },
+            );
+        }
+        doc
+    }
+
     #[test]
-    fn v1_fixture_is_current_and_loads() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
+    fn every_operation_round_trips_byte_identically() {
+        let doc = sample_v2();
+        let a = save(&doc).unwrap();
+        let loaded = load(&a).unwrap();
+        assert_eq!(loaded, doc);
+        assert_eq!(save(&loaded).unwrap(), a);
+    }
+
+    #[test]
+    fn v2_fixture_is_current_and_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v2/plate.locus");
         if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample()).unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v2()).unwrap()).unwrap();
         }
         let text = std::fs::read_to_string(path).unwrap();
-        assert_eq!(load(&text).unwrap(), sample());
+        assert_eq!(load(&text).unwrap(), sample_v2());
         assert_eq!(
-            save(&sample()).unwrap(),
+            save(&sample_v2()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    /// The v1 fixture is frozen; it must keep loading, with default
+    /// parameters on its layers (SPEC §10 migration).
+    #[test]
+    fn v1_fixture_migrates_to_v2() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 1"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample());
+        assert_eq!(
+            doc.layer(L).unwrap().operation,
+            Operation::Cut(CutParams::default())
+        );
+        assert!(save(&doc).unwrap().contains("format_version: 2"));
+    }
+
+    #[test]
+    fn rejects_out_of_range_operation_params() {
+        let good = save(&sample()).unwrap();
+        let bad = good.replacen("passes: 1", "passes: 0", 1);
+        assert_ne!(bad, good);
+        assert!(matches!(load(&bad), Err(FileError::Invalid(_))));
     }
 
     #[test]
@@ -409,13 +558,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 1", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 2", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(2)),
+            load(&v(3)),
             Err(FileError::FutureVersion {
-                found: 2,
-                supported: 1
+                found: 3,
+                supported: 2
             })
         );
         // Dangling reference: a line pointing at a missing point.

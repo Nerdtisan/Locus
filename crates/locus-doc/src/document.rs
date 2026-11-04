@@ -10,20 +10,12 @@ use crate::constraint::Constraint;
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{ConstraintId, EntityId, LayerId, MAX_ID};
+use crate::operation::{CutParams, Operation};
 use locus_geom::{Arc, Circle, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// What a layer does on the machine (SPEC §7).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Operation {
-    Cut,
-    Score,
-    Engrave,
-    Draw,
-}
-
-/// A layer (SPEC §4). Operation parameters (SPEC §7) arrive with M2.
+/// A layer (SPEC §4). Its operation carries the SPEC §7 parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
     pub name: String,
@@ -122,7 +114,7 @@ impl Document {
         let layer = Layer {
             name: "Layer 1".to_owned(),
             colour: [0, 0, 0],
-            operation: Operation::Cut,
+            operation: Operation::Cut(CutParams::default()),
             export_order: 0,
             visible: true,
             locked: false,
