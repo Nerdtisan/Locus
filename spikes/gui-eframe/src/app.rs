@@ -416,13 +416,19 @@ impl State {
             }
         }
 
-        // Rubber band for the line tool.
-        if let (Some(a), Some(w)) = (self.pending, self.cursor_world) {
-            painter.line_segment(
-                [self.view.to_screen(a, rect), self.view.to_screen(w, rect)],
-                Stroke::new(1.0, ui.visuals().strong_text_color()),
-            );
+        // Rubber band for the line tool: a thicker preview line and a dot on the
+        // start point, as spike B draws it.
+        if let Some(a) = self.pending {
+            let rubber = ui.visuals().strong_text_color();
+            let sa = self.view.to_screen(a, rect);
+            if let Some(w) = self.cursor_world {
+                painter.line_segment([sa, self.view.to_screen(w, rect)], Stroke::new(2.0, rubber));
+            }
+            painter.circle_stroke(sa, 4.0, Stroke::new(2.0, rubber));
         }
+
+        // Coordinate labels on the major grid lines, over the geometry (as spike B).
+        grid::rulers(&painter, &self.view, rect);
 
         // HUD text: exercises small-text rendering over the canvas.
         let (step, _) = grid::minor_step(self.view.pt_per_mm);

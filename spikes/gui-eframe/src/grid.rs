@@ -26,7 +26,9 @@ pub fn draw(painter: &Painter, view: &View, rect: Rect, dark: bool) {
     let base = if dark { 255 } else { 0 };
     let minor_c = Color32::from_rgba_unmultiplied(base, base, base, (18.0 * fade) as u8);
     let major_c = Color32::from_rgba_unmultiplied(base, base, base, 40);
-    let axis_c = Color32::from_rgba_unmultiplied(base, base, base, 90);
+    // Same axis colours as spike B (Fusion-style): X axis red, Y axis green.
+    let x_axis_c = Color32::from_rgba_unmultiplied(217, 89, 89, 204);
+    let y_axis_c = Color32::from_rgba_unmultiplied(89, 191, 102, 204);
 
     // Index-based iteration (k * step) avoids drift from repeated addition.
     let lines = |from: f64, to: f64| {
@@ -37,7 +39,7 @@ pub fn draw(painter: &Painter, view: &View, rect: Rect, dark: bool) {
     for k in lines(lo.x, hi.x) {
         let x = k as f64 * step;
         let c = if k == 0 {
-            axis_c
+            y_axis_c
         } else if k % 10 == 0 {
             major_c
         } else if fade > 0.0 {
@@ -54,7 +56,7 @@ pub fn draw(painter: &Painter, view: &View, rect: Rect, dark: bool) {
     for k in lines(lo.y, hi.y) {
         let y = k as f64 * step;
         let c = if k == 0 {
-            axis_c
+            x_axis_c
         } else if k % 10 == 0 {
             major_c
         } else if fade > 0.0 {
@@ -66,6 +68,54 @@ pub fn draw(painter: &Painter, view: &View, rect: Rect, dark: bool) {
         painter.line_segment(
             [egui::pos2(rect.left(), sy), egui::pos2(rect.right(), sy)],
             Stroke::new(1.0, c),
+        );
+    }
+}
+
+/// Major-grid coordinate labels along the top and left edges, matching
+/// spike B's rulers (same font, colour and placement) so the two compare
+/// like for like.
+pub fn rulers(painter: &Painter, view: &View, rect: Rect) {
+    let (minor, _) = minor_step(view.pt_per_mm);
+    let step = minor * 10.0;
+    let lo = view.to_world(rect.left_bottom(), rect);
+    let hi = view.to_world(rect.right_top(), rect);
+    let font = egui::FontId::monospace(11.0);
+    let color = Color32::from_gray(150);
+    let decimals = (-step.log10().floor()).max(0.0) as usize;
+    let fmt = |v: f64| {
+        let s = format!("{v:.decimals$}");
+        // No "-0" or "-0.00".
+        if s.trim_start_matches('-')
+            .chars()
+            .all(|c| c == '0' || c == '.')
+        {
+            s.trim_start_matches('-').to_owned()
+        } else {
+            s
+        }
+    };
+    let range = |a: f64, b: f64| (a / step).ceil() as i64..=(b / step).floor() as i64;
+    for k in range(lo.x, hi.x) {
+        let x = k as f64 * step;
+        let sx = view.to_screen(V2::new(x, 0.0), rect).x;
+        painter.text(
+            egui::pos2(sx + 3.0, rect.top() + 2.0),
+            egui::Align2::LEFT_TOP,
+            fmt(x),
+            font.clone(),
+            color,
+        );
+    }
+    for k in range(lo.y, hi.y) {
+        let y = k as f64 * step;
+        let sy = view.to_screen(V2::new(0.0, y), rect).y;
+        painter.text(
+            egui::pos2(rect.left() + 3.0, sy - 2.0),
+            egui::Align2::LEFT_BOTTOM,
+            fmt(y),
+            font.clone(),
+            color,
         );
     }
 }
