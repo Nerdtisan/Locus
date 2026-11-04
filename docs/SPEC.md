@@ -14,7 +14,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 |---|---|
 | GUI | Spike both in M0: (A) `eframe` 0.35 + `egui_dock` + `wgpu` (as in Parchment), (B) Bevy 0.17 + `bevy_egui` + `egui_dock` (as in the author's simulator). Pick by ADR. |
 | Platforms | Windows, macOS, Linux and web. Web = full editor; plugins (`wasmtime`) and the MCP server are desktop-only at first; a browser plugin runtime is a later epic. |
-| Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. |
+| Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. Backend chosen 2026-11-04 by [ADR 0002](adr/0002-solver-backend.md): `ezpz` for solving, Locus's own Jacobian-rank analysis for DOF and redundancy. |
 | Toolchain | Both: Parchment-style Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`), plus a native macOS runner in CI. No host Rust toolchain. |
 | Naming | App **Locus**: `locus-*` crates, GUI binary `locus`, headless CLI binary `locus-cli` (decided 2026-11-04, PR #78), `.locus` files, `.locusplugin` archives, WIT package `locus:plugin@1.0.0`. Replaces the earlier placeholder name. |
 | Licence | As §2 / §15.6: AGPL-3.0-or-later core, MIT OR Apache-2.0 `locus-plugin-api`, CLA, plugin exception, `cargo-deny`. MPL-2.0 dependencies allowed (decided 2026-11-04, PR #80). |
@@ -104,6 +104,7 @@ crates/
   - Any other mature pure-Rust 2D GCS; adopt only if it handles the constraint set in §5 with acceptable robustness.
   - **Our own** solver in `locus-solver` (e.g. Newton / Levenberg–Marquardt over constraint residuals with graph decomposition), if neither of the above is good enough.
 - Solver requirements: incremental re-solve during drag (target < 16 ms for 500 entities), DOF count, identification of over-constrained / redundant / conflicting constraints.
+- **Chosen (M0, [ADR 0002](adr/0002-solver-backend.md)):** `ezpz` solves (sparse Levenberg–Marquardt); `locus-solver` adds its own Jacobian-rank DOF and redundancy analysis, which ezpz lacks. Measured with the harness in `spikes/solver/`, natively and in `wasm32`.
 
 ---
 
@@ -294,7 +295,7 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 
 1. **GUI framework** — **Spiking.** Two candidates, both on `wgpu` + `egui_dock`: (A) `eframe` 0.35, (B) Bevy 0.17 + `bevy_egui`. Criteria: precise custom 2D canvas rendering, native-feeling docked panels, cross-platform packaging, **web build quality** (now a required target), binary/wasm size. Closed by the GUI framework ADR.
 2. **Canvas renderer** — **Spiking** with item 1 (`wgpu` + `lyon`, `vello`, or framework-native). Closed by the GUI framework ADR or a separate canvas-renderer ADR.
-3. **Solver backend** — **Decided in part:** pure Rust only (§3). **Spiking** which one: SolidCraft extract, another Rust GCS, or our own. Closed by the solver ADR.
+3. **Solver backend** — **Decided** ([ADR 0002](adr/0002-solver-backend.md)): `ezpz` (pure Rust, MIT) solves, behind the `locus-solver` `Solver` trait; DOF and redundancy come from Locus's own Jacobian-rank analysis. SolidCraft stays a behaviour reference (§18), not a dependency.
 4. **Entity ID scheme** — **Decided:** document-scoped monotonic `u64`. [ADR-0003](adr/0003-entity-ids.md).
 5. **RON vs JSON** for the file format — **Decided:** RON. [ADR-0004](adr/0004-file-format.md).
 6. **App name** — **Decided:** Locus (§0).

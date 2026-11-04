@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- Runs the solver harness built for wasm32-unknown-unknown in the browser
+     (issue #41). See ../README.md for how to build and serve it. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solver spike (wasm)</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  pre { white-space: pre-wrap; font: 12px ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Solver spike: wasm32 run</h1>
+<p id="status">Loading…</p>
+<pre id="out"></pre>
+<script type="module">
+  const status = document.getElementById("status");
+  const out = document.getElementById("out");
+  const params = new URLSearchParams(location.search);
+  const wasmUrl = params.get("wasm") ?? "solver_spike.wasm";
+  const cells = Number(params.get("cells") ?? 72);
+  try {
+    const bytes = await (await fetch(wasmUrl)).arrayBuffer();
+    const module = await WebAssembly.compile(bytes);
+    // Stub any import other than the clock, so an unexpected one shows up by
+    // name instead of failing instantiation.
+    const imports = {};
+    const unexpected = [];
+    for (const imp of WebAssembly.Module.imports(module)) {
+      imports[imp.module] ??= {};
+      if (imp.module === "env" && imp.name === "now_ms") {
+        imports.env.now_ms = () => performance.now();
+      } else {
+        unexpected.push(`${imp.module}.${imp.name}`);
+        imports[imp.module][imp.name] = () => { throw new Error(`unexpected import ${imp.module}.${imp.name}`); };
+      }
+    }
+    const { exports } = await WebAssembly.instantiate(module, imports);
+    status.textContent = `Running ${wasmUrl} (${(bytes.byteLength / 1e6).toFixed(2)} MB) on ${cells} cells…`;
+    await new Promise((r) => setTimeout(r, 50));
+    const t0 = performance.now();
+    const len = exports.run_suite(cells);
+    const ms = performance.now() - t0;
+    const text = new TextDecoder().decode(new Uint8Array(exports.memory.buffer, exports.out_ptr(), len));
+    out.textContent = text;
+    status.textContent = `Done in ${(ms / 1e3).toFixed(1)} s. ${navigator.userAgent}. ` +
+      `crossOriginIsolated=${self.crossOriginIsolated}. Unexpected imports: ${unexpected.join(", ") || "none"}.`;
+    document.title = "done";
+  } catch (e) {
+    status.textContent = `Failed: ${e}`;
+    document.title = "failed";
+  }
+</script>
+</body>
+</html>
