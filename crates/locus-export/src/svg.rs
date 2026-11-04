@@ -7,58 +7,33 @@
 //! flipped about the top of the bounds when writing coordinates. Construction
 //! geometry, layers with export disabled and bare points are not written.
 
-use locus_doc::{Document, Geom, Layer, LayerId};
-use locus_geom::{Aabb, Vec2};
-use std::f64::consts::{PI, TAU};
+use crate::order::order;
+use crate::pipeline::{ExportModel, PathSeg, Shape, collect};
+use locus_doc::Document;
+use locus_geom::Vec2;
+use std::f64::consts::PI;
 use std::fmt::Write as _;
 
 /// Canvas size for a document with nothing to export (a zero-size SVG is invalid).
 const EMPTY_SIZE_MM: f64 = 1.0;
 
-enum Shape {
-    Line(Vec2, Vec2),
-    Circle(Vec2, f64),
-    Arc(Vec2, Vec2, Vec2),
-}
-
 /// Render the document's exportable geometry as SVG bytes (UTF-8).
 ///
+/// Convenience for `to_svg_model(&order(collect(doc)))`: no validation.
 /// Geometry that references a missing point is skipped rather than failing:
 /// an exporter must not panic on a document it did not validate (SPEC §8).
 #[must_use]
 pub fn to_svg(doc: &Document) -> Vec<u8> {
-    let mut bounds: Option<Aabb> = None;
-    let mut layers: Vec<(&Layer, LayerId, Vec<Shape>)> = doc
-        .layers()
-        .iter()
-        .filter(|(_, l)| l.export_enabled)
-        .map(|(id, l)| (l, *id, Vec::new()))
-        .collect();
-    layers.sort_by_key(|(l, id, _)| (l.export_order, id.get()));
+    let mut model = collect(doc);
+    order(&mut model);
+    to_svg_model(&model)
+}
 
-    for (eid, e) in doc.entities().iter() {
-        if e.construction {
-            continue;
-        }
-        let shape = match &e.geom {
-            Geom::Point { .. } => continue,
-            Geom::Line { .. } => doc.line(eid).map(|l| (Shape::Line(l.a, l.b), l.bbox())),
-            Geom::Circle { .. } => doc
-                .circle(eid)
-                .map(|c| (Shape::Circle(c.center, c.radius), c.bbox())),
-            Geom::Arc { .. } => doc
-                .arc(eid)
-                .map(|a| (Shape::Arc(a.center, a.start, a.end), a.bbox())),
-        };
-        let Some((shape, bb)) = shape else { continue };
-        let Some((_, _, shapes)) = layers.iter_mut().find(|(_, id, _)| *id == e.layer) else {
-            continue;
-        };
-        shapes.push(shape);
-        bounds = Some(bounds.map_or(bb, |b| b.union(bb)));
-    }
-
-    let (min, w, h) = match bounds {
+/// Write an already prepared model. Each chained path becomes one `<path>`
+/// (closed paths end in `Z`); circles stay `<circle>`.
+#[must_use]
+pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
+    let (min, w, h) = match model.bounds() {
         Some(b) => (b.min, b.width(), b.height()),
         None => (Vec2::ZERO, EMPTY_SIZE_MM, EMPTY_SIZE_MM),
     };
@@ -69,79 +44,96 @@ pub fn to_svg(doc: &Document) -> Vec<u8> {
     let map = |p: Vec2| Vec2::new(p.x - min.x, top - p.y);
 
     let mut out = String::new();
-    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+",
+    );
     let _ = writeln!(
         out,
         "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"{w}mm\" height=\"{h}mm\" viewBox=\"0 0 {w} {h}\">",
         w = num(w),
         h = num(h)
     );
-    for (layer, id, shapes) in &layers {
-        if shapes.is_empty() {
+    for layer in &model.layers {
+        if layer.paths.is_empty() {
             continue;
         }
         let _ = writeln!(
             out,
             "  <g id=\"layer-{id}\" data-name=\"{name}\" data-operation=\"{op:?}\" fill=\"none\" stroke=\"#{r:02x}{g:02x}{b:02x}\" stroke-width=\"0.1\">",
+            id = layer.id,
             name = escape(&layer.name),
             op = layer.operation,
             r = layer.colour[0],
             g = layer.colour[1],
             b = layer.colour[2],
         );
-        for s in shapes {
-            write_shape(&mut out, s, &map);
+        for p in &layer.paths {
+            if let [seg] = p.segs.as_slice()
+                && let Shape::Circle(c) = seg.shape
+            {
+                let c0 = map(c.center);
+                let _ = writeln!(
+                    out,
+                    "    <circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
+                    num(c0.x),
+                    num(c0.y),
+                    num(c.radius)
+                );
+                continue;
+            }
+            let start = map(p.start());
+            let mut d = format!("M {} {}", num(start.x), num(start.y));
+            for s in &p.segs {
+                write_seg(&mut d, s, &map);
+            }
+            if p.closed {
+                d.push_str(" Z");
+            }
+            let _ = writeln!(out, "    <path d=\"{d}\"/>");
         }
-        out.push_str("  </g>\n");
+        out.push_str(
+            "  </g>
+",
+        );
     }
-    out.push_str("</svg>\n");
+    out.push_str(
+        "</svg>
+",
+    );
     out.into_bytes()
 }
 
-fn write_shape(out: &mut String, s: &Shape, map: &impl Fn(Vec2) -> Vec2) {
-    match *s {
-        Shape::Line(a, b) => {
-            let (a, b) = (map(a), map(b));
-            let _ = writeln!(
-                out,
-                "    <line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>",
-                num(a.x),
-                num(a.y),
-                num(b.x),
-                num(b.y)
-            );
+fn write_seg(d: &mut String, s: &PathSeg, map: &impl Fn(Vec2) -> Vec2) {
+    let end = map(s.end());
+    match s.shape {
+        Shape::Line(_) => {
+            let _ = write!(d, " L {} {}", num(end.x), num(end.y));
         }
-        Shape::Circle(c, r) => {
-            let c = map(c);
-            let _ = writeln!(
-                out,
-                "    <circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
-                num(c.x),
-                num(c.y),
-                num(r)
-            );
-        }
-        Shape::Arc(c, s, e) => {
-            let r = s.distance(c);
-            // CCW sweep in the Y-up document. The end is projected onto the
-            // circle (SPEC §4: only its angle matters) so the SVG arc is exact.
-            let a0 = (s - c).angle();
-            let a1 = (e - c).angle();
-            let sweep = (a1 - a0).rem_euclid(TAU);
+        Shape::Arc(a) => {
+            let r = a.radius();
+            // CCW sweep in the Y-up document; the arc's own sweep, whichever way it is traversed.
+            let sweep = a.sweep();
             let large = u8::from(sweep > PI);
-            let end = c + Vec2::from_angle(a1) * r;
-            let (ms, me) = (map(s), map(end));
-            // The Y flip turns CCW into clockwise on screen: sweep-flag 0.
-            let _ = writeln!(
-                out,
-                "    <path d=\"M {} {} A {r} {r} 0 {large} 0 {} {}\"/>",
-                num(ms.x),
-                num(ms.y),
-                num(me.x),
-                num(me.y),
+            // The Y flip turns CCW into clockwise on screen (flag 0); a reversed
+            // traversal runs the other way (flag 1). The end is projected onto the
+            // circle (SPEC §4: only its angle matters) so the SVG arc is exact.
+            let flag = u8::from(s.reversed);
+            let on_circle = if s.reversed {
+                s.end()
+            } else {
+                a.center + Vec2::from_angle(a.end_angle()) * r
+            };
+            let end = if s.reversed { end } else { map(on_circle) };
+            let _ = write!(
+                d,
+                " A {r} {r} 0 {large} {flag} {} {}",
+                num(end.x),
+                num(end.y),
                 r = num(r),
             );
         }
+        Shape::Circle(_) => {}
     }
 }
 
