@@ -1483,6 +1483,10 @@ version = "0.0.0"
 [[package]]
 name = "locus-solver"
 version = "0.0.0"
+dependencies = [
+ "locus-geom",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "locus-text"
