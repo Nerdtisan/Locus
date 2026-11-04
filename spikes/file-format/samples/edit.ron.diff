@@ -1,0 +1,67 @@
+diff --git a/sample.ron b/sample-edited.ron
+index 8703929..9e292a0 100644
+--- a/sample.ron
++++ b/sample-edited.ron
+@@ -1,11 +1,11 @@
+ (
+   format_version: 1,
+   units: Mm,
+-  next_id: 20,
++  next_id: 22,
+   parameters: {
+     "width": (
+-      expr: "60 mm",
+-      value: 60.0,
++      expr: "65 mm",
++      value: 65.0,
+     ),
+   },
+   layers: {
+@@ -33,7 +33,7 @@
+       layer: 1,
+       construction: false,
+       geom: Point(
+-        x: 60.0,
++        x: 65.0,
+         y: 0.0,
+       ),
+     ),
+@@ -41,7 +41,7 @@
+       layer: 1,
+       construction: false,
+       geom: Point(
+-        x: 60.0,
++        x: 65.0,
+         y: 40.0,
+       ),
+     ),
+@@ -109,6 +109,14 @@
+         y: 13.333333333333334,
+       ),
+     ),
++    20: (
++      layer: 2,
++      construction: true,
++      geom: Point(
++        x: 32.5,
++        y: 20.0,
++      ),
++    ),
+   },
+   constraints: {
+     14: Horizontal(7),
+@@ -120,12 +128,13 @@
+       b: 4,
+       value: Expr(
+         expr: "width",
+-        value: 60.0,
++        value: 65.0,
+       ),
+     ),
+     19: Radius(
+       circle: 12,
+       value: Value(5.0),
+     ),
++    21: Coincident(20, 11),
+   },
+ )

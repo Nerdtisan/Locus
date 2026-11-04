@@ -1,0 +1,131 @@
+(
+  format_version: 1,
+  units: Mm,
+  next_id: 20,
+  parameters: {
+    "width": (
+      expr: "60 mm",
+      value: 60.0,
+    ),
+  },
+  layers: {
+    "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1": (
+      name: "Cut",
+      operation: Cut,
+      colour: (255, 0, 0),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f58422817b6": (
+      name: "Score",
+      operation: Score,
+      colour: (0, 0, 255),
+    ),
+  },
+  entities: {
+    "01a1a41b-9c52-76c4-8a07-2f597ad397b4": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Point(
+        x: 0.0,
+        y: 0.0,
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f5a510bcc43": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Point(
+        x: 60.0,
+        y: 0.0,
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f5bf60147d2": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Point(
+        x: 60.0,
+        y: 40.0,
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f5c2e1b7e9a": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Point(
+        x: 0.0,
+        y: 40.0,
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f5d79f42028": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Line(
+        start: "01a1a41b-9c52-76c4-8a07-2f597ad397b4",
+        end: "01a1a41b-9c52-76c4-8a07-2f5a510bcc43",
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f5e4664ec79": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Line(
+        start: "01a1a41b-9c52-76c4-8a07-2f5a510bcc43",
+        end: "01a1a41b-9c52-76c4-8a07-2f5bf60147d2",
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f5f156f506a": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Line(
+        start: "01a1a41b-9c52-76c4-8a07-2f5bf60147d2",
+        end: "01a1a41b-9c52-76c4-8a07-2f5c2e1b7e9a",
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f607fa194e0": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Line(
+        start: "01a1a41b-9c52-76c4-8a07-2f5c2e1b7e9a",
+        end: "01a1a41b-9c52-76c4-8a07-2f597ad397b4",
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f6195651368": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Point(
+        x: 30.0,
+        y: 20.0,
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f6254c192b1": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f57cae6ebc1",
+      construction: false,
+      geom: Circle(
+        centre: "01a1a41b-9c52-76c4-8a07-2f6195651368",
+        radius: 5.0,
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f63c4873978": (
+      layer: "01a1a41b-9c52-76c4-8a07-2f58422817b6",
+      construction: true,
+      geom: Point(
+        x: 0.30000000000000004,
+        y: 13.333333333333334,
+      ),
+    ),
+  },
+  constraints: {
+    "01a1a41b-9c52-76c4-8a07-2f6476d307d5": Horizontal("01a1a41b-9c52-76c4-8a07-2f5d79f42028"),
+    "01a1a41b-9c52-76c4-8a07-2f6570749a83": Vertical("01a1a41b-9c52-76c4-8a07-2f5e4664ec79"),
+    "01a1a41b-9c52-76c4-8a07-2f66778523ef": Horizontal("01a1a41b-9c52-76c4-8a07-2f5f156f506a"),
+    "01a1a41b-9c52-76c4-8a07-2f67c5c1efcc": Vertical("01a1a41b-9c52-76c4-8a07-2f607fa194e0"),
+    "01a1a41b-9c52-76c4-8a07-2f688aa01d86": Distance(
+      a: "01a1a41b-9c52-76c4-8a07-2f597ad397b4",
+      b: "01a1a41b-9c52-76c4-8a07-2f5a510bcc43",
+      value: Expr(
+        expr: "width",
+        value: 60.0,
+      ),
+    ),
+    "01a1a41b-9c52-76c4-8a07-2f69050b8257": Radius(
+      circle: "01a1a41b-9c52-76c4-8a07-2f6254c192b1",
+      value: Value(5.0),
+    ),
+  },
+)
