@@ -118,7 +118,7 @@ fn degenerate(layer: &ExportLayer, out: &mut Vec<Issue>) {
 }
 
 fn open_paths(layer: &ExportLayer, out: &mut Vec<Issue>) {
-    if layer.operation != Operation::Cut {
+    if !matches!(layer.operation, Operation::Cut(_)) {
         return;
     }
     for p in layer.paths.iter().filter(|p| !p.closed) {
@@ -203,6 +203,7 @@ fn self_intersections(layer: &ExportLayer, out: &mut Vec<Issue>) {
 mod tests {
     use super::*;
     use crate::pipeline::testutil::*;
+    use locus_doc::OperationKind;
 
     fn model(op: Operation, segs: Vec<PathSeg>) -> ExportModel {
         ExportModel {
@@ -212,7 +213,10 @@ mod tests {
 
     #[test]
     fn closed_rectangle_is_clean() {
-        let r = validate(&model(Operation::Cut, rect(1, 0.0, 0.0, 10.0, 10.0)));
+        let r = validate(&model(
+            OperationKind::Cut.default_operation(),
+            rect(1, 0.0, 0.0, 10.0, 10.0),
+        ));
         assert!(r.issues.is_empty(), "{:?}", r.issues);
     }
 
@@ -220,20 +224,24 @@ mod tests {
     fn open_path_is_an_error_on_cut_only() {
         let mut segs = rect(1, 0.0, 0.0, 10.0, 10.0);
         segs.pop();
-        let r = validate(&model(Operation::Cut, segs.clone()));
+        let r = validate(&model(OperationKind::Cut.default_operation(), segs.clone()));
         let issue = r.of_kind(IssueKind::OpenPath).next().unwrap();
         assert_eq!(issue.severity, Severity::Error);
         assert_eq!(issue.entities.len(), 3);
         assert!(r.has_errors());
         // An open path is normal for a Draw layer.
-        assert!(validate(&model(Operation::Draw, segs)).issues.is_empty());
+        assert!(
+            validate(&model(OperationKind::Draw.default_operation(), segs))
+                .issues
+                .is_empty()
+        );
     }
 
     #[test]
     fn duplicate_and_collinear_overlap_are_errors() {
         let mut segs = rect(1, 0.0, 0.0, 10.0, 10.0);
         segs.push(seg(9, (0.0, 0.0), (5.0, 0.0))); // lies on edge 1
-        let r = validate(&model(Operation::Cut, segs));
+        let r = validate(&model(OperationKind::Cut.default_operation(), segs));
         let d: Vec<_> = r.of_kind(IssueKind::DuplicateSegment).collect();
         assert_eq!(d.len(), 1);
         assert!(d[0].entities.contains(&EntityId::new(9)));
@@ -250,7 +258,7 @@ mod tests {
             seg(3, (10.0, 0.0), (0.0, 10.0)),
             seg(4, (0.0, 10.0), (0.0, 0.0)),
         ];
-        let r = validate(&model(Operation::Cut, segs));
+        let r = validate(&model(OperationKind::Cut.default_operation(), segs));
         let x: Vec<_> = r.of_kind(IssueKind::SelfIntersection).collect();
         assert_eq!(x.len(), 1);
         assert_eq!(x[0].severity, Severity::Warning);
@@ -259,7 +267,10 @@ mod tests {
 
     #[test]
     fn degenerate_is_reported() {
-        let mut m = model(Operation::Cut, rect(1, 0.0, 0.0, 10.0, 10.0));
+        let mut m = model(
+            OperationKind::Cut.default_operation(),
+            rect(1, 0.0, 0.0, 10.0, 10.0),
+        );
         m.layers[0].degenerate.push(EntityId::new(42));
         let r = validate(&m);
         let d = r.of_kind(IssueKind::Degenerate).next().unwrap();
