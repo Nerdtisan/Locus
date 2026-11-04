@@ -31,6 +31,9 @@ allow = [
     "BSL-1.0",
     "Unicode-3.0",
     "CC0-1.0",
+    # File-level copyleft, compatible with (A)GPLv3 (MPL-2.0 §3.3). Approved
+    # by the project owner, 2026-11-04 (PR #80).
+    "MPL-2.0",
     "LGPL-2.1-or-later",
     "LGPL-3.0-or-later",
     "GPL-3.0-only",
