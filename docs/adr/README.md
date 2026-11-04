@@ -14,5 +14,9 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | ADR | Title | Status | Spec |
 |---|---|---|---|
 | [0000](0000-template.md) | Template | — | — |
+| [0003](0003-entity-ids.md) | Entity ID scheme — document-scoped monotonic `u64` | Accepted | §4, §12.4 |
+| [0004](0004-file-format.md) | Native `.locus` format — RON | Accepted | §10, §12.5 |
+| [0005](0005-mcp-sdk.md) | MCP SDK — `rmcp` 3.8, MCP revision 2026-07-28 | Accepted | §16.2, §12.8 |
+| [0006](0006-plugin-licence-exception.md) | Plugin licence exception — draft wording (legal review pending) | Accepted (draft) | §15.6, §12.7 |
 
-Planned in M0 (spec §12): GUI framework (eframe vs Bevy), canvas renderer, solver backend (pure Rust), entity ID scheme, RON vs JSON, plugin licence exception wording, MCP SDK and spec revision.
+Still planned in M0 (spec §12): GUI framework (eframe vs Bevy) and canvas renderer (ADR 0001), solver backend (ADR 0002).
