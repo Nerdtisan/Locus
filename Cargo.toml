@@ -19,6 +19,8 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
+ron = "0.12"
+locus-geom = { path = "crates/locus-geom" }
 
 # GUI (ADR 0001): only locus-app may use these. Same feature set as Parchment:
 # wgpu backend only, bundled fonts, winit's Linux backends (no-ops elsewhere).
