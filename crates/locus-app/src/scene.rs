@@ -77,6 +77,7 @@ pub enum DimKind {
 pub enum Annot {
     /// Constraint glyph badge. `slot` spaces several glyphs on one anchor.
     Glyph {
+        id: ConstraintId,
         at: Vec2,
         slot: u8,
         label: &'static str,
@@ -184,6 +185,7 @@ impl Scene {
                 {
                     let slot = slots.entry(first).or_insert(0);
                     annots.push(Annot::Glyph {
+                        id: cid,
                         at,
                         slot: *slot,
                         label,

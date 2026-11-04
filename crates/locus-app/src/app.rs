@@ -374,10 +374,7 @@ impl TabViewer for Viewer<'_> {
         match tab {
             Tab::Canvas => self.canvas.ui(ui, self.settings, self.status),
             Tab::Properties => self.canvas.properties_ui(ui, self.settings),
-            Tab::Constraints => {
-                ui.weak("No constraints yet.");
-                ui.weak("The constraint list arrives with the solver (M1).");
-            }
+            Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
         }
     }
 

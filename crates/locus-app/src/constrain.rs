@@ -268,6 +268,59 @@ pub fn plan(kind: Kind, doc: &Document, sel: &[EntityId]) -> Result<Command, Str
     Ok(commands(kind, cs))
 }
 
+/// The same dimension as a driven (reference) one: measured, not enforced
+/// (SPEC §5). `None` for a constraint that has no value.
+pub fn as_driven(c: &Constraint) -> Option<Constraint> {
+    let mut c = c.clone();
+    let dim = match &mut c {
+        Constraint::Distance { dim, .. }
+        | Constraint::HorizontalDistance { dim, .. }
+        | Constraint::VerticalDistance { dim, .. }
+        | Constraint::Angle { dim, .. }
+        | Constraint::Radius { dim, .. }
+        | Constraint::Diameter { dim, .. } => dim,
+        _ => return None,
+    };
+    dim.driven = true;
+    Some(c)
+}
+
+/// "Line 6", "Point 2": how the constraint list names an entity.
+pub fn entity_name(doc: &Document, id: EntityId) -> String {
+    let kind = match doc.entity(id).map(|e| e.geom.kind()) {
+        Some(EntityKind::Point) => "Point",
+        Some(EntityKind::Line) => "Line",
+        Some(EntityKind::Circle) => "Circle",
+        Some(EntityKind::Arc) => "Arc",
+        None => "Missing",
+    };
+    format!("{kind} {id}")
+}
+
+/// One row of the constraints panel: the constraint, its value if it has
+/// one, and what it ties together.
+pub fn describe(doc: &Document, c: &Constraint, units: crate::settings::Units) -> String {
+    let refs = c
+        .references()
+        .into_iter()
+        .map(|r| entity_name(doc, r))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let value = c.dimension().map(|d| {
+        let v = if matches!(c, Constraint::Angle { .. }) {
+            format!("{:.2}°", d.value.to_degrees())
+        } else {
+            units.format_len(d.value)
+        };
+        if d.driven {
+            format!(" ({v})")
+        } else {
+            format!(" {v}")
+        }
+    });
+    format!("{}{}: {refs}", c.name(), value.unwrap_or_default())
+}
+
 /// What a dimension measures, before its value is chosen.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DimSpec {
@@ -572,6 +625,46 @@ mod tests {
         let (spec, v) = infer_dimension(d, &[f.p[4], f.l[0]]).unwrap();
         assert!(matches!(spec, DimSpec::Distance(..)) && v > 0.0);
         assert!(infer_dimension(d, &[]).is_err());
+    }
+
+    #[test]
+    fn as_driven_keeps_the_value_and_only_dimensions_have_one() {
+        let d = Constraint::Radius {
+            curve: EntityId::new(5),
+            dim: Dimension::driving(3.0),
+        };
+        assert_eq!(
+            as_driven(&d),
+            Some(Constraint::Radius {
+                curve: EntityId::new(5),
+                dim: Dimension {
+                    value: 3.0,
+                    driven: true
+                }
+            })
+        );
+        assert_eq!(
+            as_driven(&Constraint::Fix {
+                point: EntityId::new(2)
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn rows_name_the_constraint_value_and_entities() {
+        let f = fix();
+        let c = Constraint::Distance {
+            a: f.p[0],
+            b: f.p[1],
+            dim: Dimension::driving(12.5),
+        };
+        let row = describe(f.s.document(), &c, crate::settings::Units::Mm);
+        assert!(row.starts_with("distance 12.500 mm: Point "), "{row}");
+        let driven = as_driven(&c).unwrap();
+        assert!(
+            describe(f.s.document(), &driven, crate::settings::Units::Mm).contains("(12.500 mm)")
+        );
     }
 
     #[test]
