@@ -12,7 +12,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 
 | Topic | Decision |
 |---|---|
-| GUI | Spike both in M0: (A) `eframe` 0.35 + `egui_dock` + `wgpu` (as in Parchment), (B) Bevy 0.17 + `bevy_egui` + `egui_dock` (as in the author's simulator). Pick by ADR. |
+| GUI | **Decided** ([ADR 0001](adr/0001-gui-framework.md)): `eframe` 0.35 + `egui_dock` + `wgpu` (as in Parchment); canvas drawn with the egui painter first, the wgpu paint-callback renderer kept as the measured upgrade path. Bevy spiked and not chosen (decided 2026-11-04). |
 | Platforms | Windows, macOS, Linux and web. Web = full editor; plugins (`wasmtime`) and the MCP server are desktop-only at first; a browser plugin runtime is a later epic. |
 | Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. Backend chosen 2026-11-04 by [ADR 0002](adr/0002-solver-backend.md): `ezpz` for solving, Locus's own Jacobian-rank analysis for DOF and redundancy. |
 | Toolchain | Both: Parchment-style Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`), plus a native macOS runner in CI. No host Rust toolchain. |
@@ -295,8 +295,8 @@ Export is always one-way. Native file is the source of truth.
 
 Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR in `docs/adr/` containing measured results (see [`docs/adr/README.md`](adr/README.md)); ADR numbers are assigned when each ADR is written.
 
-1. **GUI framework** — **Spiking.** Two candidates, both on `wgpu` + `egui_dock`: (A) `eframe` 0.35, (B) Bevy 0.17 + `bevy_egui`. Criteria: precise custom 2D canvas rendering, native-feeling docked panels, cross-platform packaging, **web build quality** (now a required target), binary/wasm size. Closed by the GUI framework ADR.
-2. **Canvas renderer** — **Spiking** with item 1 (`wgpu` + `lyon`, `vello`, or framework-native). Closed by the GUI framework ADR or a separate canvas-renderer ADR.
+1. **GUI framework** — **Decided** ([ADR 0001](adr/0001-gui-framework.md)): `eframe` 0.35 + `egui_dock` + `wgpu`. Faster, ~⅓ the binary, ~½ the web download and build time of Bevy 0.17 + `bevy_egui`; owner's hand test agreed.
+2. **Canvas renderer** — **Decided** ([ADR 0001](adr/0001-gui-framework.md)): framework-native egui painter first (1.07 ms / 5 000 lines); a `wgpu` paint callback (0.38 ms) is the upgrade path; `lyon` reserved for fills/hatching.
 3. **Solver backend** — **Decided** ([ADR 0002](adr/0002-solver-backend.md)): `ezpz` (pure Rust, MIT) solves, behind the `locus-solver` `Solver` trait; DOF and redundancy come from Locus's own Jacobian-rank analysis. SolidCraft stays a behaviour reference (§18), not a dependency.
 4. **Entity ID scheme** — **Decided:** document-scoped monotonic `u64`. [ADR-0003](adr/0003-entity-ids.md).
 5. **RON vs JSON** for the file format — **Decided:** RON. [ADR-0004](adr/0004-file-format.md).
