@@ -37,7 +37,11 @@ fn drag_frames_stay_within_the_section_3_budget_at_500_entities() {
         }
         assert!(check::satisfied(&sk), "{}", d.name);
         println!("{}: worst frame {worst:.2} ms", d.name);
-        assert!(worst < FRAME_BUDGET_MS, "{}: worst frame {worst:.1} ms", d.name);
+        assert!(
+            worst < FRAME_BUDGET_MS,
+            "{}: worst frame {worst:.1} ms",
+            d.name
+        );
     }
 }
 
@@ -47,7 +51,10 @@ fn on_circle() -> (Sketch, PointId) {
     let c = sk.point(0.0, 0.0);
     let circle = sk.circle(c, 5.0);
     let p = sk.point(0.0, 5.0);
-    sk.constrain(ConstraintKind::Fix { p: c, at: Vec2::ZERO });
+    sk.constrain(ConstraintKind::Fix {
+        p: c,
+        at: Vec2::ZERO,
+    });
     sk.constrain(ConstraintKind::Radius { c: circle, r: 5.0 });
     sk.constrain(ConstraintKind::PointOnCurve(p, circle));
     (sk, p)
@@ -73,7 +80,9 @@ fn unreachable_target_pulls_the_point_as_near_as_it_can_go() {
 fn dragging_a_fixed_point_leaves_the_sketch_alone() {
     let f = fixtures::filleted_rect();
     let mut sk = f.exact.clone();
-    let rep = LmSolver::new().drag(&mut sk, PointId(0), Vec2::new(30.0, 30.0)).unwrap();
+    let rep = LmSolver::new()
+        .drag(&mut sk, PointId(0), Vec2::new(30.0, 30.0))
+        .unwrap();
     assert!(rep.converged && !rep.at_target, "{rep:?}");
     for (a, b) in sk.points.iter().zip(&f.exact.points) {
         assert!(a.at.distance(b.at) < 1e-6, "{a:?} moved from {b:?}");

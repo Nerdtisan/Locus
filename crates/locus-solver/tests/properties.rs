@@ -27,7 +27,12 @@ fn build(pts: &[(f64, f64)], r: f64, picks: &[(u8, u8, u8)]) -> Sketch {
     let ps: Vec<PointId> = pts.iter().map(|&(x, y)| sk.point(x, y)).collect();
     let mut lines: Vec<CurveId> = Vec::new();
     for w in ps.windows(2) {
-        if sk.point_at(w[0]).unwrap().distance(sk.point_at(w[1]).unwrap()) > 2.0 {
+        if sk
+            .point_at(w[0])
+            .unwrap()
+            .distance(sk.point_at(w[1]).unwrap())
+            > 2.0
+        {
             lines.push(sk.line(w[0], w[1]));
         }
     }
@@ -42,18 +47,36 @@ fn build(pts: &[(f64, f64)], r: f64, picks: &[(u8, u8, u8)]) -> Sketch {
         let mp = sk.point(m.x, m.y);
         sk.constrain(K::Midpoint { p: mp, line: l });
     }
-    sk.constrain(K::Fix { p: ps[1], at: sk.point_at(ps[1]).unwrap() });
+    sk.constrain(K::Fix {
+        p: ps[1],
+        at: sk.point_at(ps[1]).unwrap(),
+    });
     let np = sk.points.len();
     for &(kind, i, j) in picks {
         let p = PointId(u32::from(i) % np as u32);
         let q = PointId(u32::from(j) % np as u32);
         let (pa, qa) = (sk.point_at(p).unwrap(), sk.point_at(q).unwrap());
         let k = match kind % 6 {
-            0 if pa.distance(qa) > 1.0 => K::Distance { p, q, d: pa.distance(qa) },
-            1 if p != q => K::HorizontalDistance { p, q, d: qa.x - pa.x },
-            2 if p != q => K::VerticalDistance { p, q, d: qa.y - pa.y },
+            0 if pa.distance(qa) > 1.0 => K::Distance {
+                p,
+                q,
+                d: pa.distance(qa),
+            },
+            1 if p != q => K::HorizontalDistance {
+                p,
+                q,
+                d: qa.x - pa.x,
+            },
+            2 if p != q => K::VerticalDistance {
+                p,
+                q,
+                d: qa.y - pa.y,
+            },
             3 if lines.len() > 1 => {
-                let (l, m) = (lines[i as usize % lines.len()], lines[j as usize % lines.len()]);
+                let (l, m) = (
+                    lines[i as usize % lines.len()],
+                    lines[j as usize % lines.len()],
+                );
                 if l == m {
                     continue;
                 }
@@ -62,7 +85,11 @@ fn build(pts: &[(f64, f64)], r: f64, picks: &[(u8, u8, u8)]) -> Sketch {
                     sk.point_at(b).unwrap() - sk.point_at(a).unwrap()
                 };
                 let (u, v) = (dir(l), dir(m));
-                K::Angle { l, m, rad: u.cross(v).atan2(u.dot(v)) }
+                K::Angle {
+                    l,
+                    m,
+                    rad: u.cross(v).atan2(u.dot(v)),
+                }
             }
             4 if !lines.is_empty() => {
                 let l = lines[j as usize % lines.len()];
@@ -86,7 +113,7 @@ fn build(pts: &[(f64, f64)], r: f64, picks: &[(u8, u8, u8)]) -> Sketch {
 fn perturb(sk: &Sketch, noise: &[(f64, f64)]) -> Sketch {
     let mut s = sk.clone();
     for (p, (dx, dy)) in s.points.iter_mut().zip(noise.iter().cycle()).skip(2) {
-        p.at = p.at + Vec2::new(*dx, *dy);
+        p.at += Vec2::new(*dx, *dy);
     }
     s
 }

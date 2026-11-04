@@ -207,7 +207,14 @@ impl Solver for LmSolver {
         // so the drag factorisation is reused) and pulls the point as near as
         // the constraints allow; then a plain solve from there restores every
         // constraint exactly.
-        let sys = System::new(sk, Some(Eq::Hold { p, at: to, w: SOFT_HOLD }))?;
+        let sys = System::new(
+            sk,
+            Some(Eq::Hold {
+                p,
+                at: to,
+                w: SOFT_HOLD,
+            }),
+        )?;
         let mut x = sys.x0(sk);
         let c = Self::cached(&mut self.drag, sys);
         let soft = lm::solve(&c.sys, sk, &mut c.lin, &mut x, lm::DRAG_ITER);

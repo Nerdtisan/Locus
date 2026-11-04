@@ -60,7 +60,10 @@ fn main() {
         row(&format!("{n}: full solve, ms"), format!("{solve:.3}"));
         let t = Instant::now();
         let a = solver.analyse(&f.exact).unwrap();
-        row(&format!("{n}: analyse (DOF {} ✓ = {}), ms", f.expected_dof, a.dof), format!("{:.3}", ms(t)));
+        row(
+            &format!("{n}: analyse (DOF {} ✓ = {}), ms", f.expected_dof, a.dof),
+            format!("{:.3}", ms(t)),
+        );
         for d in &f.drags {
             let mut sk = f.exact.clone();
             let mut solver = LmSolver::new();
@@ -82,7 +85,10 @@ fn main() {
         let t = Instant::now();
         let a = solver.analyse(&c.start).unwrap();
         row(
-            &format!("{n}: conflict detected and named ({}), ms", a.conflicts.len()),
+            &format!(
+                "{n}: conflict detected and named ({}), ms",
+                a.conflicts.len()
+            ),
             format!("{:.3}", ms(t)),
         );
     }
