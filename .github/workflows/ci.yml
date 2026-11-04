@@ -1,0 +1,118 @@
+# .github/workflows/ci.yml
+#
+# The merge gate (CLAUDE.md, Definition of Done; SPEC §2, §3, §17).
+#
+# `gate` runs inside the same dev container used locally, so "passes in the
+# container" and "passes CI" mean the same thing (Parchment pattern). The image
+# is built fresh each run: no registry, no credentials.
+#
+# `--user root` is CI-only: the bind-mounted checkout belongs to the runner's
+# UID, not the image's `dev` user. The cache post-step can't read root-owned
+# files, hence the chown at the end.
+#
+# macOS can't be built in a Linux container (Apple SDK), so it gets a native job.
+# The web (trunk) build joins this file with #38, once the app has an index.html.
+
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  # Line tables keep backtraces readable at a fraction of full DWARF's size.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  gate:
+    name: Linux gate (dev container)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache the crate registry
+        # CARGO_HOME is inside the checkout (/workspace/.cargo-home), so a plain
+        # path cache reaches it. registry/src is regenerated for free; skip it.
+        uses: actions/cache@v6
+        with:
+          path: |
+            .cargo-home/registry/index
+            .cargo-home/registry/cache
+            .cargo-home/git/db
+            .cargo-home/advisory-dbs
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build dev container image
+        run: docker build -t locus-dev .devcontainer
+
+      - name: Define the container command
+        run: |
+          echo "D=docker run --rm --user root -e CARGO_HOME=/workspace/.cargo-home -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG -v ${{ github.workspace }}:/workspace -w /workspace locus-dev" >> "$GITHUB_ENV"
+
+      - name: cargo fmt --check
+        run: $D cargo fmt --all --check
+
+      - name: cargo clippy -D warnings
+        run: $D cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: $D cargo test --workspace
+
+      - name: cargo deny check (licences, advisories, bans, sources)
+        run: $D cargo deny check
+
+      - name: Core crates build for wasm32 (SPEC §3)
+        # A GUI, filesystem or thread dependency in a core crate breaks this.
+        run: >-
+          $D cargo check --target wasm32-unknown-unknown
+          -p locus-geom -p locus-solver -p locus-doc -p locus-region
+          -p locus-export -p locus-text -p locus-plugin-api
+
+      - name: Windows cross build
+        run: $D cargo build --release --target x86_64-pc-windows-gnu
+
+      - name: Reclaim cargo-home ownership
+        # Lets the cache post-step (running as the runner user) tar the registry.
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .cargo-home
+
+  macos:
+    name: macOS build + test (native)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the container's Rust toolchain
+        # Keep in step with RUST_VERSION in .devcontainer/Dockerfile.
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+
+      - name: cargo build
+        run: cargo build --workspace --all-targets
+
+      - name: cargo test
+        run: cargo test --workspace
+
+  msrv:
+    name: MSRV (rust-version in Cargo.toml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check with the declared minimum Rust
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          echo "MSRV: $msrv"
+          rustup toolchain install "$msrv" --profile minimal
+          cargo +"$msrv" check --workspace --all-targets
