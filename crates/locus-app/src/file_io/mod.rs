@@ -8,9 +8,14 @@
 //! contain file names or document contents, and nothing here logs either
 //! (CLAUDE.md, Secure Coding).
 
+#[cfg(target_arch = "wasm32")]
+mod web;
+
 use crate::canvas::Canvas;
 use locus_doc::Document;
-use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+use std::path::PathBuf;
 
 const RECENT_KEY: &str = "recent_files";
 const MAX_RECENT: usize = 10;
@@ -25,32 +30,51 @@ enum Action {
     Open(PathBuf),
     /// A built-in sample.
     Replace(Box<Document>),
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // web has no close request until #75
+    /// Close the window (desktop only; the browser tab has no close request).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Quit,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FileIo {
-    /// Where the open document was loaded from / last saved to.
+    /// Where the open document was loaded from / last saved to (desktop).
     path: Option<PathBuf>,
+    /// Display name of the open document (file name; no directory).
+    name: Option<String>,
+    /// The first frame adopts the canvas's starting document as the baseline.
+    started: bool,
     /// The document as last saved or loaded; the document is dirty when it differs.
     baseline: Document,
     recent: Vec<PathBuf>,
     error: Option<String>,
+    notice: Option<String>,
     pending: Option<Action>,
     allow_close: bool,
     last_title: String,
+    #[cfg(target_arch = "wasm32")]
+    web: web::Web,
 }
 
 impl FileIo {
-    pub fn new(storage: Option<&dyn eframe::Storage>) -> Self {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    pub fn new(ctx: &egui::Context, storage: Option<&dyn eframe::Storage>) -> Self {
         let recent = storage
             .and_then(|s| s.get_string(RECENT_KEY))
             .and_then(|j| serde_json::from_str::<Vec<PathBuf>>(&j).ok())
             .unwrap_or_default();
         Self {
+            path: None,
+            name: None,
+            started: false,
+            baseline: Document::new(),
             recent: recent.into_iter().take(MAX_RECENT).collect(),
-            ..Self::default()
+            error: None,
+            notice: None,
+            pending: None,
+            allow_close: false,
+            last_title: String::new(),
+            #[cfg(target_arch = "wasm32")]
+            web: web::Web::new(ctx),
         }
     }
 
@@ -72,6 +96,10 @@ impl FileIo {
     /// Per-frame work: shortcuts, the close guard, window title and dialogs.
     pub fn update(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
         use egui::{Key, KeyboardShortcut, Modifiers};
+        if !self.started {
+            self.started = true;
+            self.baseline = canvas.document().clone();
+        }
         // Shift+S is consumed first: egui lets Ctrl+S match Ctrl+Shift+S too.
         let (open, save_as, save) = ctx.input_mut(|i| {
             (
@@ -99,15 +127,15 @@ impl FileIo {
             self.pending = Some(Action::Quit);
         }
 
+        #[cfg(target_arch = "wasm32")]
+        self.web_update(ctx, canvas);
+
         self.sync_title(ctx, canvas);
         self.dialogs(ctx, canvas);
     }
 
     fn sync_title(&mut self, ctx: &egui::Context, canvas: &Canvas) {
-        let name = self.path.as_deref().and_then(Path::file_name).map_or_else(
-            || "Untitled".to_owned(),
-            |n| n.to_string_lossy().into_owned(),
-        );
+        let name = self.name.as_deref().unwrap_or("Untitled");
         let title = format!(
             "{}{name} — Locus",
             if self.dirty(canvas) { "● " } else { "" }
@@ -163,6 +191,15 @@ impl FileIo {
             self.export_svg(canvas);
             ui.close();
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            ui.separator();
+            ui.weak("Autosaved in this browser only").on_hover_text(
+                "Your sketch is autosaved to this browser's storage and restored on \
+                 reload. It isn't shared with other browsers or devices — use Save to \
+                 keep a copy.",
+            );
+        }
     }
 
     // ── Actions ──────────────────────────────────────────────────────────
@@ -177,13 +214,9 @@ impl FileIo {
 
     fn perform(&mut self, ctx: &egui::Context, canvas: &mut Canvas, action: Action) {
         match action {
-            Action::New => self.replace(canvas, Document::new(), None),
-            Action::Replace(doc) => self.replace(canvas, *doc, None),
-            Action::OpenDialog => {
-                if let Some(path) = pick_open() {
-                    self.open_path(canvas, path);
-                }
-            }
+            Action::New => self.replace(canvas, Document::new(), None, None),
+            Action::Replace(doc) => self.replace(canvas, *doc, None, None),
+            Action::OpenDialog => self.begin_open(canvas),
             #[cfg(not(target_arch = "wasm32"))]
             Action::Open(path) => self.open_path(canvas, path),
             Action::Quit => {
@@ -193,16 +226,37 @@ impl FileIo {
         }
     }
 
-    fn replace(&mut self, canvas: &mut Canvas, doc: Document, path: Option<PathBuf>) {
+    fn replace(
+        &mut self,
+        canvas: &mut Canvas,
+        doc: Document,
+        path: Option<PathBuf>,
+        name: Option<String>,
+    ) {
         canvas.load(doc);
         self.baseline = canvas.document().clone();
         self.path = path;
+        self.name = name;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn begin_open(&mut self, canvas: &mut Canvas) {
+        if let Some(path) = pick_open() {
+            self.open_path(canvas, path);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn begin_open(&mut self, _canvas: &mut Canvas) {
+        self.web.pick();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_path(&mut self, canvas: &mut Canvas, path: PathBuf) {
         match read_document(&path) {
             Ok(doc) => {
-                self.replace(canvas, doc, Some(path.clone()));
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                self.replace(canvas, doc, Some(path.clone()), name);
                 self.remember(path);
             }
             Err(msg) => {
@@ -212,16 +266,34 @@ impl FileIo {
         }
     }
 
+    /// Browser: save is a download (the browser decides where it goes).
+    #[cfg(target_arch = "wasm32")]
+    fn save(&mut self, canvas: &Canvas, _force_dialog: bool) -> bool {
+        let text = match locus_doc::file::save(canvas.document()) {
+            Ok(t) => t,
+            Err(e) => {
+                self.error = Some(format!("Could not save: {e}."));
+                return false;
+            }
+        };
+        let name = self
+            .name
+            .clone()
+            .unwrap_or_else(|| "untitled.locus".to_owned());
+        web::Web::download(&name, &text, "application/octet-stream");
+        self.name = Some(name);
+        self.baseline = canvas.document().clone();
+        true
+    }
+
     /// Save to the current path, or ask for one. Returns whether it saved.
+    #[cfg(not(target_arch = "wasm32"))]
     fn save(&mut self, canvas: &Canvas, force_dialog: bool) -> bool {
         let path = match (&self.path, force_dialog) {
             (Some(p), false) => p.clone(),
             _ => {
-                let name = self.path.as_deref().and_then(Path::file_name).map_or_else(
-                    || "untitled.locus".to_owned(),
-                    |n| n.to_string_lossy().into_owned(),
-                );
-                let Some(p) = pick_save(&name, "locus", "Locus document") else {
+                let name = self.name.as_deref().unwrap_or("untitled.locus");
+                let Some(p) = pick_save(name, "locus", "Locus document") else {
                     return false;
                 };
                 p
@@ -230,6 +302,7 @@ impl FileIo {
         match write_document(&path, canvas.document()) {
             Ok(()) => {
                 self.baseline = canvas.document().clone();
+                self.name = path.file_name().map(|n| n.to_string_lossy().into_owned());
                 self.path = Some(path.clone());
                 self.remember(path);
                 true
@@ -241,11 +314,20 @@ impl FileIo {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
     fn export_svg(&mut self, canvas: &Canvas) {
-        let stem = self.path.as_deref().and_then(Path::file_stem).map_or_else(
-            || "untitled".to_owned(),
-            |n| n.to_string_lossy().into_owned(),
+        let stem = self.name.as_deref().map_or("untitled", strip_ext);
+        let svg = locus_export::to_svg(canvas.document());
+        web::Web::download(
+            &format!("{stem}.svg"),
+            &String::from_utf8_lossy(&svg),
+            "image/svg+xml",
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn export_svg(&mut self, canvas: &Canvas) {
+        let stem = self.name.as_deref().map_or("untitled", strip_ext);
         let Some(path) = pick_save(&format!("{stem}.svg"), "svg", "SVG image") else {
             return;
         };
@@ -255,8 +337,45 @@ impl FileIo {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn remember(&mut self, path: PathBuf) {
         push_recent(&mut self.recent, path);
+    }
+
+    /// Browser: pick results, restore and debounced autosave.
+    #[cfg(target_arch = "wasm32")]
+    fn web_update(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+        let now = ctx.input(|i| i.time);
+        for msg in self.web.poll(now) {
+            match msg {
+                web::Msg::Picked(Ok(Some((name, text)))) => match locus_doc::file::load(&text) {
+                    Ok(doc) => self.replace(canvas, doc, None, Some(name)),
+                    Err(e) => self.error = Some(format!("Could not open the file: {e}.")),
+                },
+                web::Msg::Picked(Ok(None)) => {}
+                web::Msg::Picked(Err(msg)) => self.error = Some(msg),
+                web::Msg::Restore(text) => {
+                    // Only if the user has not started on something else yet.
+                    let untouched = !self.dirty(canvas) && self.name.is_none();
+                    match text.map(|t| locus_doc::file::load(&t)) {
+                        Some(Ok(doc)) if untouched => {
+                            canvas.load(doc);
+                            // Never downloaded: stays "unsaved" so the guard applies.
+                            self.baseline = Document::new();
+                            self.web.mark_saved(canvas.document());
+                            self.notice = Some(
+                                "Restored your autosaved sketch from this browser.".to_owned(),
+                            );
+                        }
+                        // Nothing usable stored, or the user got going first:
+                        // the next change replaces the stored copy.
+                        _ => self.web.mark_saved(&Document::new()),
+                    }
+                }
+                web::Msg::AutosaveDone(_) => {}
+            }
+        }
+        self.web.tick_autosave(now, canvas.document());
     }
 
     fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
@@ -288,6 +407,19 @@ impl FileIo {
                 self.perform(ctx, canvas, action);
             }
         }
+        if let Some(msg) = self.notice.clone() {
+            egui::Window::new("Restored")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(msg);
+                    ui.weak("Autosave is stored in this browser only.");
+                    if ui.button("OK").clicked() {
+                        self.notice = None;
+                    }
+                });
+        }
         if let Some(msg) = self.error.clone() {
             egui::Window::new("Error")
                 .collapsible(false)
@@ -307,7 +439,12 @@ fn open_shortcut() -> egui::KeyboardShortcut {
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O)
 }
 
+fn strip_ext(name: &str) -> &str {
+    name.rsplit_once('.').map_or(name, |(stem, _)| stem)
+}
+
 /// Most recent first, no duplicates, capped.
+#[cfg(not(target_arch = "wasm32"))]
 fn push_recent(list: &mut Vec<PathBuf>, path: PathBuf) {
     list.retain(|p| p != &path);
     list.insert(0, path);
@@ -337,16 +474,6 @@ fn pick_save(name: &str, ext: &str, filter: &str) -> Option<PathBuf> {
     })
 }
 
-#[cfg(target_arch = "wasm32")]
-fn pick_open() -> Option<PathBuf> {
-    None
-}
-
-#[cfg(target_arch = "wasm32")]
-fn pick_save(_name: &str, _ext: &str, _filter: &str) -> Option<PathBuf> {
-    None
-}
-
 /// Read and parse a `.locus` file. Messages are safe to show (no paths).
 #[cfg(not(target_arch = "wasm32"))]
 fn read_document(path: &Path) -> Result<Document, String> {
@@ -359,11 +486,7 @@ fn read_document(path: &Path) -> Result<Document, String> {
     locus_doc::file::load(&text).map_err(|e| format!("Could not open the file: {e}."))
 }
 
-#[cfg(target_arch = "wasm32")]
-fn read_document(_path: &Path) -> Result<Document, String> {
-    Err("Opening files from disk is not available in the browser.".to_owned())
-}
-
+#[cfg(not(target_arch = "wasm32"))]
 fn write_document(path: &Path, doc: &Document) -> Result<(), String> {
     let text = locus_doc::file::save(doc).map_err(|e| format!("Could not save: {e}."))?;
     write_atomic(path, text.as_bytes())
@@ -395,11 +518,6 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         return Err(io(e));
     }
     Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn write_atomic(_path: &Path, _bytes: &[u8]) -> Result<(), String> {
-    Err("Saving to disk is not available in the browser.".to_owned())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
