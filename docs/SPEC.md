@@ -17,7 +17,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. |
 | Toolchain | Both: Parchment-style Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`), plus a native macOS runner in CI. No host Rust toolchain. |
 | Naming | App **Locus**: `locus-*` crates, GUI binary `locus`, headless CLI binary `locus-cli` (decided 2026-11-04, PR #78), `.locus` files, `.locusplugin` archives, WIT package `locus:plugin@1.0.0`. Replaces the earlier placeholder name. |
-| Licence | As §2 / §15.6: AGPL-3.0-or-later core, MIT OR Apache-2.0 `locus-plugin-api`, CLA, plugin exception, `cargo-deny`. |
+| Licence | As §2 / §15.6: AGPL-3.0-or-later core, MIT OR Apache-2.0 `locus-plugin-api`, CLA, plugin exception, `cargo-deny`. MPL-2.0 dependencies allowed (decided 2026-11-04, PR #80). |
 | Web hosting | GitHub Pages; browser open/download plus OPFS/IndexedDB autosave. |
 | Packaging | Windows Inno Setup + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`. |
 | Input | Mouse + keyboard first; touch/pen is an M4 epic. |
@@ -55,7 +55,7 @@ It replaces the Inkscape/Affinity workflow where precision is achieved by eye an
 
 - **AGPL-3.0-or-later.**
 - **CLA required from the first external contribution** (preserves option for dual-licensing or a hosted/WASM offering later). Set up CLA bot before accepting PRs.
-- Dependency licence policy: MIT / Apache-2.0 / BSD / Zlib / LGPL / GPLv3+ allowed. Anything GPLv2-only or proprietary is **forbidden**. Enforce with `cargo-deny` in CI from day one.
+- Dependency licence policy: MIT / Apache-2.0 / BSD / Zlib / MPL-2.0 / LGPL / GPLv3+ allowed, plus permissive equivalents (ISC, BSL-1.0, Unicode-3.0, CC0-1.0, MIT-0, 0BSD); the exact list is `deny.toml`. Anything GPLv2-only or proprietary is **forbidden**. Enforce with `cargo-deny` in CI from day one.
 
 ---
 
