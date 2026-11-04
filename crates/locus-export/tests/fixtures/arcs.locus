@@ -1,0 +1,32 @@
+(
+  format_version: 1,
+  units: Mm,
+  next_id: 13,
+  parameters: {},
+  layers: {
+    1: (
+      name: "Cut & <score>",
+      colour: (255, 0, 0),
+      operation: Cut,
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    2: (layer: 1, construction: false, geom: Point(pos: (x: 0.0, y: 0.0))),
+    3: (layer: 1, construction: false, geom: Point(pos: (x: 10.0, y: 0.0))),
+    4: (layer: 1, construction: false, geom: Point(pos: (x: 0.0, y: 10.0))),
+    5: (layer: 1, construction: false, geom: Arc(center: 2, start: 3, end: 4)),
+    6: (layer: 1, construction: false, geom: Point(pos: (x: 30.0, y: 0.0))),
+    7: (layer: 1, construction: false, geom: Point(pos: (x: 40.0, y: 0.0))),
+    8: (layer: 1, construction: false, geom: Point(pos: (x: 30.0, y: -10.0))),
+    9: (layer: 1, construction: false, geom: Arc(center: 6, start: 7, end: 8)),
+    10: (layer: 1, construction: true, geom: Line(start: 2, end: 6)),
+    11: (layer: 1, construction: false, geom: Line(start: 3, end: 7)),
+    12: (layer: 1, construction: false, geom: Circle(center: 6, radius: 2.5)),
+  },
+  constraints: {},
+  view: None,
+)
