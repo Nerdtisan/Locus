@@ -39,6 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: SPDX licence headers (SPEC §2, §15.6)
+        # Plain bash + git, so it runs before the image build and fails fast.
+        run: bash scripts/check-spdx.sh
+
       - name: Cache the crate registry
         # CARGO_HOME is inside the checkout (/workspace/.cargo-home), so a plain
         # path cache reaches it. registry/src is regenerated for free; skip it.
