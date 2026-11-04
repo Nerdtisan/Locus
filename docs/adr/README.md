@@ -15,10 +15,11 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 |---|---|---|---|
 | [0000](0000-template.md) | Template | — | — |
 | [0001](0001-gui-framework.md) | GUI framework: eframe + egui_dock + wgpu; egui painter canvas | Accepted | §12.1, §12.2 |
-| [0002](0002-solver-backend.md) | Solver backend: ezpz, plus Locus's own DOF/redundancy analysis | Accepted | §3, §12.3 |
+| [0002](0002-solver-backend.md) | Solver backend: ezpz, plus Locus's own DOF/redundancy analysis | Superseded by 0007 | §3, §12.3 |
 | [0003](0003-entity-ids.md) | Entity ID scheme — document-scoped monotonic `u64` | Accepted | §4, §12.4 |
 | [0004](0004-file-format.md) | Native `.locus` format — RON | Accepted | §10, §12.5 |
 | [0005](0005-mcp-sdk.md) | MCP SDK — `rmcp` 3.8, MCP revision 2026-07-28 | Accepted | §16.2, §12.8 |
 | [0006](0006-plugin-licence-exception.md) | Plugin licence exception — draft wording (legal review pending) | Accepted (draft) | §15.6, §12.7 |
+| [0007](0007-solver-backend-without-paste.md) | Solver backend without `paste`: Locus-owned sparse LM + LDLᵀ | Accepted | §3, §12.3 |
 
 All §12 M0 decisions are recorded.
