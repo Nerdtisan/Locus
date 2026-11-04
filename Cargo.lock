@@ -1531,6 +1531,10 @@ dependencies = [
 [[package]]
 name = "locus-export"
 version = "0.0.0"
+dependencies = [
+ "locus-doc",
+ "locus-geom",
+]
 
 [[package]]
 name = "locus-geom"
