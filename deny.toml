@@ -1,0 +1,61 @@
+# deny.toml: dependency policy enforced by `cargo deny check` (SPEC §2).
+#
+# The core is AGPL-3.0-or-later, so every dependency must be compatible with
+# it. Never loosen this file just to make a check pass (CLAUDE.md, Off-Limits):
+# adding a licence to `allow` is a decision that belongs in the PR description.
+
+[graph]
+# Check what ships on every target, including web and Windows.
+all-features = true
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# The allow-list is policy, not a list of what's in use today; don't warn
+# about entries no current dependency needs.
+unused-allowed-license = "allow"
+# SPEC §2 allows MIT / Apache-2.0 / BSD / Zlib / LGPL / GPLv3+. ISC, BSL-1.0,
+# Unicode-3.0 and CC0-1.0 are permissive licences of the same family, common
+# in the Rust ecosystem (e.g. unicode-ident is Unicode-3.0).
+# GPL-2.0-only and anything proprietary or unlicensed are rejected by omission.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "AGPL-3.0-or-later",
+]
+
+[licenses.private]
+# Our own crates are checked too, so a wrong `license` field fails CI.
+ignore = false
+
+[advisories]
+version = 2
+# RustSec vulnerabilities and unsound crates fail the build (the v2 defaults).
+yanked = "deny"
+ignore = []
+
+[bans]
+# Duplicate major versions are common in GUI stacks; warn, don't fail.
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies inside the workspace are fine.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
