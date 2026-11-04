@@ -1,0 +1,174 @@
+  0
+SECTION
+  2
+HEADER
+  9
+$ACADVER
+  1
+AC1009
+  9
+$INSUNITS
+ 70
+4
+  9
+$MEASUREMENT
+ 70
+1
+  0
+ENDSEC
+  0
+SECTION
+  2
+TABLES
+  0
+TABLE
+  2
+LTYPE
+ 70
+1
+  0
+LTYPE
+  2
+CONTINUOUS
+ 70
+0
+  3
+Solid line
+ 72
+65
+ 73
+0
+ 40
+0
+  0
+ENDTAB
+  0
+TABLE
+  2
+LAYER
+ 70
+2
+  0
+LAYER
+  2
+Parts
+ 70
+0
+ 62
+1
+  6
+CONTINUOUS
+  0
+LAYER
+  2
+Marks
+ 70
+0
+ 62
+5
+  6
+CONTINUOUS
+  0
+ENDTAB
+  0
+ENDSEC
+  0
+SECTION
+  2
+ENTITIES
+  0
+CIRCLE
+  8
+Parts
+ 10
+20
+ 20
+15
+ 30
+0
+ 40
+5
+  0
+LINE
+  8
+Parts
+ 10
+40
+ 20
+0
+ 30
+0
+ 11
+40
+ 21
+30
+ 31
+0
+  0
+LINE
+  8
+Parts
+ 10
+40
+ 20
+30
+ 30
+0
+ 11
+0
+ 21
+30
+ 31
+0
+  0
+LINE
+  8
+Parts
+ 10
+0
+ 20
+30
+ 30
+0
+ 11
+0
+ 21
+0
+ 31
+0
+  0
+LINE
+  8
+Parts
+ 10
+0
+ 20
+0
+ 30
+0
+ 11
+40
+ 21
+0
+ 31
+0
+  0
+LINE
+  8
+Marks
+ 10
+40
+ 20
+35
+ 30
+0
+ 11
+0
+ 21
+35
+ 31
+0
+  0
+ENDSEC
+  0
+EOF
