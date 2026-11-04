@@ -14,5 +14,6 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | ADR | Title | Status | Spec |
 |---|---|---|---|
 | [0000](0000-template.md) | Template | — | — |
+| [0002](0002-solver-backend.md) | Solver backend: ezpz, plus Locus's own DOF/redundancy analysis | Accepted | §3, §12.3 |
 
 Planned in M0 (spec §12): GUI framework (eframe vs Bevy), canvas renderer, solver backend (pure Rust), entity ID scheme, RON vs JSON, plugin licence exception wording, MCP SDK and spec revision.
