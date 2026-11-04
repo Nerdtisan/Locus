@@ -20,4 +20,4 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | [0005](0005-mcp-sdk.md) | MCP SDK — `rmcp` 3.8, MCP revision 2026-07-28 | Accepted | §16.2, §12.8 |
 | [0006](0006-plugin-licence-exception.md) | Plugin licence exception — draft wording (legal review pending) | Accepted (draft) | §15.6, §12.7 |
 
-Still planned in M0 (spec §12): GUI framework (eframe vs Bevy) and canvas renderer (ADR 0001), solver backend (ADR 0002).
+Still planned in M0 (spec §12): GUI framework (eframe vs Bevy) and canvas renderer (ADR 0001).
