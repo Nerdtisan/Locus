@@ -207,6 +207,27 @@ impl Frame<'_> {
         self.polyline(pts, stroke, dashed);
     }
 
+    /// Rubber-band shapes of the active drawing tool (#68).
+    pub fn draw_preview(&self, shapes: &[Shape]) {
+        let stroke = Stroke::new(STROKE_W, self.pal.hover);
+        for shape in shapes {
+            match *shape {
+                Shape::Point(p) => {
+                    self.painter.circle_filled(self.s(p), 3.4, stroke.color);
+                }
+                Shape::Line(l) => self.polyline(vec![self.s(l.a), self.s(l.b)], stroke, true),
+                Shape::Circle(c) => self.circle(c, stroke, true),
+                Shape::Arc(a) => self.arc(a, stroke, true),
+            }
+        }
+    }
+
+    /// Ring marking the existing point a tool will snap to.
+    pub fn draw_snap(&self, p: Vec2) {
+        self.painter
+            .circle_stroke(self.s(p), 7.0, Stroke::new(1.6, self.pal.selected));
+    }
+
     // ── Annotations ──────────────────────────────────────────────────────
 
     pub fn draw_annotations(&self, scene: &Scene) {

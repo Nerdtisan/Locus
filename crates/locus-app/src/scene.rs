@@ -8,7 +8,7 @@
 
 use locus_doc::{Constraint, Document, EntityId, Geom};
 use locus_geom::{Aabb, Arc, Circle, Line, Vec2};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
@@ -35,8 +35,7 @@ pub struct Item {
     pub id: EntityId,
     pub shape: Shape,
     pub construction: bool,
-    /// Drawn in the fully-constrained colour. Stand-in until the solver
-    /// reports degrees of freedom (SPEC §5): see [`Scene::build`].
+    /// Drawn in the fully-constrained colour (SPEC §5): see [`Scene::build`].
     pub constrained: bool,
     /// A point that belongs to a line, circle or arc (an endpoint or centre).
     pub owned_point: bool,
@@ -125,26 +124,10 @@ impl Scene {
         }
     }
 
-    /// Build the scene. Hidden layers are skipped.
-    ///
-    /// "Fully constrained" is a placeholder until the solver reports DOF:
-    /// a point is constrained when fixed; a line when both ends are; a circle
-    /// when its centre is fixed and it has a radius/diameter dimension; an arc
-    /// when all three points are fixed.
-    pub fn build(doc: &Document) -> Self {
-        let mut fixed: HashSet<EntityId> = HashSet::new();
-        let mut sized: HashSet<EntityId> = HashSet::new();
-        for c in doc.constraints().values() {
-            match c {
-                Constraint::Fix { point } => {
-                    fixed.insert(*point);
-                }
-                Constraint::Radius { curve, .. } | Constraint::Diameter { curve, .. } => {
-                    sized.insert(*curve);
-                }
-                _ => {}
-            }
-        }
+    /// Build the scene. Hidden layers are skipped. `fully_constrained` is the
+    /// solver's set of entities that can no longer move (SPEC §5): they are
+    /// drawn in the fully-constrained colour.
+    pub fn build(doc: &Document, fully_constrained: &BTreeSet<EntityId>) -> Self {
         let owned: HashSet<EntityId> = doc
             .entities()
             .iter()
@@ -157,30 +140,22 @@ impl Scene {
             if doc.layer(e.layer).is_some_and(|l| !l.visible) {
                 continue;
             }
-            let (shape, constrained) = match e.geom {
-                Geom::Point { pos } => (Shape::Point(pos), fixed.contains(&id)),
-                Geom::Line { start, end } => match doc.line(id) {
-                    Some(l) => (
-                        Shape::Line(l),
-                        fixed.contains(&start) && fixed.contains(&end),
-                    ),
+            let shape = match e.geom {
+                Geom::Point { pos } => Shape::Point(pos),
+                Geom::Line { .. } => match doc.line(id) {
+                    Some(l) => Shape::Line(l),
                     None => continue,
                 },
-                Geom::Circle { center, .. } => match doc.circle(id) {
-                    Some(c) => (
-                        Shape::Circle(c),
-                        fixed.contains(&center) && sized.contains(&id),
-                    ),
+                Geom::Circle { .. } => match doc.circle(id) {
+                    Some(c) => Shape::Circle(c),
                     None => continue,
                 },
-                Geom::Arc { center, start, end } => match doc.arc(id) {
-                    Some(a) => (
-                        Shape::Arc(a),
-                        [center, start, end].iter().all(|p| fixed.contains(p)),
-                    ),
+                Geom::Arc { .. } => match doc.arc(id) {
+                    Some(a) => Shape::Arc(a),
                     None => continue,
                 },
             };
+            let constrained = fully_constrained.contains(&id);
             let bbox = shape.bbox();
             bounds = Some(bounds.map_or(bbox, |b| b.union(bbox)));
             items.push(Item {
@@ -256,10 +231,17 @@ mod tests {
     use super::*;
     use crate::demo;
 
+    fn solved(doc: &Document) -> BTreeSet<EntityId> {
+        locus_doc::Sketcher::new(doc.clone())
+            .state()
+            .fully_constrained
+            .clone()
+    }
+
     #[test]
     fn demo_scene_resolves_geometry_and_flags() {
         let doc = demo::sketch();
-        let scene = Scene::build(&doc);
+        let scene = Scene::build(&doc, &solved(&doc));
         assert_eq!(scene.items.len(), doc.entities().len());
         assert!(scene.items.iter().any(|i| i.construction));
         // The fixed-and-sized hole is the one constrained circle.
@@ -283,8 +265,15 @@ mod tests {
     }
 
     #[test]
+    fn demo_sketch_has_no_redundant_or_conflicting_constraints() {
+        let s = locus_doc::Sketcher::new(demo::sketch());
+        assert!(s.state().converged);
+        assert!(s.state().redundant.is_empty() && s.state().conflicts.is_empty());
+    }
+
+    #[test]
     fn owned_points_are_flagged_and_free_points_are_not() {
-        let scene = Scene::build(&demo::sketch());
+        let scene = Scene::build(&demo::sketch(), &BTreeSet::new());
         let free = scene
             .items
             .iter()
@@ -295,13 +284,13 @@ mod tests {
 
     #[test]
     fn empty_document_has_no_bounds() {
-        let scene = Scene::build(&Document::new());
+        let scene = Scene::build(&Document::new(), &BTreeSet::new());
         assert!(scene.items.is_empty() && scene.bounds.is_none());
     }
 
     #[test]
     fn stress_scene_has_thousands_of_curves() {
-        let scene = Scene::build(&demo::stress(500));
+        let scene = Scene::build(&demo::stress(500), &BTreeSet::new());
         let curves = scene
             .items
             .iter()
