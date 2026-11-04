@@ -200,7 +200,7 @@ impl ExportModel {
 
 /// Is this layer written at all? (SPEC §8: export-disabled layers are skipped.)
 fn layer_exported(layer: &locus_doc::Layer) -> bool {
-    layer.export_enabled
+    layer.export_enabled && layer.operation.is_exportable()
 }
 
 /// Collect exportable geometry per layer and chain it into paths.
@@ -363,12 +363,12 @@ pub(crate) mod testutil {
         }
     }
 
-    pub fn layer(op: Operation, segs: Vec<PathSeg>) -> ExportLayer {
+    pub fn layer(op: locus_doc::OperationKind, segs: Vec<PathSeg>) -> ExportLayer {
         ExportLayer {
             id: LayerId::new(1),
             name: "L".into(),
             colour: [0, 0, 0],
-            operation: op,
+            operation: op.default_operation(),
             paths: chain(segs),
             degenerate: Vec::new(),
         }

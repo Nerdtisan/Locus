@@ -163,7 +163,7 @@ fn contains(poly: &[Vec2], p: Vec2) -> bool {
 mod tests {
     use super::*;
     use crate::pipeline::testutil::*;
-    use locus_doc::Operation;
+    use locus_doc::OperationKind;
 
     fn first_x(p: &ExportPath) -> f64 {
         p.bbox().unwrap().min.x
@@ -176,7 +176,7 @@ mod tests {
         segs.extend(rect(5, 40.0, 40.0, 60.0, 60.0));
         segs.extend(rect(9, 200.0, 0.0, 220.0, 20.0));
         let mut m = ExportModel {
-            layers: vec![layer(Operation::Cut, segs)],
+            layers: vec![layer(OperationKind::Cut, segs)],
         };
         order(&mut m);
         let xs: Vec<f64> = m.layers[0].paths.iter().map(first_x).collect();
@@ -191,7 +191,7 @@ mod tests {
         segs.extend(rect(5, 10.0, 10.0, 90.0, 90.0));
         segs.extend(rect(9, 20.0, 20.0, 80.0, 80.0));
         let mut m = ExportModel {
-            layers: vec![layer(Operation::Cut, segs)],
+            layers: vec![layer(OperationKind::Cut, segs)],
         };
         order(&mut m);
         let xs: Vec<f64> = m.layers[0].paths.iter().map(first_x).collect();
@@ -206,7 +206,7 @@ mod tests {
             segs.extend(rect(1 + 4 * k as u64, *x, 0.0, x + 10.0, 10.0));
         }
         let mut m = ExportModel {
-            layers: vec![layer(Operation::Cut, segs)],
+            layers: vec![layer(OperationKind::Cut, segs)],
         };
         let before = travel_length(&m);
         order(&mut m);
@@ -221,7 +221,7 @@ mod tests {
             seg(2, (100.0, 0.0), (50.0, 0.0)),
         ];
         let mut m = ExportModel {
-            layers: vec![layer(Operation::Draw, segs)],
+            layers: vec![layer(OperationKind::Draw, segs)],
         };
         order(&mut m);
         let p = &m.layers[0].paths;

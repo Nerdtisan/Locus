@@ -102,14 +102,14 @@ mod tests {
     use super::*;
     use crate::pipeline::testutil::*;
     use crate::validate::{IssueKind, validate};
-    use locus_doc::Operation;
+    use locus_doc::OperationKind;
 
     #[test]
     fn duplicates_and_degenerates_are_fixed() {
         let mut segs = rect(1, 0.0, 0.0, 10.0, 10.0);
         segs.push(seg(9, (10.0, 0.0), (0.0, 0.0))); // exact reverse of edge 1
         segs.push(seg(10, (0.0, 0.0), (6.0, 0.0))); // inside edge 1
-        let mut l = layer(Operation::Cut, segs);
+        let mut l = layer(OperationKind::Cut, segs);
         l.degenerate.push(EntityId::new(77));
         let mut m = ExportModel { layers: vec![l] };
         assert!(validate(&m).has_errors());
@@ -133,7 +133,7 @@ mod tests {
             seg(2, (4.0, 0.0), (10.0, 0.0)),
         ];
         let mut m = ExportModel {
-            layers: vec![layer(Operation::Draw, segs)],
+            layers: vec![layer(OperationKind::Draw, segs)],
         };
         autofix(&mut m);
         let s = &m.layers[0].paths[0].segs;
