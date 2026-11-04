@@ -84,7 +84,7 @@ pub fn to_svg(doc: &Document) -> Vec<u8> {
             out,
             "  <g id=\"layer-{id}\" data-name=\"{name}\" data-operation=\"{op:?}\" fill=\"none\" stroke=\"#{r:02x}{g:02x}{b:02x}\" stroke-width=\"0.1\">",
             name = escape(&layer.name),
-            op = layer.operation,
+            op = layer.operation.kind(),
             r = layer.colour[0],
             g = layer.colour[1],
             b = layer.colour[2],
