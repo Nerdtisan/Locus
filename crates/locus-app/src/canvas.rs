@@ -63,6 +63,11 @@ impl Canvas {
         self.request_fit();
     }
 
+    /// The document as it stands (read-only; changes go through commands).
+    pub fn document(&self) -> &Document {
+        self.editor.document()
+    }
+
     /// Run a command and refresh the derived scene.
     #[allow(dead_code)] // first caller: tools and the properties panel (M1)
     pub fn apply(&mut self, cmd: &Command) -> Result<(), DocError> {

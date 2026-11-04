@@ -6,6 +6,7 @@
 mod app;
 mod canvas;
 mod demo;
+mod file_io;
 mod fonts;
 mod grid;
 mod hit;
