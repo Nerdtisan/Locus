@@ -84,7 +84,7 @@ impl App {
             settings,
             canvas: Canvas::default(),
             status: Status::default(),
-            files: FileIo::new(cc.storage),
+            files: FileIo::new(&cc.egui_ctx, cc.storage),
         }
     }
 
