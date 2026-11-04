@@ -27,4 +27,4 @@ pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
 pub use file::FileError;
 pub use ids::{ConstraintId, EntityId, LayerId};
-pub use solve::{ConstraintGroup, Sketcher, SolveState, Status};
+pub use solve::{ConstraintGroup, DragFrame, Sketcher, SolveState, Status};

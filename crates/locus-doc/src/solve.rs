@@ -23,6 +23,7 @@ use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{ConstraintId, EntityId};
+use locus_geom::Vec2;
 use locus_solver::{self as ls, Check, Solver as _};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -64,6 +65,27 @@ impl SolveState {
     }
 }
 
+/// What one drag frame achieved (#71).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DragFrame {
+    /// The dragged point reached the cursor. False when the constraints stop
+    /// it (a fully constrained point doesn't move, §5): it then sits as near
+    /// as they allow.
+    pub at_target: bool,
+    /// Every driving constraint held. When false the frame was **not**
+    /// applied and the geometry is as it was after the last good frame.
+    pub converged: bool,
+}
+
+/// A drag in progress: the cached solver input stays warm between frames, and
+/// the state at the start is kept for undo and cancel.
+#[derive(Debug)]
+struct Drag {
+    low: Lowered,
+    point: ls::PointId,
+    start: Solution,
+}
+
 /// An [`Editor`] that keeps the sketch solved. The way clients change a
 /// document once solving matters.
 #[derive(Debug)]
@@ -72,6 +94,7 @@ pub struct Sketcher {
     // One solver per document: it caches factorisations between solves.
     solver: ls::LmSolver,
     state: SolveState,
+    drag: Option<Drag>,
 }
 
 impl Sketcher {
@@ -85,6 +108,7 @@ impl Sketcher {
             editor: Editor::new(doc),
             solver: ls::LmSolver::new(),
             state: SolveState::unknown(),
+            drag: None,
         };
         if let Ok(sol) = solve(&mut s.solver, s.editor.document()) {
             // Can only fail on a solver bug (non-finite output); the stored
@@ -125,6 +149,7 @@ impl Sketcher {
     /// otherwise whatever validation rejected. In every case the document and
     /// the history are unchanged.
     pub fn apply(&mut self, cmd: &Command) -> Result<Applied, DocError> {
+        self.not_dragging()?;
         self.precheck(cmd)?;
         // A sketch that is already unsolvable (e.g. loaded that way) must
         // still accept edits, or the user could never repair it: keep stored
@@ -148,6 +173,7 @@ impl Sketcher {
     /// # Errors
     /// [`DocError::NothingToDo`] when there is nothing to undo.
     pub fn undo(&mut self) -> Result<String, DocError> {
+        self.not_dragging()?;
         let label = self.editor.undo()?;
         self.refresh();
         Ok(label)
@@ -158,9 +184,126 @@ impl Sketcher {
     /// # Errors
     /// [`DocError::NothingToDo`] when there is nothing to redo.
     pub fn redo(&mut self) -> Result<String, DocError> {
+        self.not_dragging()?;
         let label = self.editor.redo()?;
         self.refresh();
         Ok(label)
+    }
+
+    fn not_dragging(&self) -> Result<(), DocError> {
+        if self.drag.is_some() {
+            Err(DocError::Invalid("a drag is in progress".to_owned()))
+        } else {
+            Ok(())
+        }
+    }
+
+    // ── Dragging (§3, §5, #71) ───────────────────────────────────────────
+
+    /// Whether a drag is in progress.
+    #[must_use]
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Start dragging a point. Frames ([`Self::drag_to`]) move the geometry
+    /// without recording history; [`Self::end_drag`] records the whole drag
+    /// as one undo step and [`Self::cancel_drag`] puts everything back.
+    /// While dragging, [`Self::apply`], [`Self::undo`] and [`Self::redo`]
+    /// are refused, and [`Self::state`] describes the sketch as it was
+    /// before the drag.
+    ///
+    /// # Errors
+    /// [`DocError::UnknownEntity`] / [`DocError::WrongKind`] when `point`
+    /// isn't a point; [`DocError::Invalid`] when a drag is already running.
+    pub fn begin_drag(&mut self, point: EntityId) -> Result<(), DocError> {
+        self.not_dragging()?;
+        let doc = self.editor.document();
+        match doc.entity(point).map(|e| e.geom.kind()) {
+            None => return Err(DocError::UnknownEntity(point)),
+            Some(EntityKind::Point) => {}
+            Some(found) => {
+                return Err(DocError::WrongKind {
+                    what: "drag",
+                    entity: point,
+                    expected: "point",
+                    found,
+                });
+            }
+        }
+        let low = lower(doc)?;
+        let pid = low.point(point)?;
+        self.drag = Some(Drag {
+            start: Solution::capture(doc),
+            low,
+            point: pid,
+        });
+        Ok(())
+    }
+
+    /// One drag frame: pull the point towards `to`, re-solving from the
+    /// previous frame with everything else kept as still as the constraints
+    /// allow (§3). Nothing is recorded.
+    ///
+    /// # Errors
+    /// [`DocError::Invalid`] when no drag is running or `to` isn't finite.
+    pub fn drag_to(&mut self, to: Vec2) -> Result<DragFrame, DocError> {
+        let Some(drag) = self.drag.as_mut() else {
+            return Err(DocError::Invalid("no drag in progress".to_owned()));
+        };
+        let report = self
+            .solver
+            .drag(&mut drag.low.sketch, drag.point, to)
+            .map_err(solver_err)?;
+        let frame = DragFrame {
+            at_target: report.at_target,
+            converged: report.converged,
+        };
+        if !report.converged {
+            return Ok(frame);
+        }
+        let sol = Solution {
+            points: drag
+                .low
+                .points
+                .iter()
+                .zip(&drag.low.sketch.points)
+                .map(|(id, p)| (*id, p.at))
+                .collect(),
+            radii: radii(&drag.low),
+            driven: report
+                .driven
+                .iter()
+                .map(|(k, v)| (ConstraintId::new(k.0), *v))
+                .collect(),
+        };
+        self.editor.apply_solution_unrecorded(&sol)?;
+        Ok(frame)
+    }
+
+    /// Finish the drag: everything it changed becomes **one** undo step, so
+    /// undo restores the pre-drag geometry exactly. Does nothing if the
+    /// geometry didn't move.
+    ///
+    /// # Errors
+    /// [`DocError::Invalid`] when no drag is running.
+    pub fn end_drag(&mut self) -> Result<(), DocError> {
+        let drag = self
+            .drag
+            .take()
+            .ok_or_else(|| DocError::Invalid("no drag in progress".to_owned()))?;
+        self.editor.commit_from("Drag", &drag.start)?;
+        self.refresh();
+        Ok(())
+    }
+
+    /// Abandon the drag (Esc): the geometry goes back to the start, exactly.
+    pub fn cancel_drag(&mut self) {
+        if let Some(drag) = self.drag.take() {
+            // Restoring values that were valid a moment ago can't fail; if it
+            // somehow did, the next solve re-derives the geometry anyway.
+            let _ = self.editor.apply_solution_unrecorded(&drag.start);
+        }
     }
 
     /// Refuse a driving constraint that can't add a real restriction, before
@@ -225,6 +368,7 @@ impl Sketcher {
 }
 
 /// A document lowered into solver input, with the maps back to document IDs.
+#[derive(Debug)]
 struct Lowered {
     sketch: ls::Sketch,
     point_index: BTreeMap<EntityId, ls::PointId>,
@@ -422,6 +566,18 @@ impl Lowered {
     }
 }
 
+/// Circle radii from the solver's sketch.
+fn radii(low: &Lowered) -> Vec<(EntityId, f64)> {
+    low.curves
+        .iter()
+        .zip(&low.sketch.curves)
+        .filter_map(|(id, c)| match c.kind {
+            ls::CurveKind::Circle { r, .. } => Some((*id, r)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Solve the document and return the result in document terms.
 fn solve(solver: &mut ls::LmSolver, doc: &Document) -> Result<Solution, DocError> {
     let mut low = lower(doc)?;
@@ -441,15 +597,7 @@ fn solve(solver: &mut ls::LmSolver, doc: &Document) -> Result<Solution, DocError
         .zip(&low.sketch.points)
         .map(|(id, p)| (*id, p.at))
         .collect();
-    let radii = low
-        .curves
-        .iter()
-        .zip(&low.sketch.curves)
-        .filter_map(|(id, c)| match c.kind {
-            ls::CurveKind::Circle { r, .. } => Some((*id, r)),
-            _ => None,
-        })
-        .collect();
+    let radii = radii(&low);
     let driven = report
         .driven
         .iter()
