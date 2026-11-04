@@ -11,6 +11,8 @@
 # files, hence the chown at the end.
 #
 # macOS can't be built in a Linux container (Apple SDK), so it gets a native job.
+# There is no separate MSRV job: the project always targets the latest stable
+# Rust, so the minimum and the container toolchain are the same version.
 # The web (trunk) build joins this file with #38, once the app has an index.html.
 
 name: ci
@@ -101,7 +103,8 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install the container's Rust toolchain
-        # Keep in step with RUST_VERSION in .devcontainer/Dockerfile.
+        # Keep in step with RUST_VERSION in .devcontainer/Dockerfile and
+        # rust-version in Cargo.toml (always the latest stable Rust).
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           rustup default 1.99.1
@@ -112,15 +115,3 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-  msrv:
-    name: MSRV (rust-version in Cargo.toml)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Check with the declared minimum Rust
-        run: |
-          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
-          echo "MSRV: $msrv"
-          rustup toolchain install "$msrv" --profile minimal
-          cargo +"$msrv" check --workspace --all-targets

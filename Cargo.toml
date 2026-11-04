@@ -6,11 +6,12 @@ members = ["crates/*"]
 
 [workspace.package]
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/Nerdtisan/Locus"
-# Matches the egui/eframe 0.35 floor used by Parchment, so either GUI spike (§12.1) fits.
-rust-version = "1.92"
+# Always the latest stable Rust (owner decision, 2026-11-04). Bump together with
+# RUST_VERSION in .devcontainer/Dockerfile and the macOS job in ci.yml.
+rust-version = "1.99"
 publish = false
 
 [workspace.dependencies]

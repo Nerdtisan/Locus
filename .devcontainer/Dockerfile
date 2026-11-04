@@ -27,7 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Rust via rustup ───────────────────────────────────────────────────────────
 # Pinned to an explicit release (not `stable`) so the gate is reproducible.
-# Bump deliberately; the workspace MSRV lives in Cargo.toml.
+# Always the latest stable Rust: bump together with rust-version in Cargo.toml
+# and the macOS job in .github/workflows/ci.yml.
 ARG RUST_VERSION=1.99.1
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
