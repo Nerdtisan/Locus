@@ -3,9 +3,10 @@
 //! The [`Solver`] trait (SPEC §3: backends are swappable) and Locus's own
 //! backend, [`LmSolver`] (ADR 0007).
 
+use crate::analysis::{self, Analysis, ConstraintSet};
 use crate::ldl::{Ldl, LinSolve};
 use crate::lm;
-use crate::sketch::{Key, PointId, Sketch, SketchError};
+use crate::sketch::{Constraint, ConstraintId, Key, PointId, Sketch, SketchError};
 use crate::system::{self, Eq, System};
 use locus_geom::{SOLVER_TOL, Vec2};
 
@@ -31,6 +32,28 @@ pub trait Solver {
     /// One drag frame: move point `p` to `to` and re-solve from the current
     /// geometry, keeping everything else as still as the constraints allow.
     fn drag(&mut self, sk: &mut Sketch, p: PointId, to: Vec2) -> Result<SolveReport, SketchError>;
+    /// DOF, status, per-entity freedom, and redundant and conflicting sets
+    /// (#60, #61). Solves a copy first, so it works on unsolved and
+    /// conflicting sketches too; `sk` is not changed.
+    fn analyse(&mut self, sk: &Sketch) -> Result<Analysis, SketchError>;
+    /// Would adding `c` (as a driving constraint) conflict, or be redundant?
+    /// Lets the UI refuse a conflicting constraint before it is applied (§5).
+    fn check_add(&mut self, sk: &Sketch, c: Constraint) -> Result<Check, SketchError>;
+    /// The same check for turning driven dimension `id` into a driving one
+    /// (#62): refused with a conflict report if it would over-constrain.
+    fn check_driving(&mut self, sk: &Sketch, id: ConstraintId) -> Result<Check, SketchError>;
+}
+
+/// Outcome of a pre-check.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Check {
+    /// Adds a real restriction and can hold.
+    Ok,
+    /// Implied by the constraints in the set (consistent, but removes no
+    /// freedom). The UI may still offer it as a driven dimension.
+    Redundant(ConstraintSet),
+    /// Cannot hold together with the constraints in the set.
+    Conflict(ConstraintSet),
 }
 
 /// A system and its symbolic factorisation, reused while the pattern holds.
@@ -49,6 +72,9 @@ struct Cached {
 pub struct LmSolver {
     base: Option<Cached>,
     drag: Option<Cached>,
+    /// Pre-checks: the sketch plus one constraint, kept apart so they don't
+    /// evict the main solve's factorisation.
+    check: Option<Cached>,
 }
 
 impl LmSolver {
@@ -59,7 +85,13 @@ impl LmSolver {
     /// Solve `sys` with the factorisation cached in `slot`, re-analysed only
     /// if the pattern changed.
     fn run(slot: &mut Option<Cached>, sys: System, sk: &mut Sketch, x: &mut [f64]) -> SolveReport {
-        let mut c = match slot.take() {
+        let c = Self::cached(slot, sys);
+        Self::finish(c, sk, x)
+    }
+
+    /// The cache entry for `sys`, re-analysed only if the pattern changed.
+    fn cached(slot: &mut Option<Cached>, sys: System) -> &mut Cached {
+        let c = match slot.take() {
             Some(mut c) if c.sys.same_pattern(&sys) => {
                 // Same pattern; take the new values (hold target, etc.).
                 c.sys = sys;
@@ -70,9 +102,31 @@ impl LmSolver {
                 sys,
             },
         };
-        let report = Self::finish(&mut c, sk, x);
-        *slot = Some(c);
-        report
+        slot.insert(c)
+    }
+
+    /// Solve a copy and analyse at the result (or the least-squares point).
+    fn analyse_with(slot: &mut Option<Cached>, sk: &Sketch) -> Result<Analysis, SketchError> {
+        let sys = System::new(sk, None)?;
+        let mut x = sys.x0(sk);
+        let c = Self::cached(slot, sys);
+        let out = lm::solve(&c.sys, sk, &mut c.lin, &mut x);
+        Ok(analysis::analyse(&c.sys, sk, &x, out.converged))
+    }
+
+    /// Analyse `sk` with `c` appended last (so a dependency names it), and
+    /// classify `c`.
+    fn check_with(&mut self, sk: &Sketch, mut c: Constraint) -> Result<Check, SketchError> {
+        c.driven = false;
+        let mut sk = sk.clone();
+        sk.constraints.push(c);
+        let a = Self::analyse_with(&mut self.check, &sk)?;
+        let find = |sets: Vec<ConstraintSet>| sets.into_iter().find(|s| s.constraint == c.key);
+        Ok(match (find(a.conflicts), find(a.redundant)) {
+            (Some(s), _) => Check::Conflict(s),
+            (None, Some(s)) => Check::Redundant(s),
+            (None, None) => Check::Ok,
+        })
     }
 
     fn finish(c: &mut Cached, sk: &mut Sketch, x: &mut [f64]) -> SolveReport {
@@ -130,5 +184,22 @@ impl Solver for LmSolver {
         x[2 * p.index()] = to.x;
         x[2 * p.index() + 1] = to.y;
         Ok(Self::run(&mut self.drag, sys, sk, &mut x))
+    }
+
+    fn analyse(&mut self, sk: &Sketch) -> Result<Analysis, SketchError> {
+        Self::analyse_with(&mut self.base, sk)
+    }
+
+    fn check_add(&mut self, sk: &Sketch, c: Constraint) -> Result<Check, SketchError> {
+        self.check_with(sk, c)
+    }
+
+    fn check_driving(&mut self, sk: &Sketch, id: ConstraintId) -> Result<Check, SketchError> {
+        let Some(c) = sk.constraints.get(id.index()).copied() else {
+            return Err(SketchError::MissingConstraint);
+        };
+        let mut rest = sk.clone();
+        rest.constraints.remove(id.index());
+        self.check_with(&rest, c)
     }
 }

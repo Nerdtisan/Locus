@@ -266,6 +266,8 @@ pub enum SketchError {
     NotFinite(Key),
     #[error("drag of a missing point, or to a non-finite position")]
     BadDrag,
+    #[error("no such constraint")]
+    MissingConstraint,
 }
 
 /// Builders for tests and lowering: keys default to the item's index.

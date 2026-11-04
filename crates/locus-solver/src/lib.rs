@@ -16,15 +16,18 @@
 // Tests may unwrap; library code may not (CLAUDE.md, Code Style).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod analysis;
 mod dual;
 mod ldl;
 mod lm;
+mod rank;
 pub mod sketch;
 mod solver;
 mod system;
 
+pub use analysis::{Analysis, ConstraintSet, Freedom, Status};
 pub use sketch::{
     Constraint, ConstraintId, ConstraintKind, Curve, CurveId, CurveKind, Key, Point, PointId,
     Sketch, SketchError,
 };
-pub use solver::{LmSolver, SolveReport, Solver};
+pub use solver::{Check, LmSolver, SolveReport, Solver};
