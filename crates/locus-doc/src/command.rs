@@ -498,6 +498,28 @@ impl Editor {
         Ok(out)
     }
 
+    /// Record everything that changed since `start` as **one** undo step.
+    ///
+    /// For an interaction (a drag, #71) whose frames were written with
+    /// [`Self::apply_solution_unrecorded`]: the document is rewound to
+    /// `start` and the current state replayed as a recorded step, so undo
+    /// restores `start` exactly and redo the final state. Nothing is recorded
+    /// when nothing changed.
+    pub(crate) fn commit_from(&mut self, label: &str, start: &Solution) -> Result<(), DocError> {
+        let end = Solution::capture(&self.doc);
+        solution_patches(&mut self.doc, start, &mut Vec::new())?;
+        let mut patches = Vec::new();
+        solution_patches(&mut self.doc, &end, &mut patches)?;
+        if !patches.is_empty() {
+            self.undo.push(Transaction {
+                label: label.to_owned(),
+                patches,
+            });
+            self.redo.clear();
+        }
+        Ok(())
+    }
+
     /// Write solver output without an undo step, e.g. the first solve after
     /// opening a file (SPEC §10: stored positions are derived state).
     pub(crate) fn apply_solution_unrecorded(&mut self, sol: &Solution) -> Result<(), DocError> {
@@ -513,6 +535,27 @@ pub(crate) struct Solution {
     pub radii: Vec<(EntityId, f64)>,
     /// Measured values of driven (reference) dimensions.
     pub driven: Vec<(ConstraintId, f64)>,
+}
+
+impl Solution {
+    /// Every solver-written value in the document as it stands: all point
+    /// positions, circle radii and measured (driven) dimension values.
+    pub(crate) fn capture(doc: &Document) -> Self {
+        let mut s = Self::default();
+        for (id, e) in doc.entities().iter() {
+            match e.geom {
+                Geom::Point { pos } => s.points.push((id, pos)),
+                Geom::Circle { radius, .. } => s.radii.push((id, radius)),
+                _ => {}
+            }
+        }
+        for (id, c) in doc.constraints() {
+            if let Some(d) = c.dimension().filter(|d| d.driven) {
+                s.driven.push((*id, d.value));
+            }
+        }
+        s
+    }
 }
 
 /// Turn a [`Solution`] into recorded patches. Everything is validated before

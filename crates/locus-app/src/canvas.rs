@@ -15,6 +15,7 @@ use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
 use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, Sketcher};
 use locus_geom::{Aabb, Vec2};
+use std::collections::BTreeSet;
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
@@ -26,6 +27,18 @@ const MIN_BOX_PT: f32 = 4.0;
 enum DimTarget {
     New(DimSpec),
     Existing(ConstraintId),
+}
+
+/// A constraint the solver refused (SPEC §5 Solver UX): shown with the set it
+/// clashes with highlighted, and — for a dimension — the offer to add it as a
+/// driven (reference) dimension instead.
+#[derive(Debug, Clone)]
+struct Refusal {
+    constraints: Vec<ConstraintId>,
+    entities: Vec<EntityId>,
+    redundant: bool,
+    /// The same dimension, driven, if the refused command was one.
+    as_driven: Option<Command>,
 }
 
 /// The inline value box shown over the canvas while a dimension is typed.
@@ -68,6 +81,10 @@ pub struct Canvas {
     notice: Option<String>,
     /// The inline dimension editor, while open (#70).
     dim_edit: Option<DimEdit>,
+    /// The last constraint the solver refused, until dismissed (#72).
+    refusal: Option<Refusal>,
+    /// A point drag is in progress (#71): frames re-solve, release records.
+    dragging: bool,
     /// Screen rectangles of the dimension labels drawn last frame.
     dim_rects: Vec<(ConstraintId, egui::Rect)>,
 }
@@ -89,6 +106,8 @@ impl Default for Canvas {
             cursor: None,
             notice: None,
             dim_edit: None,
+            refusal: None,
+            dragging: false,
             dim_rects: Vec::new(),
         };
         c.load(demo::sketch());
@@ -100,11 +119,13 @@ impl Canvas {
     /// Replace the document (new / sample). Clears the undo history.
     pub fn load(&mut self, doc: Document) {
         self.sketcher = Sketcher::new(doc);
+        self.dragging = false;
         self.selection.clear();
         self.draft.cancel();
         self.typed.clear();
         self.notice = None;
         self.dim_edit = None;
+        self.refusal = None;
         self.rebuild();
         self.request_fit();
     }
@@ -127,14 +148,37 @@ impl Canvas {
         }
     }
 
-    /// DOF and solve status for the status bar.
+    /// DOF and solve status for the status bar — the solver's own report
+    /// (#72, SPEC §5 Solver UX).
     pub fn solve_summary(&self) -> String {
         let st = self.sketcher.state();
         match st.status {
             locus_doc::Status::FullyConstrained => "Fully constrained".to_owned(),
             locus_doc::Status::UnderConstrained => format!("Under-constrained · DOF {}", st.dof),
-            _ => "Over-constrained".to_owned(),
+            _ => format!(
+                "Over-constrained · {} conflicting, {} redundant",
+                st.conflicts.len(),
+                st.redundant.len()
+            ),
         }
+    }
+
+    /// Constraints and entities to draw in the conflict colour: the solver's
+    /// conflicting and redundant sets, plus whatever a refused constraint
+    /// clashed with.
+    fn flagged(&self) -> (BTreeSet<ConstraintId>, BTreeSet<EntityId>) {
+        let st = self.sketcher.state();
+        let mut cs = BTreeSet::new();
+        let mut es = BTreeSet::new();
+        for g in st.conflicts.iter().chain(&st.redundant) {
+            cs.extend(g.constraints.iter().copied());
+            es.extend(g.entities.iter().copied());
+        }
+        if let Some(r) = &self.refusal {
+            cs.extend(r.constraints.iter().copied());
+            es.extend(r.entities.iter().copied());
+        }
+        (cs, es)
     }
 
     fn selected(&self) -> Vec<EntityId> {
@@ -213,11 +257,142 @@ impl Canvas {
         });
     }
 
-    /// Run a command; on failure, explain in the status bar (SPEC §11).
+    /// Run a command; on failure, explain in the status bar. A constraint the
+    /// solver's pre-check refuses is kept as a [`Refusal`]: the conflicting
+    /// set is highlighted and a dimension can be added as driven (#72).
     fn apply_reporting(&mut self, cmd: &Command) {
         match self.apply(cmd) {
-            Ok(()) => self.notice = None,
-            Err(e) => self.notice = Some(e.to_string()),
+            Ok(()) => {
+                self.notice = None;
+                self.refusal = None;
+            }
+            Err(e) => {
+                self.notice = Some(e.to_string());
+                self.refusal = match &e {
+                    DocError::Conflict {
+                        constraints,
+                        entities,
+                    }
+                    | DocError::Redundant {
+                        constraints,
+                        entities,
+                    } => Some(Refusal {
+                        constraints: constraints.clone(),
+                        entities: entities.clone(),
+                        redundant: matches!(e, DocError::Redundant { .. }),
+                        as_driven: match cmd {
+                            Command::AddConstraint { constraint } => {
+                                constrain::as_driven(constraint)
+                                    .map(|constraint| Command::AddConstraint { constraint })
+                            }
+                            _ => None,
+                        },
+                    }),
+                    _ => None,
+                };
+            }
+        }
+    }
+
+    /// The refusal banner over the canvas: why, and the driven offer.
+    fn refusal_banner(&mut self, ui: &egui::Ui, rect: egui::Rect) {
+        let Some(r) = self.refusal.clone() else {
+            return;
+        };
+        let what = if r.as_driven.is_some() {
+            "dimension"
+        } else {
+            "constraint"
+        };
+        let why = if r.redundant {
+            format!(
+                "is already implied by the {} highlighted constraint(s)",
+                r.constraints.len()
+            )
+        } else {
+            format!(
+                "conflicts with the {} highlighted constraint(s)",
+                r.constraints.len()
+            )
+        };
+        let (mut add, mut dismiss) = (false, false);
+        egui::Area::new(egui::Id::new("refusal"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.left_top() + egui::vec2(12.0, 12.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.colored_label(
+                        Palette::new(ui.visuals().dark_mode).conflict,
+                        format!("This {what} {why}, so it was not added."),
+                    );
+                    ui.horizontal(|ui| {
+                        if r.as_driven.is_some()
+                            && ui
+                                .button("Add as driven")
+                                .on_hover_text(
+                                    "A driven (reference) dimension shows the measured value without constraining the sketch",
+                                )
+                                .clicked()
+                        {
+                            add = true;
+                        }
+                        dismiss = ui.button("Dismiss").clicked();
+                    });
+                });
+            });
+        if add && let Some(cmd) = r.as_driven {
+            self.refusal = None;
+            self.apply_reporting(&cmd);
+        } else if dismiss {
+            self.refusal = None;
+        }
+    }
+
+    /// The constraints panel: every constraint, conflicting ones in red,
+    /// with driven toggles and removal (#72).
+    pub fn constraints_ui(&mut self, ui: &mut egui::Ui, settings: &Settings) {
+        let (flagged, _) = self.flagged();
+        let doc = self.sketcher.document();
+        if doc.constraints().is_empty() {
+            ui.weak("No constraints yet.");
+            return;
+        }
+        let red = Palette::new(ui.visuals().dark_mode).conflict;
+        let mut select: Option<Vec<EntityId>> = None;
+        let mut action: Option<Command> = None;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for (&id, c) in doc.constraints() {
+                ui.horizontal(|ui| {
+                    let text = constrain::describe(doc, c, settings.units);
+                    let text = if flagged.contains(&id) {
+                        egui::RichText::new(text).color(red)
+                    } else {
+                        egui::RichText::new(text)
+                    };
+                    if ui.selectable_label(false, text).clicked() {
+                        select = Some(c.references());
+                    }
+                    if let Some(d) = c.dimension() {
+                        let mut driven = d.driven;
+                        if ui
+                            .checkbox(&mut driven, "driven")
+                            .on_hover_text("Measured instead of enforced")
+                            .changed()
+                        {
+                            action = Some(Command::SetDriven { id, driven });
+                        }
+                    }
+                    if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                        action = Some(Command::RemoveConstraint { id });
+                    }
+                });
+            }
+        });
+        if let Some(ids) = select {
+            self.selection.set_all(ids);
+        }
+        if let Some(cmd) = action {
+            self.apply_reporting(&cmd);
         }
     }
 
@@ -509,8 +684,11 @@ impl Canvas {
             units: settings.units,
         };
         let (selection, hovered) = (&self.selection, self.hover);
+        let (flag_constraints, flag_entities) = self.flagged();
         self.drawn = frame.draw_items(&self.scene, |item| {
-            if selection.contains(item.id) {
+            if flag_entities.contains(&item.id) {
+                Emphasis::Conflict
+            } else if selection.contains(item.id) {
                 Emphasis::Selected
             } else if hovered == Some(item.id) {
                 Emphasis::Hover
@@ -518,13 +696,14 @@ impl Canvas {
                 Emphasis::None
             }
         });
-        self.dim_rects = frame.draw_annotations(&self.scene);
+        self.dim_rects = frame.draw_annotations(&self.scene, &flag_constraints);
         self.draw_tool_overlay(&frame, &painter);
         if let (Some(start), Some(now)) = (self.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
         grid::rulers(&painter, &self.view, rect);
         self.dimension_editor(ui, rect, settings.units);
+        self.refusal_banner(ui, rect);
 
         status.cursor = hover.map(|p| self.view.to_world(p, rect));
         status.extent_mm = self.view.extent_mm(rect);
@@ -686,6 +865,72 @@ impl Canvas {
         }
     }
 
+    /// Start dragging what was grabbed (#71). A point moves itself; a line
+    /// moves by its end nearer the cursor; a circle or arc by its centre.
+    fn begin_drag(&mut self, grabbed: EntityId, at: Vec2) -> bool {
+        let doc = self.sketcher.document();
+        let near = |a: EntityId, b: EntityId| {
+            let d = |p: EntityId| doc.point_pos(p).map_or(f64::MAX, |q| q.distance(at));
+            if d(a) <= d(b) { a } else { b }
+        };
+        let point = match doc.entity(grabbed).map(|e| &e.geom) {
+            Some(Geom::Point { .. }) => grabbed,
+            Some(Geom::Line { start, end }) => near(*start, *end),
+            Some(Geom::Circle { center, .. } | Geom::Arc { center, .. }) => *center,
+            None => return false,
+        };
+        match self.sketcher.begin_drag(point) {
+            Ok(()) => {
+                self.dragging = true;
+                self.notice = None;
+                true
+            }
+            Err(e) => {
+                self.notice = Some(e.to_string());
+                false
+            }
+        }
+    }
+
+    /// One frame of a drag: re-solve towards the pointer; release records
+    /// one undo step; Esc puts everything back (#71).
+    fn drag_frame(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.sketcher.cancel_drag();
+            self.dragging = false;
+            self.rebuild();
+            return;
+        }
+        if resp.dragged_by(PointerButton::Primary)
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            let to = self.view.to_world(p, rect);
+            match self.sketcher.drag_to(to) {
+                Ok(f) if f.converged => {
+                    // Keep the selection: rebuild() prunes it by id, and a
+                    // drag never removes entities.
+                    self.rebuild();
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    self.sketcher.cancel_drag();
+                    self.dragging = false;
+                    self.notice = Some(e.to_string());
+                    self.rebuild();
+                    return;
+                }
+            }
+        }
+        if resp.drag_stopped_by(PointerButton::Primary) || !resp.dragged() {
+            self.dragging = false;
+            if let Err(e) = self.sketcher.end_drag() {
+                self.notice = Some(e.to_string());
+            }
+            self.rebuild();
+        }
+    }
+
     /// Hover, click and box selection (#67). Left-drag is a rubber-band box;
     /// pan stays on middle/right-drag.
     fn pick_and_select(
@@ -705,8 +950,19 @@ impl Canvas {
             hit::pick(&this.scene.items, w, tol)
         };
 
+        if self.dragging {
+            self.drag_frame(ui, resp, rect);
+            return;
+        }
         if resp.drag_started_by(PointerButton::Primary) {
-            self.rubber = resp.interact_pointer_pos();
+            // The press, not where the drag threshold was crossed.
+            let origin = ui.input(|i| i.pointer.press_origin());
+            match origin.and_then(|o| pick_at(self, o).map(|id| (o, id))) {
+                Some((o, id)) if self.begin_drag(id, self.view.to_world(o, rect)) => {
+                    self.selection.set_all([id]);
+                }
+                _ => self.rubber = resp.interact_pointer_pos(),
+            }
         }
         let boxing = self.rubber.is_some();
         self.hover = match resp.hover_pos() {
@@ -750,6 +1006,7 @@ impl Canvas {
                 )
             });
             if esc {
+                self.refusal = None;
                 self.clear_selection();
             }
             if all {
@@ -969,6 +1226,88 @@ mod tests {
         assert_eq!(c.undo_label(), Some("Add fix constraint"));
         c.undo();
         assert_eq!(c.sketcher.document().constraints().len(), before);
+    }
+
+    #[test]
+    fn grabbing_a_line_drags_its_nearer_end_and_undo_restores_the_geometry() {
+        let mut c = Canvas::default();
+        let line = c
+            .sketcher
+            .document()
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Line { .. }) && e.construction)
+            .map(|(id, _)| id)
+            .unwrap_or(EntityId::new(0));
+        let before = c.sketcher.document().entities().clone();
+        // The construction diagonal runs (20, 20) → (220, 140): grab near its end.
+        assert!(c.begin_drag(line, Vec2::new(215.0, 138.0)));
+        assert!(c.dragging);
+        let moved = c.sketcher.drag_to(Vec2::new(200.0, 100.0));
+        assert!(moved.is_ok());
+        assert!(c.sketcher.end_drag().is_ok());
+        c.dragging = false;
+        c.rebuild();
+        assert_ne!(c.sketcher.document().entities(), &before);
+        assert_eq!(c.undo_label(), Some("Drag"));
+        c.undo();
+        assert_eq!(c.sketcher.document().entities(), &before);
+    }
+
+    #[test]
+    fn a_refused_dimension_is_highlighted_and_can_be_added_as_driven() {
+        let mut c = Canvas::default();
+        let circle = c
+            .sketcher
+            .document()
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Circle { .. }))
+            .map(|(id, _)| id)
+            .unwrap_or(EntityId::new(0));
+        let before = c.sketcher.document().constraints().len();
+        // The demo's hole already has a diameter dimension.
+        let spec = DimSpec::Diameter(circle);
+        c.apply_reporting(&Command::AddConstraint {
+            constraint: spec.constraint(30.0, false),
+        });
+        assert_eq!(c.sketcher.document().constraints().len(), before);
+        let Some(r) = c.refusal.clone() else {
+            panic!("the conflicting dimension should have been refused");
+        };
+        assert!(!r.constraints.is_empty() && r.as_driven.is_some());
+        let (cs, es) = c.flagged();
+        assert!(r.constraints.iter().all(|id| cs.contains(id)));
+        assert!(r.entities.iter().all(|id| es.contains(id)));
+        // Accept the offer: it lands as a driven dimension showing the
+        // measured value, and the sketch is untouched.
+        let cmd = r.as_driven.clone().unwrap_or(Command::Compound {
+            label: String::new(),
+            commands: Vec::new(),
+        });
+        c.apply_reporting(&cmd);
+        assert!(c.refusal.is_none());
+        assert_eq!(c.sketcher.document().constraints().len(), before + 1);
+        let driven = c
+            .sketcher
+            .document()
+            .constraints()
+            .values()
+            .filter_map(|k| k.dimension())
+            .filter(|d| d.driven)
+            .collect::<Vec<_>>();
+        assert_eq!(driven.len(), 1);
+        assert!((driven[0].value - 40.0).abs() < 1e-6, "measured, not 30");
+    }
+
+    #[test]
+    fn status_text_follows_the_solver_report() {
+        let c = Canvas::default();
+        let st = c.sketcher.state();
+        assert_eq!(
+            c.solve_summary(),
+            format!("Under-constrained · DOF {}", st.dof)
+        );
     }
 
     #[test]
