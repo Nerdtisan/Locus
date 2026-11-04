@@ -60,8 +60,12 @@ jobs:
         run: docker build -t locus-dev .devcontainer
 
       - name: Define the container command
+        # The GIT_CONFIG_* vars mark the bind mount as a safe git directory. The
+        # advisory DB that cargo-deny updates with git comes back from the cache
+        # owned by the runner user, and git refuses to touch it as root
+        # ("dubious ownership"). Safe here: the container is thrown away after each step.
         run: |
-          echo "D=docker run --rm --user root -e CARGO_HOME=/workspace/.cargo-home -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG -v ${{ github.workspace }}:/workspace -w /workspace locus-dev" >> "$GITHUB_ENV"
+          echo "D=docker run --rm --user root -e CARGO_HOME=/workspace/.cargo-home -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=* -v ${{ github.workspace }}:/workspace -w /workspace locus-dev" >> "$GITHUB_ENV"
 
       - name: cargo fmt --check
         run: $D cargo fmt --all --check
