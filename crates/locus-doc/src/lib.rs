@@ -21,9 +21,9 @@ pub mod solve;
 #[cfg(test)]
 mod testutil;
 
-pub use command::{Applied, Command, Editor};
+pub use command::{Applied, Command, Editor, LayerProps};
 pub use constraint::{Constraint, Dimension};
-pub use document::{Document, EntityStore, Layer, Parameter, View};
+pub use document::{Document, EntityStore, Layer, LayerDeletion, Parameter, View};
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
 pub use file::FileError;
@@ -31,4 +31,4 @@ pub use ids::{ConstraintId, EntityId, LayerId};
 pub use operation::{
     Compensation, CutParams, DragKnifeParams, DrawParams, EngraveParams, Operation, OperationKind,
 };
-pub use solve::{ConstraintGroup, DragFrame, Sketcher, SolveState, Status};
+pub use solve::{ConstraintGroup, DragFrame, LockReport, Sketcher, SolveState, Status};
