@@ -15,5 +15,5 @@ docker run --rm -e CARGO_HOME=/workspace/.cargo-home -v "${PWD}:/workspace" `
 
 | Folder | Issue | What |
 |---|---|---|
-| `gui-eframe/` | #44 | GUI spike A: reference canvas on eframe 0.35 + egui_dock + wgpu — see its `RESULTS.md` |
+| ~~`gui-eframe/`~~ | #44 | GUI spike A (eframe). Chosen ([ADR 0001](../docs/adr/0001-gui-framework.md)); its view maths, grid and rulers now live in `crates/locus-app`, and the folder was removed in #67. Results are in the ADR; the code is in git history. |
 | ~~`gui-bevy/`~~ | #45 | GUI spike B (Bevy). Not chosen ([ADR 0001](../docs/adr/0001-gui-framework.md)); removed from `dev`, kept at git tag `archive/spike-gui-bevy`. |
