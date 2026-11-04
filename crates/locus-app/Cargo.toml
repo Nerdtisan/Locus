@@ -1,0 +1,16 @@
+[package]
+name = "locus-app"
+description = "Locus desktop and web GUI shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "locus"
+path = "src/main.rs"

@@ -1,0 +1,12 @@
+[package]
+name = "locus-mcp"
+description = "MCP server over the Locus command API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
