@@ -106,7 +106,7 @@ crates/
   - Any other mature pure-Rust 2D GCS; adopt only if it handles the constraint set in §5 with acceptable robustness.
   - **Our own** solver in `locus-solver` (e.g. Newton / Levenberg–Marquardt over constraint residuals with graph decomposition), if neither of the above is good enough.
 - Solver requirements: incremental re-solve during drag (target < 16 ms for 500 entities), DOF count, identification of over-constrained / redundant / conflicting constraints.
-- **Chosen ([ADR 0007](adr/0007-solver-backend-without-paste.md), superseding [ADR 0002](adr/0002-solver-backend.md)'s `ezpz`):** our own solver in `locus-solver`: sparse Levenberg–Marquardt over Locus's residuals (exact gradients by dual numbers), its own sparse LDLᵀ with a minimum-degree ordering, and its own Jacobian-rank DOF and redundancy analysis. No third-party dependencies. Measured with the harness in `spikes/solver/`, natively and in `wasm32`: 500-curve worst drag frame 1.4 ms native, 1.7 ms wasm.
+- **Chosen ([ADR 0007](adr/0007-solver-backend-without-paste.md), superseding [ADR 0002](adr/0002-solver-backend.md)'s `ezpz`):** our own solver in `locus-solver`: sparse Levenberg–Marquardt over Locus's residuals (exact gradients by dual numbers), its own sparse LDLᵀ with a minimum-degree ordering, and its own Jacobian-rank DOF and redundancy analysis. No third-party dependencies. Measured with the harness (now `locus-solver`'s test suite and `cargo bench -p locus-solver`), natively and in `wasm32`: 500-curve worst drag frame 1.4 ms native, 1.7 ms wasm.
 
 ---
 

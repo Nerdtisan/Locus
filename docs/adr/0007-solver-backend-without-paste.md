@@ -89,7 +89,9 @@ These are still the single-release, few-hundred-download crates ADR 0002 surveye
 
 **One tuning finding.** At first, λ started at 1e-6. On the 1,000-curve chain drag, frames then took 29 LM iterations (8 ms). Tracing showed soft modes along the long chain with σ² ≈ 1e-7: a λ that large over-damps them, and LM creeps. Starting at λ = 1e-9 cuts this to about 4 iterations per frame. λ still rises by itself when a step is rejected or a pivot isn't positive. Scaling the direction rows (parallel, perpendicular, angle, fillet tangency) to millimetres made no measurable difference, but it is kept: every row then shares one unit and one tolerance.
 
-**Reproduce:** see `spikes/solver/README.md`. Run `cargo run --release --no-default-features --features ezpz,nalgebra --bin table [cells]`, and the same build for wasm, opened in `web/index.html`.
+**In `locus-solver` (M1, #63),** the same algorithm as ported, 504 curves: worst drag frame 1.6 ms native (`cargo bench -p locus-solver`, release) and 1.8 ms in wasm32 (Chromium 152), every frame checked; CI gates it at 16 ms (`tests/drag.rs`).
+
+**Reproduce:** the spike now lives at git tag `archive/spike-solver` (see its `spikes/solver/README.md`); the same suite runs in `locus-solver` as `cargo bench -p locus-solver`. Run `cargo run --release --no-default-features --features ezpz,nalgebra --bin table [cells]`, and the same build for wasm, opened in `web/index.html`.
 
 ## Decision
 
