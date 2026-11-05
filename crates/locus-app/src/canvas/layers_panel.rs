@@ -421,14 +421,14 @@ fn layer_row(
             }));
         }
         if ui
-            .add_enabled(pos > 0, egui::Button::new("▲"))
+            .add_enabled(pos > 0, egui::Button::new("Up"))
             .on_hover_text("Earlier in export order")
             .clicked()
         {
             want.commands.extend(reorder(doc, order, pos, -1));
         }
         if ui
-            .add_enabled(pos + 1 < order.len(), egui::Button::new("▼"))
+            .add_enabled(pos + 1 < order.len(), egui::Button::new("Down"))
             .on_hover_text("Later in export order")
             .clicked()
         {
@@ -439,7 +439,7 @@ fn layer_row(
             st.expanded = if open { None } else { Some(id) };
         }
         if ui
-            .add_enabled(order.len() > 1, egui::Button::new("✕"))
+            .add_enabled(order.len() > 1, egui::Button::new("Delete"))
             .on_hover_text("Delete layer…")
             .clicked()
         {
