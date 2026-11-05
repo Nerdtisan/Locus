@@ -139,7 +139,7 @@ fn write_seg(d: &mut String, s: &PathSeg, map: &impl Fn(Vec2) -> Vec2) {
 
 /// Fixed 4-decimal (0.1 µm) formatting with trailing zeros trimmed, so output
 /// is stable across platforms and never prints `-0`.
-fn num(v: f64) -> String {
+pub(crate) fn num(v: f64) -> String {
     let mut s = format!("{v:.4}");
     if s.contains('.') {
         while s.ends_with('0') {

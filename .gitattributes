@@ -1,2 +1,3 @@
-# .locus fixtures are compared byte-for-byte; never let git rewrite line endings.
 *.locus text eol=lf
+# PDF xref offsets are byte positions: never rewrite line endings.
+crates/*/tests/fixtures/*.pdf binary

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Golden-file test: `.locus` fixture → SVG compared with the committed output (SPEC §14).
+//! Layer-model golden test (the per-format fixtures live in `golden.rs`). Golden-file test: `.locus` fixture → SVG compared with the committed output (SPEC §14).
 //! Regenerate with `LOCUS_UPDATE_GOLDEN=1` after an intended change.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -10,17 +10,6 @@ fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name)
-}
-
-#[test]
-fn plate_matches_golden() {
-    check("plate");
-}
-
-/// True arcs (small and large), a circle, escaping, and excluded construction geometry.
-#[test]
-fn arcs_match_golden() {
-    check("arcs");
 }
 
 fn check(name: &str) {
