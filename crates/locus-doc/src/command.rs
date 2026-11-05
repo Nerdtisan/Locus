@@ -15,11 +15,12 @@
 //! The ID counter itself never goes backwards. Solver output is not command
 //! state: re-solve after every apply, undo and redo.
 
+use crate::boolean::Boolean;
 use crate::constraint::Constraint;
 use crate::document::{Document, Layer};
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
-use crate::ids::{ConstraintId, EntityId, LayerId};
+use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId};
 use crate::operation::Operation;
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
@@ -97,6 +98,20 @@ pub enum Command {
         entities: Vec<EntityId>,
         layer: LayerId,
     },
+    /// Add a non-destructive boolean recipe (SPEC §6.3). The document assigns
+    /// the ID (see [`Applied::booleans`]). Its result is recomputed after each
+    /// solve, and is an error (not a failure) while a source region is gone.
+    AddBoolean {
+        boolean: Boolean,
+    },
+    /// Replace a recipe's operation and sources.
+    EditBoolean {
+        id: BooleanId,
+        boolean: Boolean,
+    },
+    RemoveBoolean {
+        id: BooleanId,
+    },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
         label: String,
@@ -131,6 +146,9 @@ impl Command {
             Command::DeleteLayer { .. } => "Delete layer".to_owned(),
             Command::SetLayerLocked { locked: true, .. } => "Lock layer".to_owned(),
             Command::SetLayerLocked { locked: false, .. } => "Unlock layer".to_owned(),
+            Command::AddBoolean { .. } => "Add boolean".to_owned(),
+            Command::EditBoolean { .. } => "Edit boolean".to_owned(),
+            Command::RemoveBoolean { .. } => "Remove boolean".to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -143,6 +161,7 @@ pub struct Applied {
     pub entities: Vec<EntityId>,
     pub constraints: Vec<ConstraintId>,
     pub layers: Vec<LayerId>,
+    pub booleans: Vec<BooleanId>,
 }
 
 /// New values for a layer's editable properties; `None` leaves a field alone.
@@ -175,6 +194,11 @@ enum Patch {
         before: Option<Layer>,
         after: Option<Layer>,
     },
+    Boolean {
+        id: BooleanId,
+        before: Option<Boolean>,
+        after: Option<Boolean>,
+    },
 }
 
 impl Patch {
@@ -196,6 +220,12 @@ impl Patch {
                 match if forward { after } else { before }.clone() {
                     Some(c) => doc.constraints.insert(*id, c),
                     None => doc.constraints.remove(id),
+                };
+            }
+            Patch::Boolean { id, before, after } => {
+                match if forward { after } else { before }.clone() {
+                    Some(b) => doc.booleans.insert(*id, b),
+                    None => doc.booleans.remove(id),
                 };
             }
         }
@@ -505,6 +535,44 @@ fn exec(
             for c in commands {
                 exec(doc, c, patches, out)?;
             }
+        }
+        Command::AddBoolean { boolean } => {
+            boolean.validate()?;
+            let id = BooleanId::new(doc.alloc_id()?);
+            let p = Patch::Boolean {
+                id,
+                before: None,
+                after: Some(boolean.clone()),
+            };
+            record(doc, patches, p);
+            out.booleans.push(id);
+        }
+        Command::EditBoolean { id, boolean } => {
+            boolean.validate()?;
+            let before = doc
+                .boolean(*id)
+                .ok_or(DocError::UnknownBoolean(*id))?
+                .clone();
+            if before != *boolean {
+                let p = Patch::Boolean {
+                    id: *id,
+                    before: Some(before),
+                    after: Some(boolean.clone()),
+                };
+                record(doc, patches, p);
+            }
+        }
+        Command::RemoveBoolean { id } => {
+            let before = doc
+                .boolean(*id)
+                .ok_or(DocError::UnknownBoolean(*id))?
+                .clone();
+            let p = Patch::Boolean {
+                id: *id,
+                before: Some(before),
+                after: None,
+            };
+            record(doc, patches, p);
         }
         Command::ApplySolution { points, radii } => apply_solution(doc, points, radii)?,
     }
