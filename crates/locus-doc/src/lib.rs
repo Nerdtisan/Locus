@@ -16,6 +16,7 @@ pub mod error;
 pub mod file;
 pub mod ids;
 pub mod operation;
+pub mod regions;
 pub mod solve;
 
 #[cfg(test)]
