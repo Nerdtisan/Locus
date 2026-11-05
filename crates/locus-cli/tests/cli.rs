@@ -117,11 +117,116 @@ fn usage_errors_exit_2() {
         s("export"),
         f.as_os_str(),
         s("--format"),
-        s("pdf"),
+        s("hpgl"),
         s("--out"),
         s("x"),
     ]);
     assert_eq!(out.status.code(), Some(2));
+    assert_eq!(cli(&[s("validate")]).status.code(), Some(2));
     let out = cli(&[s("export"), f.as_os_str(), s("--out"), s("x")]);
     assert_eq!(out.status.code(), Some(2));
+}
+
+fn run_export(input: &str, format: &str, out: &std::path::Path, extra: &[&str]) -> Output {
+    let f = fixture(input);
+    let mut args: Vec<&std::ffi::OsStr> = vec![
+        s("export"),
+        f.as_os_str(),
+        s("--format"),
+        s(format),
+        s("--out"),
+        out.as_os_str(),
+    ];
+    args.extend(extra.iter().map(|a| s(a)));
+    cli(&args)
+}
+
+fn validate(input: &str, extra: &[&str]) -> (Option<i32>, String) {
+    let f = fixture(input);
+    let mut args: Vec<&std::ffi::OsStr> = vec![s("validate"), f.as_os_str()];
+    args.extend(extra.iter().map(|a| s(a)));
+    let out = cli(&args);
+    (out.status.code(), String::from_utf8(out.stdout).unwrap())
+}
+
+#[test]
+fn validate_clean_file_exits_0() {
+    let (code, text) = validate("plate.locus", &[]);
+    assert_eq!(code, Some(0));
+    assert!(text.contains("0 error(s), 0 warning(s)"), "{text}");
+}
+
+#[test]
+fn validate_reports_open_path_with_entity_ids_and_exits_1() {
+    let (code, text) = validate("open.locus", &[]);
+    assert_eq!(code, Some(1));
+    assert!(text.contains("error: layer \"Cut\": open path"), "{text}");
+    assert!(
+        text.contains("[entities 7, 8, 9]") || text.contains("[entities 9, 8, 7]"),
+        "{text}"
+    );
+}
+
+#[test]
+fn validate_fix_resolves_duplicates_but_not_open_paths() {
+    let (code, text) = validate("dup.locus", &[]);
+    assert_eq!(code, Some(1));
+    assert!(text.contains("double cut"), "{text}");
+    let (code, text) = validate("dup.locus", &["--fix"]);
+    assert_eq!(code, Some(0), "{text}");
+    assert!(text.contains("fixed: "), "{text}");
+    let (code, _) = validate("open.locus", &["--fix"]);
+    assert_eq!(code, Some(1));
+}
+
+#[test]
+fn export_is_blocked_by_errors_unless_forced_or_fixed() {
+    let blocked = scratch("blocked.svg");
+    let out = run_export("open.locus", "svg", &blocked, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("blocked by validation"));
+    assert!(!blocked.exists());
+
+    let forced = scratch("forced.svg");
+    assert!(
+        run_export("open.locus", "svg", &forced, &["--force"])
+            .status
+            .success()
+    );
+    assert!(forced.exists());
+
+    let fixed = scratch("fixed.dxf");
+    assert!(
+        run_export("dup.locus", "dxf", &fixed, &["--fix"])
+            .status
+            .success()
+    );
+    // The duplicate edge is gone: exactly four LINEs remain.
+    let dxf = std::fs::read_to_string(&fixed).unwrap();
+    assert_eq!(
+        dxf.matches(
+            "
+LINE
+"
+        )
+        .count(),
+        4
+    );
+}
+
+#[test]
+fn export_pdf_and_dxf_from_the_cli() {
+    let pdf = scratch("plate.pdf");
+    assert!(run_export("plate.locus", "pdf", &pdf, &[]).status.success());
+    let bytes = std::fs::read(&pdf).unwrap();
+    assert!(bytes.starts_with(b"%PDF-1.5"));
+    assert!(bytes.ends_with(
+        b"%%EOF
+"
+    ));
+
+    let dxf = scratch("plate.dxf");
+    assert!(run_export("plate.locus", "dxf", &dxf, &[]).status.success());
+    let text = std::fs::read_to_string(&dxf).unwrap();
+    assert!(text.contains("AC1009") && text.contains("CIRCLE"));
 }
