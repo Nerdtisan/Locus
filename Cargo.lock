@@ -1549,6 +1549,7 @@ version = "0.0.0"
 dependencies = [
  "locus-doc",
  "locus-geom",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

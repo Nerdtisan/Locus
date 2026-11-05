@@ -82,29 +82,18 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     "export blocked by validation errors (use --fix, or --force to export anyway)"
                 )));
             }
-            let bytes = opts.format.write(&prepared.model);
-            write_file(&opts.out, &bytes)?;
+            let registry = locus_export::Registry::builtin();
+            let exporter = registry
+                .get(&opts.format)
+                .context("unknown export format")?;
+            let exported = exporter
+                .export(&prepared.model)
+                .map_err(|e| anyhow::anyhow!("export failed: {e}"))?;
+            write_file(&opts.out, &exported.bytes)?;
             Ok(())
         }
         Some(other) => Err(CliError::Usage(format!("unknown command `{other}`"))),
         None => Err(CliError::Usage("no command given".into())),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Format {
-    Svg,
-    Pdf,
-    Dxf,
-}
-
-impl Format {
-    fn write(self, model: &locus_export::ExportModel) -> Vec<u8> {
-        match self {
-            Format::Svg => locus_export::to_svg_model(model),
-            Format::Pdf => locus_export::to_pdf_model(model),
-            Format::Dxf => locus_export::to_dxf_model(model),
-        }
     }
 }
 
@@ -138,7 +127,7 @@ impl ValidateOpts {
 struct ExportOpts {
     input: PathBuf,
     out: PathBuf,
-    format: Format,
+    format: String,
     fix: bool,
     force: bool,
 }
@@ -164,13 +153,14 @@ impl ExportOpts {
                 }
             }
         }
-        let format = match format {
-            Some("svg") => Format::Svg,
-            Some("pdf") => Format::Pdf,
-            Some("dxf") => Format::Dxf,
-            Some(f) => return Err(format!("unsupported format `{f}` (svg, pdf or dxf)")),
-            None => return Err("--format is required".into()),
-        };
+        let format = format.ok_or("--format is required")?.to_owned();
+        let registry = locus_export::Registry::builtin();
+        if registry.get(&format).is_none() {
+            return Err(format!(
+                "unsupported format `{format}` (one of: {})",
+                registry.ids().join(", ")
+            ));
+        }
         Ok(Self {
             input: input.ok_or("no input file given")?,
             out: out.ok_or("--out is required")?,

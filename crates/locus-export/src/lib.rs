@@ -10,6 +10,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod dxf;
+pub mod exporter;
 pub mod fix;
 pub mod order;
 pub mod overlap;
@@ -20,6 +21,9 @@ pub mod svg;
 pub mod validate;
 
 pub use dxf::{to_dxf, to_dxf_model};
+pub use exporter::{
+    DxfExporter, ExportError, Exported, Exporter, PdfExporter, Registry, SvgExporter,
+};
 pub use fix::{Fix, FixKind, autofix};
 pub use order::{order, travel_length};
 pub use pdf::{to_pdf, to_pdf_model};
