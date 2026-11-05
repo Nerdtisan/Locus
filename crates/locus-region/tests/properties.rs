@@ -71,8 +71,10 @@ fn shape() -> impl Strategy<Value = S> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
 
-    /// Faces partition the covered area: a probe off every curve is in
-    /// exactly one region when some shape covers it, and in none otherwise.
+    /// Faces partition the covered area: a probe off every curve is in at
+    /// most one region, and in exactly one when some shape covers it. (An
+    /// uncovered probe may still sit in a void the shapes enclose, which is
+    /// a face too.)
     #[test]
     fn faces_partition_the_covered_area(shapes in prop::collection::vec(shape(), 1..6), probes in prop::collection::vec((0.0f64..12.0, 0.0f64..12.0), 40)) {
         let curves: Vec<Curve> = shapes.iter().enumerate().flat_map(|(i, s)| s.curves(10 * i as u64)).collect();
@@ -84,7 +86,10 @@ proptest! {
             }
             let covered = shapes.iter().any(|s| s.inside(q));
             let n = regions.iter().filter(|r| r.contains(q)).count();
-            prop_assert_eq!(n, usize::from(covered), "probe {:?}", q);
+            prop_assert!(n <= 1, "probe {:?} in {} regions", q, n);
+            if covered {
+                prop_assert_eq!(n, 1, "probe {:?}", q);
+            }
         }
         for r in &regions {
             prop_assert!(r.area() > 0.0 && r.outer.area() > 0.0);
