@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// The Locus plugin interface (SPEC §15, ADR 0009). DRAFT for M3: names and
+// shapes may still change until the plugin host (#22) ships; after that,
+// breaking changes only on a major version bump (§15.3).
+//
+// Principles (§15.3, §15.4):
+// - Plugins never touch the document. The host passes immutable data in; the
+//   plugin returns data out; the host turns it into one undoable command.
+// - Deny by default: every world below *imports nothing*. No filesystem,
+//   network, clock, environment or randomness. Exporters and importers get
+//   bytes from / give bytes to the host, which does all file I/O.
+// - Deterministic: identical inputs must give identical outputs (§15.5).
+//   Anything random must come from a seed parameter.
+// - Units: millimetres for lengths, radians for angles, f64 throughout.
+
+package locus:plugin@1.0.0;
+
+/// Geometry shared by every plugin kind.
+interface types {
+    record vec2 {
+        x: f64,
+        y: f64,
+    }
+
+    /// An arc runs counter-clockwise from `start` to `end` around `center`.
+    record arc {
+        center: vec2,
+        start: vec2,
+        end: vec2,
+    }
+
+    record circle {
+        center: vec2,
+        radius: f64,
+    }
+
+    record line {
+        a: vec2,
+        b: vec2,
+    }
+
+    variant shape {
+        line(line),
+        arc(arc),
+        circle(circle),
+    }
+
+    /// A shape placed in a path. `reversed`: traversed end to start.
+    record segment {
+        shape: shape,
+        reversed: bool,
+    }
+
+    /// Segments joined end to end. A circle is a one-segment closed path.
+    record path {
+        segments: list<segment>,
+        closed: bool,
+    }
+
+    enum compensation {
+        none,
+        inside,
+        outside,
+    }
+
+    record cut-params {
+        kerf-width: f64,
+        compensation: compensation,
+        passes: u32,
+    }
+
+    record engrave-params {
+        hatch-spacing: f64,
+        hatch-angle: f64,
+    }
+
+    record draw-params {
+        pen-number: u32,
+        pen-width: f64,
+    }
+
+    record drag-knife-params {
+        blade-offset: f64,
+    }
+
+    /// A layer's machine operation and its settings (§7).
+    variant operation {
+        cut(cut-params),
+        score,
+        engrave(engrave-params),
+        draw(draw-params),
+        drag-knife(drag-knife-params),
+        reference,
+    }
+
+    record layer {
+        name: string,
+        /// Display colour, 0xRRGGBB.
+        colour: u32,
+        operation: operation,
+        paths: list<path>,
+    }
+
+    /// Validated, ordered export geometry: what the built-in SVG, DXF and
+    /// PDF writers receive (§8). Reference and export-disabled layers are
+    /// already removed.
+    record export-model {
+        layers: list<layer>,
+    }
+
+    /// Why a plugin call produced no result. Traps, timeouts and memory
+    /// overruns are reported by the host, not by the plugin (§15.4).
+    variant plugin-error {
+        /// A parameter is missing, out of range or of the wrong kind.
+        bad-parameter(string),
+        /// The input can't be handled, e.g. an exporter meeting a shape its
+        /// format can't express.
+        unsupported(string),
+        /// Anything else, with a message for the user.
+        failed(string),
+    }
+}
+
+/// Parameter schemas: the host draws the panel; plugins have no UI code (§15.3).
+interface params {
+    record number-spec {
+        /// Unit label for the panel, e.g. "mm", "deg", "" for none.
+        unit: string,
+        min: option<f64>,
+        max: option<f64>,
+        default: f64,
+    }
+
+    record integer-spec {
+        min: option<s64>,
+        max: option<s64>,
+        default: s64,
+    }
+
+    record choice-spec {
+        options: list<string>,
+        /// Index into `options`.
+        default: u32,
+    }
+
+    record text-spec {
+        default: string,
+        max-length: u32,
+    }
+
+    variant param-kind {
+        number(number-spec),
+        integer(integer-spec),
+        boolean(bool),
+        choice(choice-spec),
+        text(text-spec),
+        /// Bind to a named document parameter (§5 Expressions); the host
+        /// passes its current value as a number.
+        doc-parameter,
+    }
+
+    record param-spec {
+        /// Stable key, kebab-case.
+        key: string,
+        label: string,
+        help: string,
+        kind: param-kind,
+    }
+
+    variant param-value {
+        number(f64),
+        integer(s64),
+        boolean(bool),
+        choice(u32),
+        text(string),
+    }
+
+    record param {
+        key: string,
+        value: param-value,
+    }
+}
+
+/// Facts the host reads before calling anything.
+interface info {
+    record plugin-info {
+        /// Reverse-DNS id, matching plugin.toml, e.g. "com.example.finger-box".
+        id: string,
+        name: string,
+        version: string,
+    }
+
+    describe: func() -> plugin-info;
+}
+
+/// Parameters → new geometry, optionally with constraints (§15.2, M3).
+interface generator {
+    use types.{vec2, plugin-error};
+    use params.{param-spec, param};
+
+    /// Geometry in plugin-local coordinates. Curves refer to points by index
+    /// into `points`, so shared corners stay shared (and constrainable).
+    variant entity {
+        point(u32),
+        line(tuple<u32, u32>),
+        /// center, radius
+        circle(tuple<u32, f64>),
+        /// center, start, end (counter-clockwise)
+        arc(tuple<u32, u32, u32>),
+    }
+
+    /// The constraint kinds a generator may emit; indices refer to `entities`.
+    variant constraint {
+        coincident(tuple<u32, u32>),
+        horizontal(u32),
+        vertical(u32),
+        parallel(tuple<u32, u32>),
+        perpendicular(tuple<u32, u32>),
+        tangent(tuple<u32, u32>),
+        equal(tuple<u32, u32>),
+        distance(tuple<u32, u32, f64>),
+        radius(tuple<u32, f64>),
+    }
+
+    record generated {
+        points: list<vec2>,
+        /// Entities by index; `entity::point(i)` places `points[i]`.
+        entities: list<entity>,
+        constraints: list<constraint>,
+    }
+
+    schema: func() -> list<param-spec>;
+    generate: func(params: list<param>) -> result<generated, plugin-error>;
+}
+
+/// Non-destructive transform of selected paths (§15.2, M3), e.g. tabs or
+/// dogbone corners. The host re-runs it whenever the source changes.
+interface modifier {
+    use types.{path, plugin-error};
+    use params.{param-spec, param};
+
+    schema: func() -> list<param-spec>;
+    modify: func(input: list<path>, params: list<param>) -> result<list<path>, plugin-error>;
+}
+
+/// Export model → file bytes (§15.2, M3). Same contract as the built-in
+/// `Exporter` trait in locus-export (#136).
+interface exporter {
+    use types.{export-model, plugin-error};
+
+    record format-info {
+        /// Stable id for the CLI and menus, e.g. "hpgl".
+        id: string,
+        name: string,
+        /// Without the dot.
+        extension: string,
+        mime: string,
+    }
+
+    format: func() -> format-info;
+    %export: func(model: export-model) -> result<list<u8>, plugin-error>;
+}
+
+/// File bytes → reference geometry for a locked layer (§15.2, M4).
+interface importer {
+    use types.{path, plugin-error};
+
+    /// Extensions this importer accepts, without dots.
+    extensions: func() -> list<string>;
+    %import: func(bytes: list<u8>) -> result<list<path>, plugin-error>;
+}
+
+/// Extra pre-export checks (§15.2, M4).
+interface validator {
+    use types.{export-model, plugin-error};
+    use params.{param-spec, param};
+
+    enum severity {
+        warning,
+        error,
+    }
+
+    record finding {
+        severity: severity,
+        message: string,
+        /// Indices of the affected layer and path in the model, if any.
+        layer: option<u32>,
+        path: option<u32>,
+    }
+
+    schema: func() -> list<param-spec>;
+    validate: func(model: export-model, params: list<param>) -> result<list<finding>, plugin-error>;
+}
+
+// One world per plugin kind. A plugin component targets one or more of them.
+// None imports anything: that is the sandbox (§15.4).
+
+world generator-plugin {
+    export info;
+    export generator;
+}
+
+world modifier-plugin {
+    export info;
+    export modifier;
+}
+
+world exporter-plugin {
+    export info;
+    export exporter;
+}
+
+world importer-plugin {
+    export info;
+    export importer;
+}
+
+world validator-plugin {
+    export info;
+    export validator;
+}
