@@ -13,9 +13,11 @@ use crate::tools::{Draft, Outcome, Pick, Tool};
 use crate::view::View;
 use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
-use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, Sketcher};
+use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, LayerId, Sketcher};
 use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
+
+mod layers_panel;
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
@@ -87,6 +89,9 @@ pub struct Canvas {
     dragging: bool,
     /// Screen rectangles of the dimension labels drawn last frame.
     dim_rects: Vec<(ConstraintId, egui::Rect)>,
+    /// The layer new geometry is drawn on (#118).
+    active_layer: LayerId,
+    layer_ui: layers_panel::LayerUi,
 }
 
 impl Default for Canvas {
@@ -109,6 +114,8 @@ impl Default for Canvas {
             refusal: None,
             dragging: false,
             dim_rects: Vec::new(),
+            active_layer: Document::default_layer(),
+            layer_ui: layers_panel::LayerUi::default(),
         };
         c.load(demo::sketch());
         c
@@ -119,6 +126,9 @@ impl Canvas {
     /// Replace the document (new / sample). Clears the undo history.
     pub fn load(&mut self, doc: Document) {
         self.sketcher = Sketcher::new(doc);
+        self.layer_ui = layers_panel::LayerUi::default();
+        self.active_layer = self.active_layer();
+        self.draft.set_layer(self.active_layer);
         self.dragging = false;
         self.selection.clear();
         self.draft.cancel();
@@ -754,6 +764,7 @@ impl Canvas {
         if resp.clicked_by(PointerButton::Primary)
             && let Some(pick) = self.cursor
         {
+            self.draft.set_layer(self.active_layer());
             let out = self.draft.click(pick, self.sketcher.document().next_id());
             self.typed.clear();
             self.run(out);
@@ -795,6 +806,7 @@ impl Canvas {
                     Units::Inch => v * 25.4,
                 };
                 let at = self.cursor.unwrap_or_else(|| Pick::free(Vec2::ZERO));
+                self.draft.set_layer(self.active_layer());
                 let out = self.draft.typed(mm, at, self.sketcher.document().next_id());
                 self.run(out);
             } else {
@@ -1147,6 +1159,50 @@ mod tests {
             rows.iter()
                 .any(|(k, v)| k == "Diameter" && v == "40.000 mm")
         );
+    }
+
+    /// Run the Layers panel headlessly for a few frames.
+    fn frames(c: &mut Canvas, n: usize) {
+        let ctx = egui::Context::default();
+        let settings = Settings::default();
+        for _ in 0..n {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                c.layers_ui(ui, &settings);
+            });
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn layers_panel_renders_and_every_layer_action_is_one_undo_step() {
+        let mut c = Canvas::default();
+        frames(&mut c, 2);
+        let l1 = c.active_layer();
+        let cmd = Command::AddLayer {
+            name: "Cut 2".to_owned(),
+            colour: [1, 2, 3],
+            operation: locus_doc::OperationKind::Draw.default_operation(),
+        };
+        c.apply_reporting(&cmd);
+        let l2 = *c.document().layers().keys().next_back().unwrap();
+        c.layer_ui.expanded_for_test(l2);
+        frames(&mut c, 2);
+        // Lock → delete dialog paths run without panicking.
+        c.apply_reporting(&Command::SetLayerLocked {
+            id: l1,
+            locked: true,
+        });
+        assert!(c.document().layer(l1).unwrap().locked);
+        assert_eq!(c.undo().as_deref(), Some("Lock layer"));
+        let plan = c.document().layer_deletion(l2).unwrap();
+        c.layer_ui.dialog_for_test(l2, plan);
+        frames(&mut c, 2);
+        c.apply_reporting(&Command::DeleteLayer { id: l2 });
+        frames(&mut c, 1);
+        assert!(c.document().layer(l2).is_none());
+        // The active layer survives its own deletion by falling back.
+        c.active_layer = l2;
+        assert_eq!(c.active_layer(), l1);
     }
 
     #[test]

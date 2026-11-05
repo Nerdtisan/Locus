@@ -12,7 +12,7 @@
 //! (ADR 0003), and a compound runs its commands in order.
 
 use crate::scene::Shape;
-use locus_doc::{Command, Constraint, Dimension, Document, EntityId, Geom};
+use locus_doc::{Command, Constraint, Dimension, Document, EntityId, Geom, LayerId};
 use locus_geom::{Arc, Circle, Line, Vec2};
 
 /// Shorter than this is "the same place": no zero-length lines or radii.
@@ -179,13 +179,15 @@ pub enum Outcome {
 /// Builds one compound, predicting the IDs of what it creates.
 struct Plan {
     next: u64,
+    layer: LayerId,
     commands: Vec<Command>,
 }
 
 impl Plan {
-    fn new(doc_next_id: u64) -> Self {
+    fn new(doc_next_id: u64, layer: LayerId) -> Self {
         Self {
             next: doc_next_id,
+            layer,
             commands: Vec::new(),
         }
     }
@@ -198,7 +200,7 @@ impl Plan {
 
     fn add(&mut self, geom: Geom) -> EntityId {
         self.commands.push(Command::AddEntity {
-            layer: Document::default_layer(),
+            layer: self.layer,
             construction: false,
             geom,
         });
@@ -241,6 +243,8 @@ pub struct Draft {
     nodes: Vec<Node>,
     /// First point of the current polyline, so a click on it closes the loop.
     chain_first: Option<EntityId>,
+    /// Layer new geometry goes on (the active layer, SPEC §4).
+    layer: LayerId,
 }
 
 impl Draft {
@@ -249,7 +253,13 @@ impl Draft {
             tool,
             nodes: Vec::new(),
             chain_first: None,
+            layer: Document::default_layer(),
         }
+    }
+
+    /// Put new geometry on `layer`.
+    pub fn set_layer(&mut self, layer: LayerId) {
+        self.layer = layer;
     }
 
     pub fn tool(&self) -> Tool {
@@ -303,7 +313,7 @@ impl Draft {
 
     pub fn click(&mut self, pick: Pick, doc_next_id: u64) -> Outcome {
         let here = Node::from_pick(pick);
-        let mut plan = Plan::new(doc_next_id);
+        let mut plan = Plan::new(doc_next_id, self.layer);
         match self.tool {
             Tool::Select => Outcome::Pending,
             Tool::Point => {
@@ -467,7 +477,7 @@ impl Draft {
             .normalized(MIN_SIZE_MM)
             .unwrap_or(Vec2::new(1.0, 0.0));
         let at = Node::New(from.pos() + dir * value);
-        let mut plan = Plan::new(doc_next_id);
+        let mut plan = Plan::new(doc_next_id, self.layer);
         match self.tool {
             // A typed length keeps the inferred direction and its constraint.
             Tool::Line => self.segment(from, at, plan, Some(value), cursor.line),
@@ -597,6 +607,23 @@ mod tests {
             .iter()
             .filter(|(_, e)| f(&e.geom))
             .count()
+    }
+
+    #[test]
+    fn new_geometry_goes_on_the_active_layer() {
+        let mut s = Sketcher::new(Document::new());
+        let l2 = s
+            .apply(&Command::AddLayer {
+                name: "Score".to_owned(),
+                colour: [0; 3],
+                operation: locus_doc::Operation::Score,
+            })
+            .unwrap()
+            .layers[0];
+        let mut d = Draft::new(Tool::Point);
+        d.set_layer(l2);
+        let a = click(&mut d, &mut s, at(1.0, 1.0)).unwrap();
+        assert_eq!(s.document().entity(a.entities[0]).unwrap().layer, l2);
     }
 
     #[test]
