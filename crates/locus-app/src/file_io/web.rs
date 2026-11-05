@@ -13,7 +13,7 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(module = "/src/file_io/web.js")]
 extern "C" {
-    fn download(name: &str, text: &str, mime: &str);
+    fn download(name: &str, data: &[u8], mime: &str);
     #[wasm_bindgen(catch)]
     async fn pick_text(accept: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch)]
@@ -92,8 +92,8 @@ impl Web {
         });
     }
 
-    pub fn download(name: &str, text: &str, mime: &str) {
-        download(name, text, mime);
+    pub fn download(name: &str, data: &[u8], mime: &str) {
+        download(name, data, mime);
     }
 
     /// Drain finished async work. Autosave bookkeeping is handled here; the

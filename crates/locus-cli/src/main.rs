@@ -13,7 +13,12 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 usage:
   locus-cli info <file.locus>
-  locus-cli export <file.locus> --format svg --out <out.svg>";
+  locus-cli validate <file.locus> [--fix]
+  locus-cli export <file.locus> --format svg|pdf|dxf --out <file> [--fix] [--force]
+
+validate prints errors and warnings and exits 1 when errors remain.
+--fix applies the safe auto-fixes to the exported geometry (never to the file).
+export refuses to write when errors remain unless --force is given.";
 
 /// Largest input read, matching the file loader's own cap (SPEC §10).
 const MAX_INPUT_BYTES: u64 = locus_doc::file::MAX_FILE_BYTES as u64;
@@ -55,10 +60,29 @@ fn run(args: &[String]) -> Result<(), CliError> {
             write_info(&mut out, &doc).context("cannot write to stdout")?;
             Ok(())
         }
+        Some("validate") => {
+            let opts = ValidateOpts::parse(&args[1..]).map_err(CliError::Usage)?;
+            let doc = read_document(&opts.input)?;
+            let prepared = locus_export::prepare(&doc, opts.fix);
+            let mut out = std::io::stdout().lock();
+            write_report(&mut out, &prepared).context("cannot write to stdout")?;
+            if prepared.blocked() {
+                return Err(CliError::Failed(anyhow::anyhow!("validation found errors")));
+            }
+            Ok(())
+        }
         Some("export") => {
             let opts = ExportOpts::parse(&args[1..]).map_err(CliError::Usage)?;
             let doc = read_document(&opts.input)?;
-            let bytes = locus_export::to_svg(&doc);
+            let prepared = locus_export::prepare(&doc, opts.fix);
+            if prepared.blocked() && !opts.force {
+                let mut err = std::io::stderr().lock();
+                let _ = write_report(&mut err, &prepared);
+                return Err(CliError::Failed(anyhow::anyhow!(
+                    "export blocked by validation errors (use --fix, or --force to export anyway)"
+                )));
+            }
+            let bytes = opts.format.write(&prepared.model);
             write_file(&opts.out, &bytes)?;
             Ok(())
         }
@@ -67,9 +91,56 @@ fn run(args: &[String]) -> Result<(), CliError> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Format {
+    Svg,
+    Pdf,
+    Dxf,
+}
+
+impl Format {
+    fn write(self, model: &locus_export::ExportModel) -> Vec<u8> {
+        match self {
+            Format::Svg => locus_export::to_svg_model(model),
+            Format::Pdf => locus_export::to_pdf_model(model),
+            Format::Dxf => locus_export::to_dxf_model(model),
+        }
+    }
+}
+
+struct ValidateOpts {
+    input: PathBuf,
+    fix: bool,
+}
+
+impl ValidateOpts {
+    fn parse(args: &[String]) -> Result<Self, String> {
+        let mut input = None;
+        let mut fix = false;
+        for a in args {
+            match a.as_str() {
+                "--fix" => fix = true,
+                s if s.starts_with("--") => return Err(format!("unknown option `{s}`")),
+                s => {
+                    if input.replace(PathBuf::from(s)).is_some() {
+                        return Err("validate takes exactly one input file".into());
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            input: input.ok_or("no input file given")?,
+            fix,
+        })
+    }
+}
+
 struct ExportOpts {
     input: PathBuf,
     out: PathBuf,
+    format: Format,
+    fix: bool,
+    force: bool,
 }
 
 impl ExportOpts {
@@ -77,11 +148,14 @@ impl ExportOpts {
         let mut input = None;
         let mut out = None;
         let mut format = None;
+        let (mut fix, mut force) = (false, false);
         let mut it = args.iter();
         while let Some(a) = it.next() {
             match a.as_str() {
                 "--format" => format = Some(it.next().ok_or("--format needs a value")?.as_str()),
                 "--out" => out = Some(PathBuf::from(it.next().ok_or("--out needs a value")?)),
+                "--fix" => fix = true,
+                "--force" => force = true,
                 s if s.starts_with("--") => return Err(format!("unknown option `{s}`")),
                 s => {
                     if input.replace(PathBuf::from(s)).is_some() {
@@ -90,16 +164,33 @@ impl ExportOpts {
                 }
             }
         }
-        match format {
-            Some("svg") => {}
-            Some(f) => return Err(format!("unsupported format `{f}` (only svg so far)")),
+        let format = match format {
+            Some("svg") => Format::Svg,
+            Some("pdf") => Format::Pdf,
+            Some("dxf") => Format::Dxf,
+            Some(f) => return Err(format!("unsupported format `{f}` (svg, pdf or dxf)")),
             None => return Err("--format is required".into()),
-        }
+        };
         Ok(Self {
             input: input.ok_or("no input file given")?,
             out: out.ok_or("--out is required")?,
+            format,
+            fix,
+            force,
         })
     }
+}
+
+/// Fixes applied, then each issue, then a one-line summary.
+fn write_report(out: &mut impl std::io::Write, p: &locus_export::Prepared) -> std::io::Result<()> {
+    for f in &p.fixes {
+        writeln!(out, "fixed: {}", f.message)?;
+    }
+    for i in &p.report.issues {
+        writeln!(out, "{i}")?;
+    }
+    let c = p.report.counts();
+    writeln!(out, "{} error(s), {} warning(s)", c.errors, c.warnings)
 }
 
 fn read_document(path: &Path) -> Result<Document> {
