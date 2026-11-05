@@ -52,6 +52,7 @@ pub struct FileIo {
     pending: Option<Action>,
     /// The open pre-export panel (SPEC §8 Validation, #128).
     export: Option<ExportPanel>,
+    exporters: locus_export::Registry,
     allow_close: bool,
     last_title: String,
     #[cfg(target_arch = "wasm32")]
@@ -75,6 +76,7 @@ impl FileIo {
             notice: None,
             pending: None,
             export: None,
+            exporters: locus_export::Registry::builtin(),
             allow_close: false,
             last_title: String::new(),
             #[cfg(target_arch = "wasm32")]
@@ -192,9 +194,11 @@ impl FileIo {
             ui.close();
         }
         ui.menu_button("Export", |ui| {
-            for f in ExportFormat::ALL {
-                if ui.button(format!("{}…", f.label())).clicked() {
-                    self.begin_export(f, canvas);
+            let formats: Vec<(&'static str, &'static str)> =
+                self.exporters.iter().map(|e| (e.id(), e.name())).collect();
+            for (id, name) in formats {
+                if ui.button(format!("{name}…")).clicked() {
+                    self.begin_export(id, canvas);
                     ui.close();
                 }
             }
@@ -324,7 +328,7 @@ impl FileIo {
 
     /// Validate, then either write straight away (nothing to report) or open
     /// the pre-export panel. Export always goes through validation (#128, #133).
-    fn begin_export(&mut self, format: ExportFormat, canvas: &Canvas) {
+    fn begin_export(&mut self, format: &'static str, canvas: &Canvas) {
         let prepared = locus_export::prepare(canvas.document(), false);
         if prepared.report.issues.is_empty() {
             self.write_export(format, &prepared);
@@ -338,27 +342,57 @@ impl FileIo {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn write_export(&mut self, format: ExportFormat, prepared: &Prepared) {
+    fn write_export(&mut self, format: &str, prepared: &Prepared) {
+        let Some(done) = self.run_exporter(format, prepared) else {
+            return;
+        };
         let stem = self.name.as_deref().map_or("untitled", strip_ext);
         web::Web::download(
-            &format!("{stem}.{}", format.ext()),
-            &format.write(&prepared.model),
-            format.mime(),
+            &format!("{stem}.{}", done.extension),
+            &done.bytes,
+            done.mime,
         );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn write_export(&mut self, format: ExportFormat, prepared: &Prepared) {
+    fn write_export(&mut self, format: &str, prepared: &Prepared) {
+        let Some(done) = self.run_exporter(format, prepared) else {
+            return;
+        };
         let stem = self.name.as_deref().map_or("untitled", strip_ext);
+        let filter = format!("{} file", format.to_uppercase());
         let Some(path) = pick_save(
-            &format!("{stem}.{}", format.ext()),
-            format.ext(),
-            format.filter(),
+            &format!("{stem}.{}", done.extension),
+            done.extension,
+            &filter,
         ) else {
             return;
         };
-        if let Err(msg) = write_atomic(&path, &format.write(&prepared.model)) {
+        if let Err(msg) = write_atomic(&path, &done.bytes) {
             self.error = Some(msg);
+        }
+    }
+
+    /// Run the registered exporter; a failure is shown to the user, never a crash.
+    fn run_exporter(
+        &mut self,
+        format: &str,
+        prepared: &Prepared,
+    ) -> Option<locus_export::Exported> {
+        let result = self
+            .exporters
+            .get(format)
+            .ok_or_else(|| "That export format is not available.".to_owned())
+            .and_then(|e| {
+                e.export(&prepared.model)
+                    .map_err(|e| format!("Export failed: {e}."))
+            });
+        match result {
+            Ok(done) => Some(done),
+            Err(msg) => {
+                self.error = Some(msg);
+                None
+            }
         }
     }
 
@@ -381,7 +415,11 @@ impl FileIo {
                 locus_export::IssueKind::DuplicateSegment | locus_export::IssueKind::Degenerate
             )
         });
-        egui::Window::new(format!("Export {}", panel.format.label()))
+        let title = self
+            .exporters
+            .get(panel.format)
+            .map_or("Export", |e| e.name());
+        egui::Window::new(format!("Export {title}"))
             .collapsible(false)
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -568,63 +606,11 @@ impl FileIo {
 /// Open pre-export panel.
 #[derive(Debug)]
 struct ExportPanel {
-    format: ExportFormat,
+    /// Id of the exporter in [`locus_export::Registry`].
+    format: &'static str,
     /// Auto-fixes have been applied to `prepared`.
     fixed: bool,
     prepared: Prepared,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExportFormat {
-    Svg,
-    Pdf,
-    Dxf,
-}
-
-impl ExportFormat {
-    const ALL: [Self; 3] = [Self::Svg, Self::Pdf, Self::Dxf];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Svg => "SVG",
-            Self::Pdf => "PDF",
-            Self::Dxf => "DXF",
-        }
-    }
-
-    fn ext(self) -> &'static str {
-        match self {
-            Self::Svg => "svg",
-            Self::Pdf => "pdf",
-            Self::Dxf => "dxf",
-        }
-    }
-
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    fn filter(self) -> &'static str {
-        match self {
-            Self::Svg => "SVG image",
-            Self::Pdf => "PDF document",
-            Self::Dxf => "DXF drawing (R12)",
-        }
-    }
-
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    fn mime(self) -> &'static str {
-        match self {
-            Self::Svg => "image/svg+xml",
-            Self::Pdf => "application/pdf",
-            Self::Dxf => "application/dxf",
-        }
-    }
-
-    fn write(self, model: &locus_export::ExportModel) -> Vec<u8> {
-        match self {
-            Self::Svg => locus_export::to_svg_model(model),
-            Self::Pdf => locus_export::to_pdf_model(model),
-            Self::Dxf => locus_export::to_dxf_model(model),
-        }
-    }
 }
 
 fn open_shortcut() -> egui::KeyboardShortcut {
