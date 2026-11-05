@@ -12,9 +12,11 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod arrange;
+pub mod boolean;
 pub mod region;
 pub mod seg;
 
 pub use arrange::SNAP;
+pub use boolean::{BoolOp, boolean, union_all};
 pub use region::{Curve, Region, RegionKey, Shape, detect};
 pub use seg::{Area, Edge, Loop, Seg};
