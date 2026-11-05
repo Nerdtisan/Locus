@@ -27,6 +27,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | File format | `.locus` is RON (`ron` 0.12), `BTreeMap`-ordered, finite floats only; JSON only as an export view. [ADR-0004](adr/0004-file-format.md), 2026-11-04. |
 | MCP SDK | `rmcp` 3.8; target MCP revision 2026-07-28, also accept 2025-11-25 clients. [ADR-0005](adr/0005-mcp-sdk.md), 2026-11-04. |
 | Plugin exception | Classpath-style "Locus Plugin Exception" drafted in [ADR-0006](adr/0006-plugin-licence-exception.md), 2026-11-04; not in effect until legal review (#83). |
+| Booleans | Exact line/arc booleans owned by `locus-region`, sharing the region-detection arrangement; no flattening or arc refit (decided 2026-11-05, [ADR 0008](adr/0008-booleans-and-arcs.md)). |
 
 ---
 
@@ -91,7 +92,7 @@ crates/
 |---|---|
 | Curve math | `kurbo` |
 | Offsets with true arcs (kerf, inset) | `cavalier_contours` (polyline-with-bulge, keeps arcs) |
-| Booleans | `i_overlay` or `geo` (flattening — see §6.3 tension) |
+| Booleans | ~~`i_overlay` or `geo`~~ — Locus-owned exact arrangement in `locus-region` ([ADR 0008](adr/0008-booleans-and-arcs.md)) |
 | Tessellation for rendering | `lyon` |
 | DXF write | `dxf` crate |
 | PDF write | `krilla` or `printpdf` |
@@ -214,6 +215,7 @@ All are **associative**: stored as a recipe (source entity IDs + parameters), re
 - Automatic closed-profile detection from sketch geometry (as Fusion does), producing **regions**.
 - Non-destructive boolean result objects (union/subtract/intersect of regions), stored as recipes referencing entity IDs and recomputed on solve.
 - **Known tension:** most Rust boolean libs flatten to polylines; DXF/laser output strongly prefers true arcs. Approach: perform booleans on flattened geometry, then **arc-refit** the result (or use `cavalier_contours` for arc-preserving cases). Spike in Milestone 2.
+- **Decided ([ADR 0008](adr/0008-booleans-and-arcs.md), 2026-11-05):** `locus-region` owns an exact line/arc arrangement (split at intersections and overlaps with `SOLVER_TOL` snapping, de-duplicate, classify edges by winding number, trace loops, merge pieces on one line or circle). Region detection and booleans share it; no flattening, no refit, no new dependencies. Measured: 15,000/15,000 random cases within tolerance (flatten + `i_overlay` + refit 99.6 %, `cavalier_contours` 98.9 %, failing on shared edges); deviation below 1e-7 mm; minimal arc counts; 28 KB gzipped in wasm32.
 
 ---
 
@@ -306,6 +308,7 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 9. **Toolchain** — **Decided:** Docker dev container + native macOS CI runner, no host Rust toolchain (§0).
 10. **Web hosting & browser storage** — **Decided:** GitHub Pages; open/download + OPFS/IndexedDB autosave (§0).
 11. **Packaging formats** — **Decided:** see §0 and M4 (§13).
+12. **Booleans that keep arcs** (§6.3, M2) — **Decided** ([ADR 0008](adr/0008-booleans-and-arcs.md)): Locus-owned exact line/arc arrangement in `locus-region`; `i_overlay` + refit and `cavalier_contours` measured and not chosen.
 
 ---
 
