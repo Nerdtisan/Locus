@@ -53,3 +53,7 @@ id_type!(
     /// Identifies a layer.
     LayerId
 );
+id_type!(
+    /// Identifies a boolean recipe (SPEC §6.3).
+    BooleanId
+);

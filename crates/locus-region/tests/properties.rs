@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use locus_geom::{Circle, Line, Vec2};
-use locus_region::{Curve, Shape, detect};
+use locus_region::{Area, BoolOp, Curve, Shape, boolean, detect};
 use proptest::prelude::*;
 use std::time::Instant;
 
@@ -94,6 +94,55 @@ proptest! {
         for r in &regions {
             prop_assert!(r.area() > 0.0 && r.outer.area() > 0.0);
             prop_assert!(r.holes.iter().all(|h| h.area() < 0.0));
+        }
+    }
+}
+
+/// An operand as a filled area: the single region of one shape.
+fn area(s: &S) -> Area {
+    let rs = detect(&s.curves(0));
+    assert_eq!(rs.len(), 1);
+    rs[0].to_area()
+}
+
+fn op() -> impl Strategy<Value = BoolOp> {
+    prop_oneof![
+        Just(BoolOp::Union),
+        Just(BoolOp::Subtract),
+        Just(BoolOp::Intersect)
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(500))]
+
+    /// ADR 0008 sweep as a property: off the curves, the result contains a
+    /// probe exactly when the operation of the operands does; loops close,
+    /// outer loops are CCW and no sliver survives.
+    #[test]
+    fn boolean_matches_pointwise_truth(a in shape(), b in shape(), op in op(), shift in prop_oneof![Just(0.0), -1e-7f64..1e-7], probes in prop::collection::vec((-1.0f64..14.0, -1.0f64..14.0), 60)) {
+        let b = match b {
+            S::Rect(x0, y0, x1, y1) => S::Rect(x0 + shift, y0, x1 + shift, y1),
+            S::Circle(x, y, r) => S::Circle(x + shift, y, r),
+        };
+        let (aa, ba) = (area(&a), area(&b));
+        let r = boolean(&aa, &ba, op);
+        for (x, y) in probes {
+            let q = Vec2::new(x, y);
+            if a.near(q) || b.near(q) {
+                continue;
+            }
+            let want = match op {
+                BoolOp::Union => a.inside(q) || b.inside(q),
+                BoolOp::Subtract => a.inside(q) && !b.inside(q),
+                BoolOp::Intersect => a.inside(q) && b.inside(q),
+            };
+            prop_assert_eq!(r.contains(q), want, "probe {:?}", q);
+        }
+        for l in &r.loops {
+            let n = l.edges.len();
+            prop_assert!((0..n).all(|i| l.edges[i].seg.end().distance(l.edges[(i + 1) % n].seg.start()) <= 1e-6));
+            prop_assert!(l.area().abs() > 1e-9);
         }
     }
 }

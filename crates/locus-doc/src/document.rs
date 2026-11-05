@@ -6,10 +6,11 @@
 //! command API (SPEC §11, `crate::command`); the mutators here are
 //! crate-private building blocks for it.
 
+use crate::boolean::Boolean;
 use crate::constraint::Constraint;
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
-use crate::ids::{ConstraintId, EntityId, LayerId, MAX_ID};
+use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID};
 use crate::operation::{CutParams, Operation};
 use locus_geom::{Arc, Circle, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,8 @@ pub struct Document {
     pub(crate) layers: BTreeMap<LayerId, Layer>,
     pub(crate) entities: EntityStore,
     pub(crate) constraints: BTreeMap<ConstraintId, Constraint>,
+    /// Boolean recipes (SPEC §6.3); their results are derived, not stored.
+    pub(crate) booleans: BTreeMap<BooleanId, Boolean>,
     pub(crate) view: Option<View>,
 }
 
@@ -146,6 +149,7 @@ impl Document {
             layers: BTreeMap::from([(LayerId::new(1), layer)]),
             entities: EntityStore::default(),
             constraints: BTreeMap::new(),
+            booleans: BTreeMap::new(),
             view: None,
         }
     }
@@ -202,6 +206,16 @@ impl Document {
     #[must_use]
     pub fn constraint(&self, id: ConstraintId) -> Option<&Constraint> {
         self.constraints.get(&id)
+    }
+
+    #[must_use]
+    pub fn booleans(&self) -> &BTreeMap<BooleanId, Boolean> {
+        &self.booleans
+    }
+
+    #[must_use]
+    pub fn boolean(&self, id: BooleanId) -> Option<&Boolean> {
+        self.booleans.get(&id)
     }
 
     #[must_use]

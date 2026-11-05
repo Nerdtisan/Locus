@@ -4,7 +4,7 @@
 //! bad input (CLAUDE.md, untrusted input); callers get one of these.
 
 use crate::entity::EntityKind;
-use crate::ids::{ConstraintId, EntityId, LayerId};
+use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -22,6 +22,8 @@ pub enum DocError {
     LayerLocked(LayerId),
     #[error("unknown layer {0}")]
     UnknownLayer(LayerId),
+    #[error("unknown boolean {0}")]
+    UnknownBoolean(BooleanId),
     #[error("{what} on entity {entity}: expected {expected}, found {found:?}")]
     WrongKind {
         what: &'static str,

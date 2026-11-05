@@ -8,6 +8,7 @@
 // Tests may unwrap; library code may not (CLAUDE.md, Code Style).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod boolean;
 pub mod command;
 pub mod constraint;
 pub mod document;
@@ -22,13 +23,14 @@ pub mod solve;
 #[cfg(test)]
 mod testutil;
 
+pub use boolean::{Boolean, BooleanError};
 pub use command::{Applied, Command, Editor, LayerProps};
 pub use constraint::{Constraint, Dimension};
 pub use document::{Document, EntityStore, Layer, LayerDeletion, Parameter, View};
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
 pub use file::FileError;
-pub use ids::{ConstraintId, EntityId, LayerId};
+pub use ids::{BooleanId, ConstraintId, EntityId, LayerId};
 pub use operation::{
     Compensation, CutParams, DragKnifeParams, DrawParams, EngraveParams, Operation, OperationKind,
 };

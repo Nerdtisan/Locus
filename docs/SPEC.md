@@ -278,7 +278,7 @@ Export is always one-way. Native file is the source of truth.
 
 - Extension: `.locus`.
 - Human-readable **RON** for clean git diffs and easy debugging ([ADR-0004](adr/0004-file-format.md); JSON only as an export view).
-- Top-level: `format_version`, `units`, `next_id` (ID counter, [ADR-0003](adr/0003-entity-ids.md)), `parameters`, `layers`, `entities`, `constraints`, `regions/booleans`, `view` (optional, can be ignored by diff tools).
+- Top-level: `format_version`, `units`, `next_id` (ID counter, [ADR-0003](adr/0003-entity-ids.md)), `parameters`, `layers`, `entities`, `constraints`, `booleans` (boolean recipes over region keys, format v3, #123; regions themselves are derived and not stored), `view` (optional, can be ignored by diff tools).
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
 - Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.
 - Deterministic serialisation (stable ordering) so unchanged documents produce identical files.

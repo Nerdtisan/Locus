@@ -17,11 +17,13 @@
 //! - A command the solver can't satisfy is rolled back. Driven (reference)
 //!   dimensions get their measured values written back.
 
+use crate::boolean::BooleanError;
 use crate::command::{Applied, Command, Editor, Solution};
 use crate::constraint::Constraint;
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
 use crate::error::DocError;
+use crate::ids::BooleanId;
 use crate::ids::{ConstraintId, EntityId, LayerId, MAX_ID};
 use locus_geom::Vec2;
 use locus_solver::{self as ls, Check, Solver as _};
@@ -110,6 +112,7 @@ pub struct Sketcher {
     drag: Option<Drag>,
     // Derived, recomputed with the solve state (§6.3, #121).
     regions: Vec<locus_region::Region>,
+    results: BTreeMap<BooleanId, Result<locus_region::Area, BooleanError>>,
 }
 
 impl Sketcher {
@@ -125,6 +128,7 @@ impl Sketcher {
             state: SolveState::unknown(),
             drag: None,
             regions: Vec::new(),
+            results: BTreeMap::new(),
         };
         if let Ok(sol) = solve(&mut s.solver, s.editor.document()) {
             // Can only fail on a solver bug (non-finite output); the stored
@@ -446,7 +450,22 @@ impl Sketcher {
 
     fn refresh(&mut self) {
         self.state = analyse(&mut self.solver, self.editor.document());
-        self.regions = crate::regions::regions(self.editor.document());
+        let doc = self.editor.document();
+        self.regions = crate::regions::regions(doc);
+        self.results = doc
+            .booleans()
+            .iter()
+            .map(|(id, b)| (*id, b.evaluate(&self.regions)))
+            .collect();
+    }
+
+    /// Every boolean recipe's result (§6.3), as of the last solve: the exact
+    /// area, or why there is none (a source region is gone).
+    #[must_use]
+    pub fn boolean_results(
+        &self,
+    ) -> &BTreeMap<BooleanId, Result<locus_region::Area, BooleanError>> {
+        &self.results
     }
 
     /// The sketch's closed regions (§6.3), as of the last solve. Not updated
