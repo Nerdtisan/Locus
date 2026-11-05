@@ -108,6 +108,8 @@ pub struct Sketcher {
     solver: ls::LmSolver,
     state: SolveState,
     drag: Option<Drag>,
+    // Derived, recomputed with the solve state (§6.3, #121).
+    regions: Vec<locus_region::Region>,
 }
 
 impl Sketcher {
@@ -122,6 +124,7 @@ impl Sketcher {
             solver: ls::LmSolver::new(),
             state: SolveState::unknown(),
             drag: None,
+            regions: Vec::new(),
         };
         if let Ok(sol) = solve(&mut s.solver, s.editor.document()) {
             // Can only fail on a solver bug (non-finite output); the stored
@@ -443,6 +446,14 @@ impl Sketcher {
 
     fn refresh(&mut self) {
         self.state = analyse(&mut self.solver, self.editor.document());
+        self.regions = crate::regions::regions(self.editor.document());
+    }
+
+    /// The sketch's closed regions (§6.3), as of the last solve. Not updated
+    /// during a drag: they catch up when it ends.
+    #[must_use]
+    pub fn regions(&self) -> &[locus_region::Region] {
+        &self.regions
     }
 }
 
