@@ -21,5 +21,6 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | [0005](0005-mcp-sdk.md) | MCP SDK — `rmcp` 3.8, MCP revision 2026-07-28 | Accepted | §16.2, §12.8 |
 | [0006](0006-plugin-licence-exception.md) | Plugin licence exception — draft wording (legal review pending) | Accepted (draft) | §15.6, §12.7 |
 | [0007](0007-solver-backend-without-paste.md) | Solver backend without `paste`: Locus-owned sparse LM + LDLᵀ | Accepted | §3, §12.3 |
+| [0008](0008-booleans-and-arcs.md) | Booleans that keep true arcs: Locus-owned exact line/arc arrangement | Accepted | §6.3, §12.12 |
 
 All §12 M0 decisions are recorded.

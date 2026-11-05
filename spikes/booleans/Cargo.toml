@@ -1,0 +1,31 @@
+# Standalone spike workspace (#120, ADR 0008): not part of the root workspace.
+[package]
+name = "booleans-spike"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+wasm-own = []
+wasm-cav = []
+wasm-flat = []
+
+[dependencies]
+cavalier_contours = "0.9.0"
+i_overlay = "9.1.0"
+
+[profile.release]
+debug = false
+strip = true
+
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
