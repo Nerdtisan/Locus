@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! File handling for the GUI shell: Open / Save / Save As / Export SVG, the
+//! File handling for the GUI shell: Open / Save / Save As / Export (SVG, PDF, DXF via the pre-export panel), the
 //! unsaved-changes guard and recent files (SPEC §10, M1 #74).
 //!
 //! The document is only ever replaced through [`Canvas::load`], which starts
@@ -12,7 +12,8 @@
 mod web;
 
 use crate::canvas::Canvas;
-use locus_doc::Document;
+use locus_doc::{Document, EntityId};
+use locus_export::{Prepared, Severity};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -49,6 +50,8 @@ pub struct FileIo {
     error: Option<String>,
     notice: Option<String>,
     pending: Option<Action>,
+    /// The open pre-export panel (SPEC §8 Validation, #128).
+    export: Option<ExportPanel>,
     allow_close: bool,
     last_title: String,
     #[cfg(target_arch = "wasm32")]
@@ -71,6 +74,7 @@ impl FileIo {
             error: None,
             notice: None,
             pending: None,
+            export: None,
             allow_close: false,
             last_title: String::new(),
             #[cfg(target_arch = "wasm32")]
@@ -187,10 +191,14 @@ impl FileIo {
             self.save(canvas, true);
             ui.close();
         }
-        if ui.button("Export SVG…").clicked() {
-            self.export_svg(canvas);
-            ui.close();
-        }
+        ui.menu_button("Export", |ui| {
+            for f in ExportFormat::ALL {
+                if ui.button(format!("{}…", f.label())).clicked() {
+                    self.begin_export(f, canvas);
+                    ui.close();
+                }
+            }
+        });
         #[cfg(target_arch = "wasm32")]
         {
             ui.separator();
@@ -280,7 +288,7 @@ impl FileIo {
             .name
             .clone()
             .unwrap_or_else(|| "untitled.locus".to_owned());
-        web::Web::download(&name, &text, "application/octet-stream");
+        web::Web::download(&name, text.as_bytes(), "application/octet-stream");
         self.name = Some(name);
         self.baseline = canvas.document().clone();
         true
@@ -314,26 +322,147 @@ impl FileIo {
         }
     }
 
+    /// Validate, then either write straight away (nothing to report) or open
+    /// the pre-export panel. Export always goes through validation (#128, #133).
+    fn begin_export(&mut self, format: ExportFormat, canvas: &Canvas) {
+        let prepared = locus_export::prepare(canvas.document(), false);
+        if prepared.report.issues.is_empty() {
+            self.write_export(format, &prepared);
+        } else {
+            self.export = Some(ExportPanel {
+                format,
+                fixed: false,
+                prepared,
+            });
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
-    fn export_svg(&mut self, canvas: &Canvas) {
+    fn write_export(&mut self, format: ExportFormat, prepared: &Prepared) {
         let stem = self.name.as_deref().map_or("untitled", strip_ext);
-        let svg = locus_export::to_svg(canvas.document());
         web::Web::download(
-            &format!("{stem}.svg"),
-            &String::from_utf8_lossy(&svg),
-            "image/svg+xml",
+            &format!("{stem}.{}", format.ext()),
+            &format.write(&prepared.model),
+            format.mime(),
         );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn export_svg(&mut self, canvas: &Canvas) {
+    fn write_export(&mut self, format: ExportFormat, prepared: &Prepared) {
         let stem = self.name.as_deref().map_or("untitled", strip_ext);
-        let Some(path) = pick_save(&format!("{stem}.svg"), "svg", "SVG image") else {
+        let Some(path) = pick_save(
+            &format!("{stem}.{}", format.ext()),
+            format.ext(),
+            format.filter(),
+        ) else {
             return;
         };
-        let bytes = locus_export::to_svg(canvas.document());
-        if let Err(msg) = write_atomic(&path, &bytes) {
+        if let Err(msg) = write_atomic(&path, &format.write(&prepared.model)) {
             self.error = Some(msg);
+        }
+    }
+
+    /// The pre-export panel: fixes applied, errors (which block export) and
+    /// warnings, each selectable to highlight its entities on the canvas.
+    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+        let Some(panel) = self.export.as_mut() else {
+            return;
+        };
+        enum Do {
+            Fix,
+            Export,
+            Cancel,
+        }
+        let mut act = None;
+        let mut select: Option<Vec<EntityId>> = None;
+        let fixable = panel.prepared.report.issues.iter().any(|i| {
+            matches!(
+                i.kind,
+                locus_export::IssueKind::DuplicateSegment | locus_export::IssueKind::Degenerate
+            )
+        });
+        egui::Window::new(format!("Export {}", panel.format.label()))
+            .collapsible(false)
+            .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                let counts = panel.prepared.report.counts();
+                ui.label(format!(
+                    "{} error(s), {} warning(s)",
+                    counts.errors, counts.warnings
+                ));
+                for f in &panel.prepared.fixes {
+                    ui.weak(format!("Fixed: {}", f.message));
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(260.0)
+                    .show(ui, |ui| {
+                        for issue in &panel.prepared.report.issues {
+                            let colour = match issue.severity {
+                                Severity::Error => ui.visuals().error_fg_color,
+                                Severity::Warning => ui.visuals().warn_fg_color,
+                            };
+                            let text = egui::RichText::new(&issue.message).color(colour);
+                            if ui
+                                .selectable_label(false, text)
+                                .on_hover_text("Click to highlight on the canvas")
+                                .clicked()
+                            {
+                                select = Some(issue.entities.clone());
+                            }
+                        }
+                    });
+                if panel.prepared.blocked() {
+                    ui.label(
+                        "Errors block export. Fix them in the sketch or apply the auto-fixes.",
+                    );
+                }
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            fixable && !panel.fixed,
+                            egui::Button::new("Apply auto-fixes"),
+                        )
+                        .on_hover_text(
+                            "Merge duplicate segments and drop zero-length ones in the \
+                             exported geometry. Your sketch is not changed.",
+                        )
+                        .clicked()
+                    {
+                        act = Some(Do::Fix);
+                    }
+                    if ui
+                        .add_enabled(!panel.prepared.blocked(), egui::Button::new("Export…"))
+                        .clicked()
+                    {
+                        act = Some(Do::Export);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        act = Some(Do::Cancel);
+                    }
+                });
+            });
+        if let Some(ids) = select {
+            canvas.select_entities(&ids);
+        }
+        match act {
+            Some(Do::Fix) => {
+                panel.prepared = locus_export::prepare(canvas.document(), true);
+                panel.fixed = true;
+            }
+            Some(Do::Export) => {
+                // Re-prepare: the sketch may have changed while the panel was open.
+                let prepared = locus_export::prepare(canvas.document(), panel.fixed);
+                let format = panel.format;
+                if prepared.blocked() {
+                    panel.prepared = prepared;
+                } else {
+                    self.export = None;
+                    self.write_export(format, &prepared);
+                }
+            }
+            Some(Do::Cancel) => self.export = None,
+            None => {}
         }
     }
 
@@ -379,6 +508,7 @@ impl FileIo {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+        self.export_panel(ctx, canvas);
         if self.pending.is_some() {
             let mut choice = None;
             egui::Window::new("Unsaved changes")
@@ -431,6 +561,68 @@ impl FileIo {
                         self.error = None;
                     }
                 });
+        }
+    }
+}
+
+/// Open pre-export panel.
+#[derive(Debug)]
+struct ExportPanel {
+    format: ExportFormat,
+    /// Auto-fixes have been applied to `prepared`.
+    fixed: bool,
+    prepared: Prepared,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportFormat {
+    Svg,
+    Pdf,
+    Dxf,
+}
+
+impl ExportFormat {
+    const ALL: [Self; 3] = [Self::Svg, Self::Pdf, Self::Dxf];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Svg => "SVG",
+            Self::Pdf => "PDF",
+            Self::Dxf => "DXF",
+        }
+    }
+
+    fn ext(self) -> &'static str {
+        match self {
+            Self::Svg => "svg",
+            Self::Pdf => "pdf",
+            Self::Dxf => "dxf",
+        }
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn filter(self) -> &'static str {
+        match self {
+            Self::Svg => "SVG image",
+            Self::Pdf => "PDF document",
+            Self::Dxf => "DXF drawing (R12)",
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    fn mime(self) -> &'static str {
+        match self {
+            Self::Svg => "image/svg+xml",
+            Self::Pdf => "application/pdf",
+            Self::Dxf => "application/dxf",
+        }
+    }
+
+    fn write(self, model: &locus_export::ExportModel) -> Vec<u8> {
+        match self {
+            Self::Svg => locus_export::to_svg_model(model),
+            Self::Pdf => locus_export::to_pdf_model(model),
+            Self::Dxf => locus_export::to_dxf_model(model),
         }
     }
 }

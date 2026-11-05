@@ -599,6 +599,16 @@ impl Canvas {
             .set_all(self.scene.items.iter().map(|i| i.id));
     }
 
+    /// Select exactly these entities (the pre-export panel's highlight, #128).
+    pub fn select_entities(&mut self, ids: &[locus_doc::EntityId]) {
+        let present: Vec<_> = ids
+            .iter()
+            .copied()
+            .filter(|id| self.scene.items.iter().any(|i| i.id == *id))
+            .collect();
+        self.selection.set_all(present);
+    }
+
     pub fn clear_selection(&mut self) {
         self.selection.clear();
     }

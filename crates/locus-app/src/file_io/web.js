@@ -10,8 +10,8 @@ const STORE = "kv";
 const MAX_BYTES = 256 * 1024 * 1024;
 
 // Save: hand the browser a file to download.
-export function download(name, text, mime) {
-  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+export function download(name, data, mime) {
+  const url = URL.createObjectURL(new Blob([data], { type: mime }));
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
