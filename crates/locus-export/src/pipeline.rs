@@ -364,12 +364,12 @@ pub(crate) mod testutil {
         }
     }
 
-    pub fn layer(op: Operation, segs: Vec<PathSeg>) -> ExportLayer {
+    pub fn layer(op: locus_doc::OperationKind, segs: Vec<PathSeg>) -> ExportLayer {
         ExportLayer {
             id: LayerId::new(1),
             name: "L".into(),
             colour: [0, 0, 0],
-            operation: op,
+            operation: op.default_operation(),
             paths: chain(segs),
             degenerate: Vec::new(),
         }
