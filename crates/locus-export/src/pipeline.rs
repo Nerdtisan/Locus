@@ -198,14 +198,15 @@ impl ExportModel {
     }
 }
 
-/// Is this layer written at all? (SPEC §8: export-disabled layers are skipped.)
+/// Is this layer written at all? (SPEC §7, §8: export-disabled and Reference
+/// layers are never exported.)
 fn layer_exported(layer: &locus_doc::Layer) -> bool {
     layer.export_enabled && layer.operation.is_exportable()
 }
 
 /// Collect exportable geometry per layer and chain it into paths.
 ///
-/// Skipped: construction geometry, bare points, export-disabled layers, and
+/// Skipped: construction geometry, bare points, export-disabled and Reference layers, and
 /// geometry that references a missing point (an exporter must not panic on a
 /// document it did not validate). Layers with nothing to write are omitted.
 #[must_use]

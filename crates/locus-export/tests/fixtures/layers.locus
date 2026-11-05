@@ -1,0 +1,206 @@
+(
+  format_version: 2,
+  units: Mm,
+  next_id: 21,
+  parameters: {},
+  layers: {
+    1: (
+      name: "Layer 1",
+      colour: (0, 0, 0),
+      operation: Cut((
+        kerf_width: 0.0,
+        compensation: r#None,
+        passes: 1,
+      )),
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    2: (
+      name: "Score",
+      colour: (255, 0, 0),
+      operation: Score,
+      export_order: 1,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    3: (
+      name: "Engrave (off)",
+      colour: (0, 0, 255),
+      operation: Engrave((
+        hatch_spacing: 0.1,
+        hatch_angle: 0.0,
+      )),
+      export_order: 2,
+      visible: true,
+      locked: false,
+      export_enabled: false,
+    ),
+    4: (
+      name: "Guides",
+      colour: (128, 128, 128),
+      operation: Reference,
+      export_order: 3,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    5: (
+      name: "Vinyl",
+      colour: (0, 160, 0),
+      operation: DragKnife((
+        blade_offset: 0.25,
+      )),
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    6: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    7: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 40.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    8: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 6,
+        end: 7,
+      ),
+    ),
+    9: (
+      layer: 2,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 5.0,
+        ),
+      ),
+    ),
+    10: (
+      layer: 2,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 40.0,
+          y: 5.0,
+        ),
+      ),
+    ),
+    11: (
+      layer: 2,
+      construction: false,
+      geom: Line(
+        start: 9,
+        end: 10,
+      ),
+    ),
+    12: (
+      layer: 3,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    13: (
+      layer: 3,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 40.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    14: (
+      layer: 3,
+      construction: false,
+      geom: Line(
+        start: 12,
+        end: 13,
+      ),
+    ),
+    15: (
+      layer: 4,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 15.0,
+        ),
+      ),
+    ),
+    16: (
+      layer: 4,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 40.0,
+          y: 15.0,
+        ),
+      ),
+    ),
+    17: (
+      layer: 4,
+      construction: false,
+      geom: Line(
+        start: 15,
+        end: 16,
+      ),
+    ),
+    18: (
+      layer: 5,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    19: (
+      layer: 5,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 40.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    20: (
+      layer: 5,
+      construction: false,
+      geom: Line(
+        start: 18,
+        end: 19,
+      ),
+    ),
+  },
+  constraints: {},
+  view: None,
+)
