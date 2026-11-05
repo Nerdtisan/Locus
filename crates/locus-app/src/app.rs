@@ -20,6 +20,7 @@ const LAYOUT_KEY: &str = "locus.layout.v1";
 pub enum Tab {
     Canvas,
     Properties,
+    Layers,
     Constraints,
 }
 
@@ -28,6 +29,7 @@ impl Tab {
         match self {
             Tab::Canvas => "Sketch",
             Tab::Properties => "Properties",
+            Tab::Layers => "Layers",
             Tab::Constraints => "Constraints",
         }
     }
@@ -36,7 +38,8 @@ impl Tab {
 fn default_layout() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas]);
     let tree = dock.main_surface_mut();
-    let [_canvas, right] = tree.split_right(NodeIndex::root(), 0.76, vec![Tab::Properties]);
+    let [_canvas, right] =
+        tree.split_right(NodeIndex::root(), 0.76, vec![Tab::Properties, Tab::Layers]);
     tree.split_below(right, 0.55, vec![Tab::Constraints]);
     dock
 }
@@ -169,7 +172,7 @@ impl App {
                     ui.close();
                 }
                 ui.separator();
-                for tab in [Tab::Properties, Tab::Constraints] {
+                for tab in [Tab::Properties, Tab::Layers, Tab::Constraints] {
                     let mut shown = self.dock.find_tab(&tab).is_some();
                     if ui.checkbox(&mut shown, tab.title()).changed() {
                         self.toggle_tab(tab);
@@ -379,6 +382,7 @@ impl TabViewer for Viewer<'_> {
         match tab {
             Tab::Canvas => self.canvas.ui(ui, self.settings, self.status),
             Tab::Properties => self.canvas.properties_ui(ui, self.settings),
+            Tab::Layers => self.canvas.layers_ui(ui, self.settings),
             Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
         }
     }
@@ -445,7 +449,7 @@ mod tests {
     #[test]
     fn layout_round_trips() {
         let json = serde_json::to_string(&default_layout()).unwrap_or_default();
-        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 3);
+        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 4);
     }
 
     #[test]
