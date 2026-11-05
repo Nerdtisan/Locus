@@ -18,6 +18,7 @@ use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
 
 mod layers_panel;
+mod regions;
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
@@ -92,6 +93,8 @@ pub struct Canvas {
     /// The layer new geometry is drawn on (#118).
     active_layer: LayerId,
     layer_ui: layers_panel::LayerUi,
+    /// Region selection, hover and the boolean combine (#122, #124).
+    region_ui: regions::RegionUi,
 }
 
 impl Default for Canvas {
@@ -116,6 +119,7 @@ impl Default for Canvas {
             dim_rects: Vec::new(),
             active_layer: Document::default_layer(),
             layer_ui: layers_panel::LayerUi::default(),
+            region_ui: regions::RegionUi::default(),
         };
         c.load(demo::sketch());
         c
@@ -127,6 +131,7 @@ impl Canvas {
     pub fn load(&mut self, doc: Document) {
         self.sketcher = Sketcher::new(doc);
         self.layer_ui = layers_panel::LayerUi::default();
+        self.region_ui = regions::RegionUi::default();
         self.active_layer = self.active_layer();
         self.draft.set_layer(self.active_layer);
         self.dragging = false;
@@ -574,6 +579,7 @@ impl Canvas {
         self.selection
             .retain(|id| scene.items.iter().any(|i| i.id == id));
         self.hover = None;
+        self.retain_regions();
     }
 
     /// World bounds of the content; a sheet-sized default while empty.
@@ -611,6 +617,7 @@ impl Canvas {
 
     pub fn clear_selection(&mut self) {
         self.selection.clear();
+        self.region_ui.selected.clear();
     }
 
     pub fn summary(&self) -> String {
@@ -623,8 +630,12 @@ impl Canvas {
     }
 
     pub fn properties_ui(&mut self, ui: &mut egui::Ui, settings: &Settings) {
+        if let Some(s) = self.region_summary() {
+            ui.label(s);
+        }
         let doc = self.sketcher.document();
         match self.selection.len() {
+            0 if !self.region_ui.selected.is_empty() => {}
             0 => {
                 ui.weak("Nothing selected.");
             }
@@ -705,6 +716,7 @@ impl Canvas {
         };
         let (selection, hovered) = (&self.selection, self.hover);
         let (flag_constraints, flag_entities) = self.flagged();
+        self.draw_regions(&painter, rect, dark);
         self.drawn = frame.draw_items(&self.scene, |item| {
             if flag_entities.contains(&item.id) {
                 Emphasis::Conflict
@@ -991,6 +1003,13 @@ impl Canvas {
             Some(p) if !boxing => pick_at(self, p),
             _ => None,
         };
+        // Inside a region but off its curves: shade the region (#122).
+        self.region_ui.hover = match resp.hover_pos() {
+            Some(p) if !boxing && self.hover.is_none() => {
+                self.region_at(self.view.to_world(p, rect))
+            }
+            _ => None,
+        };
         if self.hover.is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -1003,7 +1022,26 @@ impl Canvas {
         } else if resp.clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
         {
-            self.selection.click(pick_at(self, p), mods);
+            let hit = pick_at(self, p);
+            let region = self.region_at(self.view.to_world(p, rect));
+            let plain = !(mods.add || mods.toggle);
+            if self.region_ui.combine.is_some() {
+                // Picking tool regions for a boolean (#124).
+                if hit.is_none() {
+                    self.combine_click(region);
+                }
+            } else if hit.is_some() || region.is_none() {
+                self.selection.click(hit, mods);
+                if plain {
+                    self.region_ui.selected.clear();
+                }
+            } else {
+                // Regions select alongside entities, by the same rules.
+                self.region_ui.click(region.as_ref(), mods);
+                if plain {
+                    self.selection.clear();
+                }
+            }
         }
         if resp.drag_stopped_by(PointerButton::Primary)
             && let Some(start) = self.rubber.take()
@@ -1027,9 +1065,15 @@ impl Canvas {
                     i.modifiers.command && i.key_pressed(egui::Key::A),
                 )
             });
-            if esc {
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if esc && self.region_ui.combine.is_some() {
+                self.cancel_combine();
+            } else if esc {
                 self.refusal = None;
                 self.clear_selection();
+            }
+            if enter && self.region_ui.combine.is_some() {
+                self.finish_combine();
             }
             if all {
                 self.select_all();
