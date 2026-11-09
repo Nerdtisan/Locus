@@ -125,6 +125,17 @@ fn violation_opt(sk: &Sketch, k: &Constraint) -> Option<f64> {
             pt(sk, p)?.distance((a + b) * 0.5)
         }
         Fix { p, at } => pt(sk, p)?.distance(at),
+        Aligned { a, p, b } | RightAngle { a, p, b } => {
+            let pp = pt(sk, p)?;
+            let (u, v) = (pt(sk, a)? - pp, pt(sk, b)? - pp);
+            let s = (u.length() * v.length()).sqrt().max(1e-12);
+            let r = if matches!(*k, Aligned { .. }) {
+                u.cross(v)
+            } else {
+                u.dot(v)
+            };
+            (r / s).abs()
+        }
         Distance { p, q, d } => (pt(sk, p)?.distance(pt(sk, q)?) - d).abs(),
         PointLineDistance { p, line: l, d } => (line_dist(pt(sk, p)?, line(sk, l)?) - d).abs(),
         LineLineDistance { l, m, d } => (line_dist(line(sk, m)?.0, line(sk, l)?) - d).abs(),

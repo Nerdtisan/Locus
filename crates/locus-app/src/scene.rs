@@ -7,7 +7,7 @@
 //! successful command; it is derived state and never edited (SPEC §11).
 
 use locus_doc::{Constraint, ConstraintId, Document, EntityId, Geom};
-use locus_geom::{Aabb, Arc, Circle, Line, Vec2};
+use locus_geom::{Aabb, Arc, Circle, Cubic, Line, Vec2};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,6 +16,7 @@ pub enum Shape {
     Line(Line),
     Circle(Circle),
     Arc(Arc),
+    Cubic(Cubic),
 }
 
 impl Shape {
@@ -25,6 +26,7 @@ impl Shape {
             Shape::Line(l) => Aabb::from_points(l.a, l.b),
             Shape::Circle(c) => c.bbox(),
             Shape::Arc(a) => a.bbox(),
+            Shape::Cubic(c) => c.bbox(),
         }
     }
 }
@@ -125,6 +127,7 @@ impl Scene {
             Geom::Line { .. } => doc.line(id).map(|l| l.eval(0.5)),
             Geom::Circle { .. } => doc.circle(id).map(|c| c.center),
             Geom::Arc { .. } => doc.arc(id).map(|a| a.eval(0.5)),
+            Geom::Bezier { .. } => doc.cubic(id).map(|c| c.eval(0.5)),
         }
     }
 
@@ -158,6 +161,10 @@ impl Scene {
                     Some(a) => Shape::Arc(a),
                     None => continue,
                 },
+                Geom::Bezier { .. } => match doc.cubic(id) {
+                    Some(c) => Shape::Cubic(c),
+                    None => continue,
+                },
             };
             let constrained = fully_constrained.contains(&id);
             let bbox = shape.bbox();
@@ -169,7 +176,9 @@ impl Scene {
                 constrained,
                 owned_point: matches!(shape, Shape::Point(_)) && owned.contains(&id),
                 ends: match e.geom {
-                    Geom::Line { start, end } | Geom::Arc { start, end, .. } => Some((start, end)),
+                    Geom::Line { start, end }
+                    | Geom::Arc { start, end, .. }
+                    | Geom::Bezier { start, end, .. } => Some((start, end)),
                     _ => None,
                 },
                 bbox,

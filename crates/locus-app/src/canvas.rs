@@ -260,6 +260,7 @@ impl Canvas {
                 Geom::Line { .. } => doc.line(r).map(|l| l.eval(0.5)),
                 Geom::Circle { .. } => doc.circle(r).map(|c| c.center),
                 Geom::Arc { .. } => doc.arc(r).map(|a| a.center),
+                Geom::Bezier { .. } => doc.cubic(r).map(|c| c.eval(0.5)),
             })
             .unwrap_or(Vec2::ZERO);
         self.dim_edit = Some(DimEdit {
@@ -911,6 +912,8 @@ impl Canvas {
             Some(Geom::Point { .. }) => grabbed,
             Some(Geom::Line { start, end }) => near(*start, *end),
             Some(Geom::Circle { center, .. } | Geom::Arc { center, .. }) => *center,
+            // A Bézier moves by its end nearer the cursor, like a line.
+            Some(Geom::Bezier { start, end, .. }) => near(*start, *end),
             None => return false,
         };
         match self.sketcher.begin_drag(point) {
@@ -1141,6 +1144,7 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
         Geom::Line { .. } => "Line",
         Geom::Circle { .. } => "Circle",
         Geom::Arc { .. } => "Arc",
+        Geom::Bezier { .. } => "Bézier",
     };
     let mut rows = vec![
         ("ID".to_owned(), id.to_string()),
@@ -1179,6 +1183,13 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
                     "Sweep".to_owned(),
                     format!("{:.2}°", a.sweep().to_degrees()),
                 ));
+            }
+        }
+        Geom::Bezier { .. } => {
+            if let Some(c) = doc.cubic(id) {
+                rows.push(("Start".to_owned(), pt(c.p0)));
+                rows.push(("End".to_owned(), pt(c.p1)));
+                rows.push(("Length".to_owned(), units.format_len(c.length())));
             }
         }
     }

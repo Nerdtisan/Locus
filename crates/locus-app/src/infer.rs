@@ -86,6 +86,7 @@ fn nearest_curve(items: &[Item], p: Vec2, tol: f64) -> Option<(EntityId, Vec2)> 
             Shape::Point(_) => continue,
             Shape::Line(l) => l.closest_point(p),
             Shape::Arc(a) => a.closest_point(p),
+            Shape::Cubic(c) => c.closest_point(p),
             Shape::Circle(c) => {
                 let Some(u) = (p - c.center).normalized(1e-12) else {
                     continue;

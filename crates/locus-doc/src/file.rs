@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -176,8 +176,41 @@ struct FileV3 {
     view: Option<View>,
 }
 
-/// The newest on-disk shape. When adding v4, point this at `FileV4`.
-type Latest = FileV3;
+impl From<FileV3> for FileV4 {
+    /// v3 → v4: nothing to convert; v4 only adds the cubic Bézier entity
+    /// (SPEC §4), which no v3 file can contain.
+    fn from(f: FileV3) -> Self {
+        FileV4 {
+            format_version: 4,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            view: f.view,
+        }
+    }
+}
+
+/// Version 4: cubic Bézier entities and their G1 tangency (SPEC §4, #159).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV4 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+/// The newest on-disk shape. When adding v5, point this at `FileV5`.
+type Latest = FileV4;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -229,9 +262,10 @@ pub fn load(text: &str) -> Result<Document, FileError> {
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
     let latest = match header.format_version {
         0 => return Err(FileError::UnknownVersion(0)),
-        1 => FileV2::from(parse::<FileV1>(text)?).into(),
-        2 => parse::<FileV2>(text)?.into(),
-        3 => parse::<FileV3>(text)?,
+        1 => FileV3::from(FileV2::from(parse::<FileV1>(text)?)).into(),
+        2 => FileV3::from(parse::<FileV2>(text)?).into(),
+        3 => parse::<FileV3>(text)?.into(),
+        4 => parse::<FileV4>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -577,32 +611,122 @@ mod tests {
         doc
     }
 
+    /// The v4 sample: `sample_v3()` plus a Bézier chain: a line, then a
+    /// Bézier tangent to it, then a second Bézier tangent to the first.
+    pub(crate) fn sample_v4() -> Document {
+        let mut ed = Editor::new(sample_v3());
+        let mut add = |geom| {
+            ed.apply(&Command::AddEntity {
+                layer: L,
+                construction: false,
+                geom,
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let pt = |x, y| Geom::Point {
+            pos: Vec2::new(x, y),
+        };
+        let p = [
+            add(pt(70.0, 0.0)),
+            add(pt(80.0, 0.0)),
+            add(pt(90.0, 0.0)),
+            add(pt(100.0, 10.0)),
+            add(pt(105.0, 20.0)),
+            add(pt(110.0, 30.0)),
+            add(pt(120.0, 30.0)),
+            add(pt(125.0, 35.0)),
+        ];
+        let line = add(Geom::Line {
+            start: p[0],
+            end: p[1],
+        });
+        let b1 = add(Geom::Bezier {
+            start: p[1],
+            start_ctrl: p[2],
+            end_ctrl: p[3],
+            end: p[4],
+        });
+        let b2 = add(Geom::Bezier {
+            start: p[4],
+            start_ctrl: p[5],
+            end_ctrl: p[6],
+            end: p[7],
+        });
+        for constraint in [
+            Constraint::Tangent { a: line, b: b1 },
+            Constraint::Tangent { a: b1, b: b2 },
+            Constraint::Fix { point: p[0] },
+        ] {
+            ed.apply(&Command::AddConstraint { constraint }).unwrap();
+        }
+        ed.into_document()
+    }
+
     #[test]
-    fn v3_fixture_is_current_and_loads() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v3/plate.locus");
+    fn v4_fixture_is_current_and_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v4/plate.locus");
         if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v3()).unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v4()).unwrap()).unwrap();
         }
         let text = std::fs::read_to_string(path).unwrap();
-        assert_eq!(load(&text).unwrap(), sample_v3());
+        assert!(text.contains("format_version: 4"));
+        assert_eq!(load(&text).unwrap(), sample_v4());
         assert_eq!(
-            save(&sample_v3()).unwrap(),
+            save(&sample_v4()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
     }
 
-    /// The v2 fixture is frozen; it migrates to v3 with no recipes.
+    /// The v3 fixture is frozen; it migrates to v4 unchanged.
     #[test]
-    fn v2_fixture_migrates_to_v3() {
+    fn v3_fixture_migrates_to_v4() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v3/plate.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 3"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v3());
+        assert!(save(&doc).unwrap().contains("format_version: 4"));
+    }
+
+    #[test]
+    fn bezier_tangent_must_share_an_end_point() {
+        let mut doc = sample_v4();
+        // Cut the shared point out of the first tangent by pointing the
+        // constraint at the unrelated plate line.
+        let plate_line = doc
+            .entities()
+            .iter()
+            .find_map(|(id, e)| matches!(e.geom, Geom::Line { .. }).then_some(id))
+            .unwrap();
+        let bez = doc
+            .entities()
+            .iter()
+            .find_map(|(id, e)| matches!(e.geom, Geom::Bezier { .. }).then_some(id))
+            .unwrap();
+        let cid = *doc.constraints.keys().next().unwrap();
+        doc.constraints.insert(
+            cid,
+            Constraint::Tangent {
+                a: plate_line,
+                b: bez,
+            },
+        );
+        assert!(matches!(validate(&doc), Err(FileError::Invalid(_))));
+    }
+
+    /// The v2 fixture is frozen; it migrates to v4 with no recipes.
+    #[test]
+    fn v2_fixture_migrates_to_v4() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v2/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 2"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 3"));
+        assert!(save(&doc).unwrap().contains("format_version: 4"));
     }
 
     #[test]
@@ -618,7 +742,7 @@ mod tests {
     /// The v1 fixture is frozen; it must keep loading, with default
     /// parameters on its layers (SPEC §10 migration).
     #[test]
-    fn v1_fixture_migrates_to_v3() {
+    fn v1_fixture_migrates_to_v4() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 1"));
@@ -628,7 +752,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 3"));
+        assert!(save(&doc).unwrap().contains("format_version: 4"));
     }
 
     #[test]
@@ -650,13 +774,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 3", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 4", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(4)),
+            load(&v(5)),
             Err(FileError::FutureVersion {
-                found: 4,
-                supported: 3
+                found: 5,
+                supported: 4
             })
         );
         // Dangling reference: a line pointing at a missing point.

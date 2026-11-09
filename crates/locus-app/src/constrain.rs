@@ -87,7 +87,7 @@ impl Kind {
             Kind::Coincident => "two points, or a point and a curve",
             Kind::Horizontal | Kind::Vertical => "one or more lines",
             Kind::Parallel | Kind::Perpendicular | Kind::Collinear => "two lines",
-            Kind::Tangent => "two curves (line, circle or arc)",
+            Kind::Tangent => "two curves (line, circle, arc or Bézier)",
             Kind::Concentric => "two circles or arcs",
             Kind::Equal => "two or more lines, or two or more circles/arcs",
             Kind::Symmetric => "two points and a line to mirror across",
@@ -104,6 +104,7 @@ struct Sorted {
     lines: Vec<EntityId>,
     circles: Vec<EntityId>,
     arcs: Vec<EntityId>,
+    beziers: Vec<EntityId>,
 }
 
 impl Sorted {
@@ -115,6 +116,7 @@ impl Sorted {
                 Some(EntityKind::Line) => s.lines.push(id),
                 Some(EntityKind::Circle) => s.circles.push(id),
                 Some(EntityKind::Arc) => s.arcs.push(id),
+                Some(EntityKind::Bezier) => s.beziers.push(id),
                 None => {}
             }
         }
@@ -135,7 +137,11 @@ impl Sorted {
     }
 
     fn total(&self) -> usize {
-        self.points.len() + self.lines.len() + self.circles.len() + self.arcs.len()
+        self.points.len()
+            + self.lines.len()
+            + self.circles.len()
+            + self.arcs.len()
+            + self.beziers.len()
     }
 }
 
@@ -205,6 +211,20 @@ pub fn plan(kind: Kind, doc: &Document, sel: &[EntityId]) -> Result<Command, Str
                 Kind::Perpendicular => Constraint::Perpendicular { a, b },
                 _ => Constraint::Collinear { a, b },
             }]
+        }
+        Kind::Tangent if !s.beziers.is_empty() => {
+            // G1 at a shared end point: a Bézier with a line, arc or Bézier.
+            let c: Vec<EntityId> = s
+                .beziers
+                .iter()
+                .chain(&s.lines)
+                .chain(&s.arcs)
+                .copied()
+                .collect();
+            if s.total() != 2 || c.len() != 2 {
+                return Err(bad());
+            }
+            vec![Constraint::Tangent { a: c[0], b: c[1] }]
         }
         Kind::Tangent => {
             let c = s.curves();
@@ -292,6 +312,7 @@ pub fn entity_name(doc: &Document, id: EntityId) -> String {
         Some(EntityKind::Line) => "Line",
         Some(EntityKind::Circle) => "Circle",
         Some(EntityKind::Arc) => "Arc",
+        Some(EntityKind::Bezier) => "Bézier",
         None => "Missing",
     };
     format!("{kind} {id}")
@@ -433,6 +454,7 @@ pub fn dim_anchor(doc: &Document, spec: DimSpec) -> Vec2 {
             locus_doc::Geom::Line { .. } => doc.line(id).map(|l| l.eval(0.5)),
             locus_doc::Geom::Circle { .. } => doc.circle(id).map(|c| c.center),
             locus_doc::Geom::Arc { .. } => doc.arc(id).map(|a| a.center),
+            locus_doc::Geom::Bezier { .. } => doc.cubic(id).map(|c| c.eval(0.5)),
         }
     };
     match spec {

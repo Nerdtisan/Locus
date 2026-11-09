@@ -8,7 +8,7 @@
 //! model and never the [`Document`] (SPEC §11).
 
 use locus_doc::{Document, EntityId, Geom, LayerId, Operation};
-use locus_geom::{Aabb, Arc, Circle, EXPORT_TOL, Line, Vec2};
+use locus_geom::{Aabb, Arc, Circle, Cubic, EXPORT_TOL, Line, Piece, Vec2};
 use std::collections::VecDeque;
 
 /// One drawable primitive, in document millimetres (Y-up).
@@ -18,6 +18,9 @@ pub enum Shape {
     /// Counter-clockwise from `start` to `end` (SPEC §4).
     Arc(Arc),
     Circle(Circle),
+    /// Cubic Bézier (SPEC §4). SVG and PDF write it as a curve; DXF R12 and the
+    /// geometric checks use [`Shape::pieces`].
+    Cubic(Cubic),
 }
 
 impl Shape {
@@ -27,6 +30,7 @@ impl Shape {
             Shape::Line(l) => l.bbox(),
             Shape::Arc(a) => a.bbox(),
             Shape::Circle(c) => c.bbox(),
+            Shape::Cubic(c) => c.bbox(),
         }
     }
 
@@ -36,6 +40,7 @@ impl Shape {
             Shape::Line(l) => l.length(),
             Shape::Arc(a) => a.length(),
             Shape::Circle(c) => c.length(),
+            Shape::Cubic(c) => c.length(),
         }
     }
 
@@ -46,6 +51,7 @@ impl Shape {
             Shape::Line(l) => l.length() <= EXPORT_TOL,
             Shape::Arc(a) => a.is_degenerate() || a.length() <= EXPORT_TOL,
             Shape::Circle(c) => c.radius <= EXPORT_TOL,
+            Shape::Cubic(c) => c.length() <= EXPORT_TOL,
         }
     }
 
@@ -55,12 +61,38 @@ impl Shape {
             Shape::Line(l) => Some((l.a, l.b)),
             Shape::Arc(a) => Some((a.start, a.end)),
             Shape::Circle(_) => None,
+            Shape::Cubic(c) => Some((c.p0, c.p1)),
+        }
+    }
+
+    /// A Bézier as lines and arcs within [`EXPORT_TOL`]; any other shape is
+    /// its own single piece (a circle has none, see [`Shape::Circle`]).
+    #[must_use]
+    pub fn pieces(&self) -> Vec<Shape> {
+        match self {
+            Shape::Cubic(c) => c
+                .to_pieces(EXPORT_TOL)
+                .into_iter()
+                .map(|p| match p {
+                    Piece::Line(l) => Shape::Line(l),
+                    Piece::Arc(a) => Shape::Arc(a),
+                })
+                .collect(),
+            other => vec![*other],
         }
     }
 
     /// Intersection points with another shape (collinear overlaps excluded).
+    /// A Bézier is compared through its arc approximation.
     #[must_use]
     pub fn intersections(&self, o: &Shape) -> Vec<Vec2> {
+        if matches!(self, Shape::Cubic(_)) || matches!(o, Shape::Cubic(_)) {
+            let (a, b) = (self.pieces(), o.pieces());
+            return a
+                .iter()
+                .flat_map(|x| b.iter().flat_map(move |y| x.intersections(y)))
+                .collect();
+        }
         match (self, o) {
             (Shape::Line(a), Shape::Line(b)) => a.intersect_line(b).into_iter().collect(),
             (Shape::Line(a), Shape::Arc(b)) | (Shape::Arc(b), Shape::Line(a)) => a.intersect_arc(b),
@@ -72,6 +104,7 @@ impl Shape {
                 a.intersect_circle(b)
             }
             (Shape::Circle(a), Shape::Circle(b)) => a.intersect_circle(b),
+            (Shape::Cubic(_), _) | (_, Shape::Cubic(_)) => Vec::new(),
         }
     }
 }
@@ -243,6 +276,7 @@ pub fn collect(doc: &Document) -> ExportModel {
             Geom::Line { .. } => doc.line(eid).map(Shape::Line),
             Geom::Circle { .. } => doc.circle(eid).map(Shape::Circle),
             Geom::Arc { .. } => doc.arc(eid).map(Shape::Arc),
+            Geom::Bezier { .. } => doc.cubic(eid).map(Shape::Cubic),
         };
         let Some(shape) = shape else { continue };
         let Some((layer, segs)) = layers.iter_mut().find(|(l, _)| l.id == e.layer) else {
