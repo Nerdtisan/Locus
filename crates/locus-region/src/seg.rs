@@ -305,13 +305,34 @@ impl Loop {
     /// into y-monotone pieces). Undefined exactly on the boundary.
     #[must_use]
     pub fn winding(&self, q: Vec2) -> i32 {
+        self.winding_boxed(q, None)
+    }
+
+    /// [`Loop::winding`], skipping edges whose box (`boxes[i]`, when given,
+    /// one per edge) the ray can't meet.
+    pub(crate) fn winding_boxed(&self, q: Vec2, boxes: Option<&[Aabb]>) -> i32 {
         let mut w = 0;
         let mut cross = |a: Vec2, b: Vec2, x_at: &dyn Fn() -> f64| {
             if (a.y <= q.y) != (b.y <= q.y) && x_at() > q.x {
                 w += if b.y > a.y { 1 } else { -1 };
             }
         };
+        let reach = crate::arrange::SNAP;
         for (i, e) in self.edges.iter().enumerate() {
+            // The ray can't meet an edge that is clearly above, below or left
+            // of the probe; checked before the vertices, which cost
+            // trigonometry. The margin keeps canonical vertices, which may
+            // differ from an arc's own ends by an ulp, on the full test.
+            if let Some(bb) = boxes.and_then(|b| b.get(i)) {
+                if bb.min.y > q.y + reach || bb.max.y < q.y - reach || bb.max.x < q.x - reach {
+                    continue;
+                }
+            } else if let Seg::Arc { center, radius, .. } = e.seg {
+                let reach = radius + reach;
+                if (q.y - center.y).abs() > reach || center.x + reach < q.x {
+                    continue;
+                }
+            }
             let (v0, v1) = (self.vertex(i), self.vertex(i + 1));
             match e.seg {
                 Seg::Line { .. } => cross(v0, v1, &|| {
@@ -323,8 +344,9 @@ impl Loop {
                     start,
                     sweep,
                 } => {
-                    let angs = monotone_breaks(start, sweep);
-                    let m = angs.len() - 1;
+                    let (angs, len) = monotone_breaks(start, sweep);
+                    let angs = &angs[..len];
+                    let m = len - 1;
                     for (k, win) in angs.windows(2).enumerate() {
                         let (t0, t1) = (win[0], win[1]);
                         let pa = if k == 0 {
@@ -350,26 +372,34 @@ impl Loop {
     }
 }
 
+/// Most arcs in a loop sweep at most a full turn, so they have at most three
+/// top/bottom breaks; longer sweeps are cut short at this many angles.
+const MAX_BREAKS: usize = 8;
+
 /// `start`, every top/bottom angle (π/2 + kπ) strictly inside the sweep in
-/// order, and the end angle.
-fn monotone_breaks(start: f64, sweep: f64) -> Vec<f64> {
+/// order, and the end angle, with the count used.
+fn monotone_breaks(start: f64, sweep: f64) -> ([f64; MAX_BREAKS], usize) {
     let end = start + sweep;
-    let mut angs = vec![start];
+    let mut angs = [0.0; MAX_BREAKS];
+    angs[0] = start;
+    let mut len = 1;
     if sweep > 0.0 {
         let mut k = ((start - FRAC_PI_2) / PI).floor() + 1.0;
-        while FRAC_PI_2 + k * PI < end {
-            angs.push(FRAC_PI_2 + k * PI);
+        while FRAC_PI_2 + k * PI < end && len < MAX_BREAKS - 1 {
+            angs[len] = FRAC_PI_2 + k * PI;
+            len += 1;
             k += 1.0;
         }
     } else {
         let mut k = ((start - FRAC_PI_2) / PI).ceil() - 1.0;
-        while FRAC_PI_2 + k * PI > end {
-            angs.push(FRAC_PI_2 + k * PI);
+        while FRAC_PI_2 + k * PI > end && len < MAX_BREAKS - 1 {
+            angs[len] = FRAC_PI_2 + k * PI;
+            len += 1;
             k -= 1.0;
         }
     }
-    angs.push(end);
-    angs
+    angs[len] = end;
+    (angs, len + 1)
 }
 
 /// A filled area: loops combined by the non-zero winding rule (outer loops
