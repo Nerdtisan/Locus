@@ -1548,6 +1548,7 @@ dependencies = [
  "locus-geom",
  "locus-region",
  "locus-solver",
+ "proptest",
  "ron",
  "serde",
  "thiserror 2.0.21",
