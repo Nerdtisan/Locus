@@ -6,6 +6,12 @@
 //! `width`/`height` in mm). The document is Y-up; SVG is Y-down, so Y is
 //! flipped about the top of the bounds when writing coordinates. Construction
 //! geometry, layers with export disabled and bare points are not written.
+//!
+//! Each `<path>`/`<circle>` carries its own `fill`/`stroke`/`stroke-width`
+//! instead of inheriting them from the layer `<g>`: Cricut Design Space
+//! ignores group-level presentation attributes and imported a design with a
+//! large black outline as blank (#134). Per-shape attributes are valid SVG 1.1
+//! and read the same in LightBurn and Inkscape.
 
 use crate::order::order;
 use crate::pipeline::{ExportModel, PathSeg, Shape, collect};
@@ -60,10 +66,14 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
         }
         let _ = writeln!(
             out,
-            "  <g id=\"layer-{id}\" data-name=\"{name}\" data-operation=\"{op:?}\" fill=\"none\" stroke=\"#{r:02x}{g:02x}{b:02x}\" stroke-width=\"0.1\">",
+            "  <g id=\"layer-{id}\" data-name=\"{name}\" data-operation=\"{op:?}\">",
             id = layer.id,
             name = escape(&layer.name),
             op = layer.operation.kind(),
+        );
+        // On every shape, not the group (see the module docs: Cricut).
+        let style = format!(
+            "fill=\"none\" stroke=\"#{r:02x}{g:02x}{b:02x}\" stroke-width=\"0.1\"",
             r = layer.colour[0],
             g = layer.colour[1],
             b = layer.colour[2],
@@ -75,7 +85,7 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
                 let c0 = map(c.center);
                 let _ = writeln!(
                     out,
-                    "    <circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
+                    "    <circle {style} cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
                     num(c0.x),
                     num(c0.y),
                     num(c.radius)
@@ -90,7 +100,7 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
             if p.closed {
                 d.push_str(" Z");
             }
-            let _ = writeln!(out, "    <path d=\"{d}\"/>");
+            let _ = writeln!(out, "    <path {style} d=\"{d}\"/>");
         }
         out.push_str(
             "  </g>
@@ -168,6 +178,61 @@ mod tests {
         let svg = String::from_utf8(to_svg(&Document::new())).unwrap();
         assert!(svg.contains("width=\"1mm\" height=\"1mm\" viewBox=\"0 0 1 1\""));
         assert!(!svg.contains("<g "));
+    }
+
+    /// Regression for #134: Cricut Design Space ignores styles on `<g>`, so
+    /// every shape must carry its own fill and stroke.
+    #[test]
+    fn every_shape_carries_its_own_style() {
+        use locus_doc::{Command, Editor, Geom};
+        let mut ed = Editor::new(Document::new());
+        let layer = Document::default_layer();
+        let pt = |ed: &mut Editor, x, y| {
+            ed.apply(&Command::AddEntity {
+                layer,
+                construction: false,
+                geom: Geom::Point {
+                    pos: Vec2::new(x, y),
+                },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let (a, b) = (pt(&mut ed, 0.0, 0.0), pt(&mut ed, 50.0, 0.0));
+        let c = pt(&mut ed, 20.0, 20.0);
+        for geom in [
+            Geom::Line { start: a, end: b },
+            Geom::Circle {
+                center: c,
+                radius: 5.0,
+            },
+        ] {
+            ed.apply(&Command::AddEntity {
+                layer,
+                construction: false,
+                geom,
+            })
+            .unwrap();
+        }
+        let svg = String::from_utf8(to_svg(ed.document())).unwrap();
+        let shapes: Vec<&str> = svg
+            .lines()
+            .filter(|l| l.contains("<path") || l.contains("<circle"))
+            .collect();
+        assert_eq!(shapes.len(), 2, "{svg}");
+        for s in shapes {
+            assert!(
+                s.contains("fill=\"none\"")
+                    && s.contains("stroke=\"#")
+                    && s.contains("stroke-width="),
+                "shape without its own style: {s}"
+            );
+        }
+        let group = svg.lines().find(|l| l.contains("<g ")).unwrap();
+        assert!(
+            !group.contains("stroke="),
+            "style must not be on the group: {group}"
+        );
     }
 
     #[test]
