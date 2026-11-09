@@ -10,3 +10,7 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Parses wit/ in a test so the draft interface stays valid WIT (#137).
+wit-parser = "0.263"

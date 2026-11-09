@@ -28,6 +28,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | MCP SDK | `rmcp` 3.8; target MCP revision 2026-07-28, also accept 2025-11-25 clients. [ADR-0005](adr/0005-mcp-sdk.md), 2026-11-04. |
 | Plugin exception | Classpath-style "Locus Plugin Exception" drafted in [ADR-0006](adr/0006-plugin-licence-exception.md), 2026-11-04; not in effect until legal review (#83). |
 | Booleans | Exact line/arc booleans owned by `locus-region`, sharing the region-detection arrangement; no flattening or arc refit (decided 2026-11-05, [ADR 0008](adr/0008-booleans-and-arcs.md)). |
+| Plugin API | WIT package `locus:plugin@1.0.0` (draft until the M3 host): one world per plugin kind, none importing anything (deny by default), exporters get the same validated export model as built-in writers ([ADR-0009](adr/0009-plugin-api.md), 2026-11-05). Text ships in core, not as a plugin (§9). |
 
 ---
 
@@ -268,7 +269,7 @@ Export is always one-way. Native file is the source of truth.
 
 - **Single-line fonts** (Hershey, EMS/SVG single-stroke) for plotters/engraving — required v1-ish (Milestone 3).
 - Outline TrueType/OpenType → geometry for cutting.
-- Text could ship as a first-party plugin to validate the plugin API (decide in M2).
+- Text ships in core (`locus-text`), not as a plugin: it must work on the web, where plugins aren't available yet, and it's a live constrainable entity ([ADR-0009](adr/0009-plugin-api.md), decided in M2).
 - Text entity has a constrained baseline/anchor (can be constrained like any entity, e.g. centred on a region).
 - Bundle only fonts with compatible licences (OFL/public domain).
 
