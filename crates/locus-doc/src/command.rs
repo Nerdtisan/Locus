@@ -139,6 +139,12 @@ pub enum Command {
         id: ConstraintId,
         expr: Option<String>,
     },
+    /// Add a driving dimension whose value is an expression, as one step
+    /// (`constraint`'s own value is replaced by the evaluated expression).
+    AddDimensionExpr {
+        constraint: Constraint,
+        expr: String,
+    },
     /// Add an associative recipe over `sources` (SPEC §6.2.1, ADR 0011): the
     /// document creates the instance entities (and, for a mirror, the
     /// constraints that tie them to the sources). IDs: see [`Applied`].
@@ -197,6 +203,9 @@ impl Command {
             Command::RemoveParameter { name } => format!("Remove parameter {name}"),
             Command::RenameParameter { from, .. } => format!("Rename parameter {from}"),
             Command::SetDimensionExpr { .. } => "Set dimension expression".to_owned(),
+            Command::AddDimensionExpr { constraint, .. } => {
+                format!("Add {} constraint", constraint.name())
+            }
             Command::AddRecipe { kind, .. } => format!("Add {}", kind.name().to_lowercase()),
             Command::ExplodeRecipe { .. } => "Explode".to_owned(),
             Command::RemoveRecipe { .. } => "Remove recipe".to_owned(),
@@ -583,6 +592,26 @@ fn exec(
                 }
                 revalue(doc, patches)?;
             }
+        }
+        Command::AddDimensionExpr { constraint, expr } => {
+            let v = crate::expr::evaluate(expr, doc.parameters())?;
+            let mut c = constraint.clone();
+            let value = params::dimension_value(&c, v);
+            let d = c
+                .dimension_mut()
+                .ok_or_else(|| DocError::Invalid("not a dimensional constraint".to_owned()))?;
+            d.value = value;
+            d.driven = false;
+            c.validate(doc)?;
+            let id = ConstraintId::new(doc.alloc_id()?);
+            let p = Patch::Constraint {
+                id,
+                before: None,
+                after: Some(c),
+            };
+            record(doc, patches, p);
+            set_dim_expr(doc, id, Some(expr.clone()), patches);
+            out.constraints.push(id);
         }
         Command::SetDimensionExpr { id, expr } => {
             let c = doc
