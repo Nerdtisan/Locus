@@ -8,6 +8,7 @@
 use crate::canvas::Canvas;
 use crate::constrain::Kind;
 use crate::file_io::FileIo;
+use crate::modify_tool::Modify;
 use crate::settings::{Settings, Theme, Units};
 use crate::tools::Tool;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
@@ -269,6 +270,15 @@ impl App {
                     .clicked()
                 {
                     self.canvas.set_tool(tool);
+                }
+            }
+            ui.separator();
+            for m in Modify::ALL {
+                if ui
+                    .selectable_label(self.canvas.modify() == Some(m), m.label())
+                    .clicked()
+                {
+                    self.canvas.set_modify(m);
                 }
             }
             ui.separator();

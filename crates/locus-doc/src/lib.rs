@@ -17,6 +17,7 @@ pub mod error;
 pub mod expr;
 pub mod file;
 pub mod ids;
+pub mod modify;
 pub mod operation;
 pub mod recipe;
 pub mod regions;
