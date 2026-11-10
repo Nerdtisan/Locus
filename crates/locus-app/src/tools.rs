@@ -14,7 +14,7 @@
 use crate::scene::Shape;
 use crate::shapes;
 use locus_doc::{Command, Constraint, Dimension, Document, EntityId, Geom, LayerId};
-use locus_geom::{Arc, Circle, Line, Vec2};
+use locus_geom::{Arc, Circle, Cubic, Line, Vec2};
 
 /// Shorter than this is "the same place": no zero-length lines or radii.
 const MIN_SIZE_MM: f64 = 1e-6;
@@ -47,10 +47,12 @@ pub enum Tool {
     Polygon,
     /// Centre, centre, then the width (#158).
     Slot,
+    /// Bézier pen: click for corners, click-drag for smooth points (#160).
+    Bezier,
 }
 
 impl Tool {
-    pub const DRAWING: [Tool; 13] = [
+    pub const DRAWING: [Tool; 14] = [
         Tool::Point,
         Tool::Line,
         Tool::RectCorner,
@@ -64,6 +66,7 @@ impl Tool {
         Tool::ArcTangent,
         Tool::Polygon,
         Tool::Slot,
+        Tool::Bezier,
     ];
 
     pub fn label(self) -> &'static str {
@@ -80,6 +83,7 @@ impl Tool {
             Tool::ArcTangent => "Arc (tangent)",
             Tool::Polygon => "Polygon",
             Tool::Slot => "Slot",
+            Tool::Bezier => "Bézier",
             Tool::ArcThreePoint => "Arc (3-point)",
             Tool::ArcCentre => "Arc (centre)",
         }
@@ -98,6 +102,7 @@ impl Tool {
             Tool::ArcTangent => Some('I'),
             Tool::Polygon => Some('G'),
             Tool::Slot => Some('U'),
+            Tool::Bezier => Some('N'),
             Tool::RectCentre | Tool::RectThree | Tool::Circle2 | Tool::Circle3 => None,
         }
     }
@@ -138,6 +143,10 @@ impl Tool {
             (Tool::Slot, 0) => "Slot: click the first centre",
             (Tool::Slot, 1) => "Slot: click the second centre",
             (Tool::Slot, _) => "Slot: click to set the width, or type it",
+            (Tool::Bezier, 0) => "Bézier: click the start (drag for a smooth point)",
+            (Tool::Bezier, _) => {
+                "Bézier: click a corner, drag for a smooth point, click the start to close (Enter finishes)"
+            }
         }
     }
 }
@@ -334,6 +343,10 @@ pub struct Draft {
     host: Option<Host>,
     sides: usize,
     circumscribed: bool,
+    /// Pen: the last anchor's outgoing handle (set when it is smooth), and
+    /// the curve just drawn, so the next one is made tangent to it.
+    out: Option<Vec2>,
+    last_curve: Option<EntityId>,
 }
 
 impl Draft {
@@ -347,6 +360,8 @@ impl Draft {
             host: None,
             sides: 6,
             circumscribed: false,
+            out: None,
+            last_curve: None,
         }
     }
 
@@ -392,7 +407,7 @@ impl Draft {
             Tool::RectCorner | Tool::RectCentre | Tool::RectThree | Tool::Slot => {
                 self.nodes.len() < 2
             }
-            Tool::Circle2 | Tool::Circle3 => true,
+            Tool::Circle2 | Tool::Circle3 | Tool::Bezier => true,
             Tool::ArcTangent => false,
             // The "through" click is only a guide.
             Tool::ArcThreePoint => self.nodes.len() < 2,
@@ -414,6 +429,8 @@ impl Draft {
         self.chain_first = None;
         self.dims = [None, None];
         self.host = None;
+        self.out = None;
+        self.last_curve = None;
     }
 
     /// Enter: end the polyline (or abandon a half-drawn shape).
@@ -446,6 +463,7 @@ impl Draft {
             Tool::ArcTangent => self.click_arc_tangent(pick, here, plan),
             Tool::Polygon => self.click_polygon(here, plan, None),
             Tool::Slot => self.click_slot(here, plan, None),
+            Tool::Bezier => self.pen(pick, None, doc_next_id),
         }
     }
 
@@ -905,6 +923,73 @@ impl Draft {
         }
     }
 
+    /// One pen click (`handle` None: a corner) or click-drag (the handle
+    /// pulled out of the anchor: a smooth point, G1 with the previous curve).
+    /// Each curve after the first anchor is one undo step (#160).
+    pub fn pen(&mut self, pick: Pick, handle: Option<Vec2>, doc_next_id: u64) -> Outcome {
+        let here = Node::from_pick(pick);
+        let handle = handle.filter(|h| h.length() > MIN_SIZE_MM);
+        let Some(&from) = self.nodes.first() else {
+            self.nodes.push(here);
+            self.chain_first = here.id();
+            self.out = handle;
+            self.last_curve = None;
+            return Outcome::Pending;
+        };
+        if from.pos().distance(here.pos()) < MIN_SIZE_MM
+            || (from.id().is_some() && from.id() == here.id())
+        {
+            return Outcome::Pending;
+        }
+        let closing = here.id().is_some() && here.id() == self.chain_first;
+        let handle = if closing { None } else { handle };
+        let mut plan = Plan::new(doc_next_id, self.layer);
+        // Corners get handles a third of the way along the chord.
+        let third = (here.pos() - from.pos()) / 3.0;
+        let c0 = from.pos() + self.out.unwrap_or(third);
+        let c1 = here.pos() - handle.unwrap_or(third);
+        let p = plan.node(from);
+        let h0 = plan.point(c0);
+        let h1 = plan.point(c1);
+        let q = plan.node(here);
+        let curve = plan.add(Geom::Bezier {
+            start: p,
+            start_ctrl: h0,
+            end_ctrl: h1,
+            end: q,
+        });
+        if self.out.is_some()
+            && let Some(prev) = self.last_curve
+        {
+            plan.constrain(Constraint::Tangent { a: prev, b: curve });
+        }
+        if closing {
+            self.cancel();
+        } else {
+            self.chain_first = self.chain_first.or(Some(p));
+            self.nodes = vec![Node::Existing(q, here.pos())];
+            self.out = handle;
+            self.last_curve = Some(curve);
+        }
+        Outcome::Commit(plan.finish("Add curve"))
+    }
+
+    /// Rubber band for the pen while a handle is being dragged out of the
+    /// anchor at `anchor` to `now`.
+    pub fn preview_pen(&self, anchor: Vec2, now: Vec2) -> Vec<Shape> {
+        let mut out = vec![Shape::Line(Line::new(anchor - (now - anchor), now))];
+        if let Some(from) = self.nodes.first().map(|n| n.pos()) {
+            let third = (anchor - from) / 3.0;
+            out.push(Shape::Cubic(Cubic::new(
+                from,
+                from + self.out.unwrap_or(third),
+                anchor - (now - anchor),
+                anchor,
+            )));
+        }
+        out
+    }
+
     /// A number typed while drawing: the line's length, the circle's radius,
     /// or the centre-arc's radius, in the direction of the cursor. Lengths
     /// and radii typed this way become dimensions (SPEC §6.1).
@@ -1067,6 +1152,15 @@ impl Draft {
                     }
                     None => Vec::new(),
                 }
+            }
+            (Tool::Bezier, _) => {
+                let third = (cursor - first) / 3.0;
+                vec![Shape::Cubic(Cubic::new(
+                    first,
+                    first + self.out.unwrap_or(third),
+                    cursor - third,
+                    cursor,
+                ))]
             }
             (Tool::Slot, 1) => vec![guide(first, cursor)],
             (Tool::Slot, _) => {
@@ -1712,5 +1806,97 @@ mod tests {
             .arc(pts_of(&s, |g| matches!(g, Geom::Arc { .. }))[0])
             .unwrap();
         assert!((arc.radius() - 4.0).abs() < 1e-6);
+    }
+
+    // ── Bézier pen (#160) ───────────────────────────────────────────────
+
+    fn pen(
+        d: &mut Draft,
+        s: &mut Sketcher,
+        x: f64,
+        y: f64,
+        handle: Option<Vec2>,
+    ) -> Option<locus_doc::Applied> {
+        match d.pen(at(x, y), handle, s.document().next_id()) {
+            Outcome::Commit(cmd) => Some(s.apply(&cmd).unwrap()),
+            _ => None,
+        }
+    }
+
+    fn beziers(s: &Sketcher) -> Vec<EntityId> {
+        pts_of(s, |g| matches!(g, Geom::Bezier { .. }))
+    }
+
+    #[test]
+    fn pen_clicks_make_corner_curves_one_undo_step_each() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Bezier);
+        assert!(pen(&mut d, &mut s, 0.0, 0.0, None).is_none());
+        let a = pen(&mut d, &mut s, 30.0, 0.0, None).unwrap();
+        assert_eq!(a.entities.len(), 5); // two ends, two handles, the curve
+        pen(&mut d, &mut s, 30.0, 30.0, None).unwrap();
+        assert_eq!(beziers(&s).len(), 2);
+        assert!(
+            s.document().constraints().is_empty(),
+            "corners carry no tangency"
+        );
+        s.undo().unwrap();
+        assert_eq!(beziers(&s).len(), 1);
+    }
+
+    #[test]
+    fn pen_drag_makes_a_smooth_point_that_stays_tangent() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Bezier);
+        pen(&mut d, &mut s, 0.0, 0.0, None);
+        pen(&mut d, &mut s, 30.0, 0.0, Some(Vec2::new(10.0, 8.0)));
+        let a = pen(&mut d, &mut s, 60.0, -10.0, None).unwrap();
+        assert!(a.constraints.len() == 1);
+        assert!(matches!(
+            s.document().constraint(a.constraints[0]),
+            Some(Constraint::Tangent { .. })
+        ));
+        // Drag a handle of the first curve: the joint stays smooth.
+        let bs = beziers(&s);
+        let (j, h_in, h_out) = {
+            let first = s.document().entity(bs[0]).unwrap().geom.clone();
+            let second = s.document().entity(bs[1]).unwrap().geom.clone();
+            match (first, second) {
+                (Geom::Bezier { end_ctrl, end, .. }, Geom::Bezier { start_ctrl, .. }) => {
+                    (end, end_ctrl, start_ctrl)
+                }
+                _ => unreachable!(),
+            }
+        };
+        s.begin_drag(h_in).unwrap();
+        let from = s.document().point_pos(h_in).unwrap();
+        for k in 1..=10 {
+            s.drag_to(from + Vec2::new(0.5 * f64::from(k), 1.2 * f64::from(k)))
+                .unwrap();
+            let p = |id| s.document().point_pos(id).unwrap();
+            let (a, b) = (p(j) - p(h_in), p(h_out) - p(j));
+            assert!(
+                a.cross(b).abs() / (a.length() * b.length()) < 1e-5,
+                "frame {k}"
+            );
+        }
+        s.end_drag().unwrap();
+    }
+
+    #[test]
+    fn pen_closes_on_the_first_point_and_ends_the_chain() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Bezier);
+        pen(&mut d, &mut s, 0.0, 0.0, None);
+        let first = pen(&mut d, &mut s, 20.0, 0.0, None).unwrap().entities[0];
+        pen(&mut d, &mut s, 20.0, 20.0, None);
+        let out = d.pen(
+            Pick::at_point(Vec2::new(0.0, 0.0), first),
+            None,
+            s.document().next_id(),
+        );
+        run(&mut s, out);
+        assert_eq!(beziers(&s).len(), 3);
+        assert!(!d.is_drawing());
     }
 }
