@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 5;
+pub const CURRENT_VERSION: u32 = 6;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -244,8 +244,44 @@ struct FileV5 {
     view: Option<View>,
 }
 
-/// The newest on-disk shape. When adding v6, point this at `FileV6`.
-type Latest = FileV5;
+impl From<FileV5> for FileV6 {
+    /// v5 → v6: no dimension expressions yet.
+    fn from(f: FileV5) -> Self {
+        FileV6 {
+            format_version: 6,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: BTreeMap::new(),
+            view: f.view,
+        }
+    }
+}
+
+/// Version 6: expressions behind dimension values (SPEC §5, #172).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV6 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+/// The newest on-disk shape. When adding v7, point this at `FileV7`.
+type Latest = FileV6;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -279,6 +315,7 @@ pub fn save(doc: &Document) -> Result<String, FileError> {
         constraints: doc.constraints.clone(),
         booleans: doc.booleans.clone(),
         recipes: doc.recipes.clone(),
+        dim_exprs: doc.dim_exprs.clone(),
         view: doc.view,
     };
     let mut text = ron::ser::to_string_pretty(&file, pretty())
@@ -298,13 +335,16 @@ pub fn load(text: &str) -> Result<Document, FileError> {
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
     let latest = match header.format_version {
         0 => return Err(FileError::UnknownVersion(0)),
-        1 => FileV5::from(FileV4::from(FileV3::from(FileV2::from(parse::<FileV1>(
+        1 => FileV6::from(FileV5::from(FileV4::from(FileV3::from(FileV2::from(
+            parse::<FileV1>(text)?,
+        ))))),
+        2 => FileV6::from(FileV5::from(FileV4::from(FileV3::from(parse::<FileV2>(
             text,
         )?)))),
-        2 => FileV5::from(FileV4::from(FileV3::from(parse::<FileV2>(text)?))),
-        3 => FileV5::from(FileV4::from(parse::<FileV3>(text)?)),
-        4 => FileV5::from(parse::<FileV4>(text)?),
-        5 => parse::<FileV5>(text)?,
+        3 => FileV6::from(FileV5::from(FileV4::from(parse::<FileV3>(text)?))),
+        4 => FileV6::from(FileV5::from(parse::<FileV4>(text)?)),
+        5 => FileV6::from(parse::<FileV5>(text)?),
+        6 => parse::<FileV6>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -336,6 +376,7 @@ fn into_document(f: Latest) -> Result<Document, FileError> {
         constraints: f.constraints,
         booleans: f.booleans,
         recipes: f.recipes,
+        dim_exprs: f.dim_exprs,
         view: f.view,
     };
     validate(&doc)?;
@@ -416,6 +457,25 @@ pub(crate) fn validate(doc: &Document) -> Result<(), FileError> {
         b.validate()?;
     }
     crate::recipe::validate_all(doc)?;
+    for (name, p) in &doc.parameters {
+        crate::params::check_name(name)?;
+        if crate::expr::evaluate(&p.expr, &doc.parameters).is_err() {
+            return Err(FileError::Invalid(format!(
+                "parameter {name} has an invalid expression"
+            )));
+        }
+    }
+    for (id, src) in &doc.dim_exprs {
+        let driving = doc
+            .constraint(*id)
+            .and_then(Constraint::dimension)
+            .is_some_and(|d| !d.driven);
+        if !driving || crate::expr::evaluate(src, &doc.parameters).is_err() {
+            return Err(FileError::Invalid(format!(
+                "constraint {id} has an invalid dimension expression"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -719,44 +779,72 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v6 sample: `sample_v5()` plus a parameter and a dimension that
+    /// uses it (SPEC §5).
+    pub(crate) fn sample_v6() -> Document {
+        let mut ed = Editor::new(sample_v5());
+        ed.apply(&Command::SetParameter {
+            name: "plate".to_owned(),
+            expr: "width / 2".to_owned(),
+        })
+        .unwrap();
+        ed.apply(&Command::SetDimensionExpr {
+            id: ConstraintId::new(18),
+            expr: Some("plate * 2".to_owned()),
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
     #[test]
-    fn v5_fixture_is_current_and_loads() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v5/plate.locus");
+    fn v6_fixture_is_current_and_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v6/plate.locus");
         if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v5()).unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v6()).unwrap()).unwrap();
         }
         let text = std::fs::read_to_string(path).unwrap();
-        assert!(text.contains("format_version: 5"));
-        assert_eq!(load(&text).unwrap(), sample_v5());
+        assert!(text.contains("format_version: 6"));
+        assert_eq!(load(&text).unwrap(), sample_v6());
         assert_eq!(
-            save(&sample_v5()).unwrap(),
+            save(&sample_v6()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
     }
 
+    /// The v5 fixture is frozen; it migrates to v6 with no expressions.
+    #[test]
+    fn v5_fixture_migrates_to_v6() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v5/plate.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 5"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v5());
+        assert!(save(&doc).unwrap().contains("format_version: 6"));
+    }
+
     /// The v4 fixture is frozen; it migrates to v5 with no recipes.
     #[test]
-    fn v4_fixture_migrates_to_v5() {
+    fn v4_fixture_migrates_to_v6() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v4/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 4"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v4());
         assert!(doc.recipes().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 5"));
+        assert!(save(&doc).unwrap().contains("format_version: 6"));
     }
 
     /// The v3 fixture is frozen; it migrates to v4 unchanged.
     #[test]
-    fn v3_fixture_migrates_to_v5() {
+    fn v3_fixture_migrates_to_v6() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v3/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 3"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v3());
-        assert!(save(&doc).unwrap().contains("format_version: 5"));
+        assert!(save(&doc).unwrap().contains("format_version: 6"));
     }
 
     #[test]
@@ -787,14 +875,14 @@ mod tests {
 
     /// The v2 fixture is frozen; it migrates to v4 with no recipes.
     #[test]
-    fn v2_fixture_migrates_to_v5() {
+    fn v2_fixture_migrates_to_v6() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v2/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 2"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 5"));
+        assert!(save(&doc).unwrap().contains("format_version: 6"));
     }
 
     #[test]
@@ -810,7 +898,7 @@ mod tests {
     /// The v1 fixture is frozen; it must keep loading, with default
     /// parameters on its layers (SPEC §10 migration).
     #[test]
-    fn v1_fixture_migrates_to_v5() {
+    fn v1_fixture_migrates_to_v6() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 1"));
@@ -820,7 +908,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 5"));
+        assert!(save(&doc).unwrap().contains("format_version: 6"));
     }
 
     #[test]
@@ -842,13 +930,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 5", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 6", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(6)),
+            load(&v(7)),
             Err(FileError::FutureVersion {
-                found: 6,
-                supported: 5
+                found: 7,
+                supported: 6
             })
         );
         // Dangling reference: a line pointing at a missing point.

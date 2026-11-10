@@ -19,6 +19,7 @@ use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
 
 mod layers_panel;
+mod params_panel;
 mod regions;
 
 /// Pick radius in screen points (converted to mm by the zoom).
@@ -99,6 +100,7 @@ pub struct Canvas {
     /// The layer new geometry is drawn on (#118).
     active_layer: LayerId,
     layer_ui: layers_panel::LayerUi,
+    param_ui: params_panel::ParamUi,
     /// Region selection, hover and the boolean combine (#122, #124).
     region_ui: regions::RegionUi,
     /// The active modify tool, if any (SPEC §6.2): clicks go to it.
@@ -129,6 +131,7 @@ impl Default for Canvas {
             dim_rects: Vec::new(),
             active_layer: Document::default_layer(),
             layer_ui: layers_panel::LayerUi::default(),
+            param_ui: params_panel::ParamUi::default(),
             region_ui: regions::RegionUi::default(),
             modify: None,
         };
@@ -243,7 +246,9 @@ impl Canvas {
     /// status bar.
     pub fn constrain(&mut self, kind: Kind) {
         match constrain::plan(kind, self.sketcher.document(), &self.selected()) {
-            Ok(cmd) => self.apply_reporting(&cmd),
+            Ok(cmd) => {
+                self.apply_reporting(&cmd);
+            }
             Err(why) => self.notice = Some(why),
         }
     }
@@ -300,7 +305,9 @@ impl Canvas {
             target: DimTarget::Existing(id),
             what: c.name(),
             angle,
-            text: format_value(dim.value, angle, units),
+            text: doc
+                .dimension_expr(id)
+                .map_or_else(|| format_value(dim.value, angle, units), str::to_owned),
             at,
             fresh: true,
         });
@@ -309,11 +316,12 @@ impl Canvas {
     /// Run a command; on failure, explain in the status bar. A constraint the
     /// solver's pre-check refuses is kept as a [`Refusal`]: the conflicting
     /// set is highlighted and a dimension can be added as driven (#72).
-    fn apply_reporting(&mut self, cmd: &Command) {
+    fn apply_reporting(&mut self, cmd: &Command) -> bool {
         match self.apply(cmd) {
             Ok(()) => {
                 self.notice = None;
                 self.refusal = None;
+                true
             }
             Err(e) => {
                 self.notice = Some(e.to_string());
@@ -339,6 +347,7 @@ impl Canvas {
                     }),
                     _ => None,
                 };
+                false
             }
         }
     }
@@ -445,30 +454,44 @@ impl Canvas {
         }
     }
 
-    /// Enter in the inline editor: parse, convert units, apply.
-    fn commit_dimension(&mut self, edit: &DimEdit, units: Units) {
-        let Some(v) = parse_number(&edit.text) else {
-            self.notice = Some(format!("\"{}\" is not a number", edit.text.trim()));
-            return;
-        };
-        let value = if edit.angle {
-            v.to_radians()
-        } else if units == Units::Inch {
-            v * 25.4
-        } else {
-            v
-        };
+    /// Enter in the inline editor: a plain number (in the display units), or
+    /// an expression over the document's parameters (in millimetres, angles
+    /// in degrees). Returns whether it was applied; on failure the editor
+    /// stays open with the reason shown.
+    fn commit_dimension(&mut self, edit: &DimEdit, units: Units) -> bool {
+        if let Some(v) = parse_number(&edit.text) {
+            let value = if edit.angle {
+                v.to_radians()
+            } else if units == Units::Inch {
+                v * 25.4
+            } else {
+                v
+            };
+            let cmd = match edit.target {
+                DimTarget::New(spec) => Command::AddConstraint {
+                    constraint: spec.constraint(value, false),
+                },
+                DimTarget::Existing(id) => Command::SetDimension { id, value },
+            };
+            return self.apply_reporting(&cmd);
+        }
+        let expr = edit.text.trim().to_owned();
         let cmd = match edit.target {
-            DimTarget::New(spec) => Command::AddConstraint {
-                constraint: spec.constraint(value, false),
+            DimTarget::New(spec) => Command::AddDimensionExpr {
+                constraint: spec.constraint(1.0, false),
+                expr,
             },
-            DimTarget::Existing(id) => Command::SetDimension { id, value },
+            DimTarget::Existing(id) => Command::SetDimensionExpr {
+                id,
+                expr: Some(expr),
+            },
         };
-        self.apply_reporting(&cmd);
+        self.apply_reporting(&cmd)
     }
 
     /// The inline value box (#70).
     fn dimension_editor(&mut self, ui: &egui::Ui, rect: egui::Rect, units: Units) {
+        let notice = self.notice.clone();
         let Some(edit) = self.dim_edit.as_mut() else {
             return;
         };
@@ -507,13 +530,20 @@ impl Canvas {
                         }
                         ui.weak(if edit.angle { "°" } else { units.label() });
                     });
+                    if let Some(msg) = &notice {
+                        ui.colored_label(ui.visuals().error_fg_color, msg);
+                    }
                 });
             });
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             cancel = true;
         }
-        if commit && let Some(edit) = self.dim_edit.take() {
-            self.commit_dimension(&edit, units);
+        if commit && let Some(mut edit) = self.dim_edit.take() {
+            if !self.commit_dimension(&edit, units) {
+                // Keep the box open, with the error beneath it.
+                edit.fresh = false;
+                self.dim_edit = Some(edit);
+            }
         } else if cancel {
             self.dim_edit = None;
         }
@@ -1392,6 +1422,94 @@ mod tests {
                 c.layers_ui(ui, &settings);
             });
         }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn parameters_panel_renders_and_expressions_drive_dimensions() {
+        let mut c = Canvas::default();
+        let ctx = egui::Context::default();
+        let frame = |c: &mut Canvas| {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.parameters_ui(ui));
+        };
+        frame(&mut c);
+        assert!(c.apply_reporting(&Command::SetParameter {
+            name: "material".to_owned(),
+            expr: "3".to_owned(),
+        }));
+        frame(&mut c);
+        // A circle with a diameter dimension typed as an expression.
+        let centre = Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        };
+        c.apply_reporting(&centre);
+        let p = *c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>()
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Circle {
+                center: p,
+                radius: 1.0,
+            },
+        });
+        let circle = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        let edit = |text: &str, id| DimEdit {
+            target: DimTarget::Existing(id),
+            what: "diameter",
+            angle: false,
+            text: text.to_owned(),
+            at: Vec2::ZERO,
+            fresh: false,
+        };
+        let cid = {
+            c.apply_reporting(&Command::AddConstraint {
+                constraint: locus_doc::Constraint::Diameter {
+                    curve: circle,
+                    dim: locus_doc::Dimension::driving(2.0),
+                },
+            });
+            *c.document().constraints().keys().next_back().unwrap()
+        };
+        assert!(c.commit_dimension(&edit("material * 2 + 0.2", cid), Units::Mm));
+        let v = c
+            .document()
+            .constraint(cid)
+            .unwrap()
+            .dimension()
+            .unwrap()
+            .value;
+        assert!((v - 6.2).abs() < 1e-6);
+        // A bad expression is refused and reported, and changes nothing.
+        assert!(!c.commit_dimension(&edit("nope * 2", cid), Units::Mm));
+        assert!(c.notice.is_some());
+        // The parameter drives it.
+        assert!(c.apply_reporting(&Command::SetParameter {
+            name: "material".to_owned(),
+            expr: "6".to_owned(),
+        }));
+        let v = c
+            .document()
+            .constraint(cid)
+            .unwrap()
+            .dimension()
+            .unwrap()
+            .value;
+        assert!((v - 12.2).abs() < 1e-6);
     }
 
     #[test]
