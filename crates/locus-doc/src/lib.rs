@@ -22,6 +22,7 @@ pub mod modify;
 pub mod operation;
 pub mod regions;
 pub mod solve;
+pub mod transform;
 
 #[cfg(test)]
 mod testutil;

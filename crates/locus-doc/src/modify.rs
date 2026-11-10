@@ -56,6 +56,10 @@ pub enum ModifyError {
     TooLarge,
     #[error("the size must be a positive number")]
     BadSize,
+    #[error("select some geometry first")]
+    EmptySelection,
+    #[error("constraints hold the selection in place; release or delete them first")]
+    Blocked(Vec<ConstraintId>),
 }
 
 /// The curve being modified, parametrised by `s`: `t` ∈ [0, 1] along a line,
@@ -275,6 +279,23 @@ impl<'a> Builder<'a> {
         EntityId::new(self.alloc())
     }
 
+    /// Adds `geom` on the same layer, and with the same construction flag,
+    /// as entity `like`.
+    pub(crate) fn add_like(&mut self, like: EntityId, geom: Geom) -> EntityId {
+        let (layer, construction) = self
+            .doc
+            .entity(like)
+            .map_or((self.layer, self.construction), |e| {
+                (e.layer, e.construction)
+            });
+        self.commands.push(Command::AddEntity {
+            layer,
+            construction,
+            geom,
+        });
+        EntityId::new(self.alloc())
+    }
+
     pub(crate) fn constrain(&mut self, constraint: Constraint) {
         self.commands.push(Command::AddConstraint { constraint });
         self.alloc();
@@ -327,7 +348,7 @@ impl<'a> Builder<'a> {
 }
 
 /// Replaces `entity` by `with` in a constraint.
-fn retarget(c: &Constraint, entity: EntityId, with: EntityId) -> Constraint {
+pub(crate) fn retarget(c: &Constraint, entity: EntityId, with: EntityId) -> Constraint {
     let mut c = c.clone();
     let swap = |x: &mut EntityId| {
         if *x == entity {

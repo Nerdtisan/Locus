@@ -223,21 +223,20 @@ fn corner(doc: &Document, a: EntityId, b: EntityId) -> Result<(Side, Side), Modi
     Ok((Side::of(doc, a, v)?, Side::of(doc, b, v)?))
 }
 
-/// After both curves leave the corner: keep it as a construction point on
-/// both carriers when a constraint uses it, else delete it if nothing else
-/// does.
+/// After both curves leave the corner: delete it if nothing else uses it;
+/// otherwise hold it on both carriers (the virtual sharp), so whatever is
+/// attached to it (dimensions, other curves) stays where the corner is. It
+/// becomes construction when no other curve uses it.
 fn settle_corner(b: &mut Builder<'_>, sa: &Side, sb: &Side, keep: bool) {
     let v = sa.corner;
     let doc = b.doc;
     let (ents, cons) = doc.dependents(v);
-    if ents.iter().any(|e| *e != sa.id && *e != sb.id) {
-        return;
-    }
-    if cons.is_empty() && !keep {
+    let shared = ents.iter().any(|e| *e != sa.id && *e != sb.id);
+    if !shared && cons.is_empty() && !keep {
         b.commands.push(crate::Command::DeleteEntity { id: v });
         return;
     }
-    if doc.entity(v).is_some_and(|e| !e.construction) {
+    if !shared && doc.entity(v).is_some_and(|e| !e.construction) {
         b.commands
             .push(crate::Command::ToggleConstruction { id: v });
     }
@@ -489,6 +488,27 @@ mod tests {
         assert!(arc.center.approx_eq(v(5.0, 5.0), 1e-5), "{:?}", arc.center);
         assert!(doc.line(a).unwrap().a.approx_eq(v(5.0, 0.0), 1e-5));
         assert!(doc.point_pos(o).unwrap().approx_eq(v(0.0, 0.0), 1e-9));
+    }
+
+    #[test]
+    fn a_shared_corner_stays_on_both_curves() {
+        // A third line ends at the corner: the corner stays a normal point,
+        // held on both filleted lines, so the lines can't drift off it.
+        let (mut d, a, b, o) = corner_doc();
+        let far = pt(&mut d, -10.0, -10.0);
+        let diag = line(&mut d, far, o);
+        let plan = fillet(&d, a, b, 3.0).unwrap();
+        let mut sk = Sketcher::new(d);
+        sk.apply(&plan.command).unwrap();
+        let doc = sk.document();
+        assert!(!doc.entity(o).unwrap().construction);
+        for curve in [a, b] {
+            assert!(doc.constraints().values().any(|c| matches!(
+                c,
+                Constraint::PointOnCurve { point, curve: k } if *point == o && *k == curve
+            )));
+        }
+        assert!(doc.line(diag).is_some());
     }
 
     #[test]
