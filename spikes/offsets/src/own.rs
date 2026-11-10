@@ -147,13 +147,25 @@ pub fn offset(a: &Area, d: f64, join: Join) -> Area {
         return a.clone();
     }
     let t = tool(a, w, d.signum(), join);
-    if d > 0.0 {
+    let mut r = if d > 0.0 {
         let mut all = a.loops.clone();
         all.extend(t);
         boolean(&Area { loops: all }, &Area::default(), BoolOp::Union)
     } else {
         boolean(a, &Area { loops: t }, BoolOp::Subtract)
-    }
+    };
+    drop_specks(&mut r);
+    r
+}
+
+/// Drops loops whose mean width (2·area / perimeter) is under the export
+/// tolerance: specks and slivers left where an offset nearly vanishes, which
+/// a machine can't cut.
+pub fn drop_specks(r: &mut Area) {
+    r.loops.retain(|l| {
+        let per: f64 = l.edges.iter().map(|e| e.seg.length()).sum();
+        2.0 * l.area().abs() > locus_geom::EXPORT_TOL * per
+    });
 }
 
 /// One-sided offset of an open chain (each edge ends where the next starts):

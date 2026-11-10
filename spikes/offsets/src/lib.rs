@@ -28,11 +28,17 @@ impl Method {
         }
     }
 
-    /// Offsets a closed area: `d` > 0 grows, < 0 shrinks. Round joins.
+    /// Offsets a closed area: `d` > 0 grows, < 0 shrinks. Round joins; loops
+    /// thinner than `EXPORT_TOL` dropped.
     pub fn offset(self, a: &Area, d: f64) -> Area {
         match self {
             Method::Own => own::offset(a, d, own::Join::Round),
-            Method::Cavalier => cav::offset(a, d),
+            Method::Cavalier => {
+                // The same speck filter as A, so only the engines differ.
+                let mut r = cav::offset(a, d);
+                own::drop_specks(&mut r);
+                r
+            }
         }
     }
 
