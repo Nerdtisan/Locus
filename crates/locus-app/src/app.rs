@@ -373,7 +373,12 @@ impl App {
                     ui.label("Picked offset");
                     // Typed, not dragged: each change is one undo step.
                     let r1 = ui
-                        .add(egui::DragValue::new(&mut d).speed(0.0).suffix(" mm"))
+                        .add(
+                            egui::DragValue::new(&mut d)
+                                .speed(0.0)
+                                .max_decimals(3)
+                                .suffix(" mm"),
+                        )
                         .on_hover_text("Click to type a new distance");
                     let r2 = ui.checkbox(&mut sharp, "Sharp");
                     if (r1.changed() || r2.changed()) && d != 0.0 {

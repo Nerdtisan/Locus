@@ -169,7 +169,7 @@ impl Canvas {
                 continue;
             };
             let p = self.view.to_screen(at, rect);
-            let text = format!("⟂ {}", units.format_len(d));
+            let text = format!("offset {}", units.format_len(d));
             let galley = painter.layout_no_wrap(text, FontId::proportional(12.0), pal.dim);
             let r = Align2::CENTER_CENTER
                 .anchor_size(p, galley.size())
