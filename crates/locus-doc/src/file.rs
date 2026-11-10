@@ -17,8 +17,9 @@ use crate::constraint::Constraint;
 use crate::document::{Document, EntityStore, Layer, Parameter, View};
 use crate::entity::{Entity, Geom};
 use crate::error::DocError;
-use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID};
+use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID, RecipeId};
 use crate::operation::{CutParams, DrawParams, EngraveParams, Operation};
+use crate::recipe::Recipe;
 use locus_geom::Unit;
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 4;
+pub const CURRENT_VERSION: u32 = 5;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -209,8 +210,42 @@ struct FileV4 {
     view: Option<View>,
 }
 
-/// The newest on-disk shape. When adding v5, point this at `FileV5`.
-type Latest = FileV4;
+impl From<FileV4> for FileV5 {
+    /// v4 → v5: no recipes yet.
+    fn from(f: FileV4) -> Self {
+        FileV5 {
+            format_version: 5,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: BTreeMap::new(),
+            view: f.view,
+        }
+    }
+}
+
+/// Version 5: associative recipes — mirror and patterns (SPEC §6.2.1, #166).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV5 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+/// The newest on-disk shape. When adding v6, point this at `FileV6`.
+type Latest = FileV5;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -243,6 +278,7 @@ pub fn save(doc: &Document) -> Result<String, FileError> {
         entities: doc.entities.iter().map(|(i, e)| (i, e.clone())).collect(),
         constraints: doc.constraints.clone(),
         booleans: doc.booleans.clone(),
+        recipes: doc.recipes.clone(),
         view: doc.view,
     };
     let mut text = ron::ser::to_string_pretty(&file, pretty())
@@ -262,10 +298,13 @@ pub fn load(text: &str) -> Result<Document, FileError> {
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
     let latest = match header.format_version {
         0 => return Err(FileError::UnknownVersion(0)),
-        1 => FileV3::from(FileV2::from(parse::<FileV1>(text)?)).into(),
-        2 => FileV3::from(parse::<FileV2>(text)?).into(),
-        3 => parse::<FileV3>(text)?.into(),
-        4 => parse::<FileV4>(text)?,
+        1 => FileV5::from(FileV4::from(FileV3::from(FileV2::from(parse::<FileV1>(
+            text,
+        )?)))),
+        2 => FileV5::from(FileV4::from(FileV3::from(parse::<FileV2>(text)?))),
+        3 => FileV5::from(FileV4::from(parse::<FileV3>(text)?)),
+        4 => FileV5::from(parse::<FileV4>(text)?),
+        5 => parse::<FileV5>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -296,6 +335,7 @@ fn into_document(f: Latest) -> Result<Document, FileError> {
         },
         constraints: f.constraints,
         booleans: f.booleans,
+        recipes: f.recipes,
         view: f.view,
     };
     validate(&doc)?;
@@ -347,7 +387,8 @@ pub(crate) fn validate(doc: &Document) -> Result<(), FileError> {
         .map(|i| i.get())
         .chain(doc.entities.iter().map(|(i, _)| i.get()))
         .chain(doc.constraints.keys().map(|i| i.get()))
-        .chain(doc.booleans.keys().map(|i| i.get()));
+        .chain(doc.booleans.keys().map(|i| i.get()))
+        .chain(doc.recipes.keys().map(|i| i.get()));
     for id in ids {
         if id >= doc.next_id {
             return Err(FileError::Invalid(format!(
@@ -374,6 +415,7 @@ pub(crate) fn validate(doc: &Document) -> Result<(), FileError> {
     for b in doc.booleans.values() {
         b.validate()?;
     }
+    crate::recipe::validate_all(doc)?;
     Ok(())
 }
 
@@ -663,32 +705,58 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v5 sample: `sample_v4()` plus a mirror of the hole about the
+    /// plate's left edge (SPEC §6.2.1, #166).
+    pub(crate) fn sample_v5() -> Document {
+        let mut ed = Editor::new(sample_v4());
+        ed.apply(&Command::AddRecipe {
+            kind: crate::recipe::RecipeKind::Mirror {
+                axis: EntityId::new(9),
+            },
+            sources: vec![EntityId::new(11)],
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
     #[test]
-    fn v4_fixture_is_current_and_loads() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v4/plate.locus");
+    fn v5_fixture_is_current_and_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v5/plate.locus");
         if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v4()).unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v5()).unwrap()).unwrap();
         }
         let text = std::fs::read_to_string(path).unwrap();
-        assert!(text.contains("format_version: 4"));
-        assert_eq!(load(&text).unwrap(), sample_v4());
+        assert!(text.contains("format_version: 5"));
+        assert_eq!(load(&text).unwrap(), sample_v5());
         assert_eq!(
-            save(&sample_v4()).unwrap(),
+            save(&sample_v5()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
     }
 
+    /// The v4 fixture is frozen; it migrates to v5 with no recipes.
+    #[test]
+    fn v4_fixture_migrates_to_v5() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v4/plate.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 4"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v4());
+        assert!(doc.recipes().is_empty());
+        assert!(save(&doc).unwrap().contains("format_version: 5"));
+    }
+
     /// The v3 fixture is frozen; it migrates to v4 unchanged.
     #[test]
-    fn v3_fixture_migrates_to_v4() {
+    fn v3_fixture_migrates_to_v5() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v3/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 3"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v3());
-        assert!(save(&doc).unwrap().contains("format_version: 4"));
+        assert!(save(&doc).unwrap().contains("format_version: 5"));
     }
 
     #[test]
@@ -719,14 +787,14 @@ mod tests {
 
     /// The v2 fixture is frozen; it migrates to v4 with no recipes.
     #[test]
-    fn v2_fixture_migrates_to_v4() {
+    fn v2_fixture_migrates_to_v5() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v2/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 2"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 4"));
+        assert!(save(&doc).unwrap().contains("format_version: 5"));
     }
 
     #[test]
@@ -742,7 +810,7 @@ mod tests {
     /// The v1 fixture is frozen; it must keep loading, with default
     /// parameters on its layers (SPEC §10 migration).
     #[test]
-    fn v1_fixture_migrates_to_v4() {
+    fn v1_fixture_migrates_to_v5() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 1"));
@@ -752,7 +820,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 4"));
+        assert!(save(&doc).unwrap().contains("format_version: 5"));
     }
 
     #[test]
@@ -774,13 +842,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 4", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 5", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(5)),
+            load(&v(6)),
             Err(FileError::FutureVersion {
-                found: 5,
-                supported: 4
+                found: 6,
+                supported: 5
             })
         );
         // Dangling reference: a line pointing at a missing point.

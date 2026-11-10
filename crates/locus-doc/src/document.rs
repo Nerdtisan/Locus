@@ -11,8 +11,8 @@ use crate::constraint::Constraint;
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID, RecipeId};
-use crate::recipe::Recipe;
 use crate::operation::{CutParams, Operation};
+use crate::recipe::Recipe;
 use locus_geom::{Arc, Circle, Cubic, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -119,7 +119,7 @@ pub struct Document {
     pub(crate) constraints: BTreeMap<ConstraintId, Constraint>,
     /// Boolean recipes (SPEC ยง6.3); their results are derived, not stored.
     pub(crate) booleans: BTreeMap<BooleanId, Boolean>,
-    /// Associative recipes (SPEC ง6.2.1, ADR 0011).
+    /// Associative recipes (SPEC ยง6.2.1, ADR 0011).
     pub(crate) recipes: BTreeMap<RecipeId, Recipe>,
     pub(crate) view: Option<View>,
 }
@@ -232,7 +232,7 @@ impl Document {
         self.recipes.get(&id)
     }
 
-    /// Every entity a recipe generated (SPEC ง6.2.1: instances are driven),
+    /// Every entity a recipe generated (SPEC ยง6.2.1: instances are driven),
     /// with the recipe that did.
     #[must_use]
     pub fn driven_entities(&self) -> BTreeMap<EntityId, RecipeId> {
@@ -462,7 +462,7 @@ impl Document {
         Ok(())
     }
 
-    /// Refuse to edit an entity a recipe generated (SPEC ง6.2.1).
+    /// Refuse to edit an entity a recipe generated (SPEC ยง6.2.1).
     pub(crate) fn check_not_driven(&self, id: EntityId) -> Result<(), DocError> {
         match self.driven_by(id) {
             Some(recipe) => Err(DocError::Driven { entity: id, recipe }),

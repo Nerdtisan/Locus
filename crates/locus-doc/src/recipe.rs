@@ -156,7 +156,9 @@ pub(crate) fn transform(doc: &Document, kind: &RecipeKind, _k: usize) -> Result<
         RecipeKind::Mirror { axis } => {
             let line = doc.line(*axis).ok_or(DocError::UnknownEntity(*axis))?;
             if (line.b - line.a).length() <= f64::EPSILON {
-                return Err(DocError::Invalid("the mirror line has zero length".to_owned()));
+                return Err(DocError::Invalid(
+                    "the mirror line has zero length".to_owned(),
+                ));
             }
             Ok(Xf::Reflect {
                 a: line.a,
@@ -169,7 +171,9 @@ pub(crate) fn transform(doc: &Document, kind: &RecipeKind, _k: usize) -> Result<
 /// The geometry of one copy of `src`, with point references renamed by `map`.
 pub(crate) fn copy_geom(src: &Geom, xf: Xf, map: &impl Fn(EntityId) -> EntityId) -> Geom {
     match src {
-        Geom::Point { pos } => Geom::Point { pos: xf.apply(*pos) },
+        Geom::Point { pos } => Geom::Point {
+            pos: xf.apply(*pos),
+        },
         Geom::Line { start, end } => Geom::Line {
             start: map(*start),
             end: map(*end),
@@ -178,8 +182,23 @@ pub(crate) fn copy_geom(src: &Geom, xf: Xf, map: &impl Fn(EntityId) -> EntityId)
             center: map(*center),
             radius: *radius,
         },
+        Geom::Bezier {
+            start,
+            start_ctrl,
+            end_ctrl,
+            end,
+        } => Geom::Bezier {
+            start: map(*start),
+            start_ctrl: map(*start_ctrl),
+            end_ctrl: map(*end_ctrl),
+            end: map(*end),
+        },
         Geom::Arc { center, start, end } => {
-            let (s, e) = if xf.flips() { (end, start) } else { (start, end) };
+            let (s, e) = if xf.flips() {
+                (end, start)
+            } else {
+                (start, end)
+            };
             Geom::Arc {
                 center: map(*center),
                 start: map(*s),
@@ -208,14 +227,13 @@ pub(crate) fn validate(
     }
     let driven = doc.driven_entities();
     for id in sources.iter().chain(&kind.references()) {
-        let e = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?;
+        doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?;
         if let Some(r) = driven.get(id).filter(|r| Some(**r) != self_id) {
             return Err(DocError::Driven {
                 entity: *id,
                 recipe: *r,
             });
         }
-        doc.check_unlocked(e.layer)?;
     }
     let sorted: BTreeSet<_> = sources.iter().collect();
     if sorted.len() != sources.len() {
@@ -228,7 +246,9 @@ pub(crate) fn validate(
                     what: "mirror line",
                     entity: *axis,
                     expected: "line",
-                    found: doc.entity(*axis).map_or(EntityKind::Point, |e| e.geom.kind()),
+                    found: doc
+                        .entity(*axis)
+                        .map_or(EntityKind::Point, |e| e.geom.kind()),
                 });
             }
             if sources.contains(axis) {
@@ -273,4 +293,38 @@ pub(crate) fn instances_of(doc: &Document, source: EntityId) -> Vec<(EntityId, R
         }
     }
     out
+}
+
+/// Whole-document recipe consistency, for file loading: pool IDs are unique
+/// and below the counter, active copies exist and inactive ones don't, and
+/// every reference resolves. Never panics on a hostile file.
+pub(crate) fn validate_all(doc: &Document) -> Result<(), DocError> {
+    let mut seen = BTreeSet::new();
+    for (rid, r) in doc.recipes() {
+        let bad = |m: &str| DocError::Invalid(format!("recipe {rid}: {m}"));
+        validate(doc, &r.kind, &r.sources, Some(*rid)).map_err(|e| bad(&e.to_string()))?;
+        if r.active > r.pool.len() || r.pool.len() > MAX_INSTANCES {
+            return Err(bad("instance count out of range"));
+        }
+        let per = closure(doc, &r.sources).len();
+        for (k, set) in r.pool.iter().enumerate() {
+            if set.len() != per {
+                return Err(bad("instance set does not match the sources"));
+            }
+            for id in set {
+                if id.get() >= doc.next_id() || !seen.insert(*id) {
+                    return Err(bad("instance ID reused or beyond the counter"));
+                }
+                if (k < r.active) != doc.entity(*id).is_some() {
+                    return Err(bad("instance entities do not match the active count"));
+                }
+            }
+        }
+        for c in &r.constraints {
+            if doc.constraint(*c).is_none() {
+                return Err(bad("owned constraint is missing"));
+            }
+        }
+    }
+    Ok(())
 }

@@ -21,8 +21,8 @@ use crate::document::{Document, Layer};
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
-use crate::recipe::{self, Recipe, RecipeKind};
 use crate::operation::Operation;
+use crate::recipe::{self, Recipe, RecipeKind};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -113,7 +113,7 @@ pub enum Command {
     RemoveBoolean {
         id: BooleanId,
     },
-    /// Add an associative recipe over `sources` (SPEC ง6.2.1, ADR 0011): the
+    /// Add an associative recipe over `sources` (SPEC ยง6.2.1, ADR 0011): the
     /// document creates the instance entities (and, for a mirror, the
     /// constraints that tie them to the sources). IDs: see [`Applied`].
     AddRecipe {
@@ -372,7 +372,7 @@ fn exec(
                     after: Some(after),
                 },
             );
-            // Instances follow their source (SPEC ง6.2.1: associative).
+            // Instances follow their source (SPEC ยง6.2.1: associative).
             for (inst, _) in recipe::instances_of(doc, *id) {
                 if let Some(b) = doc.entity(inst).cloned() {
                     let a = Entity {
@@ -679,6 +679,11 @@ fn add_recipe(
     let mut sources = sources.to_vec();
     sources.sort_unstable();
     recipe::validate(doc, kind, &sources, None)?;
+    for id in &sources {
+        if let Some(e) = doc.entity(*id) {
+            doc.check_unlocked(e.layer)?;
+        }
+    }
     let closure: Vec<EntityId> = recipe::closure(doc, &sources).into_iter().collect();
     let rid = RecipeId::new(doc.alloc_id()?);
     // New IDs for copy 0, in closure order; the recipe keeps them for good.

@@ -23,5 +23,6 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | [0007](0007-solver-backend-without-paste.md) | Solver backend without `paste`: Locus-owned sparse LM + LDLᵀ | Accepted | §3, §12.3 |
 | [0008](0008-booleans-and-arcs.md) | Booleans that keep true arcs: Locus-owned exact line/arc arrangement | Accepted | §6.3, §12.12 |
 | [0009](0009-plugin-api.md) | Plugin API: WASM components, one world per kind, nothing imported; text stays in core | Accepted | §15, §9 |
+| [0011](0011-associative-recipes.md) | Associative recipes: instances are real driven entities; mirror solved by Symmetric constraints, patterns regenerated after the solve | Accepted | §6.2.1 |
 
 All §12 M0 decisions are recorded.
