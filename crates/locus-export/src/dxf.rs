@@ -95,33 +95,52 @@ pub fn to_dxf_model(model: &ExportModel) -> Vec<u8> {
     for (l, name) in layers.iter().zip(&names) {
         for p in &l.paths {
             for s in &p.segs {
-                match s.shape {
-                    Shape::Line(_) => {
-                        // Honour the path direction for lines (arcs are CCW-only).
-                        let (a, b) = (s.start(), s.end());
-                        entity(&mut o, "LINE", name);
-                        point(&mut o, 10, a);
-                        point(&mut o, 11, b);
+                // R12 has no splines: a Bézier becomes a chain of lines and
+                // arcs within the export tolerance (SPEC §8), in travel order.
+                let shapes = match s.shape {
+                    Shape::Cubic(_) => {
+                        let mut v = s.shape.pieces();
+                        if s.reversed {
+                            v.reverse();
+                        }
+                        v
                     }
-                    Shape::Arc(a) => {
-                        entity(&mut o, "ARC", name);
-                        point(&mut o, 10, a.center);
-                        pair(&mut o, 40, &num(a.radius()));
-                        pair(
-                            &mut o,
-                            50,
-                            &num(a.start_angle().to_degrees().rem_euclid(360.0)),
-                        );
-                        pair(
-                            &mut o,
-                            51,
-                            &num(a.end_angle().to_degrees().rem_euclid(360.0)),
-                        );
-                    }
-                    Shape::Circle(c) => {
-                        entity(&mut o, "CIRCLE", name);
-                        point(&mut o, 10, c.center);
-                        pair(&mut o, 40, &num(c.radius));
+                    other => vec![other],
+                };
+                for shape in shapes {
+                    match shape {
+                        Shape::Cubic(_) => {}
+                        Shape::Line(l) => {
+                            // Honour the path direction for lines (arcs are CCW-only).
+                            let (a, b) = if matches!(s.shape, Shape::Cubic(_)) {
+                                if s.reversed { (l.b, l.a) } else { (l.a, l.b) }
+                            } else {
+                                (s.start(), s.end())
+                            };
+                            entity(&mut o, "LINE", name);
+                            point(&mut o, 10, a);
+                            point(&mut o, 11, b);
+                        }
+                        Shape::Arc(a) => {
+                            entity(&mut o, "ARC", name);
+                            point(&mut o, 10, a.center);
+                            pair(&mut o, 40, &num(a.radius()));
+                            pair(
+                                &mut o,
+                                50,
+                                &num(a.start_angle().to_degrees().rem_euclid(360.0)),
+                            );
+                            pair(
+                                &mut o,
+                                51,
+                                &num(a.end_angle().to_degrees().rem_euclid(360.0)),
+                            );
+                        }
+                        Shape::Circle(c) => {
+                            entity(&mut o, "CIRCLE", name);
+                            point(&mut o, 10, c.center);
+                            pair(&mut o, 40, &num(c.radius));
+                        }
                     }
                 }
             }

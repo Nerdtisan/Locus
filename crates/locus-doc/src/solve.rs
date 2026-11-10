@@ -19,7 +19,7 @@
 
 use crate::boolean::BooleanError;
 use crate::command::{Applied, Command, Editor, Solution};
-use crate::constraint::Constraint;
+use crate::constraint::{Constraint, G1Other, g1_joint};
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
 use crate::error::DocError;
@@ -543,7 +543,9 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
     }
     for (id, e) in doc.entities().iter() {
         let kind = match &e.geom {
-            Geom::Point { .. } => continue,
+            // A Bézier's points are ordinary solver points; its only
+            // constraints (G1 tangency) lower to point constraints below.
+            Geom::Point { .. } | Geom::Bezier { .. } => continue,
             Geom::Line { start, end } => ls::CurveKind::Line {
                 a: low.point(*start)?,
                 b: low.point(*end)?,
@@ -596,7 +598,7 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
                     driven: false,
                 });
             }
-            Geom::Line { .. } | Geom::Arc { .. } => {}
+            Geom::Line { .. } | Geom::Arc { .. } | Geom::Bezier { .. } => {}
         }
     }
     for id in pinned {
@@ -650,6 +652,28 @@ impl Lowered {
             Constraint::Parallel { a, b } => K::Parallel(self.curve(*a)?, self.curve(*b)?),
             Constraint::Perpendicular { a, b } => {
                 K::Perpendicular(self.curve(*a)?, self.curve(*b)?)
+            }
+            Constraint::Tangent { a, b }
+                if kind_of(*a)? == EntityKind::Bezier || kind_of(*b)? == EntityKind::Bezier =>
+            {
+                // G1 at the shared end: the Bézier's handle leaves along the
+                // other curve's tangent (SPEC §4).
+                let g = g1_joint(doc, *a, *b).ok_or_else(|| {
+                    DocError::Invalid("tangent Bézier shares no end point".to_owned())
+                })?;
+                let (h, j) = (self.point(g.handle)?, self.point(g.joint)?);
+                match g.other {
+                    G1Other::LineFar(o) | G1Other::Handle(o) => K::Aligned {
+                        a: h,
+                        p: j,
+                        b: self.point(o)?,
+                    },
+                    G1Other::ArcCentre(c) => K::RightAngle {
+                        a: h,
+                        p: j,
+                        b: self.point(c)?,
+                    },
+                }
             }
             Constraint::Tangent { a, b } => K::Tangent(self.curve(*a)?, self.curve(*b)?),
             Constraint::Collinear { a, b } => K::Collinear(self.curve(*a)?, self.curve(*b)?),

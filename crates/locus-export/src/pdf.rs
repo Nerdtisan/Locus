@@ -148,6 +148,24 @@ fn write_seg(out: &mut String, s: &PathSeg, map: &impl Fn(Vec2) -> Vec2) {
                 );
             }
         }
+        Shape::Cubic(c) => {
+            let (c1, c2) = if s.reversed {
+                (c.c1, c.c0)
+            } else {
+                (c.c0, c.c1)
+            };
+            let (c1, c2, p3) = (map(c1), map(c2), map(s.end()));
+            let _ = writeln!(
+                out,
+                "{} {} {} {} {} {} c",
+                num(c1.x),
+                num(c1.y),
+                num(c2.x),
+                num(c2.y),
+                num(p3.x),
+                num(p3.y)
+            );
+        }
         Shape::Circle(c) => {
             // Four quarter arcs starting and ending at the angle-0 point.
             let arc = Arc::new(

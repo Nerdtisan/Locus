@@ -9,7 +9,7 @@
 //! Angles are in **radians**, lengths in millimetres.
 
 use crate::document::Document;
-use crate::entity::EntityKind;
+use crate::entity::{EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::EntityId;
 use serde::{Deserialize, Serialize};
@@ -126,7 +126,7 @@ pub enum Constraint {
     },
 }
 
-use EntityKind::{Arc, Circle, Line, Point};
+use EntityKind::{Arc, Bezier, Circle, Line, Point};
 
 impl Constraint {
     /// Short stable name, used in error messages.
@@ -262,9 +262,36 @@ impl Constraint {
                 distinct(*a, *b)?;
             }
             Constraint::Tangent { a, b } => {
-                let ka = kind(*a, curve, "line, circle or arc")?;
-                let kb = kind(*b, curve, "line, circle or arc")?;
+                let ka = kind(
+                    *a,
+                    &[Line, Circle, Arc, Bezier],
+                    "line, circle, arc or Bézier",
+                )?;
+                let kb = kind(
+                    *b,
+                    &[Line, Circle, Arc, Bezier],
+                    "line, circle, arc or Bézier",
+                )?;
                 distinct(*a, *b)?;
+                if ka == Bezier || kb == Bezier {
+                    // G1 at a shared end point, with a line, arc or Bézier.
+                    let (other, o) = if ka == Bezier { (kb, *b) } else { (ka, *a) };
+                    if other == Circle {
+                        return Err(DocError::WrongKind {
+                            what: w,
+                            entity: o,
+                            expected: "line, arc or Bézier (a Bézier cannot be tangent to a whole circle)",
+                            found: other,
+                        });
+                    }
+                    if g1_joint(doc, *a, *b).is_none() {
+                        return Err(DocError::Invalid(
+                            "a tangent Bézier must share an end point with the curve it is tangent to"
+                                .to_owned(),
+                        ));
+                    }
+                    return Ok(());
+                }
                 if ka == Line && kb == Line {
                     return Err(DocError::WrongKind {
                         what: w,
@@ -331,6 +358,79 @@ impl Constraint {
         }
         Ok(())
     }
+}
+
+/// Where two curves meet for a tangent Bézier (G1 continuity, SPEC §4): the
+/// shared end point, the Bézier's control point next to it (`handle`), and what
+/// fixes the other curve's direction there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct G1Joint {
+    pub joint: EntityId,
+    pub handle: EntityId,
+    pub other: G1Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum G1Other {
+    /// A line: its far end point (handle, joint and far end are collinear).
+    LineFar(EntityId),
+    /// An arc: its centre (the handle direction is perpendicular to the radius).
+    ArcCentre(EntityId),
+    /// Another Bézier: its control point next to the joint.
+    Handle(EntityId),
+}
+
+/// The G1 joint of a tangent between `a` and `b`, one of which is a Bézier;
+/// `None` when they share no end point or the other one is a circle.
+pub(crate) fn g1_joint(doc: &Document, a: EntityId, b: EntityId) -> Option<G1Joint> {
+    let (ga, gb) = (&doc.entity(a)?.geom, &doc.entity(b)?.geom);
+    let (bez, other) = if matches!(ga, Geom::Bezier { .. }) {
+        (ga, gb)
+    } else {
+        (gb, ga)
+    };
+    let Geom::Bezier {
+        start,
+        start_ctrl,
+        end_ctrl,
+        end,
+    } = *bez
+    else {
+        return None;
+    };
+    // Candidate joints in a fixed order, each with its handle.
+    let ends = [(start, start_ctrl), (end, end_ctrl)];
+    for (joint, handle) in ends {
+        let found = match *other {
+            Geom::Line { start: s, end: e } if s == joint || e == joint => {
+                Some(G1Other::LineFar(if s == joint { e } else { s }))
+            }
+            Geom::Arc {
+                center,
+                start: s,
+                end: e,
+            } if s == joint || e == joint => Some(G1Other::ArcCentre(center)),
+            Geom::Bezier {
+                start: s,
+                start_ctrl: sc,
+                ..
+            } if s == joint => Some(G1Other::Handle(sc)),
+            Geom::Bezier {
+                end_ctrl: ec,
+                end: e,
+                ..
+            } if e == joint => Some(G1Other::Handle(ec)),
+            _ => None,
+        };
+        if let Some(other) = found {
+            return Some(G1Joint {
+                joint,
+                handle,
+                other,
+            });
+        }
+    }
+    None
 }
 
 #[cfg(test)]

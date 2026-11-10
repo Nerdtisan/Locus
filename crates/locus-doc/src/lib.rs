@@ -14,6 +14,7 @@ pub mod constraint;
 pub mod document;
 pub mod entity;
 pub mod error;
+pub mod expr;
 pub mod file;
 pub mod ids;
 pub mod operation;

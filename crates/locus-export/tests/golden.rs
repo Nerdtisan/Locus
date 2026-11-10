@@ -66,4 +66,6 @@ goldens! {
     arcs_match_golden: "arcs",
     // Two layers: a cut part with a hole nested inside, and an open drawn line.
     mixed_matches_golden: "mixed",
+    // Cubic Béziers (#159): a closed arch + line, and an open S-curve on a Draw layer.
+    beziers_match_golden: "beziers",
 }

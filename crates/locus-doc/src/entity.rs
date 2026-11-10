@@ -18,6 +18,8 @@ pub enum EntityKind {
     Line,
     Circle,
     Arc,
+    /// Cubic Bézier (SPEC §4, limited constraints).
+    Bezier,
 }
 
 /// Geometry of one entity. References are always to `Point` entities.
@@ -40,6 +42,15 @@ pub enum Geom {
         start: EntityId,
         end: EntityId,
     },
+    /// Cubic Bézier from `start` to `end`; `start_ctrl` is the control point
+    /// next to `start`, `end_ctrl` the one next to `end`. All four are point
+    /// entities, so the solver treats control points like any other point.
+    Bezier {
+        start: EntityId,
+        start_ctrl: EntityId,
+        end_ctrl: EntityId,
+        end: EntityId,
+    },
 }
 
 impl Geom {
@@ -50,6 +61,7 @@ impl Geom {
             Geom::Line { .. } => EntityKind::Line,
             Geom::Circle { .. } => EntityKind::Circle,
             Geom::Arc { .. } => EntityKind::Arc,
+            Geom::Bezier { .. } => EntityKind::Bezier,
         }
     }
 
@@ -61,6 +73,12 @@ impl Geom {
             Geom::Line { start, end } => vec![*start, *end],
             Geom::Circle { center, .. } => vec![*center],
             Geom::Arc { center, start, end } => vec![*center, *start, *end],
+            Geom::Bezier {
+                start,
+                start_ctrl,
+                end_ctrl,
+                end,
+            } => vec![*start, *start_ctrl, *end_ctrl, *end],
         }
     }
 }

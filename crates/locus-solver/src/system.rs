@@ -360,7 +360,7 @@ fn validate(sk: &Sketch) -> Result<(), SketchError> {
                 None
             }
             Fix { at, .. } => Some(at.x + at.y),
-            Coincident(..) | PointOnCurve(..) => None,
+            Coincident(..) | PointOnCurve(..) | Aligned { .. } | RightAngle { .. } => None,
             Distance { .. } | HorizontalDistance { .. } | VerticalDistance { .. } => None,
         };
         let dim = match k {
@@ -520,6 +520,16 @@ impl Ctx<'_> {
             Fix { p, at } => {
                 let q = self.p(p);
                 *out = [q.x - at.x, q.y - at.y];
+            }
+            // Scaled to mm like `sin_cos`: cross or dot over the geometric
+            // mean of the two arm lengths.
+            Aligned { a, p, b } => {
+                let (u, v) = (self.p(a).minus(self.p(p)), self.p(b).minus(self.p(p)));
+                out[0] = u.cross(v) / (u.len() * v.len()).sqrt().max_c(1e-12);
+            }
+            RightAngle { a, p, b } => {
+                let (u, v) = (self.p(a).minus(self.p(p)), self.p(b).minus(self.p(p)));
+                out[0] = u.dot(v) / (u.len() * v.len()).sqrt().max_c(1e-12);
             }
             Distance { p, q, d } => out[0] = self.p(p).minus(self.p(q)).len() - d,
             PointLineDistance { p, line, d } => out[0] = sd(self.p(p), self.line(line)).abs() - d,

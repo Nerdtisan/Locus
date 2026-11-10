@@ -17,6 +17,7 @@ pub fn distance(shape: &Shape, p: Vec2) -> f64 {
         Shape::Line(l) => l.distance_to(p),
         Shape::Circle(c) => (p.distance(c.center) - c.radius).abs(),
         Shape::Arc(a) => p.distance(a.closest_point(p)),
+        Shape::Cubic(c) => c.distance_to(p),
     }
 }
 
@@ -134,6 +135,14 @@ fn touches(shape: &Shape, bbox: &Aabb, rect: &Aabb) -> bool {
             rect.contains(a.start, 0.0)
                 || rect.contains(a.end, 0.0)
                 || edges.iter().any(|e| !e.intersect_arc(a).is_empty())
+        }
+        Shape::Cubic(c) => {
+            let pl = c.flatten(0.05);
+            pl.iter().any(|q| rect.contains(*q, 0.0))
+                || pl.windows(2).any(|w| {
+                    let seg = Line::new(w[0], w[1]);
+                    edges.iter().any(|e| e.intersect_line(&seg).is_some())
+                })
         }
     }
 }

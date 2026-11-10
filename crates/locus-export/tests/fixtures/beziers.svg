@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="170mm" height="54.5833mm" viewBox="0 0 170 54.5833">
+  <g id="layer-1" data-name="Layer 1" data-operation="Cut">
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 0 41.25 C 0 -13.75 100 -13.75 100 41.25 L 0 41.25 Z"/>
+  </g>
+  <g id="layer-8" data-name="Pen" data-operation="Draw">
+    <path fill="none" stroke="#0000c8" stroke-width="0.1" d="M 120 41.25 L 130 41.25 C 140 41.25 160 71.25 170 41.25"/>
+  </g>
+</svg>
