@@ -11,6 +11,7 @@
 pub mod boolean;
 pub mod command;
 pub mod constraint;
+pub mod corner;
 pub mod document;
 pub mod entity;
 pub mod error;

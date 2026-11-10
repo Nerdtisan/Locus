@@ -6,7 +6,7 @@ use crate::app::Status;
 use crate::constrain::{self, DimSpec, Kind};
 use crate::hit::{self, BoxMode, Mods, Selection};
 use crate::infer;
-use crate::modify_tool::Modify;
+use crate::modify_tool::{CornerSettings, Modify};
 use crate::render::{Emphasis, Frame, Palette};
 use crate::scene::Scene;
 use crate::settings::{Settings, Units};
@@ -103,6 +103,10 @@ pub struct Canvas {
     region_ui: regions::RegionUi,
     /// The active modify tool, if any (SPEC §6.2): clicks go to it.
     modify: Option<Modify>,
+    /// The first curve picked for a fillet or chamfer.
+    corner_first: Option<EntityId>,
+    /// Fillet radius and chamfer sizes, edited in the tool strip.
+    pub corner: CornerSettings,
 }
 
 impl Default for Canvas {
@@ -131,6 +135,8 @@ impl Default for Canvas {
             layer_ui: layers_panel::LayerUi::default(),
             region_ui: regions::RegionUi::default(),
             modify: None,
+            corner_first: None,
+            corner: CornerSettings::default(),
         };
         c.load(demo::sketch());
         c
@@ -174,6 +180,7 @@ impl Canvas {
         self.typed.clear();
         self.notice = None;
         self.modify = None;
+        self.corner_first = None;
     }
 
     /// The active modify tool (SPEC §6.2), if any.
@@ -191,7 +198,7 @@ impl Canvas {
     pub fn hint(&self) -> String {
         match (&self.notice, self.modify) {
             (Some(n), _) => n.clone(),
-            (None, Some(m)) => m.prompt().to_owned(),
+            (None, Some(m)) => m.prompt(self.corner_first.is_some()).to_owned(),
             (None, None) => self.draft.tool().prompt(self.draft.clicks()).to_owned(),
         }
     }
@@ -885,18 +892,42 @@ impl Canvas {
             });
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.modify = None;
+                self.corner_first = None;
+                self.selection.clear();
                 self.notice = None;
                 return;
             }
         }
-        let (Some(id), Some(w)) = (self.hover, at) else {
-            return;
-        };
         if !resp.clicked_by(PointerButton::Primary) {
             return;
         }
         let doc = self.sketcher.document();
-        match m.plan(doc, id, w) {
+        let plan = if m.takes_two() {
+            // A corner point shared by exactly two curves picks both.
+            let corner = at
+                .and_then(|w| hit::pick_point(&self.scene.items, w, tol))
+                .map(|(p, _)| doc.dependents(p).0)
+                .filter(|users| users.len() == 2);
+            match (corner, self.corner_first, self.hover) {
+                (Some(users), _, _) => m.plan_corner(doc, users[0], users[1], &self.corner),
+                (None, None, Some(id)) => {
+                    self.corner_first = Some(id);
+                    self.selection.set_all([id]);
+                    self.notice = None;
+                    return;
+                }
+                (None, Some(first), Some(id)) => m.plan_corner(doc, first, id, &self.corner),
+                (None, _, None) => return,
+            }
+        } else {
+            let (Some(id), Some(w)) = (self.hover, at) else {
+                return;
+            };
+            m.plan(doc, id, w)
+        };
+        self.corner_first = None;
+        self.selection.clear();
+        match plan {
             Err(e) => self.notice = Some(e.to_string()),
             Ok(plan) => {
                 let names: Vec<String> = plan

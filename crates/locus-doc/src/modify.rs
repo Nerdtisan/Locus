@@ -50,6 +50,12 @@ pub enum ModifyError {
     NoBoundary,
     #[error("this end is joined to other geometry; only a free end can be extended")]
     EndConnected,
+    #[error("pick two curves that meet at a corner (share an end point)")]
+    NoCorner,
+    #[error("too large for these curves: the corner piece would run past an end")]
+    TooLarge,
+    #[error("the size must be a positive number")]
+    BadSize,
 }
 
 /// The curve being modified, parametrised by `s`: `t` ∈ [0, 1] along a line,
@@ -230,16 +236,16 @@ enum End {
 
 /// Builds the compound, predicting the IDs the document will assign (it
 /// hands them out in order, ADR 0003).
-struct Builder<'a> {
-    doc: &'a Document,
+pub(crate) struct Builder<'a> {
+    pub(crate) doc: &'a Document,
     next: u64,
-    commands: Vec<Command>,
+    pub(crate) commands: Vec<Command>,
     layer: LayerId,
     construction: bool,
 }
 
 impl<'a> Builder<'a> {
-    fn new(doc: &'a Document, of: EntityId) -> Self {
+    pub(crate) fn new(doc: &'a Document, of: EntityId) -> Self {
         let (layer, construction) = doc
             .entity(of)
             .map_or((Document::default_layer(), false), |e| {
@@ -260,7 +266,7 @@ impl<'a> Builder<'a> {
         id
     }
 
-    fn add(&mut self, geom: Geom) -> EntityId {
+    pub(crate) fn add(&mut self, geom: Geom) -> EntityId {
         self.commands.push(Command::AddEntity {
             layer: self.layer,
             construction: self.construction,
@@ -269,7 +275,7 @@ impl<'a> Builder<'a> {
         EntityId::new(self.alloc())
     }
 
-    fn constrain(&mut self, constraint: Constraint) {
+    pub(crate) fn constrain(&mut self, constraint: Constraint) {
         self.commands.push(Command::AddConstraint { constraint });
         self.alloc();
     }
@@ -309,7 +315,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn finish(self, label: &str, dropped: Vec<ConstraintId>) -> Plan {
+    pub(crate) fn finish(self, label: &str, dropped: Vec<ConstraintId>) -> Plan {
         Plan {
             command: Command::Compound {
                 label: label.to_owned(),

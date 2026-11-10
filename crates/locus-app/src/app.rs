@@ -8,7 +8,7 @@
 use crate::canvas::Canvas;
 use crate::constrain::Kind;
 use crate::file_io::FileIo;
-use crate::modify_tool::Modify;
+use crate::modify_tool::{ChamferMode, Modify};
 use crate::settings::{Settings, Theme, Units};
 use crate::tools::Tool;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
@@ -282,6 +282,7 @@ impl App {
                 }
             }
             ui.separator();
+            self.corner_sizes(ui);
             if self.canvas.tool() == Tool::Polygon {
                 let (mut sides, mut outside) = self.canvas.polygon();
                 let changed = ui
@@ -299,6 +300,51 @@ impl App {
             }
             ui.weak(self.canvas.hint());
         });
+    }
+
+    /// Fillet radius and chamfer size, while those tools are active (mm and
+    /// degrees; SPEC §6.2).
+    fn corner_sizes(&mut self, ui: &mut egui::Ui) {
+        fn len(v: &mut f64) -> egui::DragValue<'_> {
+            egui::DragValue::new(v)
+                .range(0.001..=10_000.0)
+                .speed(0.1)
+                .suffix(" mm")
+        }
+        let m = self.canvas.modify();
+        let c = &mut self.canvas.corner;
+        match m {
+            Some(Modify::Fillet) => {
+                ui.label("Radius");
+                ui.add(len(&mut c.radius));
+                ui.separator();
+            }
+            Some(Modify::Chamfer) => {
+                egui::ComboBox::from_id_salt("chamfer-mode")
+                    .selected_text(c.mode.label())
+                    .show_ui(ui, |ui| {
+                        for m in ChamferMode::ALL {
+                            ui.selectable_value(&mut c.mode, m, m.label());
+                        }
+                    });
+                ui.add(len(&mut c.d1));
+                match c.mode {
+                    ChamferMode::Equal => {}
+                    ChamferMode::TwoDistances => {
+                        ui.add(len(&mut c.d2));
+                    }
+                    ChamferMode::DistanceAngle => {
+                        ui.add(
+                            egui::DragValue::new(&mut c.angle_deg)
+                                .range(0.1..=179.9)
+                                .suffix("°"),
+                        );
+                    }
+                }
+                ui.separator();
+            }
+            _ => {}
+        }
     }
 
     /// One button per constraint, enabled when the selection supports it (#70).
