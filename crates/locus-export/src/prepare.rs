@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! The shared "always through validation" front door for every exporter
-//! (SPEC §8 pipeline, #128): collect → optional auto-fix → validate → order.
+//! (SPEC §8 pipeline, #128): collect → optional auto-fix → operation
+//! transforms (kerf, blade offset, hatch) → validate → order.
 //!
 //! The app's pre-export panel and `locus-cli` both call this, so they cannot
 //! disagree about what is wrong or what a fix does. The document is read only.
 
 use crate::fix::{Fix, autofix};
+use crate::ops::apply_operations;
 use crate::order::order;
 use crate::pipeline::{ExportModel, collect};
 use crate::validate::{Report, validate};
@@ -40,6 +42,9 @@ pub fn prepare(doc: &Document, auto_fix: bool) -> Prepared {
     } else {
         Vec::new()
     };
+    // SPEC §8: operation transforms before validation, so what is checked
+    // is what will be cut.
+    apply_operations(&mut model);
     // Validate before ordering: the order stage only permutes and re-starts paths.
     let report = validate(&model);
     order(&mut model);

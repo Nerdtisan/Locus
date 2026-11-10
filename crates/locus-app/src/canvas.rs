@@ -19,6 +19,7 @@ use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
 
 mod layers_panel;
+mod machine;
 mod params_panel;
 mod regions;
 
@@ -105,6 +106,9 @@ pub struct Canvas {
     param_ui: params_panel::ParamUi,
     /// Region selection, hover and the boolean combine (#122, #124).
     region_ui: regions::RegionUi,
+    /// Machine preview on, and its polylines (#176).
+    machine_on: bool,
+    machine: Vec<machine::MachinePath>,
     /// The active modify tool, if any (SPEC §6.2): clicks go to it.
     modify: Option<Modify>,
     /// The first curve picked for a fillet or chamfer.
@@ -141,6 +145,8 @@ impl Default for Canvas {
             layer_ui: layers_panel::LayerUi::default(),
             param_ui: params_panel::ParamUi::default(),
             region_ui: regions::RegionUi::default(),
+            machine_on: false,
+            machine: Vec::new(),
             modify: None,
             corner_first: None,
             corner: CornerSettings::default(),
@@ -731,6 +737,7 @@ impl Canvas {
             .retain(|id| scene.items.iter().any(|i| i.id == id));
         self.hover = None;
         self.retain_regions();
+        self.refresh_machine();
     }
 
     /// World bounds of the content; a sheet-sized default while empty.
@@ -875,6 +882,7 @@ impl Canvas {
         let (selection, hovered) = (&self.selection, self.hover);
         let (flag_constraints, flag_entities) = self.flagged();
         self.draw_regions(&painter, rect, dark);
+        self.draw_machine(&painter, rect, dark);
         self.drawn = frame.draw_items(&self.scene, |item| {
             if flag_entities.contains(&item.id) {
                 Emphasis::Conflict

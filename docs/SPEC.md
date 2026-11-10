@@ -232,9 +232,9 @@ Layer `operation` enum:
 |---|---|
 | Cut | kerf width, inside/outside/none compensation, pass count (metadata) |
 | Score | — |
-| Engrave (fill) | hatch spacing, hatch angle |
+| Engrave (fill) | hatch spacing, hatch angle, crosshatch (holes respected; outlines kept) |
 | Draw (plotter) | pen number, pen width (drives hatch spacing + stroke-edge preview) |
-| Drag-knife (vinyl) | blade offset |
+| Drag-knife (vinyl) | blade offset (swivel arcs at turns over 10°) |
 | Reference | never exported |
 
 Machine profiles (v2): presets bundling export format, colour mapping, units, and offsets for e.g. "LightBurn", "Cricut Design Space", "Generic HPGL plotter".
