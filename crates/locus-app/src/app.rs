@@ -8,7 +8,7 @@
 use crate::canvas::Canvas;
 use crate::constrain::Kind;
 use crate::file_io::FileIo;
-use crate::modify_tool::Modify;
+use crate::modify_tool::{ChamferMode, Modify, TransformMode};
 use crate::settings::{Settings, Theme, Units};
 use crate::tools::Tool;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
@@ -301,6 +301,7 @@ impl App {
                 }
             }
             ui.separator();
+            self.corner_sizes(ui);
             if self.canvas.tool() == Tool::Polygon {
                 let (mut sides, mut outside) = self.canvas.polygon();
                 let changed = ui
@@ -318,6 +319,94 @@ impl App {
             }
             ui.weak(self.canvas.hint());
         });
+    }
+
+    /// Fillet radius and chamfer size, while those tools are active (mm and
+    /// degrees; SPEC §6.2).
+    fn corner_sizes(&mut self, ui: &mut egui::Ui) {
+        fn len(v: &mut f64) -> egui::DragValue<'_> {
+            egui::DragValue::new(v)
+                .range(0.001..=10_000.0)
+                .speed(0.1)
+                .suffix(" mm")
+        }
+        let m = self.canvas.modify();
+        let c = &mut self.canvas.corner;
+        match m {
+            Some(Modify::Fillet) => {
+                ui.label("Radius");
+                ui.add(len(&mut c.radius));
+                ui.separator();
+            }
+            Some(Modify::Chamfer) => {
+                egui::ComboBox::from_id_salt("chamfer-mode")
+                    .selected_text(c.mode.label())
+                    .show_ui(ui, |ui| {
+                        for m in ChamferMode::ALL {
+                            ui.selectable_value(&mut c.mode, m, m.label());
+                        }
+                    });
+                ui.add(len(&mut c.d1));
+                match c.mode {
+                    ChamferMode::Equal => {}
+                    ChamferMode::TwoDistances => {
+                        ui.add(len(&mut c.d2));
+                    }
+                    ChamferMode::DistanceAngle => {
+                        ui.add(
+                            egui::DragValue::new(&mut c.angle_deg)
+                                .range(0.1..=179.9)
+                                .suffix("°"),
+                        );
+                    }
+                }
+                ui.separator();
+            }
+            Some(Modify::Transform) => {
+                let t = &mut self.canvas.transform;
+                egui::ComboBox::from_id_salt("transform-mode")
+                    .selected_text(t.mode.label())
+                    .show_ui(ui, |ui| {
+                        for m in TransformMode::ALL {
+                            ui.selectable_value(&mut t.mode, m, m.label());
+                        }
+                    });
+                match t.mode {
+                    TransformMode::Move => {
+                        ui.label("dx");
+                        ui.add(egui::DragValue::new(&mut t.dx).speed(0.1).suffix(" mm"));
+                        ui.label("dy");
+                        ui.add(egui::DragValue::new(&mut t.dy).speed(0.1).suffix(" mm"));
+                    }
+                    TransformMode::Rotate => {
+                        ui.add(
+                            egui::DragValue::new(&mut t.angle_deg)
+                                .speed(1.0)
+                                .suffix("°"),
+                        );
+                    }
+                    TransformMode::Scale => {
+                        ui.add(
+                            egui::DragValue::new(&mut t.factor)
+                                .range(0.001..=1000.0)
+                                .speed(0.01)
+                                .prefix("×"),
+                        );
+                    }
+                }
+                ui.checkbox(&mut t.copy, "Copy");
+                let ok = self.canvas.can_transform();
+                if ui
+                    .add_enabled(ok, egui::Button::new("Apply"))
+                    .on_disabled_hover_text("Select geometry first")
+                    .clicked()
+                {
+                    self.canvas.apply_transform(self.settings.units);
+                }
+                ui.separator();
+            }
+            _ => {}
+        }
     }
 
     /// One button per constraint, enabled when the selection supports it (#70).

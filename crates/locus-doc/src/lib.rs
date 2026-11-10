@@ -11,6 +11,7 @@
 pub mod boolean;
 pub mod command;
 pub mod constraint;
+pub mod corner;
 pub mod document;
 pub mod entity;
 pub mod error;
@@ -23,6 +24,7 @@ pub mod params;
 pub mod recipe;
 pub mod regions;
 pub mod solve;
+pub mod transform;
 
 #[cfg(test)]
 mod testutil;
