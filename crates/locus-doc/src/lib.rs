@@ -18,6 +18,7 @@ pub mod expr;
 pub mod file;
 pub mod ids;
 pub mod operation;
+pub mod params;
 pub mod recipe;
 pub mod regions;
 pub mod solve;

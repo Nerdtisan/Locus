@@ -121,6 +121,9 @@ pub struct Document {
     pub(crate) booleans: BTreeMap<BooleanId, Boolean>,
     /// Associative recipes (SPEC §6.2.1, ADR 0011).
     pub(crate) recipes: BTreeMap<RecipeId, Recipe>,
+    /// Expressions behind dimension values (SPEC §5): the dimension's value
+    /// is re-evaluated from these when a parameter changes.
+    pub(crate) dim_exprs: BTreeMap<ConstraintId, String>,
     pub(crate) view: Option<View>,
 }
 
@@ -154,6 +157,7 @@ impl Document {
             constraints: BTreeMap::new(),
             booleans: BTreeMap::new(),
             recipes: BTreeMap::new(),
+            dim_exprs: BTreeMap::new(),
             view: None,
         }
     }
@@ -220,6 +224,12 @@ impl Document {
     #[must_use]
     pub fn boolean(&self, id: BooleanId) -> Option<&Boolean> {
         self.booleans.get(&id)
+    }
+
+    /// The expression a dimension's value comes from, if it was entered as one.
+    #[must_use]
+    pub fn dimension_expr(&self, id: ConstraintId) -> Option<&str> {
+        self.dim_exprs.get(&id).map(String::as_str)
     }
 
     #[must_use]
