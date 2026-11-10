@@ -260,6 +260,14 @@ impl Frame<'_> {
         );
     }
 
+    /// Lines from a selected Bézier's end points to their handles (#160).
+    pub fn draw_handle_guides(&self, guides: &[(Vec2, Vec2)]) {
+        let stroke = Stroke::new(1.0, self.pal.construction);
+        for (a, b) in guides {
+            self.painter.line_segment([self.s(*a), self.s(*b)], stroke);
+        }
+    }
+
     /// Ring marking the existing point a tool will snap to.
     pub fn draw_snap(&self, p: Vec2) {
         self.painter

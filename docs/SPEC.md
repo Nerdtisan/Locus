@@ -30,6 +30,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Booleans | Exact line/arc booleans owned by `locus-region`, sharing the region-detection arrangement; no flattening or arc refit (decided 2026-11-05, [ADR 0008](adr/0008-booleans-and-arcs.md)). |
 | Plugin API | WIT package `locus:plugin@1.0.0` (draft until the M3 host): one world per plugin kind, none importing anything (deny by default), exporters get the same validated export model as built-in writers ([ADR-0009](adr/0009-plugin-api.md), 2026-11-05). Text ships in core, not as a plugin (§9). |
 | Recipes | Mirror/patterns/offset are recipes in the document; instances are real driven entities, mirror solved by `Symmetric` constraints, patterns regenerated after the solve; instance IDs stay with the recipe ([ADR-0011](adr/0011-associative-recipes.md), 2026-11-10). |
+| Offsets | Exact line/arc offsets (areas and open chains, round or miter joins) owned by `locus-region` as a Minkowski sum/difference through the ADR 0008 booleans; `cavalier_contours` measured and not chosen (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)). |
 
 ---
 
@@ -93,7 +94,7 @@ crates/
 | Need | Candidate |
 |---|---|
 | Curve math | `kurbo` |
-| Offsets with true arcs (kerf, inset) | `cavalier_contours` (polyline-with-bulge, keeps arcs) |
+| Offsets with true arcs (kerf, inset) | ~~`cavalier_contours`~~ — Locus-owned in `locus-region` ([ADR 0010](adr/0010-offsets.md)) |
 | Booleans | ~~`i_overlay` or `geo`~~ — Locus-owned exact arrangement in `locus-region` ([ADR 0008](adr/0008-booleans-and-arcs.md)) |
 | Tessellation for rendering | `lyon` |
 | DXF write | `dxf` crate |
@@ -178,6 +179,8 @@ Line / polyline, rectangle (2-point, centre, 3-point rotated), circle (centre, 2
 
 ### 6.2 Modify tools (v1)
 Trim, extend, break/split, fillet (adds tangent arc + constraints), chamfer, offset (live/constrained offset entity), mirror (adds symmetric constraints), linear pattern, circular pattern, move/rotate/scale (respecting constraints), toggle construction.
+
+Offsets (the offset tool, kerf and blade offsets) share one engine that keeps true arcs: `locus-region` offsets areas and open chains as an exact Minkowski sum/difference through the ADR 0008 arrangement, with round or miter joins (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)).
 
 Auto-constraint inference while drawing (horizontal/vertical/coincident/tangent snap hints), toggleable — mirrors Fusion behaviour.
 
@@ -312,6 +315,7 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 10. **Web hosting & browser storage** — **Decided:** GitHub Pages; open/download + OPFS/IndexedDB autosave (§0).
 11. **Packaging formats** — **Decided:** see §0 and M4 (§13).
 12. **Booleans that keep arcs** (§6.3, M2) — **Decided** ([ADR 0008](adr/0008-booleans-and-arcs.md)): Locus-owned exact line/arc arrangement in `locus-region`; `i_overlay` + refit and `cavalier_contours` measured and not chosen.
+13. **Offsets that keep arcs** (§6.2, §7, M3) — **Decided** ([ADR 0010](adr/0010-offsets.md)): Locus-owned offsets on the ADR 0008 arrangement (bands + corner discs/kites, one boolean); 6,000/6,000 random cases exact vs `cavalier_contours` 5,995 (wrong by up to 1.5 mm where offsets touch exactly); no new dependencies.
 
 ---
 
