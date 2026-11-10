@@ -134,7 +134,29 @@ impl Scene {
     /// Build the scene. Hidden layers are skipped. `fully_constrained` is the
     /// solver's set of entities that can no longer move (SPEC §5): they are
     /// drawn in the fully-constrained colour.
-    pub fn build(doc: &Document, fully_constrained: &BTreeSet<EntityId>) -> Self {
+    ///
+    /// A Bézier's control points are left out unless the curve is in
+    /// `handles` (it, or one of its points, is selected): handles show only
+    /// for the selected curve (#160).
+    pub fn build(
+        doc: &Document,
+        fully_constrained: &BTreeSet<EntityId>,
+        handles: &BTreeSet<EntityId>,
+    ) -> Self {
+        let hidden: HashSet<EntityId> = doc
+            .entities()
+            .iter()
+            .filter(|(id, _)| !handles.contains(id))
+            .filter_map(|(_, e)| match e.geom {
+                Geom::Bezier {
+                    start_ctrl,
+                    end_ctrl,
+                    ..
+                } => Some([start_ctrl, end_ctrl]),
+                _ => None,
+            })
+            .flatten()
+            .collect();
         let owned: HashSet<EntityId> = doc
             .entities()
             .iter()
@@ -144,7 +166,7 @@ impl Scene {
         let mut items = Vec::with_capacity(doc.entities().len());
         let mut bounds: Option<Aabb> = None;
         for (id, e) in doc.entities().iter() {
-            if doc.layer(e.layer).is_some_and(|l| !l.visible) {
+            if doc.layer(e.layer).is_some_and(|l| !l.visible) || hidden.contains(&id) {
                 continue;
             }
             let shape = match e.geom {
@@ -260,7 +282,7 @@ mod tests {
     #[test]
     fn demo_scene_resolves_geometry_and_flags() {
         let doc = demo::sketch();
-        let scene = Scene::build(&doc, &solved(&doc));
+        let scene = Scene::build(&doc, &solved(&doc), &BTreeSet::new());
         assert_eq!(scene.items.len(), doc.entities().len());
         assert!(scene.items.iter().any(|i| i.construction));
         // The fixed-and-sized hole is the one constrained circle.
@@ -292,7 +314,7 @@ mod tests {
 
     #[test]
     fn owned_points_are_flagged_and_free_points_are_not() {
-        let scene = Scene::build(&demo::sketch(), &BTreeSet::new());
+        let scene = Scene::build(&demo::sketch(), &BTreeSet::new(), &BTreeSet::new());
         let free = scene
             .items
             .iter()
@@ -303,18 +325,55 @@ mod tests {
 
     #[test]
     fn empty_document_has_no_bounds() {
-        let scene = Scene::build(&Document::new(), &BTreeSet::new());
+        let scene = Scene::build(&Document::new(), &BTreeSet::new(), &BTreeSet::new());
         assert!(scene.items.is_empty() && scene.bounds.is_none());
     }
 
     #[test]
     fn stress_scene_has_thousands_of_curves() {
-        let scene = Scene::build(&demo::stress(500), &BTreeSet::new());
+        let scene = Scene::build(&demo::stress(500), &BTreeSet::new(), &BTreeSet::new());
         let curves = scene
             .items
             .iter()
             .filter(|i| !matches!(i.shape, Shape::Point(_)))
             .count();
         assert!(curves >= 495, "{curves}");
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn bezier_handles_show_only_for_listed_curves() {
+        use locus_doc::{Command, Editor};
+        let mut ed = Editor::new(Document::new());
+        let mut add = |geom| {
+            ed.apply(&Command::AddEntity {
+                layer: Document::default_layer(),
+                construction: false,
+                geom,
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let pt = |x| Geom::Point {
+            pos: Vec2::new(x, 0.0),
+        };
+        let p = [add(pt(0.0)), add(pt(1.0)), add(pt(2.0)), add(pt(3.0))];
+        let curve = add(Geom::Bezier {
+            start: p[0],
+            start_ctrl: p[1],
+            end_ctrl: p[2],
+            end: p[3],
+        });
+        let doc = ed.into_document();
+        let points = |s: &Scene| {
+            s.items
+                .iter()
+                .filter(|i| matches!(i.shape, Shape::Point(_)))
+                .count()
+        };
+        let hidden = Scene::build(&doc, &BTreeSet::new(), &BTreeSet::new());
+        assert_eq!(points(&hidden), 2);
+        let shown = Scene::build(&doc, &BTreeSet::new(), &BTreeSet::from([curve]));
+        assert_eq!(points(&shown), 4);
     }
 }

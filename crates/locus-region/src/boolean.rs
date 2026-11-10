@@ -8,13 +8,19 @@
 
 use crate::arrange::{GEdge, arrange, in_dir, merge_carriers, out_dir};
 use crate::seg::{Area, Edge, Loop};
-use locus_geom::Vec2;
+use locus_geom::{Aabb, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Offset of the side probes that classify an edge, mm. Features thinner
-/// than this (10× under `EXPORT_TOL`) are below the classifier (ADR 0008).
+/// Largest offset of the side probes that classify an edge, mm (10× under
+/// `EXPORT_TOL`, ADR 0008). A probe is pulled in closer when another edge
+/// passes nearer than this, so a cusp where two curves leave a point
+/// tangentially (every offset corner has them, ADR 0010) is still classified
+/// on the right side of both.
 const PROBE: f64 = 1e-4;
+
+/// Smallest probe offset: far above f64 resolution at sketch coordinates.
+const MIN_PROBE: f64 = 1e-9;
 
 /// Loops with less area than this (mm²) are slivers, dropped from results.
 const MIN_AREA: f64 = 1e-9;
@@ -43,12 +49,16 @@ impl BoolOp {
 pub fn boolean(a: &Area, b: &Area, op: BoolOp) -> Area {
     let input: Vec<Edge> = a.edges().chain(b.edges()).copied().collect();
     let arr = arrange(&input);
+    let (fa, fb) = (Boxed::new(a), Boxed::new(b));
+    let near = Near::new(&arr.edges);
     let mut kept: Vec<GEdge> = Vec::new();
-    for e in &arr.edges {
+    for (i, e) in arr.edges.iter().enumerate() {
         let seg = e.edge.seg;
         let m = seg.at(0.5);
-        let n = seg.tangent(0.5).perp() * PROBE.min(seg.length() * 0.1);
-        let inside = |q: Vec2| op.keep(a.contains(q), b.contains(q));
+        let reach = PROBE.min(seg.length() * 0.1);
+        let probe = (0.5 * near.distance(i, m, reach)).clamp(MIN_PROBE, reach);
+        let n = seg.tangent(0.5).perp() * probe;
+        let inside = |q: Vec2| op.keep(fa.contains(q), fb.contains(q));
         let (left, right) = (inside(m + n), inside(m - n));
         if left != right {
             kept.push(if left {
@@ -70,6 +80,136 @@ pub fn boolean(a: &Area, b: &Area, op: BoolOp) -> Area {
         .filter(|l| l.area().abs() > MIN_AREA)
         .collect();
     Area { loops }
+}
+
+/// Uniform grid over bounding boxes, so a probe only looks at the items
+/// (loops or edges) whose box is near it.
+struct BoxGrid {
+    cell: f64,
+    cells: HashMap<(i64, i64), Vec<usize>>,
+    /// Items too big for the grid: every query visits them.
+    overflow: Vec<usize>,
+}
+
+impl BoxGrid {
+    /// Upper bound on the cells one item is entered in.
+    const MAX_CELLS: i64 = 1024;
+
+    fn new(bbs: &[Aabb]) -> Self {
+        let span = bbs
+            .iter()
+            .copied()
+            .reduce(Aabb::union)
+            .map_or(1.0, |t| t.width().max(t.height()));
+        let n = (bbs.len().max(1) as f64).sqrt();
+        let cell = (span / n).max(PROBE * 4.0);
+        let mut grid = Self {
+            cell,
+            cells: HashMap::new(),
+            overflow: Vec::new(),
+        };
+        for (i, bb) in bbs.iter().enumerate() {
+            let (lo, hi) = (grid.key(bb.min), grid.key(bb.max));
+            if (hi.0 - lo.0 + 1).saturating_mul(hi.1 - lo.1 + 1) > Self::MAX_CELLS {
+                grid.overflow.push(i);
+                continue;
+            }
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    grid.cells.entry((x, y)).or_default().push(i);
+                }
+            }
+        }
+        grid
+    }
+
+    fn key(&self, q: Vec2) -> (i64, i64) {
+        // Saturating casts: coordinates are finite and bounded.
+        (
+            (q.x / self.cell).floor() as i64,
+            (q.y / self.cell).floor() as i64,
+        )
+    }
+
+    /// Items whose box may hold `q`, each once.
+    fn at(&self, q: Vec2) -> impl Iterator<Item = usize> + '_ {
+        let cell = self.cells.get(&self.key(q)).map_or(&[][..], Vec::as_slice);
+        cell.iter().chain(&self.overflow).copied()
+    }
+
+    /// Items whose box may come within `r` of `q` (possibly repeated).
+    fn near(&self, q: Vec2, r: f64) -> impl Iterator<Item = usize> + '_ {
+        let (lo, hi) = (self.key(q - Vec2::new(r, r)), self.key(q + Vec2::new(r, r)));
+        (lo.0..=hi.0)
+            .flat_map(move |x| (lo.1..=hi.1).map(move |y| (x, y)))
+            .filter_map(|k| self.cells.get(&k))
+            .flatten()
+            .chain(&self.overflow)
+            .copied()
+    }
+}
+
+/// An operand with its loops in a grid. A loop's winding number is zero
+/// outside its box, so a probe only walks the loops whose box holds it.
+struct Boxed<'a> {
+    /// Each loop with its box and its edges' boxes.
+    loops: Vec<(&'a Loop, Aabb, Vec<Aabb>)>,
+    grid: BoxGrid,
+}
+
+impl<'a> Boxed<'a> {
+    fn new(a: &'a Area) -> Self {
+        let loops: Vec<(&Loop, Aabb, Vec<Aabb>)> = a
+            .loops
+            .iter()
+            .filter_map(|l| {
+                let edges: Vec<Aabb> = l.edges.iter().map(|e| e.seg.bbox()).collect();
+                let bb = edges.iter().copied().reduce(Aabb::union)?;
+                Some((l, bb, edges))
+            })
+            .collect();
+        let bbs: Vec<Aabb> = loops.iter().map(|(_, bb, _)| *bb).collect();
+        Self {
+            grid: BoxGrid::new(&bbs),
+            loops,
+        }
+    }
+
+    fn contains(&self, q: Vec2) -> bool {
+        self.grid
+            .at(q)
+            .filter(|&i| self.loops[i].1.contains(q, 0.0))
+            .map(|i| self.loops[i].0.winding_boxed(q, Some(&self.loops[i].2)))
+            .sum::<i32>()
+            != 0
+    }
+}
+
+/// The arrangement's edges in a grid, for the distance from a probe's base
+/// to the nearest other edge.
+struct Near<'a> {
+    edges: &'a [GEdge],
+    grid: BoxGrid,
+}
+
+impl<'a> Near<'a> {
+    fn new(edges: &'a [GEdge]) -> Self {
+        let bbs: Vec<Aabb> = edges.iter().map(|e| e.edge.seg.bbox()).collect();
+        Self {
+            edges,
+            grid: BoxGrid::new(&bbs),
+        }
+    }
+
+    /// Distance from `q` to the nearest edge other than `skip`, or `reach`
+    /// when none is closer.
+    fn distance(&self, skip: usize, q: Vec2, reach: f64) -> f64 {
+        self.grid
+            .near(q, reach)
+            .filter(|&k| k != skip)
+            .map(|k| self.edges[k].edge.seg.distance(q))
+            .fold(reach, f64::min)
+    }
 }
 
 /// Union of several areas.
