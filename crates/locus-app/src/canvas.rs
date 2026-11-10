@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 
 mod layers_panel;
 mod machine;
+mod offsets;
 mod params_panel;
 mod regions;
 
@@ -33,6 +34,8 @@ const MIN_BOX_PT: f32 = 4.0;
 enum DimTarget {
     New(DimSpec),
     Existing(ConstraintId),
+    /// A live offset's distance (#164).
+    Offset(locus_doc::RecipeId),
 }
 
 /// A constraint the solver refused (SPEC §5 Solver UX): shown with the set it
@@ -111,6 +114,10 @@ pub struct Canvas {
     machine: Vec<machine::MachinePath>,
     /// The active modify tool, if any (SPEC §6.2): clicks go to it.
     modify: Option<Modify>,
+    /// The offset picked with the Offset tool, and the screen rectangles of
+    /// the offset distance labels drawn last frame (#164).
+    offset_pick: Option<locus_doc::RecipeId>,
+    offset_rects: Vec<(locus_doc::RecipeId, egui::Rect)>,
     /// The first curve picked for a fillet or chamfer.
     corner_first: Option<EntityId>,
     /// Fillet radius and chamfer sizes, edited in the tool strip.
@@ -148,6 +155,8 @@ impl Default for Canvas {
             machine_on: false,
             machine: Vec::new(),
             modify: None,
+            offset_pick: None,
+            offset_rects: Vec::new(),
             corner_first: None,
             corner: CornerSettings::default(),
             transform: TransformSettings::default(),
@@ -534,6 +543,14 @@ impl Canvas {
     /// in degrees). Returns whether it was applied; on failure the editor
     /// stays open with the reason shown.
     fn commit_dimension(&mut self, edit: &DimEdit, units: Units) -> bool {
+        if let DimTarget::Offset(rid) = edit.target {
+            let mm =
+                parse_number(&edit.text).map(|v| if units == Units::Inch { v * 25.4 } else { v });
+            return match self.offset_command(rid, mm, &edit.text) {
+                Some(cmd) => self.apply_reporting(&cmd),
+                None => false,
+            };
+        }
         if let Some(v) = parse_number(&edit.text) {
             let value = if edit.angle {
                 v.to_radians()
@@ -547,6 +564,7 @@ impl Canvas {
                     constraint: spec.constraint(value, false),
                 },
                 DimTarget::Existing(id) => Command::SetDimension { id, value },
+                DimTarget::Offset(_) => return false,
             };
             return self.apply_reporting(&cmd);
         }
@@ -560,6 +578,7 @@ impl Canvas {
                 id,
                 expr: Some(expr),
             },
+            DimTarget::Offset(_) => return false,
         };
         self.apply_reporting(&cmd)
     }
@@ -908,6 +927,7 @@ impl Canvas {
             draw_rubber_band(&painter, start, now);
         }
         grid::rulers(&painter, &self.view, rect);
+        self.draw_offset_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
 
@@ -999,6 +1019,12 @@ impl Canvas {
             }
         }
         if !resp.clicked_by(PointerButton::Primary) {
+            return;
+        }
+        if m == Modify::Offset {
+            if let Some(id) = self.hover {
+                self.offset_click(id, units);
+            }
             return;
         }
         let doc = self.sketcher.document();
@@ -1306,6 +1332,11 @@ impl Canvas {
         }
 
         if resp.double_clicked_by(PointerButton::Primary)
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some(&(rid, _)) = self.offset_rects.iter().find(|(_, r)| r.contains(p))
+        {
+            self.edit_offset(rid, units);
+        } else if resp.double_clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(&(id, _)) = self.dim_rects.iter().find(|(_, r)| r.contains(p))
         {

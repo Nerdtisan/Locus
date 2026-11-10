@@ -252,6 +252,17 @@ impl Document {
             .collect()
     }
 
+    /// Instances of recipes that are not solved (offsets): written after
+    /// each solve, kept out of the solver, never constrained.
+    #[must_use]
+    pub fn unsolved_instances(&self) -> BTreeSet<EntityId> {
+        self.recipes
+            .values()
+            .filter(|r| !r.kind.solved())
+            .flat_map(Recipe::instances)
+            .collect()
+    }
+
     /// The recipe that generated `id`, if any.
     #[must_use]
     pub fn driven_by(&self, id: EntityId) -> Option<RecipeId> {

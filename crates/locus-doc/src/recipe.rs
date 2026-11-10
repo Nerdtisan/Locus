@@ -37,6 +37,17 @@ pub enum RecipeKind {
     /// with the sketch: `Symmetric` constraints tie every copied point to its
     /// source, so editing the source moves the copy.
     Mirror { axis: EntityId },
+    /// Offset a chain of curves (SPEC §6.2, #164): `distance` > 0 grows a
+    /// closed chain / goes left of an open one. `expr`, when set, is
+    /// evaluated with the document's parameters instead. `sharp` keeps
+    /// corners sharp (mitred) instead of round. Not solved: the instances are
+    /// regenerated from the solved sources (see `crate::offset`).
+    Offset {
+        distance: f64,
+        sharp: bool,
+        #[serde(default)]
+        expr: Option<String>,
+    },
 }
 
 impl RecipeKind {
@@ -46,6 +57,7 @@ impl RecipeKind {
     pub fn solved(&self) -> bool {
         match self {
             Self::Mirror { .. } => true,
+            Self::Offset { .. } => false,
         }
     }
 
@@ -53,7 +65,7 @@ impl RecipeKind {
     #[must_use]
     pub fn instance_count(&self) -> usize {
         match self {
-            Self::Mirror { .. } => 1,
+            Self::Mirror { .. } | Self::Offset { .. } => 1,
         }
     }
 
@@ -62,12 +74,14 @@ impl RecipeKind {
     pub fn references(&self) -> Vec<EntityId> {
         match self {
             Self::Mirror { axis } => vec![*axis],
+            Self::Offset { .. } => Vec::new(),
         }
     }
 
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Mirror { .. } => "Mirror",
+            Self::Offset { .. } => "Offset",
         }
     }
 }
@@ -91,9 +105,28 @@ pub struct Recipe {
 }
 
 impl Recipe {
-    /// The entity IDs of the copies that currently exist.
+    /// The entity IDs of the copies that currently exist. A non-solved
+    /// offset keeps one flat list in `pool[0]`, of which the first `active`
+    /// exist (`crate::offset`).
     pub fn instances(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.pool.iter().take(self.active).flatten().copied()
+        let flat = self.is_flat();
+        let (copies, per) = if flat {
+            (1, self.active)
+        } else {
+            (self.active, usize::MAX)
+        };
+        self.pool
+            .iter()
+            .take(copies)
+            .flat_map(move |set| set.iter().take(per))
+            .copied()
+    }
+
+    /// Whether `pool[0]` is a flat ID list (offsets) rather than one set of
+    /// IDs per copy of the sources' closure (mirror, patterns).
+    #[must_use]
+    pub fn is_flat(&self) -> bool {
+        matches!(self.kind, RecipeKind::Offset { .. })
     }
 
     /// Every entity this recipe depends on: sources, their points and the
@@ -153,6 +186,9 @@ impl Xf {
 /// The map for copy `k` of `kind`, from the document's current geometry.
 pub(crate) fn transform(doc: &Document, kind: &RecipeKind, _k: usize) -> Result<Xf, DocError> {
     match kind {
+        RecipeKind::Offset { .. } => Err(DocError::Invalid(
+            "an offset is not a copy of its sources".to_owned(),
+        )),
         RecipeKind::Mirror { axis } => {
             let line = doc.line(*axis).ok_or(DocError::UnknownEntity(*axis))?;
             if (line.b - line.a).length() <= f64::EPSILON {
@@ -259,6 +295,17 @@ pub(crate) fn validate(
             }
             transform(doc, kind, 0)?;
         }
+        RecipeKind::Offset { distance, .. } => {
+            if !distance.is_finite()
+                || distance.abs() <= locus_geom::SOLVER_TOL
+                || distance.abs() > crate::operation::MAX_LENGTH
+            {
+                return Err(DocError::Invalid(
+                    "offset distance must be non-zero and at most 1000 mm".to_owned(),
+                ));
+            }
+            crate::offset::chain(doc, sources)?;
+        }
     }
     let per = closure(doc, sources).len();
     let n = kind.instance_count();
@@ -282,6 +329,9 @@ pub(crate) fn instances_of(doc: &Document, source: EntityId) -> Vec<(EntityId, R
     let mut out = Vec::new();
     for (rid, r) in doc.recipes() {
         let cl: Vec<EntityId> = closure(doc, &r.sources).into_iter().collect();
+        if r.is_flat() {
+            continue;
+        }
         if let Some(i) = cl.iter().position(|c| *c == source) {
             out.extend(
                 r.pool
@@ -303,19 +353,24 @@ pub(crate) fn validate_all(doc: &Document) -> Result<(), DocError> {
     for (rid, r) in doc.recipes() {
         let bad = |m: &str| DocError::Invalid(format!("recipe {rid}: {m}"));
         validate(doc, &r.kind, &r.sources, Some(*rid)).map_err(|e| bad(&e.to_string()))?;
-        if r.active > r.pool.len() || r.pool.len() > MAX_INSTANCES {
+        if (!r.is_flat() && r.active > r.pool.len()) || r.pool.len() > MAX_INSTANCES {
             return Err(bad("instance count out of range"));
         }
         let per = closure(doc, &r.sources).len();
+        let flat = r.is_flat();
+        if flat && (r.pool.len() > 1 || r.pool.first().map_or(0, Vec::len) < r.active) {
+            return Err(bad("offset instance list out of range"));
+        }
         for (k, set) in r.pool.iter().enumerate() {
-            if set.len() != per {
+            if !flat && set.len() != per {
                 return Err(bad("instance set does not match the sources"));
             }
-            for id in set {
+            for (i, id) in set.iter().enumerate() {
                 if id.get() >= doc.next_id() || !seen.insert(*id) {
                     return Err(bad("instance ID reused or beyond the counter"));
                 }
-                if (k < r.active) != doc.entity(*id).is_some() {
+                let live = if flat { i < r.active } else { k < r.active };
+                if live != doc.entity(*id).is_some() {
                     return Err(bad("instance entities do not match the active count"));
                 }
             }
