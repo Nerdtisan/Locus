@@ -10,8 +10,9 @@ use crate::boolean::Boolean;
 use crate::constraint::Constraint;
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
-use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID};
+use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID, RecipeId};
 use crate::operation::{CutParams, Operation};
+use crate::recipe::Recipe;
 use locus_geom::{Arc, Circle, Cubic, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -118,6 +119,8 @@ pub struct Document {
     pub(crate) constraints: BTreeMap<ConstraintId, Constraint>,
     /// Boolean recipes (SPEC §6.3); their results are derived, not stored.
     pub(crate) booleans: BTreeMap<BooleanId, Boolean>,
+    /// Associative recipes (SPEC §6.2.1, ADR 0011).
+    pub(crate) recipes: BTreeMap<RecipeId, Recipe>,
     pub(crate) view: Option<View>,
 }
 
@@ -150,6 +153,7 @@ impl Document {
             entities: EntityStore::default(),
             constraints: BTreeMap::new(),
             booleans: BTreeMap::new(),
+            recipes: BTreeMap::new(),
             view: None,
         }
     }
@@ -216,6 +220,55 @@ impl Document {
     #[must_use]
     pub fn boolean(&self, id: BooleanId) -> Option<&Boolean> {
         self.booleans.get(&id)
+    }
+
+    #[must_use]
+    pub fn recipes(&self) -> &BTreeMap<RecipeId, Recipe> {
+        &self.recipes
+    }
+
+    #[must_use]
+    pub fn recipe(&self, id: RecipeId) -> Option<&Recipe> {
+        self.recipes.get(&id)
+    }
+
+    /// Every entity a recipe generated (SPEC §6.2.1: instances are driven),
+    /// with the recipe that did.
+    #[must_use]
+    pub fn driven_entities(&self) -> BTreeMap<EntityId, RecipeId> {
+        self.recipes
+            .iter()
+            .flat_map(|(rid, r)| r.instances().map(move |e| (e, *rid)))
+            .collect()
+    }
+
+    /// The recipe that generated `id`, if any.
+    #[must_use]
+    pub fn driven_by(&self, id: EntityId) -> Option<RecipeId> {
+        self.recipes
+            .iter()
+            .find(|(_, r)| r.instances().any(|e| e == id))
+            .map(|(rid, _)| *rid)
+    }
+
+    /// Recipes that use `id` as a source, a source's point, an extra such as
+    /// the mirror axis, or as an instance.
+    #[must_use]
+    pub fn recipes_involving(&self, id: EntityId) -> Vec<RecipeId> {
+        self.recipes
+            .iter()
+            .filter(|(_, r)| r.inputs(self).contains(&id) || r.instances().any(|e| e == id))
+            .map(|(rid, _)| *rid)
+            .collect()
+    }
+
+    /// The recipe that owns constraint `id`, if any.
+    #[must_use]
+    pub fn constraint_owner(&self, id: ConstraintId) -> Option<RecipeId> {
+        self.recipes
+            .iter()
+            .find(|(_, r)| r.constraints.contains(&id))
+            .map(|(rid, _)| *rid)
     }
 
     #[must_use]
@@ -409,6 +462,14 @@ impl Document {
         Ok(())
     }
 
+    /// Refuse to edit an entity a recipe generated (SPEC §6.2.1).
+    pub(crate) fn check_not_driven(&self, id: EntityId) -> Result<(), DocError> {
+        match self.driven_by(id) {
+            Some(recipe) => Err(DocError::Driven { entity: id, recipe }),
+            None => Ok(()),
+        }
+    }
+
     /// Refuse to edit geometry on a locked layer (SPEC §4 rule 3).
     pub(crate) fn check_unlocked(&self, layer: LayerId) -> Result<(), DocError> {
         if self.layer(layer).is_some_and(|l| l.locked) {
@@ -434,6 +495,13 @@ impl Document {
     pub(crate) fn check_removable(&self, id: EntityId) -> Result<(), DocError> {
         if !self.entities.contains(id) {
             return Err(DocError::UnknownEntity(id));
+        }
+        let recipes = self.recipes_involving(id);
+        if !recipes.is_empty() {
+            return Err(DocError::RecipeInUse {
+                entity: id,
+                recipes,
+            });
         }
         let (entities, constraints) = self.dependents(id);
         if entities.is_empty() && constraints.is_empty() {
