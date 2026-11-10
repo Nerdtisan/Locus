@@ -93,7 +93,7 @@ pub struct EngraveParams {
     pub hatch_spacing: f64,
     /// Hatch angle, degrees, `-360..=360`.
     pub hatch_angle: f64,
-    /// Also hatch at `hatch_angle + 90°` (file format v6; absent = off).
+    /// Also hatch at `hatch_angle + 90°` (file format v7; absent = off).
     #[serde(default)]
     pub crosshatch: bool,
 }

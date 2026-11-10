@@ -12,6 +12,7 @@ mod fonts;
 mod grid;
 mod hit;
 mod infer;
+mod modify_tool;
 mod render;
 mod scene;
 mod settings;

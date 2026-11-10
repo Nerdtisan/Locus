@@ -1,0 +1,429 @@
+(
+  format_version: 7,
+  units: Mm,
+  next_id: 46,
+  parameters: {
+    "plate": (
+      expr: "width / 2",
+      value: 30.0,
+    ),
+    "width": (
+      expr: "60",
+      value: 60.0,
+    ),
+  },
+  layers: {
+    1: (
+      name: "Layer 1",
+      colour: (0, 0, 0),
+      operation: Cut((
+        kerf_width: 0.15,
+        compensation: Outside,
+        passes: 2,
+      )),
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    21: (
+      name: "Score layer",
+      colour: (0, 20, 30),
+      operation: Score,
+      export_order: 1,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    22: (
+      name: "Engrave layer",
+      colour: (10, 20, 30),
+      operation: Engrave((
+        hatch_spacing: 0.25,
+        hatch_angle: 45.0,
+        crosshatch: true,
+      )),
+      export_order: 2,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    23: (
+      name: "Draw layer",
+      colour: (20, 20, 30),
+      operation: Draw((
+        pen_number: 3,
+        pen_width: 0.7,
+      )),
+      export_order: 3,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    24: (
+      name: "Drag knife layer",
+      colour: (30, 20, 30),
+      operation: DragKnife((
+        blade_offset: 0.5,
+      )),
+      export_order: 4,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    25: (
+      name: "Reference layer",
+      colour: (40, 20, 30),
+      operation: Reference,
+      export_order: 5,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    2: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    3: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    4: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 40.0,
+        ),
+      ),
+    ),
+    5: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 40.0,
+        ),
+      ),
+    ),
+    6: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 2,
+        end: 3,
+      ),
+    ),
+    7: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 3,
+        end: 4,
+      ),
+    ),
+    8: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 4,
+        end: 5,
+      ),
+    ),
+    9: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 5,
+        end: 2,
+      ),
+    ),
+    10: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 30.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    11: (
+      layer: 1,
+      construction: false,
+      geom: Circle(
+        center: 10,
+        radius: 5.0,
+      ),
+    ),
+    12: (
+      layer: 1,
+      construction: true,
+      geom: Point(
+        pos: (
+          x: 0.30000000000000004,
+          y: 13.333333333333334,
+        ),
+      ),
+    ),
+    27: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 70.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    28: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 80.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    29: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 90.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    30: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 100.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    31: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 105.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    32: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 110.0,
+          y: 30.0,
+        ),
+      ),
+    ),
+    33: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 120.0,
+          y: 30.0,
+        ),
+      ),
+    ),
+    34: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 125.0,
+          y: 35.0,
+        ),
+      ),
+    ),
+    35: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 27,
+        end: 28,
+      ),
+    ),
+    36: (
+      layer: 1,
+      construction: false,
+      geom: Bezier(
+        start: 28,
+        start_ctrl: 29,
+        end_ctrl: 30,
+        end: 31,
+      ),
+    ),
+    37: (
+      layer: 1,
+      construction: false,
+      geom: Bezier(
+        start: 31,
+        start_ctrl: 32,
+        end_ctrl: 33,
+        end: 34,
+      ),
+    ),
+    42: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: -30.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    43: (
+      layer: 1,
+      construction: false,
+      geom: Circle(
+        center: 42,
+        radius: 5.0,
+      ),
+    ),
+  },
+  constraints: {
+    13: Fix(
+      point: 2,
+    ),
+    14: Horizontal(
+      line: 6,
+    ),
+    15: Vertical(
+      line: 7,
+    ),
+    16: Horizontal(
+      line: 8,
+    ),
+    17: Vertical(
+      line: 9,
+    ),
+    18: Distance(
+      a: 2,
+      b: 3,
+      dim: (
+        value: 60.0,
+        driven: false,
+      ),
+    ),
+    19: Radius(
+      curve: 11,
+      dim: (
+        value: 5.0,
+        driven: false,
+      ),
+    ),
+    20: Midpoint(
+      point: 10,
+      line: 6,
+    ),
+    38: Tangent(
+      a: 35,
+      b: 36,
+    ),
+    39: Tangent(
+      a: 36,
+      b: 37,
+    ),
+    40: Fix(
+      point: 27,
+    ),
+    44: Symmetric(
+      a: 10,
+      b: 42,
+      axis: 9,
+    ),
+    45: Equal(
+      a: 11,
+      b: 43,
+    ),
+  },
+  booleans: {
+    26: (
+      op: Subtract,
+      targets: [
+        (
+          bounds: [
+            6,
+            7,
+            8,
+            9,
+          ],
+          index: 0,
+        ),
+        (
+          bounds: [
+            11,
+          ],
+          index: 0,
+        ),
+      ],
+      tools: [
+        (
+          bounds: [
+            11,
+          ],
+          index: 0,
+        ),
+      ],
+    ),
+  },
+  recipes: {
+    41: (
+      kind: Mirror(
+        axis: 9,
+      ),
+      sources: [
+        11,
+      ],
+      pool: [
+        [
+          42,
+          43,
+        ],
+      ],
+      active: 1,
+      constraints: [
+        44,
+        45,
+      ],
+    ),
+  },
+  dim_exprs: {
+    18: "plate * 2",
+  },
+  view: Some((
+    center: (
+      x: 30.0,
+      y: 20.0,
+    ),
+    scale: 4.0,
+  )),
+)

@@ -377,6 +377,19 @@ impl Sketcher {
     /// anything changes. Only single commands are pre-checked; a compound is
     /// guarded by the solve that follows it.
     fn precheck(&mut self, cmd: &Command) -> Result<(), DocError> {
+        // A dimension entered as an expression is checked as the plain
+        // dimension it will become.
+        if let Command::AddDimensionExpr { constraint, expr } = cmd {
+            let doc = self.editor.document();
+            let v = crate::expr::evaluate(expr, doc.parameters())?;
+            let mut c = constraint.clone();
+            let value = crate::params::dimension_value(&c, v);
+            if let Some(d) = c.dimension_mut() {
+                d.value = value;
+                d.driven = false;
+            }
+            return self.precheck(&Command::AddConstraint { constraint: c });
+        }
         if let Command::SetLayerLocked { id, locked: true } = cmd {
             let report = self.check_lock(*id)?;
             if report.conflicts.is_empty() {

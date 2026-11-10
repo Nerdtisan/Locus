@@ -3,6 +3,10 @@
   units: Mm,
   next_id: 46,
   parameters: {
+    "plate": (
+      expr: "width / 2",
+      value: 30.0,
+    ),
     "width": (
       expr: "60",
       value: 60.0,
@@ -37,7 +41,6 @@
       operation: Engrave((
         hatch_spacing: 0.25,
         hatch_angle: 45.0,
-        crosshatch: true,
       )),
       export_order: 2,
       visible: true,
@@ -411,6 +414,9 @@
         45,
       ],
     ),
+  },
+  dim_exprs: {
+    18: "plate * 2",
   },
   view: Some((
     center: (

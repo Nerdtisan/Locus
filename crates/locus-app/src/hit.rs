@@ -52,6 +52,19 @@ pub fn pick(items: &[Item], p: Vec2, tol: f64) -> Option<EntityId> {
     best_point.or(best_curve).map(|(_, id)| id)
 }
 
+/// The nearest curve (not a point) within `tol` mm of `p`: the target of the
+/// modify tools (SPEC §6.2).
+pub fn pick_curve(items: &[Item], p: Vec2, tol: f64) -> Option<EntityId> {
+    let probe = Aabb::from_point(p);
+    items
+        .iter()
+        .filter(|item| !matches!(item.shape, Shape::Point(_)) && bbox_near(&item.bbox, &probe, tol))
+        .map(|item| (distance(&item.shape, p), item.id))
+        .filter(|(d, _)| *d <= tol)
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .map(|(_, id)| id)
+}
+
 /// The nearest point entity within `tol` mm of `p`, with its position: the
 /// snap target for drawing tools (#68).
 pub fn pick_point(items: &[Item], p: Vec2, tol: f64) -> Option<(EntityId, Vec2)> {
