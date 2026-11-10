@@ -9,6 +9,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod bbox;
+pub mod cubic;
 pub mod primitives;
 pub mod tolerance;
 pub mod transform;
@@ -16,6 +17,7 @@ pub mod units;
 pub mod vec2;
 
 pub use bbox::Aabb;
+pub use cubic::{Cubic, Piece};
 pub use primitives::{Arc, Circle, Line};
 pub use tolerance::{EXPORT_TOL, SOLVER_TOL};
 pub use transform::Affine2;

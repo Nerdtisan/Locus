@@ -103,6 +103,20 @@ pub enum ConstraintKind {
         p: PointId,
         line: CurveId,
     },
+    /// `a`, `p` and `b` lie on one line: G1 continuity at the joint `p`
+    /// between a Bézier handle `a` and a line's far end (or another handle) `b`.
+    Aligned {
+        a: PointId,
+        p: PointId,
+        b: PointId,
+    },
+    /// The angle `a`–`p`–`b` is a right angle: a Bézier handle `a` leaving the
+    /// joint `p` perpendicular to the arc radius `p`–`b` (G1 with an arc).
+    RightAngle {
+        a: PointId,
+        p: PointId,
+        b: PointId,
+    },
     /// The point stays at `at`.
     Fix {
         p: PointId,
@@ -174,6 +188,8 @@ impl ConstraintKind {
             EqualRadius(..) => "equal-radius",
             Symmetric { .. } => "symmetric",
             Midpoint { .. } => "midpoint",
+            Aligned { .. } => "aligned",
+            RightAngle { .. } => "right-angle",
             Fix { .. } => "fix",
             Distance { .. } => "distance",
             PointLineDistance { .. } => "point-line-distance",
@@ -211,6 +227,7 @@ impl ConstraintKind {
             | HorizontalDistance { p, q, .. }
             | VerticalDistance { p, q, .. } => (vec![p, q], vec![]),
             Fix { p, .. } => (vec![p], vec![]),
+            Aligned { a, p, b } | RightAngle { a, p, b } => (vec![a, p, b], vec![]),
             PointOnCurve(p, c) | Midpoint { p, line: c } | PointLineDistance { p, line: c, .. } => {
                 (vec![p], vec![c])
             }

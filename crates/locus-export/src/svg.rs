@@ -143,6 +143,25 @@ fn write_seg(d: &mut String, s: &PathSeg, map: &impl Fn(Vec2) -> Vec2) {
                 r = num(r),
             );
         }
+        Shape::Cubic(c) => {
+            // Travel order: a reversed segment runs the curve backwards.
+            let (c1, c2) = if s.reversed {
+                (c.c1, c.c0)
+            } else {
+                (c.c0, c.c1)
+            };
+            let (c1, c2) = (map(c1), map(c2));
+            let _ = write!(
+                d,
+                " C {} {} {} {} {} {}",
+                num(c1.x),
+                num(c1.y),
+                num(c2.x),
+                num(c2.y),
+                num(end.x),
+                num(end.y)
+            );
+        }
         Shape::Circle(_) => {}
     }
 }

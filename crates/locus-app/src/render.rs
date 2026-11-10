@@ -12,7 +12,7 @@ use crate::settings::Units;
 use crate::view::View;
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape as EShape, Stroke, Vec2 as EVec2};
 use locus_doc::ConstraintId;
-use locus_geom::{Aabb, Arc, Circle, Vec2};
+use locus_geom::{Aabb, Arc, Circle, Cubic, Vec2};
 use std::collections::BTreeSet;
 
 /// Colours for one theme. Fusion convention: under-constrained geometry in
@@ -157,6 +157,7 @@ impl Frame<'_> {
                 }
                 Shape::Circle(c) => self.circle(c, stroke, item.construction),
                 Shape::Arc(a) => self.arc(a, stroke, item.construction),
+                Shape::Cubic(c) => self.cubic(&c, stroke, item.construction),
             }
         }
         drawn
@@ -216,6 +217,13 @@ impl Frame<'_> {
         self.polyline(pts, stroke, dashed);
     }
 
+    /// A Bézier as a polyline whose chord error stays under [`FLATNESS_PT`].
+    fn cubic(&self, c: &Cubic, stroke: Stroke, dashed: bool) {
+        let tol = FLATNESS_PT / self.view.pt_per_mm;
+        let pts = c.flatten(tol).into_iter().map(|p| self.s(p)).collect();
+        self.polyline(pts, stroke, dashed);
+    }
+
     /// Rubber-band shapes of the active drawing tool (#68).
     pub fn draw_preview(&self, shapes: &[Shape]) {
         let stroke = Stroke::new(STROKE_W, self.pal.hover);
@@ -227,6 +235,7 @@ impl Frame<'_> {
                 Shape::Line(l) => self.polyline(vec![self.s(l.a), self.s(l.b)], stroke, true),
                 Shape::Circle(c) => self.circle(c, stroke, true),
                 Shape::Arc(a) => self.arc(a, stroke, true),
+                Shape::Cubic(c) => self.cubic(&c, stroke, true),
             }
         }
     }

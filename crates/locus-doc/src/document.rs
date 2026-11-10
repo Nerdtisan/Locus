@@ -12,7 +12,7 @@ use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID};
 use crate::operation::{CutParams, Operation};
-use locus_geom::{Arc, Circle, Line, Unit, Vec2};
+use locus_geom::{Arc, Circle, Cubic, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -265,6 +265,25 @@ impl Document {
         }
     }
 
+    /// A Bézier entity as `locus_geom` geometry.
+    #[must_use]
+    pub fn cubic(&self, id: EntityId) -> Option<Cubic> {
+        match self.entity(id)?.geom {
+            Geom::Bezier {
+                start,
+                start_ctrl,
+                end_ctrl,
+                end,
+            } => Some(Cubic::new(
+                self.point_pos(start)?,
+                self.point_pos(start_ctrl)?,
+                self.point_pos(end_ctrl)?,
+                self.point_pos(end)?,
+            )),
+            _ => None,
+        }
+    }
+
     /// Entities and constraints that mention `id`.
     #[must_use]
     pub fn dependents(&self, id: EntityId) -> (Vec<EntityId>, Vec<ConstraintId>) {
@@ -363,7 +382,7 @@ impl Document {
                     });
                 }
             }
-            Geom::Line { .. } | Geom::Arc { .. } => {}
+            Geom::Line { .. } | Geom::Arc { .. } | Geom::Bezier { .. } => {}
         }
         let refs = e.geom.point_refs();
         for (i, id) in refs.iter().enumerate() {

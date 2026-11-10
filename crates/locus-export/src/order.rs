@@ -113,6 +113,7 @@ fn probe_point(p: &ExportPath) -> Vec2 {
             Shape::Line(l) => l.eval(0.5),
             Shape::Arc(a) => a.eval(0.5),
             Shape::Circle(_) => s.start(),
+            Shape::Cubic(c) => c.eval(0.5),
         },
         None => Vec2::ZERO,
     }
@@ -141,6 +142,15 @@ fn sample(s: &PathSeg, pts: &mut Vec<Vec2>) {
             for k in 0..72 {
                 pts.push(c.eval(f64::from(k) * PI / 36.0));
             }
+        }
+        Shape::Cubic(c) => {
+            // Points in travel order, without the end (the next segment's start).
+            let mut flat = c.flatten(0.01);
+            if s.reversed {
+                flat.reverse();
+            }
+            flat.pop();
+            pts.extend(flat);
         }
     }
 }
