@@ -1007,6 +1007,45 @@ mod tests {
     }
 
     #[test]
+    fn modified_sketches_solve_without_conflict() {
+        // Constrained like a drawn sketch: horizontal and vertical lines, the
+        // verticals' feet fixed. Trim, break and extend each re-solve cleanly
+        // as one undo step.
+        let (mut d, h, vs) = crossed();
+        let mut cons = vec![Constraint::Horizontal { line: h }];
+        for vl in vs {
+            cons.push(Constraint::Vertical { line: vl });
+        }
+        for c in cons {
+            let id = ConstraintId::new(d.alloc_id().unwrap());
+            d.constraints.insert(id, c);
+        }
+        for (op, at) in [
+            (
+                trim as fn(&Document, EntityId, Vec2) -> Result<Plan, ModifyError>,
+                v(15.0, 0.0),
+            ),
+            (split, v(25.0, 0.0)),
+            (trim, v(2.0, 0.0)),
+        ] {
+            let mut sk = crate::Sketcher::new(d.clone());
+            sk.apply(&op(&d, h, at).unwrap().command).unwrap();
+            assert!(sk.undo().is_ok());
+            assert_eq!(sk.document().line(h), d.line(h));
+        }
+        let plan = trim(&d, h, v(15.0, 0.0)).unwrap();
+        let mut sk = crate::Sketcher::new(d);
+        sk.apply(&plan.command).unwrap();
+        assert!(
+            sk.document()
+                .line(h)
+                .unwrap()
+                .b
+                .approx_eq(v(10.0, 0.0), 1e-6)
+        );
+    }
+
+    #[test]
     fn unsupported_and_unknown() {
         let mut d = Document::new();
         let p = pt(&mut d, 0.0, 0.0);
