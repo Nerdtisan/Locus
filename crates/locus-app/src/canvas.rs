@@ -149,6 +149,15 @@ impl Canvas {
         self.draft.tool()
     }
 
+    /// Sides and kind of the polygon tool (#157).
+    pub fn polygon(&self) -> (usize, bool) {
+        self.draft.polygon()
+    }
+
+    pub fn set_polygon(&mut self, sides: usize, circumscribed: bool) {
+        self.draft.set_polygon(sides, circumscribed);
+    }
+
     pub fn set_tool(&mut self, tool: Tool) {
         self.draft.set_tool(tool);
         self.typed.clear();

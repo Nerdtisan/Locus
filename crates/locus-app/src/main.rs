@@ -15,6 +15,7 @@ mod infer;
 mod render;
 mod scene;
 mod settings;
+mod shapes;
 mod tools;
 mod view;
 
