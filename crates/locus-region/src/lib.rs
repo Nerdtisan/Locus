@@ -2,7 +2,8 @@
 
 //! Closed-profile (region) detection, non-destructive booleans and offsets
 //! (SPEC §6.3). Booleans keep true arcs with an exact line/arc arrangement
-//! owned here ([ADR 0008](../../docs/adr/0008-booleans-and-arcs.md)).
+//! owned here ([ADR 0008](../../docs/adr/0008-booleans-and-arcs.md)); offsets
+//! are booleans with exact bands and discs ([ADR 0010](../../docs/adr/0010-offsets.md)).
 //!
 //! Core crate: no GUI deps, no filesystem/thread/clock use, builds for
 //! `wasm32-unknown-unknown`. Input is plain geometry keyed by entity ID, so
@@ -13,10 +14,12 @@
 
 mod arrange;
 pub mod boolean;
+pub mod offset;
 pub mod region;
 pub mod seg;
 
 pub use arrange::SNAP;
 pub use boolean::{BoolOp, boolean, union_all};
+pub use offset::{Join, offset, offset_open};
 pub use region::{Curve, Region, RegionKey, Shape, detect};
 pub use seg::{Area, Edge, Loop, Seg};

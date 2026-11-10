@@ -268,5 +268,5 @@ fn main() {
 #[allow(dead_code)]
 pub fn prof() {
     let g = gear(100.0, 240, 1.2);
-    let _ = offsets_spike::own::offset(&g, -0.5, offsets_spike::own::Join::Round);
+    let _ = locus_region::offset(&g, -0.5, locus_region::Join::Round);
 }

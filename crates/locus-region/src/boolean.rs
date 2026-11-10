@@ -125,7 +125,10 @@ impl BoxGrid {
 
     fn key(&self, q: Vec2) -> (i64, i64) {
         // Saturating casts: coordinates are finite and bounded.
-        ((q.x / self.cell).floor() as i64, (q.y / self.cell).floor() as i64)
+        (
+            (q.x / self.cell).floor() as i64,
+            (q.y / self.cell).floor() as i64,
+        )
     }
 
     /// Items whose box may hold `q`, each once.

@@ -5,14 +5,15 @@
 pub mod cav;
 pub mod geom;
 pub mod metrics;
-pub mod own;
 
-use locus_region::{Area, Edge};
+use locus_region::offset::drop_specks;
+use locus_region::{Area, Edge, Join};
 
 /// The options compared by the spike.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
-    /// Locus-owned: Minkowski sum/difference through the ADR 0008 booleans.
+    /// Locus-owned (`locus_region::offset`): Minkowski sum/difference through
+    /// the ADR 0008 booleans.
     Own,
     /// `cavalier_contours` `Shape::parallel_offset` (round joins only).
     Cavalier,
@@ -32,11 +33,11 @@ impl Method {
     /// thinner than `EXPORT_TOL` dropped.
     pub fn offset(self, a: &Area, d: f64) -> Area {
         match self {
-            Method::Own => own::offset(a, d, own::Join::Round),
+            Method::Own => locus_region::offset(a, d, Join::Round),
             Method::Cavalier => {
                 // The same speck filter as A, so only the engines differ.
                 let mut r = cav::offset(a, d);
-                own::drop_specks(&mut r);
+                drop_specks(&mut r);
                 r
             }
         }
@@ -45,7 +46,7 @@ impl Method {
     /// One-sided offset of an open chain: `d` > 0 left of travel.
     pub fn offset_open(self, chain: &[Edge], d: f64) -> Vec<Vec<Edge>> {
         match self {
-            Method::Own => own::offset_open(chain, d),
+            Method::Own => locus_region::offset_open(chain, d, Join::Round),
             Method::Cavalier => cav::offset_open(chain, d),
         }
     }
@@ -56,7 +57,7 @@ impl Method {
 #[unsafe(no_mangle)]
 pub extern "C" fn spike_own(d: f64) -> f64 {
     let a = geom::area(vec![geom::rounded(0.0, 0.0, 40.0, 20.0, 3.0)]);
-    own::offset(&a, d, own::Join::Round).area()
+    locus_region::offset(&a, d, Join::Round).area()
 }
 
 #[cfg(feature = "wasm-cav")]
