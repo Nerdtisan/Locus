@@ -20,6 +20,7 @@ pub mod file;
 pub mod ids;
 pub mod modify;
 pub mod operation;
+pub mod params;
 pub mod recipe;
 pub mod regions;
 pub mod solve;

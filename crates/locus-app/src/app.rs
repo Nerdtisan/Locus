@@ -25,6 +25,8 @@ pub enum Tab {
     Constraints,
     /// Regions and boolean recipes (#124).
     Regions,
+    /// Named parameters for dimension expressions (#171).
+    Parameters,
 }
 
 impl Tab {
@@ -35,6 +37,7 @@ impl Tab {
             Tab::Layers => "Layers",
             Tab::Constraints => "Constraints",
             Tab::Regions => "Regions",
+            Tab::Parameters => "Parameters",
         }
     }
 }
@@ -45,7 +48,7 @@ fn default_layout() -> DockState<Tab> {
     let [_canvas, right] = tree.split_right(
         NodeIndex::root(),
         0.76,
-        vec![Tab::Properties, Tab::Layers, Tab::Regions],
+        vec![Tab::Properties, Tab::Layers, Tab::Regions, Tab::Parameters],
     );
     tree.split_below(right, 0.55, vec![Tab::Constraints]);
     dock
@@ -179,7 +182,13 @@ impl App {
                     ui.close();
                 }
                 ui.separator();
-                for tab in [Tab::Properties, Tab::Layers, Tab::Regions, Tab::Constraints] {
+                for tab in [
+                    Tab::Properties,
+                    Tab::Layers,
+                    Tab::Regions,
+                    Tab::Parameters,
+                    Tab::Constraints,
+                ] {
                     let mut shown = self.dock.find_tab(&tab).is_some();
                     if ui.checkbox(&mut shown, tab.title()).changed() {
                         self.toggle_tab(tab);
@@ -499,6 +508,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Layers => self.canvas.layers_ui(ui, self.settings),
             Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
             Tab::Regions => self.canvas.regions_ui(ui),
+            Tab::Parameters => self.canvas.parameters_ui(ui),
         }
     }
 
@@ -564,7 +574,7 @@ mod tests {
     #[test]
     fn layout_round_trips() {
         let json = serde_json::to_string(&default_layout()).unwrap_or_default();
-        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 5);
+        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 6);
     }
 
     #[test]

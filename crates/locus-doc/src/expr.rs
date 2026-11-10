@@ -97,6 +97,12 @@ impl Func {
         })
     }
 
+    /// Whether `name` is one of the built-in functions.
+    #[must_use]
+    pub fn name_is_function(name: &str) -> bool {
+        Self::from_name(name).is_some()
+    }
+
     fn variadic(self) -> bool {
         matches!(self, Self::Min | Self::Max)
     }
@@ -365,6 +371,27 @@ impl Expr {
         walk(self, &mut out);
         out.sort();
         out.dedup();
+        out
+    }
+
+    /// Every parameter reference with its byte offset in the source text
+    /// (for renaming).
+    #[must_use]
+    pub fn var_positions(&self) -> Vec<(String, usize)> {
+        fn walk(e: &Expr, out: &mut Vec<(String, usize)>) {
+            match e {
+                Expr::Num(_) => {}
+                Expr::Var(n, p) => out.push((n.clone(), *p)),
+                Expr::Neg(a) => walk(a, out),
+                Expr::Bin(_, a, b) => {
+                    walk(a, out);
+                    walk(b, out);
+                }
+                Expr::Call(_, args, _) => args.iter().for_each(|a| walk(a, out)),
+            }
+        }
+        let mut out = Vec::new();
+        walk(self, &mut out);
         out
     }
 

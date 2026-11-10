@@ -17,11 +17,13 @@
 
 use crate::boolean::Boolean;
 use crate::constraint::Constraint;
+use crate::document::Parameter;
 use crate::document::{Document, Layer};
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 use crate::operation::Operation;
+use crate::params;
 use crate::recipe::{self, Recipe, RecipeKind};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
@@ -113,6 +115,36 @@ pub enum Command {
     RemoveBoolean {
         id: BooleanId,
     },
+    /// Add or change a named parameter (SPEC §5). The expression is checked
+    /// (syntax, unknown names, cycles) and every dependent value is
+    /// re-evaluated, all as one undo step.
+    SetParameter {
+        name: String,
+        expr: String,
+    },
+    /// Delete a parameter. Refused with [`DocError::ParameterInUse`] (listing
+    /// the users) while an expression refers to it.
+    RemoveParameter {
+        name: String,
+    },
+    /// Rename a parameter, rewriting every reference to it.
+    RenameParameter {
+        from: String,
+        to: String,
+    },
+    /// Give a driving dimension an expression (`material * 2 + 0.2`), or
+    /// `None` to keep its current value as a plain number. Angles are
+    /// entered in degrees.
+    SetDimensionExpr {
+        id: ConstraintId,
+        expr: Option<String>,
+    },
+    /// Add a driving dimension whose value is an expression, as one step
+    /// (`constraint`'s own value is replaced by the evaluated expression).
+    AddDimensionExpr {
+        constraint: Constraint,
+        expr: String,
+    },
     /// Add an associative recipe over `sources` (SPEC §6.2.1, ADR 0011): the
     /// document creates the instance entities (and, for a mirror, the
     /// constraints that tie them to the sources). IDs: see [`Applied`].
@@ -167,6 +199,13 @@ impl Command {
             Command::AddBoolean { .. } => "Add boolean".to_owned(),
             Command::EditBoolean { .. } => "Edit boolean".to_owned(),
             Command::RemoveBoolean { .. } => "Remove boolean".to_owned(),
+            Command::SetParameter { name, .. } => format!("Set parameter {name}"),
+            Command::RemoveParameter { name } => format!("Remove parameter {name}"),
+            Command::RenameParameter { from, .. } => format!("Rename parameter {from}"),
+            Command::SetDimensionExpr { .. } => "Set dimension expression".to_owned(),
+            Command::AddDimensionExpr { constraint, .. } => {
+                format!("Add {} constraint", constraint.name())
+            }
             Command::AddRecipe { kind, .. } => format!("Add {}", kind.name().to_lowercase()),
             Command::ExplodeRecipe { .. } => "Explode".to_owned(),
             Command::RemoveRecipe { .. } => "Remove recipe".to_owned(),
@@ -226,6 +265,16 @@ enum Patch {
         before: Option<Recipe>,
         after: Option<Recipe>,
     },
+    Parameter {
+        name: String,
+        before: Option<Parameter>,
+        after: Option<Parameter>,
+    },
+    DimExpr {
+        id: ConstraintId,
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 impl Patch {
@@ -253,6 +302,22 @@ impl Patch {
                 match if forward { after } else { before }.clone() {
                     Some(b) => doc.booleans.insert(*id, b),
                     None => doc.booleans.remove(id),
+                };
+            }
+            Patch::Parameter {
+                name,
+                before,
+                after,
+            } => {
+                match if forward { after } else { before }.clone() {
+                    Some(p) => doc.parameters.insert(name.clone(), p),
+                    None => doc.parameters.remove(name),
+                };
+            }
+            Patch::DimExpr { id, before, after } => {
+                match if forward { after } else { before }.clone() {
+                    Some(e) => doc.dim_exprs.insert(*id, e),
+                    None => doc.dim_exprs.remove(id),
                 };
             }
             Patch::Recipe { id, before, after } => {
@@ -428,9 +493,147 @@ fn exec(
         }
         Command::SetDimension { id, value } => {
             edit_dimension(doc, *id, patches, |d| d.value = *value)?;
+            set_dim_expr(doc, *id, None, patches);
         }
         Command::SetDriven { id, driven } => {
             edit_dimension(doc, *id, patches, |d| d.driven = *driven)?;
+            if *driven {
+                set_dim_expr(doc, *id, None, patches);
+            }
+        }
+        Command::SetParameter { name, expr } => {
+            params::check_name(name)?;
+            if doc.parameters.len() >= params::MAX_PARAMETERS && !doc.parameters.contains_key(name)
+            {
+                return Err(DocError::Invalid("too many parameters".to_owned()));
+            }
+            let before = doc.parameters.get(name).cloned();
+            let after = Parameter {
+                expr: expr.clone(),
+                value: before.as_ref().map_or(0.0, |p| p.value),
+            };
+            let p = Patch::Parameter {
+                name: name.clone(),
+                before,
+                after: Some(after),
+            };
+            record(doc, patches, p);
+            revalue(doc, patches)?;
+        }
+        Command::RemoveParameter { name } => {
+            let before = doc
+                .parameters
+                .get(name)
+                .cloned()
+                .ok_or_else(|| DocError::UnknownParameter(name.clone()))?;
+            let users = params::users_of(doc, name);
+            if !users.is_empty() {
+                return Err(DocError::ParameterInUse {
+                    name: name.clone(),
+                    users,
+                });
+            }
+            let p = Patch::Parameter {
+                name: name.clone(),
+                before: Some(before),
+                after: None,
+            };
+            record(doc, patches, p);
+        }
+        Command::RenameParameter { from, to } => {
+            params::check_name(to)?;
+            let old = doc
+                .parameters
+                .get(from)
+                .cloned()
+                .ok_or_else(|| DocError::UnknownParameter(from.clone()))?;
+            if from != to {
+                if doc.parameters.contains_key(to) {
+                    return Err(DocError::Invalid(format!(
+                        "parameter `{to}` already exists"
+                    )));
+                }
+                let names: Vec<String> = doc.parameters.keys().cloned().collect();
+                let p = Patch::Parameter {
+                    name: from.clone(),
+                    before: Some(old.clone()),
+                    after: None,
+                };
+                record(doc, patches, p);
+                let p = Patch::Parameter {
+                    name: to.clone(),
+                    before: None,
+                    after: Some(old),
+                };
+                record(doc, patches, p);
+                for n in names.iter().filter(|n| *n != from) {
+                    let Some(b) = doc.parameters.get(n).cloned() else {
+                        continue;
+                    };
+                    let e = params::rename_in(&b.expr, from, to);
+                    if e != b.expr {
+                        let p = Patch::Parameter {
+                            name: n.clone(),
+                            before: Some(b.clone()),
+                            after: Some(Parameter { expr: e, ..b }),
+                        };
+                        record(doc, patches, p);
+                    }
+                }
+                let ids: Vec<ConstraintId> = doc.dim_exprs.keys().copied().collect();
+                for id in ids {
+                    let Some(b) = doc.dim_exprs.get(&id).cloned() else {
+                        continue;
+                    };
+                    let e = params::rename_in(&b, from, to);
+                    if e != b {
+                        set_dim_expr(doc, id, Some(e), patches);
+                    }
+                }
+                revalue(doc, patches)?;
+            }
+        }
+        Command::AddDimensionExpr { constraint, expr } => {
+            let v = crate::expr::evaluate(expr, doc.parameters())?;
+            let mut c = constraint.clone();
+            let value = params::dimension_value(&c, v);
+            let d = c
+                .dimension_mut()
+                .ok_or_else(|| DocError::Invalid("not a dimensional constraint".to_owned()))?;
+            d.value = value;
+            d.driven = false;
+            c.validate(doc)?;
+            let id = ConstraintId::new(doc.alloc_id()?);
+            let p = Patch::Constraint {
+                id,
+                before: None,
+                after: Some(c),
+            };
+            record(doc, patches, p);
+            set_dim_expr(doc, id, Some(expr.clone()), patches);
+            out.constraints.push(id);
+        }
+        Command::SetDimensionExpr { id, expr } => {
+            let c = doc
+                .constraint(*id)
+                .ok_or(DocError::UnknownConstraint(*id))?
+                .clone();
+            let d = c.dimension().ok_or(DocError::NotADimension(*id))?;
+            match expr {
+                Some(src) => {
+                    if d.driven {
+                        return Err(DocError::Invalid(
+                            "a driven dimension shows its measured value; make it driving first"
+                                .to_owned(),
+                        ));
+                    }
+                    // Parse and evaluate first so the error names the expression.
+                    crate::expr::evaluate(src, doc.parameters())?;
+                    set_dim_expr(doc, *id, Some(src.clone()), patches);
+                    revalue(doc, patches)?;
+                }
+                None => set_dim_expr(doc, *id, None, patches),
+            }
         }
         Command::AddLayer {
             name,
@@ -833,6 +1036,61 @@ fn remove_recipe(
             after: None,
         },
     );
+    Ok(())
+}
+
+/// Set or clear the expression behind a dimension, as a patch.
+fn set_dim_expr(
+    doc: &mut Document,
+    id: ConstraintId,
+    expr: Option<String>,
+    patches: &mut Vec<Patch>,
+) {
+    let before = doc.dim_exprs.get(&id).cloned();
+    if before != expr {
+        let p = Patch::DimExpr {
+            id,
+            before,
+            after: expr,
+        };
+        record(doc, patches, p);
+    }
+}
+
+/// Re-evaluate every parameter and expression-backed dimension, recording
+/// what changed. Fails (the whole command is rolled back) when an expression
+/// no longer evaluates or a dimension would become invalid.
+fn revalue(doc: &mut Document, patches: &mut Vec<Patch>) -> Result<(), DocError> {
+    let r = params::revalue(doc)?;
+    for (name, v) in r.parameters {
+        if let Some(b) = doc.parameters.get(&name).filter(|b| b.value != v).cloned() {
+            let p = Patch::Parameter {
+                name,
+                before: Some(b.clone()),
+                after: Some(Parameter { value: v, ..b }),
+            };
+            record(doc, patches, p);
+        }
+    }
+    for (id, v) in r.dimensions {
+        let before = doc
+            .constraint(id)
+            .ok_or(DocError::UnknownConstraint(id))?
+            .clone();
+        let mut after = before.clone();
+        let d = after.dimension_mut().ok_or(DocError::NotADimension(id))?;
+        if d.value == v {
+            continue;
+        }
+        d.value = v;
+        after.validate(doc)?;
+        let p = Patch::Constraint {
+            id,
+            before: Some(before),
+            after: Some(after),
+        };
+        record(doc, patches, p);
+    }
     Ok(())
 }
 
