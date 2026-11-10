@@ -226,7 +226,9 @@ impl Canvas {
         let t = self.transform.transform(center);
         let doc = self.sketcher.document();
         match locus_doc::transform::transform(doc, &sel, t, self.transform.copy) {
-            Ok(plan) => self.apply_reporting(&plan.command),
+            Ok(plan) => {
+                self.apply_reporting(&plan.command);
+            }
             Err(locus_doc::modify::ModifyError::Blocked(cs)) => {
                 let cs_len = cs.len();
                 let names: Vec<String> = cs
