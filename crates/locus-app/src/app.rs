@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn layout_round_trips() {
         let json = serde_json::to_string(&default_layout()).unwrap_or_default();
-        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 5);
+        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 6);
     }
 
     #[test]
