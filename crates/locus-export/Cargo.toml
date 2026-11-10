@@ -14,4 +14,5 @@ workspace = true
 [dependencies]
 locus-geom.workspace = true
 locus-doc.workspace = true
+locus-region.workspace = true
 thiserror.workspace = true

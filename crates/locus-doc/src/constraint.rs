@@ -212,6 +212,13 @@ impl Constraint {
     /// The first problem found, as a [`DocError`].
     pub fn validate(&self, doc: &Document) -> Result<(), DocError> {
         let w = self.name();
+        let unsolved = doc.unsolved_instances();
+        if let Some(e) = self.references().iter().find(|e| unsolved.contains(e)) {
+            return Err(DocError::Invalid(format!(
+                "entity {} belongs to a live offset, which follows its source; explode the offset to constrain it",
+                e.get()
+            )));
+        }
         let kind = |id: EntityId, ok: &[EntityKind], expected: &'static str| {
             let found = doc
                 .entity(id)

@@ -180,7 +180,7 @@ Line / polyline, rectangle (2-point, centre, 3-point rotated), circle (centre, 2
 ### 6.2 Modify tools (v1)
 Trim, extend, break/split, fillet (adds tangent arc + constraints), chamfer, offset (live/constrained offset entity), mirror (adds symmetric constraints), linear pattern, circular pattern, move/rotate/scale (respecting constraints), toggle construction.
 
-Offsets (the offset tool, kerf and blade offsets) share one engine that keeps true arcs: `locus-region` offsets areas and open chains as an exact Minkowski sum/difference through the ADR 0008 arrangement, with round or miter joins (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)).
+Offsets (the offset tool, kerf and blade offsets) share one engine that keeps true arcs: `locus-region` offsets areas and open chains as an exact Minkowski sum/difference through the ADR 0008 arrangement, with round or miter joins (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)). The live offset is an ADR 0011 recipe over a chain of curves (distance signed: + grows a closed chain / goes left of an open one; a number or an expression); its curves are regenerated after every solve in the same undo step, stay out of the solver and can't take constraints until exploded (v1 limitation, like pattern instances).
 
 Auto-constraint inference while drawing (horizontal/vertical/coincident/tangent snap hints), toggleable — mirrors Fusion behaviour.
 
@@ -232,9 +232,9 @@ Layer `operation` enum:
 |---|---|
 | Cut | kerf width, inside/outside/none compensation, pass count (metadata) |
 | Score | — |
-| Engrave (fill) | hatch spacing, hatch angle |
+| Engrave (fill) | hatch spacing, hatch angle, crosshatch (holes respected; outlines kept) |
 | Draw (plotter) | pen number, pen width (drives hatch spacing + stroke-edge preview) |
-| Drag-knife (vinyl) | blade offset |
+| Drag-knife (vinyl) | blade offset (swivel arcs at turns over 10°) |
 | Reference | never exported |
 
 Machine profiles (v2): presets bundling export format, colour mapping, units, and offsets for e.g. "LightBurn", "Cricut Design Space", "Generic HPGL plotter".

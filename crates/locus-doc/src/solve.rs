@@ -314,6 +314,8 @@ impl Sketcher {
             .take()
             .ok_or_else(|| DocError::Invalid("no drag in progress".to_owned()))?;
         self.editor.commit_from("Drag", &drag.start)?;
+        // Offsets follow the dragged geometry in the same undo step (#164).
+        self.editor.regenerate_into_last()?;
         self.refresh();
         Ok(())
     }
@@ -543,8 +545,13 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
         curves: Vec::new(),
         constraints: Vec::new(),
     };
+    // Offset instances are written after the solve, not solved (#164).
+    let unsolved = doc.unsolved_instances();
     // Points first: curves refer to them by index.
     for (id, e) in doc.entities().iter() {
+        if unsolved.contains(&id) {
+            continue;
+        }
         if let Geom::Point { pos } = e.geom {
             let pid = ls::PointId(u32::try_from(low.points.len()).map_err(|_| too_big())?);
             low.sketch.points.push(ls::Point {
@@ -556,6 +563,9 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
         }
     }
     for (id, e) in doc.entities().iter() {
+        if unsolved.contains(&id) {
+            continue;
+        }
         let kind = match &e.geom {
             // A Bézier's points are ordinary solver points; its only
             // constraints (G1 tangency) lower to point constraints below.
@@ -595,6 +605,9 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
     // are appended last, so document-constraint indices are unchanged.
     let mut pinned = BTreeSet::new();
     for (id, e) in doc.entities().iter() {
+        if unsolved.contains(&id) {
+            continue;
+        }
         let locked = also_locked == Some(e.layer) || doc.layer(e.layer).is_some_and(|l| l.locked);
         if !locked {
             continue;

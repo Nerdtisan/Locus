@@ -194,7 +194,6 @@ impl Selection {
         self.0.len()
     }
 
-    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

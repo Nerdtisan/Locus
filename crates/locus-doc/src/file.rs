@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 6;
+pub const CURRENT_VERSION: u32 = 8;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -280,8 +280,82 @@ struct FileV6 {
     view: Option<View>,
 }
 
-/// The newest on-disk shape. When adding v7, point this at `FileV7`.
-type Latest = FileV6;
+impl From<FileV6> for FileV7 {
+    /// v6 → v7: nothing to convert; v7 only adds the Engrave layer's
+    /// `crosshatch` flag (SPEC §7, #175), absent (off) in every v6 file.
+    fn from(f: FileV6) -> Self {
+        FileV7 {
+            format_version: 7,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+        }
+    }
+}
+
+/// Version 7: crosshatch on Engrave layers (SPEC §7, #175).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV7 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+impl From<FileV7> for FileV8 {
+    /// v7 → v8: nothing to convert; v8 only adds the live offset recipe
+    /// (SPEC §6.2, #164), which no v7 file can contain.
+    fn from(f: FileV7) -> Self {
+        FileV8 {
+            format_version: 8,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+        }
+    }
+}
+
+/// Version 8: live offset recipes (SPEC §6.2, #164).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV8 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+/// The newest on-disk shape. When adding v9, point this at `FileV9`.
+type Latest = FileV8;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -335,16 +409,22 @@ pub fn load(text: &str) -> Result<Document, FileError> {
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
     let latest = match header.format_version {
         0 => return Err(FileError::UnknownVersion(0)),
-        1 => FileV6::from(FileV5::from(FileV4::from(FileV3::from(FileV2::from(
-            parse::<FileV1>(text)?,
+        1 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(FileV4::from(
+            FileV3::from(FileV2::from(parse::<FileV1>(text)?)),
         ))))),
-        2 => FileV6::from(FileV5::from(FileV4::from(FileV3::from(parse::<FileV2>(
+        2 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(FileV4::from(
+            FileV3::from(parse::<FileV2>(text)?),
+        ))))),
+        3 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(FileV4::from(
+            parse::<FileV3>(text)?,
+        ))))),
+        4 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(parse::<FileV4>(
             text,
         )?)))),
-        3 => FileV6::from(FileV5::from(FileV4::from(parse::<FileV3>(text)?))),
-        4 => FileV6::from(FileV5::from(parse::<FileV4>(text)?)),
-        5 => FileV6::from(parse::<FileV5>(text)?),
-        6 => parse::<FileV6>(text)?,
+        5 => FileV8::from(FileV7::from(FileV6::from(parse::<FileV5>(text)?))),
+        6 => FileV8::from(FileV7::from(parse::<FileV6>(text)?)),
+        7 => FileV8::from(parse::<FileV7>(text)?),
+        8 => parse::<FileV8>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -648,6 +728,7 @@ mod tests {
             Operation::Engrave(EngraveParams {
                 hatch_spacing: 0.25,
                 hatch_angle: 45.0,
+                crosshatch: false,
             }),
             Operation::Draw(DrawParams {
                 pen_number: 3,
@@ -796,55 +877,106 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v7 sample: `sample_v6()` with crosshatch on its Engrave layer
+    /// (SPEC §7, #175).
+    pub(crate) fn sample_v7() -> Document {
+        let mut doc = sample_v6();
+        for l in doc.layers.values_mut() {
+            if let Operation::Engrave(p) = &mut l.operation {
+                p.crosshatch = true;
+            }
+        }
+        doc
+    }
+
+    /// The v8 sample: `sample_v7()` plus a live offset of the hole
+    /// (SPEC §6.2, #164).
+    pub(crate) fn sample_v8() -> Document {
+        let mut ed = Editor::new(sample_v7());
+        ed.apply(&Command::AddRecipe {
+            kind: crate::recipe::RecipeKind::Offset {
+                distance: 1.5,
+                sharp: false,
+                expr: None,
+            },
+            sources: vec![EntityId::new(11)],
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
     #[test]
-    fn v6_fixture_is_current_and_loads() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v6/plate.locus");
+    fn v8_fixture_is_current_and_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v8/plate.locus");
         if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v6()).unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v8()).unwrap()).unwrap();
         }
         let text = std::fs::read_to_string(path).unwrap();
-        assert!(text.contains("format_version: 6"));
-        assert_eq!(load(&text).unwrap(), sample_v6());
+        assert!(text.contains("format_version: 8"));
+        assert!(text.contains("Offset("));
+        assert_eq!(load(&text).unwrap(), sample_v8());
         assert_eq!(
-            save(&sample_v6()).unwrap(),
+            save(&sample_v8()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
     }
 
+    /// The v7 fixture is frozen; it migrates to v8 with no offsets.
+    #[test]
+    fn v7_fixture_migrates_to_v8() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v7/plate.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 7"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v7());
+        assert!(save(&doc).unwrap().contains("format_version: 8"));
+    }
+
+    /// The v6 fixture is frozen; it migrates to v7 with crosshatch off.
+    #[test]
+    fn v6_fixture_migrates_to_v8() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v6/plate.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 6"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v6());
+        assert!(save(&doc).unwrap().contains("format_version: 8"));
+    }
+
     /// The v5 fixture is frozen; it migrates to v6 with no expressions.
     #[test]
-    fn v5_fixture_migrates_to_v6() {
+    fn v5_fixture_migrates_to_v8() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v5/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 5"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v5());
-        assert!(save(&doc).unwrap().contains("format_version: 6"));
+        assert!(save(&doc).unwrap().contains("format_version: 8"));
     }
 
     /// The v4 fixture is frozen; it migrates to v5 with no recipes.
     #[test]
-    fn v4_fixture_migrates_to_v6() {
+    fn v4_fixture_migrates_to_v8() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v4/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 4"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v4());
         assert!(doc.recipes().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 6"));
+        assert!(save(&doc).unwrap().contains("format_version: 8"));
     }
 
     /// The v3 fixture is frozen; it migrates to v4 unchanged.
     #[test]
-    fn v3_fixture_migrates_to_v6() {
+    fn v3_fixture_migrates_to_v8() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v3/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 3"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v3());
-        assert!(save(&doc).unwrap().contains("format_version: 6"));
+        assert!(save(&doc).unwrap().contains("format_version: 8"));
     }
 
     #[test]
@@ -875,14 +1007,14 @@ mod tests {
 
     /// The v2 fixture is frozen; it migrates to v4 with no recipes.
     #[test]
-    fn v2_fixture_migrates_to_v6() {
+    fn v2_fixture_migrates_to_v8() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v2/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 2"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 6"));
+        assert!(save(&doc).unwrap().contains("format_version: 8"));
     }
 
     #[test]
@@ -898,7 +1030,7 @@ mod tests {
     /// The v1 fixture is frozen; it must keep loading, with default
     /// parameters on its layers (SPEC §10 migration).
     #[test]
-    fn v1_fixture_migrates_to_v6() {
+    fn v1_fixture_migrates_to_v8() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 1"));
@@ -908,7 +1040,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 6"));
+        assert!(save(&doc).unwrap().contains("format_version: 8"));
     }
 
     #[test]
@@ -930,13 +1062,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 6", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 8", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(7)),
+            load(&v(9)),
             Err(FileError::FutureVersion {
-                found: 7,
-                supported: 6
+                found: 9,
+                supported: 8
             })
         );
         // Dangling reference: a line pointing at a missing point.

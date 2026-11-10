@@ -556,6 +556,11 @@ fn operation_editor(
                         "°",
                         (&mut changed, &mut done),
                     );
+                    ui.label("Crosshatch");
+                    let r = ui.checkbox(&mut p.crosshatch, "");
+                    changed |= r.changed();
+                    done |= r.changed();
+                    ui.end_row();
                 }
                 Operation::Draw(p) => {
                     ui.label("Pen number");
