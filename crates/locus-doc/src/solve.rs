@@ -239,6 +239,7 @@ impl Sketcher {
     pub fn begin_drag(&mut self, point: EntityId) -> Result<(), DocError> {
         self.not_dragging()?;
         let doc = self.editor.document();
+        doc.check_not_driven(point)?;
         match doc.entity(point).map(|e| e.geom.kind()) {
             None => return Err(DocError::UnknownEntity(point)),
             Some(EntityKind::Point) => {}

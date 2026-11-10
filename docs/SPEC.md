@@ -29,6 +29,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Plugin exception | Classpath-style "Locus Plugin Exception" drafted in [ADR-0006](adr/0006-plugin-licence-exception.md), 2026-11-04; not in effect until legal review (#83). |
 | Booleans | Exact line/arc booleans owned by `locus-region`, sharing the region-detection arrangement; no flattening or arc refit (decided 2026-11-05, [ADR 0008](adr/0008-booleans-and-arcs.md)). |
 | Plugin API | WIT package `locus:plugin@1.0.0` (draft until the M3 host): one world per plugin kind, none importing anything (deny by default), exporters get the same validated export model as built-in writers ([ADR-0009](adr/0009-plugin-api.md), 2026-11-05). Text ships in core, not as a plugin (§9). |
+| Recipes | Mirror/patterns/offset are recipes in the document; instances are real driven entities, mirror solved by `Symmetric` constraints, patterns regenerated after the solve; instance IDs stay with the recipe ([ADR-0011](adr/0011-associative-recipes.md), 2026-11-10). |
 | Offsets | Exact line/arc offsets (areas and open chains, round or miter joins) owned by `locus-region` as a Minkowski sum/difference through the ADR 0008 booleans; `cavalier_contours` measured and not chosen (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)). |
 
 ---
@@ -210,6 +211,7 @@ All are **associative**: stored as a recipe (source entity IDs + parameters), re
 - Source geometry is fully editable and constrainable. Instances are **driven**: they can be referenced by other constraints (e.g. dimension to an instance) but not directly dragged.
 - Pattern parameters appear as editable dimensions on canvas, like Fusion.
 - Instance count limit with warning (default 10 000 instances) to protect solver/render performance.
+- **Known limitation (v1, [ADR-0011](adr/0011-associative-recipes.md)):** pattern instances accept only driven (reference) dimensions; geometric and driving constraints onto them are refused until a two-phase solve with the instances fixed lands (M4). Mirror instances are solved and accept any satisfiable constraint.
 
 **Export interaction**
 - Overlapping instances are flagged by the §8 duplicate/overlap validation.
