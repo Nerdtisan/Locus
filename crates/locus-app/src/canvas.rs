@@ -6,6 +6,7 @@ use crate::app::Status;
 use crate::constrain::{self, DimSpec, Kind};
 use crate::hit::{self, BoxMode, Mods, Selection};
 use crate::infer;
+use crate::modify_tool::Modify;
 use crate::render::{Emphasis, Frame, Palette};
 use crate::scene::Scene;
 use crate::settings::{Settings, Units};
@@ -95,6 +96,8 @@ pub struct Canvas {
     layer_ui: layers_panel::LayerUi,
     /// Region selection, hover and the boolean combine (#122, #124).
     region_ui: regions::RegionUi,
+    /// The active modify tool, if any (SPEC §6.2): clicks go to it.
+    modify: Option<Modify>,
 }
 
 impl Default for Canvas {
@@ -120,6 +123,7 @@ impl Default for Canvas {
             active_layer: Document::default_layer(),
             layer_ui: layers_panel::LayerUi::default(),
             region_ui: regions::RegionUi::default(),
+            modify: None,
         };
         c.load(demo::sketch());
         c
@@ -162,13 +166,26 @@ impl Canvas {
         self.draft.set_tool(tool);
         self.typed.clear();
         self.notice = None;
+        self.modify = None;
+    }
+
+    /// The active modify tool (SPEC §6.2), if any.
+    pub fn modify(&self) -> Option<Modify> {
+        self.modify
+    }
+
+    pub fn set_modify(&mut self, m: Modify) {
+        self.set_tool(Tool::Select);
+        self.selection.clear();
+        self.modify = Some(m);
     }
 
     /// What to tell the user: the last problem, else the tool's next step.
     pub fn hint(&self) -> String {
-        match &self.notice {
-            Some(n) => n.clone(),
-            None => self.draft.tool().prompt(self.draft.clicks()).to_owned(),
+        match (&self.notice, self.modify) {
+            (Some(n), _) => n.clone(),
+            (None, Some(m)) => m.prompt().to_owned(),
+            (None, None) => self.draft.tool().prompt(self.draft.clicks()).to_owned(),
         }
     }
 
@@ -517,7 +534,7 @@ impl Canvas {
             self.set_tool(t);
             return;
         }
-        if self.draft.tool() != Tool::Select {
+        if self.draft.tool() != Tool::Select || self.modify.is_some() {
             return;
         }
         if pressed('D') {
@@ -709,7 +726,9 @@ impl Canvas {
         if resp.hovered() {
             self.hotkeys(ui, settings.units);
         }
-        if self.draft.tool() == Tool::Select {
+        if let Some(m) = self.modify {
+            self.modify_input(ui, &resp, rect, m, settings.units);
+        } else if self.draft.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect, settings.units);
         } else {
             self.tool_input(ui, &resp, rect, settings);
@@ -800,6 +819,63 @@ impl Canvas {
             let out = self.draft.click(pick, self.sketcher.document().next_id());
             self.typed.clear();
             self.run(out);
+        }
+    }
+
+    /// Clicks for the modify tools (SPEC §6.2): the curve under the pointer is
+    /// trimmed, extended or broken as one undo step, and any constraint the
+    /// step removes is named in the status bar (SPEC §4 rule 5).
+    fn modify_input(
+        &mut self,
+        ui: &egui::Ui,
+        resp: &egui::Response,
+        rect: egui::Rect,
+        m: Modify,
+        units: Units,
+    ) {
+        let tol = HIT_TOL_PT / self.view.pt_per_mm;
+        let at = resp.hover_pos().map(|p| self.view.to_world(p, rect));
+        self.hover = at.and_then(|w| hit::pick_curve(&self.scene.items, w, tol));
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(if self.hover.is_some() {
+                egui::CursorIcon::PointingHand
+            } else {
+                egui::CursorIcon::Default
+            });
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.modify = None;
+                self.notice = None;
+                return;
+            }
+        }
+        let (Some(id), Some(w)) = (self.hover, at) else {
+            return;
+        };
+        if !resp.clicked_by(PointerButton::Primary) {
+            return;
+        }
+        let doc = self.sketcher.document();
+        match m.plan(doc, id, w) {
+            Err(e) => self.notice = Some(e.to_string()),
+            Ok(plan) => {
+                let names: Vec<String> = plan
+                    .dropped
+                    .iter()
+                    .filter_map(|c| doc.constraint(*c))
+                    .map(|c| constrain::describe(doc, c, units))
+                    .collect();
+                self.apply_reporting(&plan.command);
+                if self.notice.is_none() && !names.is_empty() {
+                    let s = if names.len() == 1 { "" } else { "s" };
+                    self.notice = Some(format!(
+                        "{}: removed {} constraint{s}: {}",
+                        m.label(),
+                        names.len(),
+                        names.join("; ")
+                    ));
+                }
+                self.hover = None;
+            }
         }
     }
 
