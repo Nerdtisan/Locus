@@ -219,7 +219,6 @@ impl App {
                         ui.close();
                     }
                 }
-                stub(ui, "Rectangle");
             });
             ui.menu_button("Constrain", |ui| {
                 for kind in Kind::ALL {
@@ -259,7 +258,7 @@ impl App {
 
     /// The tool strip under the menu (#68): Select plus the drawing tools.
     fn tool_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for tool in [Tool::Select].into_iter().chain(Tool::DRAWING) {
                 let text = match tool.key() {
                     Some(k) => format!("{} ({k})", tool.label()),
@@ -273,6 +272,21 @@ impl App {
                 }
             }
             ui.separator();
+            if self.canvas.tool() == Tool::Polygon {
+                let (mut sides, mut outside) = self.canvas.polygon();
+                let changed = ui
+                    .add(
+                        egui::DragValue::new(&mut sides)
+                            .range(3..=64)
+                            .suffix(" sides"),
+                    )
+                    .changed()
+                    | ui.checkbox(&mut outside, "Circumscribed").changed();
+                if changed {
+                    self.canvas.set_polygon(sides, outside);
+                }
+                ui.separator();
+            }
             ui.weak(self.canvas.hint());
         });
     }
@@ -364,11 +378,6 @@ const REDO_ALT: egui::KeyboardShortcut =
 /// "Undo Add Line" / plain "Undo" when there is nothing to undo.
 fn history_label(verb: &str, label: Option<&str>) -> String {
     label.map_or_else(|| verb.to_owned(), |l| format!("{verb} {l}"))
-}
-
-fn stub(ui: &mut egui::Ui, label: &str) {
-    ui.add_enabled(false, egui::Button::new(label))
-        .on_disabled_hover_text("Not implemented yet");
 }
 
 struct Viewer<'a> {

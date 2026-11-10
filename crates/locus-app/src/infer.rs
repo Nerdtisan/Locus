@@ -9,7 +9,7 @@
 //! constraints in the same command as the shape (SPEC §11).
 
 use crate::scene::{Item, Shape};
-use crate::tools::{LineHint, Pick, Tool};
+use crate::tools::{Host, LineHint, Pick, Tool};
 use locus_doc::EntityId;
 use locus_geom::Vec2;
 
@@ -48,7 +48,11 @@ pub fn infer(
     cursor: Vec2,
 ) -> Pick {
     if let Some((id, pos)) = crate::hit::pick_point(items, cursor, opts.tol) {
-        return Pick::at_point(pos, id);
+        let mut pick = Pick::at_point(pos, id);
+        if tool == Tool::ArcTangent {
+            pick.host = host(items, id);
+        }
+        return pick;
     }
     let mut pick = Pick::free(cursor);
     if !opts.enabled {
@@ -117,6 +121,41 @@ fn axis(from: Vec2, to: Vec2) -> Option<(Vec2, LineHint)> {
     } else {
         None
     }
+}
+
+/// The line, arc or Bézier that ends at `point`, and the direction it
+/// continues in beyond that end (for a tangent arc, #156).
+fn host(items: &[Item], point: EntityId) -> Option<Host> {
+    items.iter().find_map(|item| {
+        let (s, e) = item.ends?;
+        if point != s && point != e {
+            return None;
+        }
+        let at_end = point == e;
+        let forward = match item.shape {
+            Shape::Line(l) => l.b - l.a,
+            Shape::Arc(a) => a.tangent(if at_end { 1.0 } else { 0.0 })?,
+            Shape::Cubic(c) => {
+                if at_end {
+                    c.end_tangent()?
+                } else {
+                    c.start_tangent()?
+                }
+            }
+            _ => return None,
+        };
+        // Line and Bézier-start tangents point along the curve's travel; the
+        // continuation beyond the start is the opposite way.
+        let dir = match item.shape {
+            Shape::Cubic(c) if !at_end => -c.start_tangent()?,
+            _ if at_end => forward,
+            _ => -forward,
+        };
+        Some(Host {
+            curve: item.id,
+            dir: dir.normalized(1e-12)?,
+        })
+    })
 }
 
 /// A line leaving an arc's end point along the arc's tangent (either way).
