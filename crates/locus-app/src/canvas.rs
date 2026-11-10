@@ -6,7 +6,7 @@ use crate::app::Status;
 use crate::constrain::{self, DimSpec, Kind};
 use crate::hit::{self, BoxMode, Mods, Selection};
 use crate::infer;
-use crate::modify_tool::{CornerSettings, Modify};
+use crate::modify_tool::{CornerSettings, Modify, TransformSettings};
 use crate::render::{Emphasis, Frame, Palette};
 use crate::scene::Scene;
 use crate::settings::{Settings, Units};
@@ -43,6 +43,8 @@ struct Refusal {
     redundant: bool,
     /// The same dimension, driven, if the refused command was one.
     as_driven: Option<Command>,
+    /// Banner text for a refusal that isn't a new constraint (a transform).
+    message: Option<String>,
 }
 
 /// The inline value box shown over the canvas while a dimension is typed.
@@ -107,6 +109,8 @@ pub struct Canvas {
     corner_first: Option<EntityId>,
     /// Fillet radius and chamfer sizes, edited in the tool strip.
     pub corner: CornerSettings,
+    /// Move/rotate/scale values, edited in the tool strip.
+    pub transform: TransformSettings,
 }
 
 impl Default for Canvas {
@@ -137,6 +141,7 @@ impl Default for Canvas {
             modify: None,
             corner_first: None,
             corner: CornerSettings::default(),
+            transform: TransformSettings::default(),
         };
         c.load(demo::sketch());
         c
@@ -190,8 +195,60 @@ impl Canvas {
 
     pub fn set_modify(&mut self, m: Modify) {
         self.set_tool(Tool::Select);
-        self.selection.clear();
+        // Move/rotate/scale works on the selection; the others pick curves.
+        if m != Modify::Transform {
+            self.selection.clear();
+        }
         self.modify = Some(m);
+    }
+
+    /// True when the selection has something to move, rotate or scale.
+    pub fn can_transform(&self) -> bool {
+        !self.selection.is_empty()
+    }
+
+    /// Move, rotate or scale the selection by the typed values, about the
+    /// centre of its bounding box, as one undo step (SPEC §6.2). When
+    /// constraints forbid it, they are named and highlighted instead.
+    pub fn apply_transform(&mut self, units: Units) {
+        let sel: Vec<EntityId> = self.selection.iter().collect();
+        let center = self
+            .scene
+            .items
+            .iter()
+            .filter(|i| self.selection.contains(i.id))
+            .map(|i| i.bbox)
+            .reduce(Aabb::union)
+            .map_or(Vec2::ZERO, |b| b.min.lerp(b.max, 0.5));
+        let t = self.transform.transform(center);
+        let doc = self.sketcher.document();
+        match locus_doc::transform::transform(doc, &sel, t, self.transform.copy) {
+            Ok(plan) => self.apply_reporting(&plan.command),
+            Err(locus_doc::modify::ModifyError::Blocked(cs)) => {
+                let cs_len = cs.len();
+                let names: Vec<String> = cs
+                    .iter()
+                    .filter_map(|c| doc.constraint(*c))
+                    .map(|c| constrain::describe(doc, c, units))
+                    .collect();
+                self.notice = Some(if names.is_empty() {
+                    "Constraints hold the selection in place".to_owned()
+                } else {
+                    format!("Held in place by: {}", names.join("; "))
+                });
+                self.refusal = Some(Refusal {
+                    constraints: cs,
+                    entities: sel,
+                    redundant: false,
+                    as_driven: None,
+                    message: Some(format!(
+                        "The {} constraint(s) highlighted hold the selection, so it was not moved.",
+                        cs_len
+                    )),
+                });
+            }
+            Err(e) => self.notice = Some(e.to_string()),
+        }
     }
 
     /// What to tell the user: the last problem, else the tool's next step.
@@ -343,6 +400,7 @@ impl Canvas {
                             }
                             _ => None,
                         },
+                        message: None,
                     }),
                     _ => None,
                 };
@@ -379,7 +437,9 @@ impl Canvas {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.colored_label(
                         Palette::new(ui.visuals().dark_mode).conflict,
-                        format!("This {what} {why}, so it was not added."),
+                        r.message
+                            .clone()
+                            .unwrap_or_else(|| format!("This {what} {why}, so it was not added.")),
                     );
                     ui.horizontal(|ui| {
                         if r.as_driven.is_some()
@@ -763,7 +823,7 @@ impl Canvas {
             self.handles = wanted;
             self.rebuild();
         }
-        if let Some(m) = self.modify {
+        if let Some(m) = self.modify.filter(|m| *m != Modify::Transform) {
             self.modify_input(ui, &resp, rect, m, settings.units);
         } else if self.draft.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect, settings.units);
