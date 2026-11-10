@@ -57,3 +57,7 @@ id_type!(
     /// Identifies a boolean recipe (SPEC §6.3).
     BooleanId
 );
+id_type!(
+    /// Identifies an associative recipe (mirror, pattern, …; SPEC §6.2.1).
+    RecipeId
+);

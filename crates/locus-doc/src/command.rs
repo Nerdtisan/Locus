@@ -20,8 +20,9 @@ use crate::constraint::Constraint;
 use crate::document::{Document, Layer};
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
-use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId};
+use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 use crate::operation::Operation;
+use crate::recipe::{self, Recipe, RecipeKind};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -112,6 +113,23 @@ pub enum Command {
     RemoveBoolean {
         id: BooleanId,
     },
+    /// Add an associative recipe over `sources` (SPEC §6.2.1, ADR 0011): the
+    /// document creates the instance entities (and, for a mirror, the
+    /// constraints that tie them to the sources). IDs: see [`Applied`].
+    AddRecipe {
+        kind: RecipeKind,
+        sources: Vec<EntityId>,
+    },
+    /// Turn a recipe's instances into ordinary, independent geometry and drop
+    /// the recipe. Constraints it created stay, as ordinary constraints.
+    ExplodeRecipe {
+        id: RecipeId,
+    },
+    /// Delete a recipe together with its instances and owned constraints.
+    /// Refused while anything else refers to the instances.
+    RemoveRecipe {
+        id: RecipeId,
+    },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
         label: String,
@@ -149,6 +167,9 @@ impl Command {
             Command::AddBoolean { .. } => "Add boolean".to_owned(),
             Command::EditBoolean { .. } => "Edit boolean".to_owned(),
             Command::RemoveBoolean { .. } => "Remove boolean".to_owned(),
+            Command::AddRecipe { kind, .. } => format!("Add {}", kind.name().to_lowercase()),
+            Command::ExplodeRecipe { .. } => "Explode".to_owned(),
+            Command::RemoveRecipe { .. } => "Remove recipe".to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -162,6 +183,7 @@ pub struct Applied {
     pub constraints: Vec<ConstraintId>,
     pub layers: Vec<LayerId>,
     pub booleans: Vec<BooleanId>,
+    pub recipes: Vec<RecipeId>,
 }
 
 /// New values for a layer's editable properties; `None` leaves a field alone.
@@ -199,6 +221,11 @@ enum Patch {
         before: Option<Boolean>,
         after: Option<Boolean>,
     },
+    Recipe {
+        id: RecipeId,
+        before: Option<Recipe>,
+        after: Option<Recipe>,
+    },
 }
 
 impl Patch {
@@ -226,6 +253,12 @@ impl Patch {
                 match if forward { after } else { before }.clone() {
                     Some(b) => doc.booleans.insert(*id, b),
                     None => doc.booleans.remove(id),
+                };
+            }
+            Patch::Recipe { id, before, after } => {
+                match if forward { after } else { before }.clone() {
+                    Some(r) => doc.recipes.insert(*id, r),
+                    None => doc.recipes.remove(id),
                 };
             }
         }
@@ -273,6 +306,7 @@ fn exec(
         }
         Command::ModifyEntity { id, geom } => {
             let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+            doc.check_not_driven(*id)?;
             doc.check_unlocked(before.layer)?;
             if before.geom.kind() != geom.kind() {
                 return Err(DocError::WrongKind {
@@ -322,9 +356,11 @@ fn exec(
         }
         Command::ToggleConstruction { id } => {
             let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
+            doc.check_not_driven(*id)?;
             doc.check_unlocked(before.layer)?;
+            let construction = !before.construction;
             let after = Entity {
-                construction: !before.construction,
+                construction,
                 ..before.clone()
             };
             record(
@@ -336,6 +372,24 @@ fn exec(
                     after: Some(after),
                 },
             );
+            // Instances follow their source (SPEC §6.2.1: associative).
+            for (inst, _) in recipe::instances_of(doc, *id) {
+                if let Some(b) = doc.entity(inst).cloned() {
+                    let a = Entity {
+                        construction,
+                        ..b.clone()
+                    };
+                    record(
+                        doc,
+                        patches,
+                        Patch::Entity {
+                            id: inst,
+                            before: Some(b),
+                            after: Some(a),
+                        },
+                    );
+                }
+            }
         }
         Command::AddConstraint { constraint } => {
             constraint.validate(doc)?;
@@ -352,6 +406,12 @@ fn exec(
             out.constraints.push(id);
         }
         Command::RemoveConstraint { id } => {
+            if let Some(recipe) = doc.constraint_owner(*id) {
+                return Err(DocError::ConstraintOwned {
+                    constraint: *id,
+                    recipe,
+                });
+            }
             let before = doc
                 .constraint(*id)
                 .ok_or(DocError::UnknownConstraint(*id))?
@@ -464,6 +524,15 @@ fn exec(
                     "a document needs at least one layer".to_owned(),
                 ));
             }
+            for e in &plan.entities {
+                let recipes = doc.recipes_involving(*e);
+                if !recipes.is_empty() {
+                    return Err(DocError::RecipeInUse {
+                        entity: *e,
+                        recipes,
+                    });
+                }
+            }
             if !plan.blocked_by.is_empty() {
                 return Err(DocError::LayerInUse {
                     layer: *id,
@@ -515,6 +584,13 @@ fn exec(
                 doc.check_unlocked(before.layer)?;
                 if before.layer == *layer {
                     continue;
+                }
+                let recipes = doc.recipes_involving(*id);
+                if !recipes.is_empty() {
+                    return Err(DocError::RecipeInUse {
+                        entity: *id,
+                        recipes,
+                    });
                 }
                 let after = Entity {
                     layer: *layer,
@@ -574,8 +650,189 @@ fn exec(
             };
             record(doc, patches, p);
         }
+        Command::AddRecipe { kind, sources } => {
+            add_recipe(doc, kind, sources, patches, out)?;
+        }
+        Command::ExplodeRecipe { id } => {
+            let before = doc.recipe(*id).ok_or(DocError::UnknownRecipe(*id))?.clone();
+            let p = Patch::Recipe {
+                id: *id,
+                before: Some(before),
+                after: None,
+            };
+            record(doc, patches, p);
+        }
+        Command::RemoveRecipe { id } => remove_recipe(doc, *id, patches)?,
         Command::ApplySolution { points, radii } => apply_solution(doc, points, radii)?,
     }
+    Ok(())
+}
+
+/// Create a recipe, its instance entities and its owned constraints.
+fn add_recipe(
+    doc: &mut Document,
+    kind: &RecipeKind,
+    sources: &[EntityId],
+    patches: &mut Vec<Patch>,
+    out: &mut Applied,
+) -> Result<(), DocError> {
+    let mut sources = sources.to_vec();
+    sources.sort_unstable();
+    recipe::validate(doc, kind, &sources, None)?;
+    for id in &sources {
+        if let Some(e) = doc.entity(*id) {
+            doc.check_unlocked(e.layer)?;
+        }
+    }
+    let closure: Vec<EntityId> = recipe::closure(doc, &sources).into_iter().collect();
+    let rid = RecipeId::new(doc.alloc_id()?);
+    // New IDs for copy 0, in closure order; the recipe keeps them for good.
+    let mut set = Vec::with_capacity(closure.len());
+    for _ in &closure {
+        set.push(EntityId::new(doc.alloc_id()?));
+    }
+    let xf = recipe::transform(doc, kind, 0)?;
+    let rename = |id: EntityId| {
+        closure
+            .iter()
+            .position(|c| *c == id)
+            .and_then(|i| set.get(i).copied())
+            .unwrap_or(id)
+    };
+    // Points first so every reference resolves when the entity is checked.
+    let mut order: Vec<usize> = (0..closure.len()).collect();
+    order.sort_by_key(|i| {
+        doc.entity(closure[*i])
+            .map_or(1, |e| u8::from(e.geom.kind() != EntityKind::Point))
+    });
+    for i in order {
+        let src = doc
+            .entity(closure[i])
+            .ok_or(DocError::UnknownEntity(closure[i]))?
+            .clone();
+        let e = Entity {
+            layer: src.layer,
+            construction: src.construction,
+            geom: recipe::copy_geom(&src.geom, xf, &rename),
+        };
+        doc.check_entity(&e)?;
+        record(
+            doc,
+            patches,
+            Patch::Entity {
+                id: set[i],
+                before: None,
+                after: Some(e),
+            },
+        );
+    }
+    let mut owned = Vec::new();
+    let RecipeKind::Mirror { axis } = kind;
+    for (i, src) in closure.iter().enumerate() {
+        let c = match doc.entity(*src).map(|e| e.geom.kind()) {
+            Some(EntityKind::Point) => Constraint::Symmetric {
+                a: *src,
+                b: set[i],
+                axis: *axis,
+            },
+            Some(EntityKind::Circle) => Constraint::Equal { a: *src, b: set[i] },
+            _ => continue,
+        };
+        c.validate(doc)?;
+        let cid = ConstraintId::new(doc.alloc_id()?);
+        record(
+            doc,
+            patches,
+            Patch::Constraint {
+                id: cid,
+                before: None,
+                after: Some(c),
+            },
+        );
+        owned.push(cid);
+        out.constraints.push(cid);
+    }
+    out.entities.extend(&set);
+    out.recipes.push(rid);
+    let recipe = Recipe {
+        kind: kind.clone(),
+        sources,
+        pool: vec![set],
+        active: 1,
+        constraints: owned,
+    };
+    record(
+        doc,
+        patches,
+        Patch::Recipe {
+            id: rid,
+            before: None,
+            after: Some(recipe),
+        },
+    );
+    Ok(())
+}
+
+/// Delete a recipe with its instances and owned constraints, unless
+/// something else still refers to them.
+fn remove_recipe(
+    doc: &mut Document,
+    id: RecipeId,
+    patches: &mut Vec<Patch>,
+) -> Result<(), DocError> {
+    let recipe = doc.recipe(id).ok_or(DocError::UnknownRecipe(id))?.clone();
+    let instances: Vec<EntityId> = recipe.instances().collect();
+    for inst in &instances {
+        let (ents, cons) = doc.dependents(*inst);
+        let ents: Vec<_> = ents
+            .into_iter()
+            .filter(|e| !instances.contains(e))
+            .collect();
+        let cons: Vec<_> = cons
+            .into_iter()
+            .filter(|c| !recipe.constraints.contains(c))
+            .collect();
+        if !ents.is_empty() || !cons.is_empty() {
+            return Err(DocError::EntityInUse {
+                id: *inst,
+                entities: ents,
+                constraints: cons,
+            });
+        }
+    }
+    for cid in &recipe.constraints {
+        let before = doc.constraint(*cid).cloned();
+        record(
+            doc,
+            patches,
+            Patch::Constraint {
+                id: *cid,
+                before,
+                after: None,
+            },
+        );
+    }
+    for inst in &instances {
+        let before = doc.entity(*inst).cloned();
+        record(
+            doc,
+            patches,
+            Patch::Entity {
+                id: *inst,
+                before,
+                after: None,
+            },
+        );
+    }
+    record(
+        doc,
+        patches,
+        Patch::Recipe {
+            id,
+            before: Some(recipe),
+            after: None,
+        },
+    );
     Ok(())
 }
 
