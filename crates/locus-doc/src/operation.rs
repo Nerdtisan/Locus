@@ -93,6 +93,9 @@ pub struct EngraveParams {
     pub hatch_spacing: f64,
     /// Hatch angle, degrees, `-360..=360`.
     pub hatch_angle: f64,
+    /// Also hatch at `hatch_angle + 90°` (file format v6; absent = off).
+    #[serde(default)]
+    pub crosshatch: bool,
 }
 
 impl Default for EngraveParams {
@@ -100,6 +103,7 @@ impl Default for EngraveParams {
         Self {
             hatch_spacing: 0.1,
             hatch_angle: 0.0,
+            crosshatch: false,
         }
     }
 }
@@ -247,10 +251,12 @@ mod tests {
             Operation::Engrave(EngraveParams {
                 hatch_spacing: 0.0,
                 hatch_angle: 0.0,
+                crosshatch: false,
             }),
             Operation::Engrave(EngraveParams {
                 hatch_spacing: 1.0,
                 hatch_angle: 400.0,
+                crosshatch: false,
             }),
             Operation::Draw(DrawParams {
                 pen_number: 0,

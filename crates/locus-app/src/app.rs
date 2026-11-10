@@ -177,6 +177,16 @@ impl App {
                     self.canvas.request_fit();
                     ui.close();
                 }
+                let mut machine = self.canvas.machine_preview();
+                if ui
+                    .checkbox(&mut machine, "Machine preview")
+                    .on_hover_text(
+                        "Show kerf- and blade-compensated paths and hatch fills, as they will be exported",
+                    )
+                    .changed()
+                {
+                    self.canvas.set_machine_preview(machine);
+                }
                 ui.separator();
                 for tab in [Tab::Properties, Tab::Layers, Tab::Regions, Tab::Constraints] {
                     let mut shown = self.dock.find_tab(&tab).is_some();

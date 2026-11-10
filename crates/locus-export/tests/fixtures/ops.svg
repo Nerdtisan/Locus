@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="120.1mm" height="40.35mm" viewBox="0 0 120.1 40.35">
+  <g id="layer-1" data-name="Layer 1" data-operation="Cut">
+    <circle fill="none" stroke="#000000" stroke-width="0.1" cx="20.1" cy="20.1" r="5.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 30 30 L 30 10.2 L 10.2 10.2 L 10.2 30 L 30 30 Z"/>
+    <circle fill="none" stroke="#000000" stroke-width="0.1" cx="45.1" cy="20.1" r="2.9"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 60.2 40.1 L 60.2 0.1 A 0.1 0.1 0 0 0 60.1 0 L 0.1 0 A 0.1 0.1 0 0 0 0 0.1 L 0 40.1 A 0.1 0.1 0 0 0 0.1 40.2 L 60.1 40.2 A 0.1 0.1 0 0 0 60.2 40.1 Z"/>
+  </g>
+  <g id="layer-22" data-name="Vinyl" data-operation="DragKnife">
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 70.1 40.35 A 0.25 0.25 0 0 0 70.35 40.1 L 90.35 40.1 A 0.25 0.25 0 0 0 90.1 39.85 L 90.1 19.85 A 0.25 0.25 0 0 0 89.85 20.1 L 69.85 20.1 A 0.25 0.25 0 0 0 70.1 20.35 L 70.1 40.35 Z"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 70.2952 9.9438 L 80.2952 1.9438 A 0.25 0.25 0 0 1 80.2952 2.2562 L 90.2952 10.2562"/>
+  </g>
+  <g id="layer-36" data-name="Fill" data-operation="Engrave">
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.3082 20.1 L 106.6701 26.4619"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 106.0132 27.2193 L 100.1 21.3061"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 20.7102 L 100.7102 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 101.7224 20.1 L 107.47 25.8476"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 107.9543 25.5838 L 113.4381 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 113.0361 20.1 L 120.1 27.1639"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 27.5802 L 107.5802 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 107.5802 40.1 L 100.1 32.6198"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 32.0239 L 112.0239 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 111.6219 20.1 L 120.1 28.5781"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 28.9944 L 108.9944 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 108.9944 40.1 L 100.1 31.2056"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 30.6097 L 110.6097 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 110.2076 20.1 L 120.1 29.9924"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 30.4087 L 110.4087 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 110.4087 40.1 L 100.1 29.7913"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 29.1955 L 109.1955 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 108.7934 20.1 L 120.1 31.4066"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 31.8229 L 111.8229 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 111.8229 40.1 L 100.1 28.3771"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 27.7812 L 107.7812 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 107.3792 20.1 L 120.1 32.8208"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 33.2371 L 113.2371 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 113.2371 40.1 L 107.5201 34.383"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 107.5957 34.4277 L 101.9234 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 101.9234 40.1 L 100.1 38.2766"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 37.6807 L 105.5682 32.2125"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 105.817 32.6799 L 100.1 26.9629"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 26.367 L 106.367 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 105.965 20.1 L 111.0576 25.1925"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 111.1541 25.2124 L 116.2665 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 115.8645 20.1 L 120.1 24.3355"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 24.7518 L 115.0886 29.7632"/>
+    <circle fill="none" stroke="#000000" stroke-width="0.1" cx="110.1" cy="30.1" r="5"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 115.0727 30.6219 L 120.1 35.6492"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 36.0655 L 116.0655 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 116.0655 40.1 L 110.9863 35.0208"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 111.3162 34.9498 L 106.166 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 106.166 40.1 L 100.1 34.034"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 33.4381 L 105.5838 27.9543"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 105.506 28.1263 L 100.1 22.7203"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 22.1244 L 102.1244 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 103.1366 20.1 L 108.4254 25.3888"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 109.5781 25.1273 L 104.5508 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 104.9528 20.1 L 100.1 24.9528"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 25.5487 L 105.1222 30.5709"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 105.2124 31.1541 L 100.1 36.2665"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 36.8624 L 103.3376 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 103.3376 40.1 L 108.5756 34.862"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 109.6291 35.0778 L 114.6513 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 114.6513 40.1 L 120.1 34.6513"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 34.235 L 115.0075 29.1424"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 114.862 28.5756 L 120.1 23.3376"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 22.9213 L 117.2787 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 117.6807 20.1 L 112.2125 25.5682"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 113.0971 26.0978 L 119.0949 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 118.6929 20.1 L 120.1 21.5071"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 21.9234 L 114.4277 27.5957"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 113.8342 26.775 L 120.1 20.5092"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 25.7497 L 114.4503 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 114.8523 20.1 L 109.8458 25.1065"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 105.1792 29.2137 L 100.1 24.1345"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 23.5386 L 103.5386 20.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 105.1065 29.8458 L 100.1 34.8523"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 35.4482 L 104.7518 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 104.7518 40.1 L 109.7632 35.0886"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 112.0737 34.694 L 117.4797 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 117.4797 40.1 L 120.1 37.4797"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 37.0634 L 114.8112 31.7746"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 114.9498 31.3162 L 120.1 26.166"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 114.3524 32.73 L 120.1 38.4776"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 120.1 38.8939 L 118.8939 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 118.8939 40.1 L 112.9807 34.1868"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 113.7381 33.5299 L 120.1 39.8918"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 106.775 33.8342 L 100.5092 40.1"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.5092 40.1 L 100.1 39.6908"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 39.0949 L 106.0978 33.0971"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 100.1 40.1 L 120.1 40.1 L 120.1 20.1 L 100.1 20.1 L 100.1 40.1 Z"/>
+  </g>
+</svg>
