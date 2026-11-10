@@ -74,6 +74,11 @@ pub struct Canvas {
     hover: Option<EntityId>,
     /// Screen position where a rubber-band box started.
     rubber: Option<Pos2>,
+    /// Béziers whose handles are shown: selected, or with a selected point (#160).
+    handles: BTreeSet<EntityId>,
+    /// Pen tool: where the button went down and where the pointer is now
+    /// while dragging out a handle (#160).
+    pen: Option<(Pick, Vec2)>,
     /// The active drawing tool and its clicks so far (#68).
     draft: Draft,
     /// Digits typed while drawing: a length or radius (SPEC §6.1).
@@ -109,6 +114,8 @@ impl Default for Canvas {
             selection: Selection::default(),
             hover: None,
             rubber: None,
+            handles: BTreeSet::new(),
+            pen: None,
             draft: Draft::new(Tool::Select),
             typed: String::new(),
             cursor: None,
@@ -580,10 +587,28 @@ impl Canvas {
         self.sketcher.editor().redo_label()
     }
 
+    /// The Béziers whose handles should show for the current selection.
+    fn wanted_handles(&self) -> BTreeSet<EntityId> {
+        let doc = self.sketcher.document();
+        doc.entities()
+            .iter()
+            .filter(|(id, e)| {
+                matches!(e.geom, Geom::Bezier { .. })
+                    && (self.selection.contains(*id)
+                        || e.geom
+                            .point_refs()
+                            .iter()
+                            .any(|p| self.selection.contains(*p)))
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     fn rebuild(&mut self) {
         self.scene = Scene::build(
             self.sketcher.document(),
             &self.sketcher.state().fully_constrained,
+            &self.handles,
         );
         let scene = &self.scene;
         self.selection
@@ -709,6 +734,11 @@ impl Canvas {
         if resp.hovered() {
             self.hotkeys(ui, settings.units);
         }
+        let wanted = self.wanted_handles();
+        if wanted != self.handles {
+            self.handles = wanted;
+            self.rebuild();
+        }
         if self.draft.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect, settings.units);
         } else {
@@ -738,6 +768,14 @@ impl Canvas {
                 Emphasis::None
             }
         });
+        let doc = self.sketcher.document();
+        let guides: Vec<(Vec2, Vec2)> = self
+            .handles
+            .iter()
+            .filter_map(|id| doc.cubic(*id))
+            .flat_map(|c| [(c.p0, c.c0), (c.p1, c.c1)])
+            .collect();
+        frame.draw_handle_guides(&guides);
         self.dim_rects = frame.draw_annotations(&self.scene, &flag_constraints);
         self.draw_tool_overlay(&frame, &painter);
         if let (Some(start), Some(now)) = (self.rubber, resp.interact_pointer_pos()) {
@@ -793,11 +831,42 @@ impl Canvas {
         if resp.hovered() || !self.typed.is_empty() {
             self.tool_keys(ui, settings.units);
         }
+        if self.draft.tool() == Tool::Bezier {
+            self.pen_drag(ui, resp, rect, auto);
+        }
         if resp.clicked_by(PointerButton::Primary)
             && let Some(pick) = self.cursor
         {
             self.draft.set_layer(self.active_layer());
             let out = self.draft.click(pick, self.sketcher.document().next_id());
+            self.typed.clear();
+            self.run(out);
+        }
+    }
+
+    /// Click-drag with the pen: the press places the anchor, the drag pulls
+    /// out its handle and the release commits the curve (#160).
+    fn pen_drag(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, auto: bool) {
+        if resp.drag_started_by(PointerButton::Primary)
+            && let Some(o) = ui.input(|i| i.pointer.press_origin())
+        {
+            let pick = self.designate(self.view.to_world(o, rect), auto);
+            self.pen = Some((pick, pick.pos));
+        }
+        if resp.dragged_by(PointerButton::Primary)
+            && let (Some((pick, _)), Some(p)) = (self.pen, resp.interact_pointer_pos())
+        {
+            self.pen = Some((pick, self.view.to_world(p, rect)));
+        }
+        if resp.drag_stopped_by(PointerButton::Primary)
+            && let Some((pick, now)) = self.pen.take()
+        {
+            self.draft.set_layer(self.active_layer());
+            let out = self.draft.pen(
+                pick,
+                Some(now - pick.pos),
+                self.sketcher.document().next_id(),
+            );
             self.typed.clear();
             self.run(out);
         }
@@ -863,7 +932,10 @@ impl Canvas {
         let Some(pick) = self.cursor else {
             return;
         };
-        frame.draw_preview(&self.draft.preview(pick.pos));
+        match self.pen {
+            Some((anchor, now)) => frame.draw_preview(&self.draft.preview_pen(anchor.pos, now)),
+            None => frame.draw_preview(&self.draft.preview(pick.pos)),
+        }
         if pick.point.is_some() {
             frame.draw_snap(pick.pos);
         }
