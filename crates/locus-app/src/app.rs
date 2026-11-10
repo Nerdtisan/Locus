@@ -362,6 +362,36 @@ impl App {
                 }
                 ui.separator();
             }
+            Some(Modify::Offset) => {
+                ui.label("Distance");
+                ui.add(egui::DragValue::new(&mut c.offset).speed(0.1).suffix(" mm"));
+                ui.checkbox(&mut c.sharp, "Sharp corners");
+                if let Some(rid) = self.canvas.offset_selected()
+                    && let Some((mut d, mut sharp)) = self.canvas.offset_params(rid)
+                {
+                    ui.separator();
+                    ui.label("Picked offset");
+                    // Typed, not dragged: each change is one undo step.
+                    let r1 = ui
+                        .add(egui::DragValue::new(&mut d).speed(0.0).suffix(" mm"))
+                        .on_hover_text("Click to type a new distance");
+                    let r2 = ui.checkbox(&mut sharp, "Sharp");
+                    if (r1.changed() || r2.changed()) && d != 0.0 {
+                        self.canvas.set_offset_params(rid, d, sharp);
+                    }
+                    if ui
+                        .button("Explode")
+                        .on_hover_text("Turn the offset into ordinary geometry")
+                        .clicked()
+                    {
+                        self.canvas.finish_offset(rid, true);
+                    }
+                    if ui.button("Remove").clicked() {
+                        self.canvas.finish_offset(rid, false);
+                    }
+                }
+                ui.separator();
+            }
             Some(Modify::Transform) => {
                 let t = &mut self.canvas.transform;
                 egui::ComboBox::from_id_salt("transform-mode")

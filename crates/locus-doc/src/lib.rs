@@ -19,6 +19,7 @@ pub mod expr;
 pub mod file;
 pub mod ids;
 pub mod modify;
+pub mod offset;
 pub mod operation;
 pub mod params;
 pub mod recipe;

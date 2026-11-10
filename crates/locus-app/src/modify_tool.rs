@@ -19,15 +19,18 @@ pub enum Modify {
     Chamfer,
     /// Move, rotate or scale the selection by typed values.
     Transform,
+    /// Live offset of a chain (#164).
+    Offset,
 }
 
 impl Modify {
-    pub const ALL: [Modify; 6] = [
+    pub const ALL: [Modify; 7] = [
         Modify::Trim,
         Modify::Extend,
         Modify::Break,
         Modify::Fillet,
         Modify::Chamfer,
+        Modify::Offset,
         Modify::Transform,
     ];
 
@@ -39,6 +42,7 @@ impl Modify {
             Modify::Fillet => "Fillet",
             Modify::Chamfer => "Chamfer",
             Modify::Transform => "Move/Rotate/Scale",
+            Modify::Offset => "Offset",
         }
     }
 
@@ -59,6 +63,9 @@ impl Modify {
                 "Click the first curve, or the corner point two curves share (Esc to finish)"
             }
             (Modify::Fillet | Modify::Chamfer, true) => "Click the second curve at the corner",
+            (Modify::Offset, _) => {
+                "Offset: click a curve to offset its chain, or an offset to edit it (+ grows / goes left)"
+            }
             (Modify::Transform, _) => {
                 "Select geometry, set the values, then Apply (about the selection's centre)"
             }
@@ -71,7 +78,9 @@ impl Modify {
             Modify::Trim => modify::trim(doc, id, at),
             Modify::Extend => modify::extend(doc, id, at),
             Modify::Break => modify::split(doc, id, at),
-            Modify::Fillet | Modify::Chamfer | Modify::Transform => Err(ModifyError::NoCorner),
+            Modify::Fillet | Modify::Chamfer | Modify::Transform | Modify::Offset => {
+                Err(ModifyError::NoCorner)
+            }
         }
     }
 
@@ -123,6 +132,10 @@ pub struct CornerSettings {
     pub d1: f64,
     pub d2: f64,
     pub angle_deg: f64,
+    /// Offset distance for a new offset (mm; + grows / goes left).
+    pub offset: f64,
+    /// New offsets keep sharp corners (Fusion's default) or round them.
+    pub sharp: bool,
 }
 
 impl Default for CornerSettings {
@@ -133,6 +146,8 @@ impl Default for CornerSettings {
             d1: 2.0,
             d2: 2.0,
             angle_deg: 45.0,
+            offset: 2.0,
+            sharp: true,
         }
     }
 }
