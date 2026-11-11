@@ -1,6 +1,6 @@
-# ADR-0012: Plugin host runtime: wasmtime 50, empty linker, fresh instance per call
+# ADR-0013: Plugin host runtime: wasmtime 50, empty linker, fresh instance per call
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-11
 - **Spec:** `docs/SPEC.md §15.1`, `§15.4`, `§15.5`, `§15.8`; builds on ADR 0009
 - **Issue:** Nerdtisan/Locus#181 (epic #23), with #186

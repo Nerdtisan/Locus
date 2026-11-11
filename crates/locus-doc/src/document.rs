@@ -456,6 +456,7 @@ impl Document {
                     });
                 }
             }
+            Geom::Text { text, .. } => text.validate()?,
             Geom::Line { .. } | Geom::Arc { .. } | Geom::Bezier { .. } => {}
         }
         let refs = e.geom.point_refs();

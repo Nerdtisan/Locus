@@ -197,7 +197,8 @@ fn cutters(doc: &Document, skip: EntityId) -> Vec<(EntityId, Piece)> {
                     out.extend(c.to_pieces(EXPORT_TOL).into_iter().map(|p| (id, p)));
                 }
             }
-            EntityKind::Point => {}
+            // Text is not a cutting target (SPEC §9: glyphs are not trimmed).
+            EntityKind::Point | EntityKind::Text => {}
         }
     }
     out

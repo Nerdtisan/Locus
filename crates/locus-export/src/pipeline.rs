@@ -267,12 +267,29 @@ pub fn collect(doc: &Document) -> ExportModel {
         (order, l.id.get())
     });
 
+    let mut text_paths: Vec<(locus_doc::LayerId, ExportPath)> = Vec::new();
     for (eid, e) in doc.entities().iter() {
         if e.construction {
             continue;
         }
+        if matches!(e.geom, Geom::Text { .. }) {
+            // Text exports as the geometry cached in the document (SPEC §9,
+            // §10), so it needs no font. Each contour is already an ordered
+            // path, so it bypasses `chain`, which could fuse touching glyphs.
+            if let Some(geom) = doc.text_geometry(eid)
+                && layers.iter().any(|(l, _)| l.id == e.layer)
+            {
+                text_paths.extend(
+                    geom.contours
+                        .iter()
+                        .filter_map(|c| text_path(eid, c))
+                        .map(|p| (e.layer, p)),
+                );
+            }
+            continue;
+        }
         let shape = match &e.geom {
-            Geom::Point { .. } => continue,
+            Geom::Point { .. } | Geom::Text { .. } => continue,
             Geom::Line { .. } => doc.line(eid).map(Shape::Line),
             Geom::Circle { .. } => doc.circle(eid).map(Shape::Circle),
             Geom::Arc { .. } => doc.arc(eid).map(Shape::Arc),
@@ -298,10 +315,44 @@ pub fn collect(doc: &Document) -> ExportModel {
             .into_iter()
             .filter_map(|(mut l, segs)| {
                 l.paths = chain(segs);
+                let id = l.id;
+                l.paths.extend(
+                    text_paths
+                        .iter()
+                        .filter(|(layer, _)| *layer == id)
+                        .map(|(_, p)| p.clone()),
+                );
                 (!l.paths.is_empty() || !l.degenerate.is_empty()).then_some(l)
             })
             .collect(),
     }
+}
+
+/// One cached text contour as an export path (SPEC §9). Zero-length or
+/// non-finite segments are dropped, so an exporter never sees a degenerate one.
+fn text_path(entity: EntityId, c: &locus_text::Contour) -> Option<ExportPath> {
+    let mut from = c.start;
+    let mut segs = Vec::with_capacity(c.segs.len());
+    for s in &c.segs {
+        let shape = match *s {
+            locus_text::Seg::Line { end } => Shape::Line(Line::new(from, end)),
+            locus_text::Seg::Cubic { c0, c1, end } => Shape::Cubic(Cubic::new(from, c0, c1, end)),
+        };
+        from = s.end();
+        let b = shape.bbox();
+        if shape.is_degenerate() || !b.min.is_finite() || !b.max.is_finite() {
+            continue;
+        }
+        segs.push(PathSeg {
+            entity,
+            shape,
+            reversed: false,
+        });
+    }
+    (!segs.is_empty()).then_some(ExportPath {
+        segs,
+        closed: c.closed,
+    })
 }
 
 fn near(a: Vec2, b: Vec2) -> bool {
