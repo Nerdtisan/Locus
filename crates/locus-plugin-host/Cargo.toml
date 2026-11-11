@@ -10,3 +10,23 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+# Desktop-only (SPEC §0, #181): the web build never links wasmtime.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmtime = { version = "50.0.1", default-features = false, features = [
+    "std",
+    "runtime",
+    "cranelift",
+    "component-model",
+    "wat",
+] }
+
+[dev-dependencies]
+# Builds the §15.8 fixture components from hand-written core WAT in tests, so
+# the sandbox suite needs no wasm toolchain and runs on every CI platform.
+wat = "1.263"
+wit-component = "0.261"
+wit-parser = "0.261"

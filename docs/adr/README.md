@@ -26,5 +26,6 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | [0011](0011-associative-recipes.md) | Associative recipes: instances are real driven entities; mirror solved by Symmetric constraints, patterns regenerated after the solve | Accepted | §6.2.1 |
 | [0010](0010-offsets.md) | Offsets that keep true arcs: Locus-owned, through the ADR 0008 arrangement | Accepted | §6.2, §7, §12.13 |
 | [0012](0012-text-entity.md) | Text entity: container with cached geometry, fonts by reference, format v9 | Accepted | §9, §10 |
+| [0013](0013-plugin-host-runtime.md) | Plugin host runtime: wasmtime 50, empty linker, fresh instance per call | Accepted | §15.1, §15.4, §15.8 |
 
 All §12 M0 decisions are recorded.
