@@ -12,7 +12,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+serde.workspace = true
 thiserror.workspace = true
+toml = { version = "1.2", default-features = false, features = ["parse", "serde", "std"] }
 
 # Desktop-only (SPEC §0, #181): the web build never links wasmtime.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -23,6 +25,9 @@ wasmtime = { version = "50.0.1", default-features = false, features = [
     "component-model",
     "wat",
 ] }
+# .locusplugin archives (§15.7): read and write zip, deflate via zlib-rs.
+zip = { version = "9.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 # Builds the §15.8 fixture components from hand-written core WAT in tests, so
