@@ -276,7 +276,10 @@ mod tests {
     fn frame_places_and_rotates() {
         let f = frame(Vec2::new(10.0, 5.0), Vec2::new(10.0, 9.0));
         let p = f.apply(Vec2::new(2.0, 0.0));
-        assert!((p.x - 10.0).abs() < 1e-9 && (p.y - 7.0).abs() < 1e-9, "{p:?}");
+        assert!(
+            (p.x - 10.0).abs() < 1e-9 && (p.y - 7.0).abs() < 1e-9,
+            "{p:?}"
+        );
         // Degenerate direction falls back to +x.
         let g = frame(Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0));
         assert!((g.apply(Vec2::new(2.0, 0.0)).x - 3.0).abs() < 1e-9);

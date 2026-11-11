@@ -380,6 +380,7 @@ impl Canvas {
                 Geom::Circle { .. } => doc.circle(r).map(|c| c.center),
                 Geom::Arc { .. } => doc.arc(r).map(|a| a.center),
                 Geom::Bezier { .. } => doc.cubic(r).map(|c| c.eval(0.5)),
+                Geom::Text { anchor, .. } => doc.point_pos(anchor),
             })
             .unwrap_or(Vec2::ZERO);
         self.dim_edit = Some(DimEdit {
@@ -1228,6 +1229,8 @@ impl Canvas {
             Some(Geom::Circle { center, .. } | Geom::Arc { center, .. }) => *center,
             // A Bézier moves by its end nearer the cursor, like a line.
             Some(Geom::Bezier { start, end, .. }) => near(*start, *end),
+            // Text is dragged by its anchor.
+            Some(Geom::Text { anchor, .. }) => *anchor,
             None => return false,
         };
         match self.sketcher.begin_drag(point) {
@@ -1464,6 +1467,7 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
         Geom::Circle { .. } => "Circle",
         Geom::Arc { .. } => "Arc",
         Geom::Bezier { .. } => "Bézier",
+        Geom::Text { .. } => "Text",
     };
     let mut rows = vec![
         ("ID".to_owned(), id.to_string()),
@@ -1509,6 +1513,16 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
                 rows.push(("Start".to_owned(), pt(c.p0)));
                 rows.push(("End".to_owned(), pt(c.p1)));
                 rows.push(("Length".to_owned(), units.format_len(c.length())));
+            }
+        }
+        Geom::Text { .. } => {
+            if let Some((t, anchor, _)) = doc.text(id) {
+                rows.push(("Text".to_owned(), t.content.clone()));
+                rows.push(("Font".to_owned(), t.font.display_name()));
+                rows.push(("Size".to_owned(), units.format_len(t.size)));
+                if let Some(p) = doc.point_pos(anchor) {
+                    rows.push(("Anchor".to_owned(), pt(p)));
+                }
             }
         }
     }

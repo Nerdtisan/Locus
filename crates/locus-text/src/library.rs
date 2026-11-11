@@ -9,11 +9,11 @@
 //! (never on the web, which cannot list them). Discovering system fonts needs
 //! the filesystem, so it lives in the app shell behind [`SystemFontSource`].
 
+use crate::Font;
 use crate::bundled::BundledFont;
 use crate::error::TextError;
 use crate::outline::OutlineFont;
 use crate::stroke::StrokeFont;
-use crate::Font;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -42,8 +42,9 @@ impl FontRef {
     #[must_use]
     pub fn display_name(&self) -> String {
         match self {
-            FontRef::Bundled(id) => BundledFont::from_id(id)
-                .map_or_else(|| id.clone(), |f| f.display_name().to_owned()),
+            FontRef::Bundled(id) => {
+                BundledFont::from_id(id).map_or_else(|| id.clone(), |f| f.display_name().to_owned())
+            }
             FontRef::File(n) | FontRef::System(n) => n.clone(),
         }
     }
@@ -122,7 +123,10 @@ impl FontLibrary {
     /// Installed system families for the picker; empty without a source.
     #[must_use]
     pub fn system_families(&self) -> Vec<String> {
-        self.system.as_ref().map(|s| s.families()).unwrap_or_default()
+        self.system
+            .as_ref()
+            .map(|s| s.families())
+            .unwrap_or_default()
     }
 
     /// Names of the fonts loaded from user files.
@@ -164,7 +168,9 @@ impl FontProvider for FontLibrary {
                     .entry(family.clone())
                     .or_insert_with(|| {
                         let bytes = source.load(family)?;
-                        OutlineFont::from_bytes(family, bytes).ok().map(Font::Outline)
+                        OutlineFont::from_bytes(family, bytes)
+                            .ok()
+                            .map(Font::Outline)
                     })
                     .clone()
             }
