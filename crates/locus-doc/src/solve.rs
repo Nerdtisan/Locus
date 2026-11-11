@@ -219,6 +219,12 @@ impl Sketcher {
         Ok(label)
     }
 
+    /// Applies a command without solving or recording a solve: for scratch
+    /// copies that only probe constraints ([`Self::precheck`]).
+    pub(crate) fn apply_unsolved(&mut self, cmd: &Command) -> Result<Applied, DocError> {
+        self.editor.apply(cmd)
+    }
+
     fn not_dragging(&self) -> Result<(), DocError> {
         if self.drag.is_some() {
             Err(DocError::Invalid("a drag is in progress".to_owned()))
@@ -387,7 +393,7 @@ impl Sketcher {
     /// Refuse a driving constraint that can't add a real restriction, before
     /// anything changes. Only single commands are pre-checked; a compound is
     /// guarded by the solve that follows it.
-    fn precheck(&mut self, cmd: &Command) -> Result<(), DocError> {
+    pub(crate) fn precheck(&mut self, cmd: &Command) -> Result<(), DocError> {
         // A dimension entered as an expression is checked as the plain
         // dimension it will become.
         if let Command::AddDimensionExpr { constraint, expr } = cmd {
