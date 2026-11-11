@@ -10,6 +10,7 @@ use locus_doc::{Document, EntityKind, Sketcher, Status};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod mcp;
 mod plugin;
 
 const USAGE: &str = "\
@@ -22,6 +23,7 @@ usage:
                         [--readme <README.md>] [--icon <icon.png>]
   locus-cli plugin run <file.locusplugin | id> [--params <params.ron>] --out <file>
                        [--format svg|pdf|dxf] [--plugins <dir>] [--force]
+  locus-cli mcp --doc <file.locus> [--scopes read,write,export] [--plugins <dir>]
 
 validate prints errors and warnings and exits 1 when errors remain.
 --fix applies the safe auto-fixes to the exported geometry (never to the file).
@@ -31,7 +33,10 @@ svg, pdf, dxf, plus those of exporter plugins given with --plugin (a file) or
 add their findings to validate and export; their errors block export too.
 plugin pack wraps a wasm32 build of a plugin into a checked .locusplugin.
 plugin run runs a generator headlessly and exports its output; params.ron is
-`(key: value, ...)`, and keys left out take the plugin's defaults.";
+`(key: value, ...)`, and keys left out take the plugin's defaults.
+mcp serves the MCP protocol on stdin/stdout for an AI client (SPEC §16).
+--scopes grants read (default), write and export; `save` writes only to the
+--doc file, and `export` returns bytes without writing a file.";
 
 /// Largest input read, matching the file loader's own cap (SPEC §10).
 const MAX_INPUT_BYTES: u64 = locus_doc::file::MAX_FILE_BYTES as u64;
@@ -124,6 +129,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         Some("plugin") => plugin::run(&args[1..]),
+        Some("mcp") => mcp::run(&args[1..]),
         Some(other) => Err(CliError::Usage(format!("unknown command `{other}`"))),
         None => Err(CliError::Usage("no command given".into())),
     }
