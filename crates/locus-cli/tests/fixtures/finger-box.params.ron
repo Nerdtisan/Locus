@@ -1,0 +1,9 @@
+// Parameters for `locus-cli plugin run` with the finger-joint box example.
+// Keys left out take the plugin's defaults.
+(
+  width: 120.0,
+  depth: 80.0,
+  height: 50.0,
+  thickness: 3.0,
+  lid: true,
+)

@@ -19,6 +19,9 @@ path = "src/main.rs"
 anyhow.workspace = true
 locus-doc.workspace = true
 locus-export.workspace = true
+locus-geom.workspace = true
+# params.ron for `plugin run` (#187).
+ron.workspace = true
 
 # The plugin host is desktop-only (SPEC §0); so is this CLI.
 locus-plugin-host.workspace = true

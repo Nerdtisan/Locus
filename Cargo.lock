@@ -1902,7 +1902,9 @@ dependencies = [
  "anyhow",
  "locus-doc",
  "locus-export",
+ "locus-geom",
  "locus-plugin-host",
+ "ron",
 ]
 
 [[package]]
