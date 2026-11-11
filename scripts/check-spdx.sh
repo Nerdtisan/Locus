@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Fails if a tracked Rust source file doesn't start with the SPDX header for
-# its crate's licence (SPEC §2, §15.6). locus-plugin-api is MIT OR Apache-2.0
-# so plugin authors don't inherit AGPL obligations, and the third_party/paste
-# shim keeps paste's own licence; everything else is AGPL.
+# its crate's licence (SPEC §2, §15.6). locus-plugin-api and the example
+# plugins and template in examples/ are MIT OR Apache-2.0 so plugin authors
+# don't inherit AGPL obligations, and the third_party/paste shim keeps paste's
+# own licence; everything else is AGPL.
 #
 # Usage: scripts/check-spdx.sh   (from the repo root; needs git and bash only)
 
@@ -12,7 +13,7 @@ set -euo pipefail
 
 expected_for() {
   case "$1" in
-    crates/locus-plugin-api/* | third_party/paste/*) echo "// SPDX-License-Identifier: MIT OR Apache-2.0" ;;
+    crates/locus-plugin-api/* | examples/* | third_party/paste/*) echo "// SPDX-License-Identifier: MIT OR Apache-2.0" ;;
     *) echo "// SPDX-License-Identifier: AGPL-3.0-or-later" ;;
   esac
 }

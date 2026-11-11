@@ -28,10 +28,11 @@ wasmtime = { version = "50.0.1", default-features = false, features = [
 # .locusplugin archives (§15.7): read and write zip, deflate via zlib-rs.
 zip = { version = "9.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 sha2 = "0.10"
+# `pack`: wraps a wit-bindgen core module into a component (#185).
+wit-component = "0.261"
 
 [dev-dependencies]
 # Builds the §15.8 fixture components from hand-written core WAT in tests, so
 # the sandbox suite needs no wasm toolchain and runs on every CI platform.
 wat = "1.263"
-wit-component = "0.261"
 wit-parser = "0.261"

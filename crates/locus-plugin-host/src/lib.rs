@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! wasmtime-based plugin runtime, capability enforcement and plugin registry
-//! (SPEC §15, ADR 0009, ADR 0012). Desktop-only at first (SPEC §0): on `wasm32`
+//! (SPEC §15, ADR 0009, ADR 0013). Desktop-only at first (SPEC §0): on `wasm32`
 //! only the plain types, validation and manifest parsing build, so the web
 //! build never links wasmtime.
 
@@ -23,6 +23,8 @@ pub mod api {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod archive;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pack;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod registry;
 #[cfg(not(target_arch = "wasm32"))]

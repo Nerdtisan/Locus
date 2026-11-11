@@ -1,0 +1,13 @@
+# The plugin manifest (SPEC §15.4). Keep id, name and version in step with
+# `describe()` in src/lib.rs: the host refuses a plugin whose component and
+# manifest disagree.
+id = "com.example.my-plugin"
+name = "Rectangle"
+version = "0.1.0"
+author = "Your Name"
+licence = "MIT OR Apache-2.0"
+kinds = ["generator"]
+api = "1.0.0"
+# v1 grants no capabilities: no filesystem, network, clock, env or randomness.
+capabilities = []
+description = "A rectangle with its sides constrained horizontal and vertical."

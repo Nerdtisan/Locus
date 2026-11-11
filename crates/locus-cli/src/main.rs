@@ -10,15 +10,20 @@ use locus_doc::{Document, EntityKind, Sketcher, Status};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+mod plugin;
+
 const USAGE: &str = "\
 usage:
   locus-cli info <file.locus>
   locus-cli validate <file.locus> [--fix]
   locus-cli export <file.locus> --format svg|pdf|dxf --out <file> [--fix] [--force]
+  locus-cli plugin pack --manifest <plugin.toml> --wasm <file.wasm> --out <file.locusplugin>
+                        [--readme <README.md>] [--icon <icon.png>]
 
 validate prints errors and warnings and exits 1 when errors remain.
 --fix applies the safe auto-fixes to the exported geometry (never to the file).
-export refuses to write when errors remain unless --force is given.";
+export refuses to write when errors remain unless --force is given.
+plugin pack wraps a wasm32 build of a plugin into a checked .locusplugin.";
 
 /// Largest input read, matching the file loader's own cap (SPEC §10).
 const MAX_INPUT_BYTES: u64 = locus_doc::file::MAX_FILE_BYTES as u64;
@@ -92,6 +97,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
             write_file(&opts.out, &exported.bytes)?;
             Ok(())
         }
+        Some("plugin") => plugin::run(&args[1..]),
         Some(other) => Err(CliError::Usage(format!("unknown command `{other}`"))),
         None => Err(CliError::Usage("no command given".into())),
     }
