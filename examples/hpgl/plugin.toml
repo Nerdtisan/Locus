@@ -1,0 +1,9 @@
+id = "io.locus.hpgl"
+name = "HPGL"
+version = "1.0.0"
+author = "The Locus project"
+licence = "MIT OR Apache-2.0"
+kinds = ["exporter"]
+api = "1.0.0"
+capabilities = []
+description = "HP-GL for pen plotters and vinyl cutters: one pen per layer, true arcs."

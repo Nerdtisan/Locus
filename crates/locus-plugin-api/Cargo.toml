@@ -14,3 +14,8 @@ workspace = true
 [dev-dependencies]
 # Parses wit/ in a test so the draft interface stays valid WIT (#137).
 wit-parser = "0.263"
+
+# The guest SDK only exists where plugins are built: wasm32. Native builds of
+# the workspace never compile wit-bindgen.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = { version = "0.63", default-features = false, features = ["macros", "realloc", "std"] }

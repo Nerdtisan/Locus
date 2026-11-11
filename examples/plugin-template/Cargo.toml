@@ -1,0 +1,25 @@
+[package]
+name = "my-locus-plugin"
+description = "My Locus plugin"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Inside the Locus repo the SDK is a path dependency. In your own copy use:
+#   locus-plugin-api = { git = "https://github.com/Nerdtisan/Locus", branch = "dev" }
+locus-plugin-api = { path = "../../crates/locus-plugin-api" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# A standalone project, not part of the Locus workspace.
+[workspace]

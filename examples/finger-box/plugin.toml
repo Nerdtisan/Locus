@@ -1,0 +1,9 @@
+id = "io.locus.finger-box"
+name = "Finger-joint box"
+version = "1.0.0"
+author = "The Locus project"
+licence = "MIT OR Apache-2.0"
+kinds = ["generator"]
+api = "1.0.0"
+capabilities = []
+description = "The six (or five) flat panels of a box with finger joints, laid out in a row."

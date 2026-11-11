@@ -5,7 +5,8 @@ Locus is a constrained 2D vector editor for pen plotters, vinyl cutters and lase
 - Specification: [`docs/SPEC.md`](docs/SPEC.md)
 - Working agreement for contributors and Claude Code: [`CLAUDE.md`](CLAUDE.md)
 - Architecture decisions: [`docs/adr/`](docs/adr/)
+- Writing a plugin: [`examples/plugin-template/`](examples/plugin-template/) (plus the finger-joint box and HPGL examples next to it)
 
 ## Licence
 
-The core is licensed under the [GNU AGPL-3.0-or-later](LICENSE). The plugin API crate (`locus-plugin-api`) will be MIT OR Apache-2.0, with a plugin exception for plugins that talk to Locus only through the published interface (spec §2, §15.6). Contributions require a CLA.
+The core is licensed under the [GNU AGPL-3.0-or-later](LICENSE). The plugin API crate (`locus-plugin-api`) and the plugin template and examples in `examples/` are MIT OR Apache-2.0, with a plugin exception for plugins that talk to Locus only through the published interface (spec §2, §15.6). Contributions require a CLA.
