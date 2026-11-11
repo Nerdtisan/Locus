@@ -15,7 +15,7 @@ mod plugin;
 const USAGE: &str = "\
 usage:
   locus-cli info <file.locus>
-  locus-cli validate <file.locus> [--fix]
+  locus-cli validate <file.locus> [--fix] [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli export <file.locus> --format <id> --out <file> [--fix] [--force]
                    [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli plugin pack --manifest <plugin.toml> --wasm <file.wasm> --out <file.locusplugin>
@@ -27,7 +27,8 @@ validate prints errors and warnings and exits 1 when errors remain.
 --fix applies the safe auto-fixes to the exported geometry (never to the file).
 export refuses to write when errors remain unless --force is given. Formats:
 svg, pdf, dxf, plus those of exporter plugins given with --plugin (a file) or
---plugins (an installed-plugins folder).
+--plugins (an installed-plugins folder). Validator plugins given the same way
+add their findings to validate and export; their errors block export too.
 plugin pack wraps a wasm32 build of a plugin into a checked .locusplugin.
 plugin run runs a generator headlessly and exports its output; params.ron is
 `(key: value, ...)`, and keys left out take the plugin's defaults.";
@@ -76,9 +77,14 @@ fn run(args: &[String]) -> Result<(), CliError> {
             let opts = ValidateOpts::parse(&args[1..]).map_err(CliError::Usage)?;
             let doc = read_document(&opts.input)?;
             let prepared = locus_export::prepare(&doc, opts.fix);
+            let found = plugin::validator_findings(
+                &opts.plugin_files,
+                opts.plugins_dir.as_deref(),
+                &prepared.model,
+            )?;
             let mut out = std::io::stdout().lock();
-            write_report(&mut out, &prepared).context("cannot write to stdout")?;
-            if prepared.blocked() {
+            write_report(&mut out, &prepared, &found).context("cannot write to stdout")?;
+            if prepared.blocked() || locus_plugin_host::validators::has_errors(&found) {
                 return Err(CliError::Failed(anyhow::anyhow!("validation found errors")));
             }
             Ok(())
@@ -95,9 +101,15 @@ fn run(args: &[String]) -> Result<(), CliError> {
             }
             let doc = read_document(&opts.input)?;
             let prepared = locus_export::prepare(&doc, opts.fix);
-            if prepared.blocked() && !opts.force {
+            let found = plugin::validator_findings(
+                &opts.plugin_files,
+                opts.plugins_dir.as_deref(),
+                &prepared.model,
+            )?;
+            let blocked = prepared.blocked() || locus_plugin_host::validators::has_errors(&found);
+            if blocked && !opts.force {
                 let mut err = std::io::stderr().lock();
-                let _ = write_report(&mut err, &prepared);
+                let _ = write_report(&mut err, &prepared, &found);
                 return Err(CliError::Failed(anyhow::anyhow!(
                     "export blocked by validation errors (use --fix, or --force to export anyway)"
                 )));
@@ -120,15 +132,25 @@ fn run(args: &[String]) -> Result<(), CliError> {
 struct ValidateOpts {
     input: PathBuf,
     fix: bool,
+    plugin_files: Vec<PathBuf>,
+    plugins_dir: Option<PathBuf>,
 }
 
 impl ValidateOpts {
     fn parse(args: &[String]) -> Result<Self, String> {
         let mut input = None;
         let mut fix = false;
-        for a in args {
+        let (mut plugin_files, mut plugins_dir) = (Vec::new(), None);
+        let mut it = args.iter();
+        while let Some(a) = it.next() {
             match a.as_str() {
                 "--fix" => fix = true,
+                "--plugin" => {
+                    plugin_files.push(PathBuf::from(it.next().ok_or("--plugin needs a value")?))
+                }
+                "--plugins" => {
+                    plugins_dir = Some(PathBuf::from(it.next().ok_or("--plugins needs a value")?));
+                }
                 s if s.starts_with("--") => return Err(format!("unknown option `{s}`")),
                 s => {
                     if input.replace(PathBuf::from(s)).is_some() {
@@ -140,6 +162,8 @@ impl ValidateOpts {
         Ok(Self {
             input: input.ok_or("no input file given")?,
             fix,
+            plugin_files,
+            plugins_dir,
         })
     }
 }
@@ -195,10 +219,12 @@ impl ExportOpts {
     }
 }
 
-/// Fixes applied, then each issue, then a one-line summary.
+/// Fixes applied, then each built-in issue, then validator plugins' findings
+/// (#234), then a one-line summary of both.
 pub(crate) fn write_report(
     out: &mut impl std::io::Write,
     p: &locus_export::Prepared,
+    found: &[locus_plugin_host::validators::PluginFinding],
 ) -> std::io::Result<()> {
     for f in &p.fixes {
         writeln!(out, "fixed: {}", f.message)?;
@@ -206,8 +232,20 @@ pub(crate) fn write_report(
     for i in &p.report.issues {
         writeln!(out, "{i}")?;
     }
+    for f in found {
+        writeln!(out, "{f}")?;
+    }
     let c = p.report.counts();
-    writeln!(out, "{} error(s), {} warning(s)", c.errors, c.warnings)
+    let plugin_errors = found
+        .iter()
+        .filter(|f| f.severity == locus_plugin_host::types::Severity::Error)
+        .count();
+    writeln!(
+        out,
+        "{} error(s), {} warning(s)",
+        c.errors + plugin_errors,
+        c.warnings + found.len() - plugin_errors
+    )
 }
 
 fn read_document(path: &Path) -> Result<Document> {

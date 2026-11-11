@@ -71,3 +71,32 @@ pub mod exporter {
         },
     });
 }
+
+pub mod importer {
+    wit_bindgen::generate!({
+        inline: "package locus:sdk; world importer { export locus:plugin/importer@1.0.0; }",
+        path: "wit",
+        world: "locus:sdk/importer",
+        pub_export_macro: true,
+        export_macro_name: "export_importer",
+        default_bindings_module: "locus_plugin_api::importer",
+        with: {
+            "locus:plugin/types@1.0.0": crate::shared::locus::plugin::types,
+        },
+    });
+}
+
+pub mod validator {
+    wit_bindgen::generate!({
+        inline: "package locus:sdk; world validator { export locus:plugin/validator@1.0.0; }",
+        path: "wit",
+        world: "locus:sdk/validator",
+        pub_export_macro: true,
+        export_macro_name: "export_validator",
+        default_bindings_module: "locus_plugin_api::validator",
+        with: {
+            "locus:plugin/types@1.0.0": crate::shared::locus::plugin::types,
+            "locus:plugin/params@1.0.0": crate::shared::locus::plugin::params,
+        },
+    });
+}
