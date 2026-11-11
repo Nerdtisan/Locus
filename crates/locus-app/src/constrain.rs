@@ -117,6 +117,8 @@ impl Sorted {
                 Some(EntityKind::Circle) => s.circles.push(id),
                 Some(EntityKind::Arc) => s.arcs.push(id),
                 Some(EntityKind::Bezier) => s.beziers.push(id),
+                // Text is a container; constraints reach it through its points.
+                Some(EntityKind::Text) => {}
                 None => {}
             }
         }
@@ -313,6 +315,7 @@ pub fn entity_name(doc: &Document, id: EntityId) -> String {
         Some(EntityKind::Circle) => "Circle",
         Some(EntityKind::Arc) => "Arc",
         Some(EntityKind::Bezier) => "Bézier",
+        Some(EntityKind::Text) => "Text",
         None => "Missing",
     };
     format!("{kind} {id}")
@@ -455,6 +458,7 @@ pub fn dim_anchor(doc: &Document, spec: DimSpec) -> Vec2 {
             locus_doc::Geom::Circle { .. } => doc.circle(id).map(|c| c.center),
             locus_doc::Geom::Arc { .. } => doc.arc(id).map(|a| a.center),
             locus_doc::Geom::Bezier { .. } => doc.cubic(id).map(|c| c.eval(0.5)),
+            locus_doc::Geom::Text { anchor, .. } => doc.point_pos(anchor),
         }
     };
     match spec {

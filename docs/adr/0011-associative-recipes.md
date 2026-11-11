@@ -21,7 +21,7 @@
 
 ## Known limitation (recorded in §6.2.1)
 
-§6.2.1 says instances "can be referenced by other constraints (e.g. dimension to an instance)". For **pattern** instances v1 allows only *driven (reference) dimensions*; geometric and driving constraints onto them are refused with a `DocError` that says why, because the instances are not solver variables. Mirror instances are solver entities and accept any constraint the solver can satisfy. Lifting this (a two-phase solve with the instances fixed) is tracked as an M4 follow-up.
+§6.2.1 says instances "can be referenced by other constraints (e.g. dimension to an instance)". For **pattern** (and offset) instances v1 refuses *every* constraint, driven (reference) dimensions included, with a `DocError` that says why, because the instances are not solver variables and a measured value would go stale (measuring them needs the same two-phase solve). Mirror instances are solver entities and accept any constraint the solver can satisfy. Lifting this (a two-phase solve with the instances fixed) is tracked as an M4 follow-up.
 
 ## Consequences for the offsets session
 
@@ -32,3 +32,7 @@
 ## Deferred
 
 Mirror's "merge geometry that lands on the mirror line" option, and per-instance suppress, are not in the first cut.
+
+## Patterns as built (#168, #169)
+
+`RecipeKind::Linear { dir1, dir2 }` and `Circular { centre, count, angle, symmetric, rotate }`; counts, spacings and angles are expressions over the document parameters. `crate::pattern::regenerate` runs after every command and solve (same hook as offsets): it re-evaluates the expressions, creates or removes copies to match the count (IDs from the recipe's pool), and writes positions from the sources. `SetInstanceSuppressed` removes a copy's entities but keeps its IDs. No format bump: new `RecipeKind` variants and an optional `suppressed` field are additive.
