@@ -127,7 +127,7 @@ impl FontCatalog {
         #[cfg(target_arch = "wasm32")]
         {
             let (name, bytes) = self.web.poll()?;
-            return self.add_file(&name, bytes);
+            self.add_file(&name, bytes)
         }
         #[cfg(not(target_arch = "wasm32"))]
         None
@@ -159,7 +159,7 @@ impl FontCatalog {
                     return None;
                 }
             };
-            return self.add_file(&name, bytes);
+            self.add_file(&name, bytes)
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -192,7 +192,10 @@ pub fn controls(
                 .hint_text("Text"),
         );
         out.content = r.changed();
-        out.content_done = r.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape));
+        // Commit on focus loss or Ctrl+Enter (clicking blank panel space does not drop focus in egui).
+        out.content_done = (r.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape)))
+            || (r.has_focus()
+                && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)));
     });
     if let Some(f) = cat.poll() {
         s.font = f;
@@ -283,15 +286,18 @@ fn font_picker(ui: &mut egui::Ui, s: &mut TextSettings, cat: &mut FontCatalog) -
                     .into_iter()
                     .filter(|f| needle.is_empty() || f.to_lowercase().contains(&needle))
                     .collect();
-                egui::ScrollArea::vertical()
-                    .max_height(220.0)
-                    .show_rows(ui, 20.0, families.len(), |ui, range| {
+                egui::ScrollArea::vertical().max_height(220.0).show_rows(
+                    ui,
+                    20.0,
+                    families.len(),
+                    |ui, range| {
                         for f in &families[range] {
                             changed |= ui
                                 .selectable_value(&mut s.font, FontRef::System(f.clone()), f)
                                 .changed();
                         }
-                    });
+                    },
+                );
             }
             ui.separator();
             if ui.button("Load font file…").clicked() {
@@ -347,7 +353,11 @@ mod system {
     fn font_dirs() -> Vec<PathBuf> {
         let mut v = Vec::new();
         if cfg!(windows) {
-            v.push(env_dir("WINDIR").unwrap_or_else(|| "C:\\Windows".into()).join("Fonts"));
+            v.push(
+                env_dir("WINDIR")
+                    .unwrap_or_else(|| "C:\\Windows".into())
+                    .join("Fonts"),
+            );
             if let Some(l) = env_dir("LOCALAPPDATA") {
                 v.push(l.join("Microsoft").join("Windows").join("Fonts"));
             }
@@ -369,9 +379,11 @@ mod system {
     }
 
     fn is_font(p: &Path) -> bool {
-        p.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| ["ttf", "otf", "ttc"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+        p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            ["ttf", "otf", "ttc"]
+                .iter()
+                .any(|x| e.eq_ignore_ascii_case(x))
+        })
     }
 
     fn walk(dir: &Path, depth: usize, out: &mut BTreeMap<String, PathBuf>) {

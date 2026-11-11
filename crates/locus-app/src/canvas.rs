@@ -12,12 +12,12 @@ use crate::scene::Scene;
 use crate::settings::{Settings, Units};
 use crate::tools::{Draft, Outcome, Pick, Tool};
 use crate::view::View;
-use text_ui::{FontCatalog, TextSettings};
 use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
 use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, LayerId, Sketcher};
 use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
+use text_ui::{FontCatalog, TextSettings};
 
 mod layers_panel;
 mod machine;
@@ -903,7 +903,16 @@ impl Canvas {
             s = live;
         }
         let missing = self.fonts.missing(&stored.font);
-        let edited = text_ui::controls(ui, &mut s, &mut self.fonts, !missing, 3);
+        let mut edited = text_ui::controls(ui, &mut s, &mut self.fonts, !missing, 3);
+        if s.content != stored.content
+            && !missing
+            && ui
+                .button("Apply text")
+                .on_hover_text("Ctrl+Enter, or click away from the field")
+                .clicked()
+        {
+            edited.content_done = true;
+        }
         if edited.commit() && s != TextSettings::from_data(stored) {
             match s.to_data(&self.fonts.library) {
                 Ok(text) => {

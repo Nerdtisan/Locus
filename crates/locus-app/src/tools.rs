@@ -148,7 +148,9 @@ impl Tool {
             (Tool::Slot, 0) => "Slot: click the first centre",
             (Tool::Slot, 1) => "Slot: click the second centre",
             (Tool::Slot, _) => "Slot: click to set the width, or type it",
-            (Tool::Text, _) => "Text: click to place the anchor (set the text and font in the tool bar)",
+            (Tool::Text, _) => {
+                "Text: click to place the anchor (set the text and font in the tool bar)"
+            }
             (Tool::Bezier, 0) => "Bézier: click the start (drag for a smooth point)",
             (Tool::Bezier, _) => {
                 "Bézier: click a corner, drag for a smooth point, click the start to close (Enter finishes)"
@@ -1383,7 +1385,9 @@ mod tests {
     #[test]
     fn text_tool_reuses_an_existing_point_as_the_anchor() {
         let mut s = Sketcher::new(Document::new());
-        let p = click(&mut Draft::new(Tool::Point), &mut s, at(2.0, 3.0)).unwrap().entities[0];
+        let p = click(&mut Draft::new(Tool::Point), &mut s, at(2.0, 3.0))
+            .unwrap()
+            .entities[0];
         let mut d = Draft::new(Tool::Text);
         d.set_text(Some(sample_text("A")));
         click(&mut d, &mut s, Pick::at_point(Vec2::new(2.0, 3.0), p)).unwrap();
