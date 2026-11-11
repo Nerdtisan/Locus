@@ -10,3 +10,10 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+locus-geom.workspace = true
+skrifa = "0.49"
+harfrust = "0.15"
+serde.workspace = true
+thiserror.workspace = true
