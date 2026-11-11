@@ -13,7 +13,7 @@
 
 use crate::scene::Shape;
 use crate::shapes;
-use locus_doc::{Command, Constraint, Dimension, Document, EntityId, Geom, LayerId};
+use locus_doc::{Command, Constraint, Dimension, Document, EntityId, Geom, LayerId, TextData};
 use locus_geom::{Arc, Circle, Cubic, Line, Vec2};
 
 /// Shorter than this is "the same place": no zero-length lines or radii.
@@ -49,10 +49,12 @@ pub enum Tool {
     Slot,
     /// Bézier pen: click for corners, click-drag for smooth points (#160).
     Bezier,
+    /// Text: one click places the anchor; content and font come from the tool strip (#180).
+    Text,
 }
 
 impl Tool {
-    pub const DRAWING: [Tool; 14] = [
+    pub const DRAWING: [Tool; 15] = [
         Tool::Point,
         Tool::Line,
         Tool::RectCorner,
@@ -67,6 +69,7 @@ impl Tool {
         Tool::Polygon,
         Tool::Slot,
         Tool::Bezier,
+        Tool::Text,
     ];
 
     pub fn label(self) -> &'static str {
@@ -84,6 +87,7 @@ impl Tool {
             Tool::Polygon => "Polygon",
             Tool::Slot => "Slot",
             Tool::Bezier => "Bézier",
+            Tool::Text => "Text",
             Tool::ArcThreePoint => "Arc (3-point)",
             Tool::ArcCentre => "Arc (centre)",
         }
@@ -103,7 +107,8 @@ impl Tool {
             Tool::Polygon => Some('G'),
             Tool::Slot => Some('U'),
             Tool::Bezier => Some('N'),
-            Tool::RectCentre | Tool::RectThree | Tool::Circle2 | Tool::Circle3 => None,
+            // T is Tangent; text has no single-key shortcut.
+            Tool::RectCentre | Tool::RectThree | Tool::Circle2 | Tool::Circle3 | Tool::Text => None,
         }
     }
 
@@ -143,6 +148,7 @@ impl Tool {
             (Tool::Slot, 0) => "Slot: click the first centre",
             (Tool::Slot, 1) => "Slot: click the second centre",
             (Tool::Slot, _) => "Slot: click to set the width, or type it",
+            (Tool::Text, _) => "Text: click to place the anchor (set the text and font in the tool bar)",
             (Tool::Bezier, 0) => "Bézier: click the start (drag for a smooth point)",
             (Tool::Bezier, _) => {
                 "Bézier: click a corner, drag for a smooth point, click the start to close (Enter finishes)"
@@ -347,6 +353,10 @@ pub struct Draft {
     /// the curve just drawn, so the next one is made tangent to it.
     out: Option<Vec2>,
     last_curve: Option<EntityId>,
+    /// Text tool: the text to place, laid out by the canvas before each click.
+    text: Option<Box<TextData>>,
+    /// The text entity the last click created, for the canvas to select.
+    placed: Option<EntityId>,
 }
 
 impl Draft {
@@ -362,6 +372,8 @@ impl Draft {
             circumscribed: false,
             out: None,
             last_curve: None,
+            text: None,
+            placed: None,
         }
     }
 
@@ -407,7 +419,7 @@ impl Draft {
             Tool::RectCorner | Tool::RectCentre | Tool::RectThree | Tool::Slot => {
                 self.nodes.len() < 2
             }
-            Tool::Circle2 | Tool::Circle3 | Tool::Bezier => true,
+            Tool::Circle2 | Tool::Circle3 | Tool::Bezier | Tool::Text => true,
             Tool::ArcTangent => false,
             // The "through" click is only a guide.
             Tool::ArcThreePoint => self.nodes.len() < 2,
@@ -464,6 +476,7 @@ impl Draft {
             Tool::Polygon => self.click_polygon(here, plan, None),
             Tool::Slot => self.click_slot(here, plan, None),
             Tool::Bezier => self.pen(pick, None, doc_next_id),
+            Tool::Text => self.click_text(here, plan),
         }
     }
 
@@ -824,6 +837,38 @@ impl Draft {
         });
         self.cancel();
         Outcome::Commit(plan.finish("Add tangent arc"))
+    }
+
+    /// The text the next Text-tool click places (laid out by the canvas).
+    pub fn set_text(&mut self, text: Option<TextData>) {
+        self.text = text.map(Box::new);
+    }
+
+    /// The text entity the last click created, once.
+    pub fn take_placed(&mut self) -> Option<EntityId> {
+        self.placed.take()
+    }
+
+    /// Text tool (SPEC §9, #180): an anchor, a point to its right that sets
+    /// the baseline direction, a construction baseline between them held
+    /// horizontal, and the text, as one undo step. Delete the Horizontal
+    /// constraint to turn the text; constrain the anchor like any point.
+    fn click_text(&mut self, here: Node, mut plan: Plan) -> Outcome {
+        let Some(text) = self.text.clone() else {
+            return Outcome::Rejected("Type some text and pick a font first");
+        };
+        // The direction point is only a direction; keep it clear of the
+        // text so it neither clutters nor snaps onto it.
+        let reach = (text.size * 3.0).max(10.0);
+        let anchor = plan.node(here);
+        let dir = plan.point(here.pos() + Vec2::new(reach, 0.0));
+        let base = plan.construction(Geom::Line {
+            start: anchor,
+            end: dir,
+        });
+        plan.constrain(Constraint::Horizontal { line: base });
+        self.placed = Some(plan.add(Geom::Text { anchor, dir, text }));
+        Outcome::Commit(plan.finish("Add text"))
     }
 
     fn click_polygon(&mut self, here: Node, mut plan: Plan, radius: Option<f64>) -> Outcome {
@@ -1296,6 +1341,55 @@ mod tests {
             .iter()
             .filter(|(_, e)| f(&e.geom))
             .count()
+    }
+
+    fn sample_text(content: &str) -> TextData {
+        use locus_text::{Align, BundledFont, BundledProvider, FontRef};
+        TextData::new(
+            content,
+            FontRef::bundled(BundledFont::HersheySans),
+            8.0,
+            Align::Left,
+            1.0,
+            &BundledProvider,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn text_tool_needs_text_then_places_it_as_one_undo_step() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Text);
+        assert!(matches!(
+            d.click(at(5.0, 5.0), s.document().next_id()),
+            Outcome::Rejected(_)
+        ));
+        d.set_text(Some(sample_text("Hi")));
+        let a = click(&mut d, &mut s, at(5.0, 5.0)).unwrap();
+        let id = d.take_placed().unwrap();
+        assert!(a.entities.contains(&id));
+        let (t, anchor, dir) = s.document().text(id).unwrap();
+        assert_eq!(t.content, "Hi");
+        // Anchor where clicked; the baseline is held horizontal.
+        assert_eq!(s.document().point_pos(anchor), Some(Vec2::new(5.0, 5.0)));
+        let pd = s.document().point_pos(dir).unwrap();
+        assert!((pd.y - 5.0).abs() < 1e-6 && pd.x > 5.0);
+        assert_eq!(count(&s, |g| matches!(g, Geom::Line { .. })), 1);
+        // The whole placement is one undo step.
+        s.undo().unwrap();
+        assert!(s.document().entities().is_empty());
+    }
+
+    #[test]
+    fn text_tool_reuses_an_existing_point_as_the_anchor() {
+        let mut s = Sketcher::new(Document::new());
+        let p = click(&mut Draft::new(Tool::Point), &mut s, at(2.0, 3.0)).unwrap().entities[0];
+        let mut d = Draft::new(Tool::Text);
+        d.set_text(Some(sample_text("A")));
+        click(&mut d, &mut s, Pick::at_point(Vec2::new(2.0, 3.0), p)).unwrap();
+        let id = d.take_placed().unwrap();
+        assert_eq!(s.document().text(id).unwrap().1, p);
+        assert_eq!(count(&s, |g| matches!(g, Geom::Point { .. })), 2);
     }
 
     #[test]

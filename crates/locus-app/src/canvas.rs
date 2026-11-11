@@ -12,6 +12,7 @@ use crate::scene::Scene;
 use crate::settings::{Settings, Units};
 use crate::tools::{Draft, Outcome, Pick, Tool};
 use crate::view::View;
+use text_ui::{FontCatalog, TextSettings};
 use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
 use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, LayerId, Sketcher};
@@ -23,6 +24,7 @@ mod machine;
 mod offsets;
 mod params_panel;
 mod regions;
+mod text_ui;
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
@@ -124,6 +126,11 @@ pub struct Canvas {
     pub corner: CornerSettings,
     /// Move/rotate/scale values, edited in the tool strip.
     pub transform: TransformSettings,
+    /// Settings for the next text the Text tool places, and the fonts it can use (#180).
+    text_settings: TextSettings,
+    fonts: FontCatalog,
+    /// The selected text being edited: its id and the not-yet-committed settings.
+    text_edit: Option<(EntityId, TextSettings)>,
 }
 
 impl Default for Canvas {
@@ -160,6 +167,9 @@ impl Default for Canvas {
             corner_first: None,
             corner: CornerSettings::default(),
             transform: TransformSettings::default(),
+            text_settings: TextSettings::default(),
+            fonts: FontCatalog::headless(),
+            text_edit: None,
         };
         c.load(demo::sketch());
         c
@@ -682,7 +692,12 @@ impl Canvas {
             Outcome::Pending => {}
             Outcome::Rejected(why) => self.notice = Some(why.to_owned()),
             Outcome::Commit(cmd) => match self.apply(&cmd) {
-                Ok(()) => self.notice = None,
+                Ok(()) => {
+                    self.notice = None;
+                    if let Some(id) = self.draft.take_placed() {
+                        self.selection.set_all([id]);
+                    }
+                }
                 Err(e) => {
                     // The draft's predicted IDs are void after a failure.
                     self.draft.cancel();
@@ -811,6 +826,15 @@ impl Canvas {
         if let Some(s) = self.region_summary() {
             ui.label(s);
         }
+        let selected_text = self
+            .selection
+            .iter()
+            .next()
+            .filter(|_| self.selection.len() == 1)
+            .and_then(|id| {
+                let (t, anchor, dir) = self.sketcher.document().text(id)?;
+                Some((id, anchor, dir, t.clone()))
+            });
         let doc = self.sketcher.document();
         match self.selection.len() {
             0 if !self.region_ui.selected.is_empty() => {}
@@ -831,19 +855,86 @@ impl Canvas {
             }
             n => {
                 ui.label(format!("{n} entities selected"));
-                let mut counts = [0usize; 4];
+                let mut counts = [0usize; 6];
                 for id in self.selection.iter() {
                     if let Some(e) = doc.entity(id) {
                         counts[e.geom.kind() as usize] += 1;
                     }
                 }
-                for (name, c) in ["Points", "Lines", "Circles", "Arcs"].iter().zip(counts) {
+                for (name, c) in ["Points", "Lines", "Circles", "Arcs", "Béziers", "Texts"]
+                    .iter()
+                    .zip(counts)
+                {
                     if c > 0 {
                         ui.label(format!("{name}: {c}"));
                     }
                 }
             }
         }
+        if let Some((id, anchor, dir, text)) = selected_text {
+            ui.separator();
+            self.edit_text(ui, id, anchor, dir, &text);
+        } else {
+            self.text_edit = None;
+        }
+    }
+
+    /// Edit the selected text's content, font and style. Style changes apply
+    /// at once; the content applies when its field loses focus, so one edit
+    /// is one undo step (SPEC §11). With the font missing only the font can
+    /// change (the content can't be re-laid out), and picking one re-lays
+    /// the saved text out in it.
+    fn edit_text(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: EntityId,
+        anchor: EntityId,
+        dir: EntityId,
+        stored: &locus_doc::TextData,
+    ) {
+        let mut s = match self.text_edit.take() {
+            Some((i, s)) if i == id => s,
+            _ => TextSettings::from_data(stored),
+        };
+        // An undo/redo or solver change under the buffer: show the stored text
+        // unless the user is mid-edit of the content.
+        let live = TextSettings::from_data(stored);
+        if s.content != live.content && !ui.memory(|m| m.focused().is_some()) {
+            s = live;
+        }
+        let missing = self.fonts.missing(&stored.font);
+        let edited = text_ui::controls(ui, &mut s, &mut self.fonts, !missing, 3);
+        if edited.commit() && s != TextSettings::from_data(stored) {
+            match s.to_data(&self.fonts.library) {
+                Ok(text) => {
+                    let cmd = Command::ModifyEntity {
+                        id,
+                        geom: Geom::Text {
+                            anchor,
+                            dir,
+                            text: Box::new(text),
+                        },
+                    };
+                    match self.apply(&cmd) {
+                        Ok(()) => self.notice = None,
+                        Err(e) => self.notice = Some(e.to_string()),
+                    }
+                }
+                Err(e) => self.notice = Some(e.to_string()),
+            }
+        }
+        self.text_edit = Some((id, s));
+    }
+
+    /// Tool-bar controls while the Text tool is active.
+    pub fn text_tool_ui(&mut self, ui: &mut egui::Ui) {
+        // Keep the strip compact: the controls go in a wrapped row.
+        text_ui::controls(ui, &mut self.text_settings, &mut self.fonts, true, 1);
+    }
+
+    /// Swap in the app's real font catalog (system fonts, browser picker).
+    pub fn install_fonts(&mut self, ctx: &egui::Context) {
+        self.fonts = FontCatalog::new(ctx);
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, settings: &Settings, status: &mut Status) {
@@ -985,6 +1076,15 @@ impl Canvas {
             && let Some(pick) = self.cursor
         {
             self.draft.set_layer(self.active_layer());
+            if self.draft.tool() == Tool::Text {
+                match self.text_settings.to_data(&self.fonts.library) {
+                    Ok(t) => self.draft.set_text(Some(t)),
+                    Err(e) => {
+                        self.draft.set_text(None);
+                        self.notice = Some(e.to_string());
+                    }
+                }
+            }
             let out = self.draft.click(pick, self.sketcher.document().next_id());
             self.typed.clear();
             self.run(out);
