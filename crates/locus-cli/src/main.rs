@@ -20,13 +20,17 @@ usage:
                    [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli plugin pack --manifest <plugin.toml> --wasm <file.wasm> --out <file.locusplugin>
                         [--readme <README.md>] [--icon <icon.png>]
+  locus-cli plugin run <file.locusplugin | id> [--params <params.ron>] --out <file>
+                       [--format svg|pdf|dxf] [--plugins <dir>] [--force]
 
 validate prints errors and warnings and exits 1 when errors remain.
 --fix applies the safe auto-fixes to the exported geometry (never to the file).
 export refuses to write when errors remain unless --force is given. Formats:
 svg, pdf, dxf, plus those of exporter plugins given with --plugin (a file) or
 --plugins (an installed-plugins folder).
-plugin pack wraps a wasm32 build of a plugin into a checked .locusplugin.";
+plugin pack wraps a wasm32 build of a plugin into a checked .locusplugin.
+plugin run runs a generator headlessly and exports its output; params.ron is
+`(key: value, ...)`, and keys left out take the plugin's defaults.";
 
 /// Largest input read, matching the file loader's own cap (SPEC §10).
 const MAX_INPUT_BYTES: u64 = locus_doc::file::MAX_FILE_BYTES as u64;
@@ -192,7 +196,10 @@ impl ExportOpts {
 }
 
 /// Fixes applied, then each issue, then a one-line summary.
-fn write_report(out: &mut impl std::io::Write, p: &locus_export::Prepared) -> std::io::Result<()> {
+pub(crate) fn write_report(
+    out: &mut impl std::io::Write,
+    p: &locus_export::Prepared,
+) -> std::io::Result<()> {
     for f in &p.fixes {
         writeln!(out, "fixed: {}", f.message)?;
     }
