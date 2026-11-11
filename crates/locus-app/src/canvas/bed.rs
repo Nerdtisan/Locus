@@ -35,4 +35,26 @@ impl Canvas {
             colour,
         );
     }
+
+    /// Show the pen width / kerf of Draw and Cut layers at true scale.
+    pub fn stroke_preview(&self) -> bool {
+        self.stroke_on
+    }
+
+    pub fn set_stroke_preview(&mut self, on: bool) {
+        self.stroke_on = on;
+    }
+
+    pub(super) fn draw_stroke_preview(&self, frame: &crate::render::Frame<'_>, dark: bool) {
+        if !self.stroke_on {
+            return;
+        }
+        let doc = self.sketcher.document();
+        let colour = if dark {
+            Color32::from_rgba_unmultiplied(255, 190, 80, 90)
+        } else {
+            Color32::from_rgba_unmultiplied(230, 120, 0, 90)
+        };
+        frame.draw_strokes(&self.scene, |id| doc.stroke_width(id), colour);
+    }
 }

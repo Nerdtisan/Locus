@@ -342,7 +342,11 @@ pub fn describe(doc: &Document, c: &Constraint, units: crate::settings::Units) -
             format!(" {v}")
         }
     });
-    format!("{}{}: {refs}", c.name(), value.unwrap_or_default())
+    let edge = c
+        .dimension()
+        .filter(|d| !d.edge.is_centre())
+        .map_or(String::new(), |d| format!(" [{}]", d.edge.name()));
+    format!("{}{}{edge}: {refs}", c.name(), value.unwrap_or_default())
 }
 
 /// What a dimension measures, before its value is chosen.

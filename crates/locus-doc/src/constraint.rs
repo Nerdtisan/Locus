@@ -260,7 +260,8 @@ impl Constraint {
     /// Can this dimension measure to a stroke edge? Distances with a line,
     /// radii and diameters can; point-to-point, horizontal / vertical
     /// distances and angles cannot (a point has no edge).
-    fn has_stroke_edge(&self, doc: &Document) -> bool {
+    #[must_use]
+    pub fn has_stroke_edge(&self, doc: &Document) -> bool {
         let is_line = |id: &EntityId| {
             doc.entity(*id)
                 .is_some_and(|e| matches!(e.geom, Geom::Line { .. }))
