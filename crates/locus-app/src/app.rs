@@ -572,7 +572,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
             Tab::Regions => self.canvas.regions_ui(ui),
             Tab::Parameters => self.canvas.parameters_ui(ui),
-            Tab::Patterns => self.canvas.patterns_ui(ui),
+            Tab::Patterns => self.canvas.patterns_ui(ui, self.settings.units),
         }
     }
 
