@@ -20,6 +20,7 @@ pub mod host;
 pub mod plugins;
 pub mod policy;
 pub mod server;
+pub mod stdio;
 pub mod tools;
 
 pub use error::ToolError;
