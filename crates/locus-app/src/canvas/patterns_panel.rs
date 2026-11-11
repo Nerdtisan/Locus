@@ -5,7 +5,8 @@
 //! it. Every action is one `Sketcher` command, so one undo step. Text is held
 //! in a draft while a box has focus and committed when focus leaves it.
 
-use super::Canvas;
+use super::{Canvas, to_display, to_stored};
+use crate::settings::Units;
 use egui::{TextEdit, Ui};
 use locus_doc::{Axis, Command, EntityId, LinearDir, RecipeId, RecipeKind};
 use std::collections::BTreeMap;
@@ -137,7 +138,7 @@ fn text(ui: &mut Ui, s: &mut String, w: f32) {
 }
 
 impl Canvas {
-    pub fn patterns_ui(&mut self, ui: &mut Ui) {
+    pub fn patterns_ui(&mut self, ui: &mut Ui, units: Units) {
         let mut cmds: Vec<Command> = Vec::new();
         let selection: Vec<EntityId> = self.selected();
         {
@@ -218,10 +219,20 @@ impl Canvas {
                     }
                 } else {
                     RecipeKind::Linear {
-                        dir1: dir(&st.axis1, &st.count1, &st.spacing1, st.symmetric),
-                        dir2: st
-                            .second
-                            .then(|| dir(&st.axis2, &st.count2, &st.spacing2, false)),
+                        dir1: dir(
+                            &st.axis1,
+                            &st.count1,
+                            &to_stored(&st.spacing1, units),
+                            st.symmetric,
+                        ),
+                        dir2: st.second.then(|| {
+                            dir(
+                                &st.axis2,
+                                &st.count2,
+                                &to_stored(&st.spacing2, units),
+                                false,
+                            )
+                        }),
                     }
                 };
                 cmds.push(Command::AddRecipe {
@@ -240,6 +251,12 @@ impl Canvas {
                     for (i, (label, current)) in fields(&r.kind).into_iter().enumerate() {
                         ui.horizontal(|ui| {
                             ui.label(label);
+                            let is_len = label.starts_with("spacing");
+                            let current = if is_len {
+                                to_display(&current, units)
+                            } else {
+                                current
+                            };
                             let key = (*rid, u8::try_from(i).unwrap_or(0));
                             let mut t = st
                                 .drafts
@@ -255,7 +272,11 @@ impl Canvas {
                                 if t != current {
                                     cmds.push(Command::EditRecipe {
                                         id: *rid,
-                                        kind: with_field(&r.kind, i, t),
+                                        kind: with_field(
+                                            &r.kind,
+                                            i,
+                                            if is_len { to_stored(&t, units) } else { t },
+                                        ),
                                     });
                                 }
                             }

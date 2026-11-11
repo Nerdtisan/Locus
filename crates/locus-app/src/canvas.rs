@@ -400,9 +400,10 @@ impl Canvas {
             target: DimTarget::Existing(id),
             what: c.name(),
             angle,
-            text: doc
-                .dimension_expr(id)
-                .map_or_else(|| format_value(dim.value, angle, units), str::to_owned),
+            text: doc.dimension_expr(id).map_or_else(
+                || format_value(dim.value, angle, units),
+                |s| to_display(s, units),
+            ),
             at,
             fresh: true,
         });
@@ -560,7 +561,7 @@ impl Canvas {
         if let DimTarget::Offset(rid) = edit.target {
             let mm =
                 parse_number(&edit.text).map(|v| if units == Units::Inch { v * 25.4 } else { v });
-            return match self.offset_command(rid, mm, &edit.text) {
+            return match self.offset_command(rid, mm, &to_stored(&edit.text, units)) {
                 Some(cmd) => self.apply_reporting(&cmd),
                 None => false,
             };
@@ -582,7 +583,11 @@ impl Canvas {
             };
             return self.apply_reporting(&cmd);
         }
-        let expr = edit.text.trim().to_owned();
+        let expr = if edit.angle {
+            edit.text.trim().to_owned()
+        } else {
+            to_stored(&edit.text, units)
+        };
         let cmd = match edit.target {
             DimTarget::New(spec) => Command::AddDimensionExpr {
                 constraint: spec.constraint(1.0, false),
@@ -1534,6 +1539,35 @@ fn format_value(value: f64, angle: bool, units: Units) -> String {
     s.to_owned()
 }
 
+/// Inch-mode entry of a length expression (SPEC §5): bare numbers follow the
+/// display unit like plain numbers do, so `1/2 + 0.125` typed in inches is
+/// stored as `(1/2 + 0.125) * in`. An expression that names parameters or a
+/// unit is already unambiguous (parameters are in millimetres) and is kept
+/// as typed.
+pub(crate) fn to_stored(text: &str, units: Units) -> String {
+    let t = text.trim();
+    if units != Units::Inch {
+        return t.to_owned();
+    }
+    match locus_doc::expr::parse(t) {
+        Ok(e) if e.references().is_empty() => format!("({t}) * in"),
+        _ => t.to_owned(),
+    }
+}
+
+/// The inverse of [`to_stored`], for showing a stored expression back.
+pub(crate) fn to_display(stored: &str, units: Units) -> String {
+    if units == Units::Inch
+        && let Some(inner) = stored
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(") * in"))
+        && locus_doc::expr::parse(inner).is_ok_and(|e| e.references().is_empty())
+    {
+        return inner.to_owned();
+    }
+    stored.to_owned()
+}
+
 /// A plain decimal, optionally followed by a unit suffix the box shows.
 fn parse_number(text: &str) -> Option<f64> {
     let t = text
@@ -1689,7 +1723,7 @@ mod tests {
         let mut c = Canvas::default();
         let ctx = egui::Context::default();
         let frame = |c: &mut Canvas| {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui));
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui, Units::Mm));
         };
         frame(&mut c);
         c.apply_reporting(&Command::AddEntity {
@@ -1729,6 +1763,84 @@ mod tests {
         }));
         frame(&mut c);
         assert_eq!(c.document().recipe(rid).unwrap().instances().count(), 2);
+    }
+
+    #[test]
+    fn expressions_follow_the_display_unit_like_plain_numbers() {
+        // Bare numbers are inches in inch mode, stored unambiguously.
+        assert_eq!(to_stored("1/2 + 0.125", Units::Inch), "(1/2 + 0.125) * in");
+        assert_eq!(to_stored("1/2 + 0.125", Units::Mm), "1/2 + 0.125");
+        // Parameters (mm) and explicit units are kept as typed.
+        assert_eq!(to_stored("w * 2", Units::Inch), "w * 2");
+        assert_eq!(to_stored("0.5 * in", Units::Inch), "0.5 * in");
+        // Showing it back strips the wrapper again.
+        assert_eq!(to_display("(1/2 + 0.125) * in", Units::Inch), "1/2 + 0.125");
+        assert_eq!(to_display("(1/2) * in", Units::Mm), "(1/2) * in");
+        assert_eq!(to_display("(w) * in", Units::Inch), "(w) * in");
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn inch_mode_expression_entry_gives_the_same_length_as_a_plain_number() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Circle {
+                center: p,
+                radius: 1.0,
+            },
+        });
+        let circle = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddConstraint {
+            constraint: locus_doc::Constraint::Diameter {
+                curve: circle,
+                dim: locus_doc::Dimension::driving(2.0),
+            },
+        });
+        let cid = *c.document().constraints().keys().next_back().unwrap();
+        let edit = |text: &str| DimEdit {
+            target: DimTarget::Existing(cid),
+            what: "diameter",
+            angle: false,
+            text: text.to_owned(),
+            at: Vec2::ZERO,
+            fresh: false,
+        };
+        let value = |c: &Canvas| {
+            c.document()
+                .constraint(cid)
+                .unwrap()
+                .dimension()
+                .unwrap()
+                .value
+        };
+        assert!(c.commit_dimension(&edit("0.5"), Units::Inch));
+        assert!((value(&c) - 12.7).abs() < 1e-9, "plain number: inches");
+        assert!(c.commit_dimension(&edit("1/4 + 1/4"), Units::Inch));
+        assert!((value(&c) - 12.7).abs() < 1e-9, "expression: same inches");
+        assert_eq!(c.document().dimension_expr(cid), Some("(1/4 + 1/4) * in"));
+        // Switching the display unit later does not move the geometry.
+        assert!(c.commit_dimension(&edit("12.7"), Units::Mm));
+        assert!((value(&c) - 12.7).abs() < 1e-9);
     }
 
     #[test]

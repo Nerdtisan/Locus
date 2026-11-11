@@ -451,6 +451,20 @@ impl Expr {
     }
 }
 
+/// Built-in constants: `pi`, and length units in millimetres, so `0.125 * in`
+/// is 3.175 (the document's length unit is the millimetre, SPEC §4).
+#[must_use]
+pub fn constant(name: &str) -> Option<f64> {
+    Some(match name {
+        "pi" => std::f64::consts::PI,
+        "mm" => 1.0,
+        "cm" => 10.0,
+        "m" => 1000.0,
+        "in" => 25.4,
+        _ => return None,
+    })
+}
+
 /// Evaluate `src` with `params` in scope. Parameters are resolved recursively
 /// from their `expr` (not their cached `value`), with cycle detection.
 ///
@@ -483,8 +497,8 @@ fn eval_src(
                 .map_err(|err| ExprError::new(pos, format!("in `{name}`: {}", err.message)));
             stack.pop();
             r
-        } else if name == "pi" {
-            Ok(std::f64::consts::PI)
+        } else if let Some(v) = constant(name) {
+            Ok(v)
         } else {
             Err(ExprError::new(pos, format!("unknown name `{name}`")))
         }
@@ -552,6 +566,9 @@ mod tests {
         assert_eq!(ev("sqrt(16) + abs(-2)").unwrap(), 6.0);
         assert_eq!(ev("floor(2.7) + ceil(2.1) + round(2.5)").unwrap(), 8.0);
         assert!((ev("pi").unwrap() - std::f64::consts::PI).abs() < 1e-15);
+        assert!((ev("0.125 * in").unwrap() - 3.175).abs() < 1e-12);
+        assert_eq!(ev("2 * cm + 5 * mm").unwrap(), 25.0);
+        assert_eq!(ev("1.5 * m").unwrap(), 1500.0);
     }
 
     #[test]
