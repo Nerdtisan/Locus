@@ -17,14 +17,17 @@ use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
 use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, LayerId, Sketcher};
 use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
+use text_ui::{FontCatalog, TextSettings};
 
 mod layers_panel;
 mod machine;
 mod offsets;
 mod params_panel;
+mod pattern_labels;
 mod patterns_panel;
 pub mod plugin_objects;
 mod regions;
+mod text_ui;
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
@@ -38,6 +41,8 @@ enum DimTarget {
     Existing(ConstraintId),
     /// A live offset's distance (#164).
     Offset(locus_doc::RecipeId),
+    /// A pattern's count and spacing / angle (#168, #169).
+    Pattern(locus_doc::RecipeId),
 }
 
 /// A constraint the solver refused (SPEC §5 Solver UX): shown with the set it
@@ -127,6 +132,11 @@ pub struct Canvas {
     pub corner: CornerSettings,
     /// Move/rotate/scale values, edited in the tool strip.
     pub transform: TransformSettings,
+    /// Settings for the next text the Text tool places, and the fonts it can use (#180).
+    text_settings: TextSettings,
+    fonts: FontCatalog,
+    /// The selected text being edited: its id and the not-yet-committed settings.
+    text_edit: Option<(EntityId, TextSettings)>,
 }
 
 impl Default for Canvas {
@@ -164,6 +174,9 @@ impl Default for Canvas {
             corner_first: None,
             corner: CornerSettings::default(),
             transform: TransformSettings::default(),
+            text_settings: TextSettings::default(),
+            fonts: FontCatalog::headless(),
+            text_edit: None,
         };
         c.load(demo::sketch());
         c
@@ -391,9 +404,10 @@ impl Canvas {
             target: DimTarget::Existing(id),
             what: c.name(),
             angle,
-            text: doc
-                .dimension_expr(id)
-                .map_or_else(|| format_value(dim.value, angle, units), str::to_owned),
+            text: doc.dimension_expr(id).map_or_else(
+                || format_value(dim.value, angle, units),
+                |s| to_display(s, units),
+            ),
             at,
             fresh: true,
         });
@@ -548,10 +562,19 @@ impl Canvas {
     /// in degrees). Returns whether it was applied; on failure the editor
     /// stays open with the reason shown.
     fn commit_dimension(&mut self, edit: &DimEdit, units: Units) -> bool {
+        if let DimTarget::Pattern(rid) = edit.target {
+            return match self.pattern_command(rid, &edit.text, units) {
+                Ok(cmd) => self.apply_reporting(&cmd),
+                Err(why) => {
+                    self.notice = Some(why);
+                    false
+                }
+            };
+        }
         if let DimTarget::Offset(rid) = edit.target {
             let mm =
                 parse_number(&edit.text).map(|v| if units == Units::Inch { v * 25.4 } else { v });
-            return match self.offset_command(rid, mm, &edit.text) {
+            return match self.offset_command(rid, mm, &to_stored(&edit.text, units)) {
                 Some(cmd) => self.apply_reporting(&cmd),
                 None => false,
             };
@@ -569,11 +592,15 @@ impl Canvas {
                     constraint: spec.constraint(value, false),
                 },
                 DimTarget::Existing(id) => Command::SetDimension { id, value },
-                DimTarget::Offset(_) => return false,
+                DimTarget::Offset(_) | DimTarget::Pattern(_) => return false,
             };
             return self.apply_reporting(&cmd);
         }
-        let expr = edit.text.trim().to_owned();
+        let expr = if edit.angle {
+            edit.text.trim().to_owned()
+        } else {
+            to_stored(&edit.text, units)
+        };
         let cmd = match edit.target {
             DimTarget::New(spec) => Command::AddDimensionExpr {
                 constraint: spec.constraint(1.0, false),
@@ -583,7 +610,7 @@ impl Canvas {
                 id,
                 expr: Some(expr),
             },
-            DimTarget::Offset(_) => return false,
+            DimTarget::Offset(_) | DimTarget::Pattern(_) => return false,
         };
         self.apply_reporting(&cmd)
     }
@@ -686,7 +713,12 @@ impl Canvas {
             Outcome::Pending => {}
             Outcome::Rejected(why) => self.notice = Some(why.to_owned()),
             Outcome::Commit(cmd) => match self.apply(&cmd) {
-                Ok(()) => self.notice = None,
+                Ok(()) => {
+                    self.notice = None;
+                    if let Some(id) = self.draft.take_placed() {
+                        self.selection.set_all([id]);
+                    }
+                }
                 Err(e) => {
                     // The draft's predicted IDs are void after a failure.
                     self.draft.cancel();
@@ -815,6 +847,15 @@ impl Canvas {
         if let Some(s) = self.region_summary() {
             ui.label(s);
         }
+        let selected_text = self
+            .selection
+            .iter()
+            .next()
+            .filter(|_| self.selection.len() == 1)
+            .and_then(|id| {
+                let (t, anchor, dir) = self.sketcher.document().text(id)?;
+                Some((id, anchor, dir, t.clone()))
+            });
         let doc = self.sketcher.document();
         match self.selection.len() {
             0 if !self.region_ui.selected.is_empty() => {}
@@ -835,19 +876,95 @@ impl Canvas {
             }
             n => {
                 ui.label(format!("{n} entities selected"));
-                let mut counts = [0usize; 4];
+                let mut counts = [0usize; 6];
                 for id in self.selection.iter() {
                     if let Some(e) = doc.entity(id) {
                         counts[e.geom.kind() as usize] += 1;
                     }
                 }
-                for (name, c) in ["Points", "Lines", "Circles", "Arcs"].iter().zip(counts) {
+                for (name, c) in ["Points", "Lines", "Circles", "Arcs", "Béziers", "Texts"]
+                    .iter()
+                    .zip(counts)
+                {
                     if c > 0 {
                         ui.label(format!("{name}: {c}"));
                     }
                 }
             }
         }
+        if let Some((id, anchor, dir, text)) = selected_text {
+            ui.separator();
+            self.edit_text(ui, id, anchor, dir, &text);
+        } else {
+            self.text_edit = None;
+        }
+    }
+
+    /// Edit the selected text's content, font and style. Style changes apply
+    /// at once; the content applies when its field loses focus, so one edit
+    /// is one undo step (SPEC §11). With the font missing only the font can
+    /// change (the content can't be re-laid out), and picking one re-lays
+    /// the saved text out in it.
+    fn edit_text(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: EntityId,
+        anchor: EntityId,
+        dir: EntityId,
+        stored: &locus_doc::TextData,
+    ) {
+        let mut s = match self.text_edit.take() {
+            Some((i, s)) if i == id => s,
+            _ => TextSettings::from_data(stored),
+        };
+        // An undo/redo or solver change under the buffer: show the stored text
+        // unless the user is mid-edit of the content.
+        let live = TextSettings::from_data(stored);
+        if s.content != live.content && !ui.memory(|m| m.focused().is_some()) {
+            s = live;
+        }
+        let missing = self.fonts.missing(&stored.font);
+        let mut edited = text_ui::controls(ui, &mut s, &mut self.fonts, !missing, 3);
+        if s.content != stored.content
+            && !missing
+            && ui
+                .button("Apply text")
+                .on_hover_text("Ctrl+Enter, or click away from the field")
+                .clicked()
+        {
+            edited.content_done = true;
+        }
+        if edited.commit() && s != TextSettings::from_data(stored) {
+            match s.to_data(&self.fonts.library) {
+                Ok(text) => {
+                    let cmd = Command::ModifyEntity {
+                        id,
+                        geom: Geom::Text {
+                            anchor,
+                            dir,
+                            text: Box::new(text),
+                        },
+                    };
+                    match self.apply(&cmd) {
+                        Ok(()) => self.notice = None,
+                        Err(e) => self.notice = Some(e.to_string()),
+                    }
+                }
+                Err(e) => self.notice = Some(e.to_string()),
+            }
+        }
+        self.text_edit = Some((id, s));
+    }
+
+    /// Tool-bar controls while the Text tool is active.
+    pub fn text_tool_ui(&mut self, ui: &mut egui::Ui) {
+        // Keep the strip compact: the controls go in a wrapped row.
+        text_ui::controls(ui, &mut self.text_settings, &mut self.fonts, true, 1);
+    }
+
+    /// Swap in the app's real font catalog (system fonts, browser picker).
+    pub fn install_fonts(&mut self, ctx: &egui::Context) {
+        self.fonts = FontCatalog::new(ctx);
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, settings: &Settings, status: &mut Status) {
@@ -933,6 +1050,7 @@ impl Canvas {
         }
         grid::rulers(&painter, &self.view, rect);
         self.draw_offset_labels(&painter, rect, dark, settings.units);
+        self.draw_pattern_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
 
@@ -989,6 +1107,15 @@ impl Canvas {
             && let Some(pick) = self.cursor
         {
             self.draft.set_layer(self.active_layer());
+            if self.draft.tool() == Tool::Text {
+                match self.text_settings.to_data(&self.fonts.library) {
+                    Ok(t) => self.draft.set_text(Some(t)),
+                    Err(e) => {
+                        self.draft.set_text(None);
+                        self.notice = Some(e.to_string());
+                    }
+                }
+            }
             let out = self.draft.click(pick, self.sketcher.document().next_id());
             self.typed.clear();
             self.run(out);
@@ -1342,7 +1469,16 @@ impl Canvas {
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(&(rid, _)) = self.offset_rects.iter().find(|(_, r)| r.contains(p))
         {
-            self.edit_offset(rid, units);
+            if self
+                .sketcher
+                .document()
+                .recipe(rid)
+                .is_some_and(|r| r.kind.is_pattern())
+            {
+                self.edit_pattern(rid, units);
+            } else {
+                self.edit_offset(rid, units);
+            }
         } else if resp.double_clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(&(id, _)) = self.dim_rects.iter().find(|(_, r)| r.contains(p))
@@ -1424,6 +1560,35 @@ fn format_value(value: f64, angle: bool, units: Units) -> String {
     // Trim trailing zeros: "20.0000" → "20".
     let s = s.trim_end_matches('0').trim_end_matches('.');
     s.to_owned()
+}
+
+/// Inch-mode entry of a length expression (SPEC §5): bare numbers follow the
+/// display unit like plain numbers do, so `1/2 + 0.125` typed in inches is
+/// stored as `(1/2 + 0.125) * in`. An expression that names parameters or a
+/// unit is already unambiguous (parameters are in millimetres) and is kept
+/// as typed.
+pub(crate) fn to_stored(text: &str, units: Units) -> String {
+    let t = text.trim();
+    if units != Units::Inch {
+        return t.to_owned();
+    }
+    match locus_doc::expr::parse(t) {
+        Ok(e) if e.references().is_empty() => format!("({t}) * in"),
+        _ => t.to_owned(),
+    }
+}
+
+/// The inverse of [`to_stored`], for showing a stored expression back.
+pub(crate) fn to_display(stored: &str, units: Units) -> String {
+    if units == Units::Inch
+        && let Some(inner) = stored
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(") * in"))
+        && locus_doc::expr::parse(inner).is_ok_and(|e| e.references().is_empty())
+    {
+        return inner.to_owned();
+    }
+    stored.to_owned()
 }
 
 /// A plain decimal, optionally followed by a unit suffix the box shows.
@@ -1577,11 +1742,69 @@ mod tests {
 
     #[test]
     #[allow(clippy::unwrap_used)]
+    fn pattern_label_edit_sets_count_and_spacing_with_units() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddRecipe {
+            kind: RecipeKind::Linear {
+                dir1: locus_doc::LinearDir {
+                    axis: locus_doc::Axis::X,
+                    count: "3".to_owned(),
+                    spacing: "10".to_owned(),
+                    symmetric: false,
+                },
+                dir2: None,
+            },
+            sources: vec![p],
+        });
+        let rid = *c.document().recipes().keys().next().unwrap();
+        c.edit_pattern(rid, Units::Mm);
+        assert_eq!(c.dim_edit.as_ref().unwrap().text, "3, 10");
+        let edit = |text: &str| DimEdit {
+            target: DimTarget::Pattern(rid),
+            what: "count, spacing",
+            angle: false,
+            text: text.to_owned(),
+            at: Vec2::ZERO,
+            fresh: false,
+        };
+        assert!(c.commit_dimension(&edit("5, 20"), Units::Mm));
+        assert_eq!(c.document().recipe(rid).unwrap().active, 4);
+        // Inch mode: the spacing is inches, like a plain number.
+        assert!(c.commit_dimension(&edit("2, 1"), Units::Inch));
+        let far = c
+            .document()
+            .recipe(rid)
+            .unwrap()
+            .instances()
+            .map(|e| c.document().point_pos(e).unwrap().x)
+            .fold(0.0_f64, f64::max);
+        assert!((far - 25.4).abs() < 1e-9);
+        c.edit_pattern(rid, Units::Inch);
+        assert_eq!(c.dim_edit.as_ref().unwrap().text, "2, 1");
+        // A malformed entry is refused with a reason.
+        assert!(!c.commit_dimension(&edit("7"), Units::Mm));
+        assert!(c.notice.is_some());
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
     fn patterns_panel_creates_edits_and_suppresses() {
         let mut c = Canvas::default();
         let ctx = egui::Context::default();
         let frame = |c: &mut Canvas| {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui));
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui, Units::Mm));
         };
         frame(&mut c);
         c.apply_reporting(&Command::AddEntity {
@@ -1621,6 +1844,84 @@ mod tests {
         }));
         frame(&mut c);
         assert_eq!(c.document().recipe(rid).unwrap().instances().count(), 2);
+    }
+
+    #[test]
+    fn expressions_follow_the_display_unit_like_plain_numbers() {
+        // Bare numbers are inches in inch mode, stored unambiguously.
+        assert_eq!(to_stored("1/2 + 0.125", Units::Inch), "(1/2 + 0.125) * in");
+        assert_eq!(to_stored("1/2 + 0.125", Units::Mm), "1/2 + 0.125");
+        // Parameters (mm) and explicit units are kept as typed.
+        assert_eq!(to_stored("w * 2", Units::Inch), "w * 2");
+        assert_eq!(to_stored("0.5 * in", Units::Inch), "0.5 * in");
+        // Showing it back strips the wrapper again.
+        assert_eq!(to_display("(1/2 + 0.125) * in", Units::Inch), "1/2 + 0.125");
+        assert_eq!(to_display("(1/2) * in", Units::Mm), "(1/2) * in");
+        assert_eq!(to_display("(w) * in", Units::Inch), "(w) * in");
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn inch_mode_expression_entry_gives_the_same_length_as_a_plain_number() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Circle {
+                center: p,
+                radius: 1.0,
+            },
+        });
+        let circle = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddConstraint {
+            constraint: locus_doc::Constraint::Diameter {
+                curve: circle,
+                dim: locus_doc::Dimension::driving(2.0),
+            },
+        });
+        let cid = *c.document().constraints().keys().next_back().unwrap();
+        let edit = |text: &str| DimEdit {
+            target: DimTarget::Existing(cid),
+            what: "diameter",
+            angle: false,
+            text: text.to_owned(),
+            at: Vec2::ZERO,
+            fresh: false,
+        };
+        let value = |c: &Canvas| {
+            c.document()
+                .constraint(cid)
+                .unwrap()
+                .dimension()
+                .unwrap()
+                .value
+        };
+        assert!(c.commit_dimension(&edit("0.5"), Units::Inch));
+        assert!((value(&c) - 12.7).abs() < 1e-9, "plain number: inches");
+        assert!(c.commit_dimension(&edit("1/4 + 1/4"), Units::Inch));
+        assert!((value(&c) - 12.7).abs() < 1e-9, "expression: same inches");
+        assert_eq!(c.document().dimension_expr(cid), Some("(1/4 + 1/4) * in"));
+        // Switching the display unit later does not move the geometry.
+        assert!(c.commit_dimension(&edit("12.7"), Units::Mm));
+        assert!((value(&c) - 12.7).abs() < 1e-9);
     }
 
     #[test]
