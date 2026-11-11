@@ -14,9 +14,11 @@
 // Tests may unwrap; library code may not (CLAUDE.md, Code Style).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod attach;
 pub mod dto;
 pub mod error;
 pub mod host;
+pub mod http;
 pub mod plugins;
 pub mod policy;
 pub mod server;
