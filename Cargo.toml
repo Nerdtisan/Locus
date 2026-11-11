@@ -25,6 +25,7 @@ locus-doc = { path = "crates/locus-doc" }
 locus-solver = { path = "crates/locus-solver" }
 locus-export = { path = "crates/locus-export" }
 locus-region = { path = "crates/locus-region" }
+locus-text = { path = "crates/locus-text" }
 
 # GUI (ADR 0001): only locus-app may use these. Same feature set as Parchment:
 # wgpu backend only, bundled fonts, winit's Linux backends (no-ops elsewhere).

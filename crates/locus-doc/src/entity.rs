@@ -8,6 +8,7 @@
 //! (SPEC §10).
 
 use crate::ids::{EntityId, LayerId};
+use crate::text::TextData;
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,8 @@ pub enum EntityKind {
     Arc,
     /// Cubic Bézier (SPEC §4, limited constraints).
     Bezier,
+    /// Text container (SPEC §9).
+    Text,
 }
 
 /// Geometry of one entity. References are always to `Point` entities.
@@ -51,6 +54,15 @@ pub enum Geom {
         end_ctrl: EntityId,
         end: EntityId,
     },
+    /// Text (SPEC §9; #179): a container that generates geometry. `anchor`
+    /// is the baseline origin and `dir - anchor` the baseline direction, both
+    /// ordinary points so they constrain like any sketch point. The laid-out
+    /// geometry is cached in `text`, so no font file is needed to open it.
+    Text {
+        anchor: EntityId,
+        dir: EntityId,
+        text: Box<TextData>,
+    },
 }
 
 impl Geom {
@@ -62,6 +74,7 @@ impl Geom {
             Geom::Circle { .. } => EntityKind::Circle,
             Geom::Arc { .. } => EntityKind::Arc,
             Geom::Bezier { .. } => EntityKind::Bezier,
+            Geom::Text { .. } => EntityKind::Text,
         }
     }
 
@@ -79,6 +92,7 @@ impl Geom {
                 end_ctrl,
                 end,
             } => vec![*start, *start_ctrl, *end_ctrl, *end],
+            Geom::Text { anchor, dir, .. } => vec![*anchor, *dir],
         }
     }
 }

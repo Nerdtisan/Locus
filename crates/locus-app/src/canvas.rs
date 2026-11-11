@@ -22,6 +22,7 @@ mod layers_panel;
 mod machine;
 mod offsets;
 mod params_panel;
+mod patterns_panel;
 mod regions;
 
 /// Pick radius in screen points (converted to mm by the zoom).
@@ -107,6 +108,7 @@ pub struct Canvas {
     active_layer: LayerId,
     layer_ui: layers_panel::LayerUi,
     param_ui: params_panel::ParamUi,
+    pattern_ui: patterns_panel::PatternUi,
     /// Region selection, hover and the boolean combine (#122, #124).
     region_ui: regions::RegionUi,
     /// Machine preview on, and its polylines (#176).
@@ -151,6 +153,7 @@ impl Default for Canvas {
             active_layer: Document::default_layer(),
             layer_ui: layers_panel::LayerUi::default(),
             param_ui: params_panel::ParamUi::default(),
+            pattern_ui: patterns_panel::PatternUi::default(),
             region_ui: regions::RegionUi::default(),
             machine_on: false,
             machine: Vec::new(),
@@ -380,6 +383,7 @@ impl Canvas {
                 Geom::Circle { .. } => doc.circle(r).map(|c| c.center),
                 Geom::Arc { .. } => doc.arc(r).map(|a| a.center),
                 Geom::Bezier { .. } => doc.cubic(r).map(|c| c.eval(0.5)),
+                Geom::Text { anchor, .. } => doc.point_pos(anchor),
             })
             .unwrap_or(Vec2::ZERO);
         self.dim_edit = Some(DimEdit {
@@ -1228,6 +1232,8 @@ impl Canvas {
             Some(Geom::Circle { center, .. } | Geom::Arc { center, .. }) => *center,
             // A Bézier moves by its end nearer the cursor, like a line.
             Some(Geom::Bezier { start, end, .. }) => near(*start, *end),
+            // Text is dragged by its anchor.
+            Some(Geom::Text { anchor, .. }) => *anchor,
             None => return false,
         };
         match self.sketcher.begin_drag(point) {
@@ -1464,6 +1470,7 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
         Geom::Circle { .. } => "Circle",
         Geom::Arc { .. } => "Arc",
         Geom::Bezier { .. } => "Bézier",
+        Geom::Text { .. } => "Text",
     };
     let mut rows = vec![
         ("ID".to_owned(), id.to_string()),
@@ -1511,6 +1518,16 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
                 rows.push(("Length".to_owned(), units.format_len(c.length())));
             }
         }
+        Geom::Text { .. } => {
+            if let Some((t, anchor, _)) = doc.text(id) {
+                rows.push(("Text".to_owned(), t.content.clone()));
+                rows.push(("Font".to_owned(), t.font.display_name()));
+                rows.push(("Size".to_owned(), units.format_len(t.size)));
+                if let Some(p) = doc.point_pos(anchor) {
+                    rows.push(("Anchor".to_owned(), pt(p)));
+                }
+            }
+        }
     }
     rows
 }
@@ -1518,6 +1535,7 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use locus_doc::RecipeKind;
 
     #[test]
     fn describe_reports_a_line_and_a_circle() {
@@ -1554,6 +1572,54 @@ mod tests {
                 c.layers_ui(ui, &settings);
             });
         }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn patterns_panel_creates_edits_and_suppresses() {
+        let mut c = Canvas::default();
+        let ctx = egui::Context::default();
+        let frame = |c: &mut Canvas| {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui));
+        };
+        frame(&mut c);
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point {
+                pos: Vec2::new(1.0, 1.0),
+            },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        let kind = RecipeKind::Linear {
+            dir1: locus_doc::LinearDir {
+                axis: locus_doc::Axis::X,
+                count: "4".to_owned(),
+                spacing: "5".to_owned(),
+                symmetric: false,
+            },
+            dir2: None,
+        };
+        assert!(c.apply_reporting(&Command::AddRecipe {
+            kind,
+            sources: vec![p]
+        }));
+        frame(&mut c);
+        let rid = *c.document().recipes().keys().next().unwrap();
+        assert_eq!(c.document().recipe(rid).unwrap().active, 3);
+        assert!(c.apply_reporting(&Command::SetInstanceSuppressed {
+            id: rid,
+            index: 0,
+            suppressed: true
+        }));
+        frame(&mut c);
+        assert_eq!(c.document().recipe(rid).unwrap().instances().count(), 2);
     }
 
     #[test]

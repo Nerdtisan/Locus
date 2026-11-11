@@ -72,6 +72,12 @@ pub fn users_of(doc: &Document, name: &str) -> Vec<String> {
         .map(|(n, _)| format!("parameter `{n}`"))
         .collect();
     out.extend(
+        doc.recipes()
+            .iter()
+            .filter(|(_, r)| r.kind.expressions().into_iter().any(uses))
+            .map(|(id, _)| format!("recipe {id}")),
+    );
+    out.extend(
         doc.dim_exprs
             .iter()
             .filter(|(_, s)| uses(s))

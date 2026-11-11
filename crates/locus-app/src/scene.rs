@@ -128,6 +128,7 @@ impl Scene {
             Geom::Circle { .. } => doc.circle(id).map(|c| c.center),
             Geom::Arc { .. } => doc.arc(id).map(|a| a.eval(0.5)),
             Geom::Bezier { .. } => doc.cubic(id).map(|c| c.eval(0.5)),
+            Geom::Text { anchor, .. } => doc.point_pos(anchor),
         }
     }
 
@@ -170,6 +171,38 @@ impl Scene {
                 continue;
             }
             let shape = match e.geom {
+                // Text draws as its cached outline: one item per segment, all
+                // carrying the text's id so any of them picks the text (#180).
+                Geom::Text { .. } => {
+                    let Some(g) = doc.text_geometry(id) else {
+                        continue;
+                    };
+                    let constrained = fully_constrained.contains(&id);
+                    for c in &g.contours {
+                        let mut from = c.start;
+                        for s in &c.segs {
+                            let shape = match *s {
+                                locus_text::Seg::Line { end } => Shape::Line(Line::new(from, end)),
+                                locus_text::Seg::Cubic { c0, c1, end } => {
+                                    Shape::Cubic(Cubic::new(from, c0, c1, end))
+                                }
+                            };
+                            from = s.end();
+                            let bbox = shape.bbox();
+                            bounds = Some(bounds.map_or(bbox, |b| b.union(bbox)));
+                            items.push(Item {
+                                id,
+                                shape,
+                                construction: e.construction,
+                                constrained,
+                                owned_point: false,
+                                ends: None,
+                                bbox,
+                            });
+                        }
+                    }
+                    continue;
+                }
                 Geom::Point { pos } => Shape::Point(pos),
                 Geom::Line { .. } => match doc.line(id) {
                     Some(l) => Shape::Line(l),
