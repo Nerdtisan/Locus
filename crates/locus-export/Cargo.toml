@@ -16,4 +16,6 @@ locus-geom.workspace = true
 locus-doc.workspace = true
 locus-text.workspace = true
 locus-region.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
