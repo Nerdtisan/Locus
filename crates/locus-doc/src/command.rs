@@ -982,7 +982,7 @@ fn exec(
                     after: Some(after),
                 },
             );
-            regenerate_one(doc, *id, patches)?;
+            regenerate_one(doc, *id, patches, None)?;
         }
         Command::SetInstanceSuppressed {
             id,
@@ -1016,7 +1016,7 @@ fn exec(
                         after: Some(after),
                     },
                 );
-                regenerate_one(doc, *id, patches)?;
+                regenerate_one(doc, *id, patches, None)?;
             }
         }
         Command::ApplySolution { points, radii } => apply_solution(doc, points, radii)?,
@@ -1084,7 +1084,7 @@ fn add_recipe(
                 after: Some(recipe),
             },
         );
-        regenerate_one(doc, rid, patches)?;
+        regenerate_one(doc, rid, patches, None)?;
         out.entities.extend(
             doc.recipe(rid)
                 .map(|r| r.instances().collect::<Vec<_>>())
@@ -1394,6 +1394,9 @@ pub struct Editor {
     doc: Document,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
+    /// Re-runs modifier plugins when their sources change (#184); none in
+    /// the web build or headless tools that don't load plugins.
+    runner: Option<std::sync::Arc<dyn crate::generated::PluginRunner>>,
 }
 
 impl Editor {
@@ -1403,7 +1406,16 @@ impl Editor {
             doc,
             undo: Vec::new(),
             redo: Vec::new(),
+            runner: None,
         }
+    }
+
+    /// Set (or clear) what re-runs modifier plugins (SPEC §15.2).
+    pub fn set_plugin_runner(
+        &mut self,
+        runner: Option<std::sync::Arc<dyn crate::generated::PluginRunner>>,
+    ) {
+        self.runner = runner;
     }
 
     #[must_use]
@@ -1426,7 +1438,7 @@ impl Editor {
         let mut patches = Vec::new();
         let mut out = Applied::default();
         if let Err(e) = exec(&mut self.doc, cmd, &mut patches, &mut out)
-            .and_then(|()| regenerate_all(&mut self.doc, &mut patches))
+            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()))
         {
             for p in patches.iter().rev() {
                 p.set(&mut self.doc, false);
@@ -1505,7 +1517,7 @@ impl Editor {
         let result = exec(&mut self.doc, cmd, &mut patches, &mut out)
             .and_then(|()| solve(&self.doc))
             .and_then(|sol| solution_patches(&mut self.doc, &sol, &mut patches))
-            .and_then(|()| regenerate_all(&mut self.doc, &mut patches));
+            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()));
         if let Err(e) = result {
             for p in patches.iter().rev() {
                 p.set(&mut self.doc, false);
@@ -1548,7 +1560,7 @@ impl Editor {
     /// last undo step, e.g. the one a drag just recorded (#164).
     pub(crate) fn regenerate_into_last(&mut self) -> Result<(), DocError> {
         let mut patches = Vec::new();
-        if let Err(e) = regenerate_all(&mut self.doc, &mut patches) {
+        if let Err(e) = regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()) {
             for p in patches.iter().rev() {
                 p.set(&mut self.doc, false);
             }
@@ -1578,7 +1590,11 @@ impl Editor {
 /// Rewrites every non-solved recipe's instances from the current geometry
 /// (offsets, #164). Recorded in `patches`, so it is part of the same undo
 /// step as whatever changed the sources.
-pub(crate) fn regenerate_all(doc: &mut Document, patches: &mut Vec<Patch>) -> Result<(), DocError> {
+pub(crate) fn regenerate_all(
+    doc: &mut Document,
+    patches: &mut Vec<Patch>,
+    runner: Option<&dyn crate::generated::PluginRunner>,
+) -> Result<(), DocError> {
     let ids: Vec<RecipeId> = doc
         .recipes()
         .iter()
@@ -1586,7 +1602,7 @@ pub(crate) fn regenerate_all(doc: &mut Document, patches: &mut Vec<Patch>) -> Re
         .map(|(id, _)| *id)
         .collect();
     for id in ids {
-        regenerate_one(doc, id, patches)?;
+        regenerate_one(doc, id, patches, runner)?;
     }
     Ok(())
 }
@@ -1596,10 +1612,11 @@ fn regenerate_one(
     doc: &mut Document,
     id: RecipeId,
     patches: &mut Vec<Patch>,
+    runner: Option<&dyn crate::generated::PluginRunner>,
 ) -> Result<(), DocError> {
     crate::offset::regenerate(doc, id, patches)?;
     crate::pattern::regenerate(doc, id, patches)?;
-    crate::generated::regenerate(doc, id, patches)
+    crate::generated::regenerate(doc, id, patches, runner)
 }
 
 /// Solver output in document terms (`crate::solve`).

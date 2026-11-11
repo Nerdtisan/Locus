@@ -105,7 +105,8 @@ impl App {
             .storage
             .and_then(|s| s.get_string(LAYOUT_KEY))
             .map_or_else(default_layout, |j| parse_layout(&j));
-        Self {
+        #[allow(unused_mut)] // mutated only on desktop
+        let mut app = Self {
             dock,
             settings,
             canvas: Canvas::default(),
@@ -113,7 +114,10 @@ impl App {
             files: FileIo::new(&cc.egui_ctx, cc.storage),
             #[cfg(not(target_arch = "wasm32"))]
             plugins: crate::plugins::Plugins::default(),
-        }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        app.plugins.attach(&mut app.canvas, &mut app.files);
+        app
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -285,7 +289,7 @@ impl App {
             });
             ui.menu_button("Plugins", |ui| {
                 #[cfg(not(target_arch = "wasm32"))]
-                self.plugins.menu(ui);
+                self.plugins.menu(ui, &self.canvas);
                 #[cfg(target_arch = "wasm32")]
                 ui.weak("Plugins run in the desktop app.");
             });
@@ -575,8 +579,11 @@ impl TabViewer for Viewer<'_> {
                 #[cfg(not(target_arch = "wasm32"))]
                 self.plugins.properties_ui(ui, self.canvas);
                 #[cfg(target_arch = "wasm32")]
-                if let Some((_, plugin)) = self.canvas.selected_plugin_object() {
+                if let Some((rid, plugin, modifier)) = self.canvas.selected_plugin_object() {
                     ui.label(egui::RichText::new("Plugin object").strong());
+                    if modifier && self.canvas.plugin_object_stale(rid) {
+                        ui.colored_label(ui.visuals().warn_fg_color, "⚠ Out of date");
+                    }
                     self.canvas.plugin_object_ui(ui, &plugin);
                     ui.weak("Plugins run in the desktop app; this one is shown from its saved geometry.");
                     ui.separator();
@@ -618,7 +625,8 @@ impl eframe::App for App {
         self.history_shortcuts(ui.ctx());
         self.files.update(ui.ctx(), &mut self.canvas);
         #[cfg(not(target_arch = "wasm32"))]
-        self.plugins.windows(ui.ctx(), &mut self.canvas);
+        self.plugins
+            .windows(ui.ctx(), &mut self.canvas, &mut self.files);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::top("constraints").show(ui, |ui| self.constraint_bar(ui));

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Plugin objects on the canvas (#183, SPEC §15.3, §15.5): finding the one
-//! the selection belongs to, and describing it. Running plugins is the
+//! Plugin objects on the canvas (#183, #184, SPEC §15.2, §15.3, §15.5):
+//! finding the one the selection belongs to, and describing it. Running plugins is the
 //! desktop-only `crate::plugins`; this part builds everywhere, so the web
 //! build shows a plugin object's details from its cached geometry too.
 
 use super::Canvas;
+#[cfg(not(target_arch = "wasm32"))]
+use locus_doc::EntityId;
 #[cfg(not(target_arch = "wasm32"))]
 use locus_doc::LayerId;
 use locus_doc::generated::{PluginRef, PluginValue};
@@ -39,12 +41,43 @@ impl Canvas {
         self.active_layer()
     }
 
-    /// The plugin object the selection belongs to: an instance it drew, or
-    /// one of its two frame points.
-    pub fn selected_plugin_object(&self) -> Option<(RecipeId, PluginRef)> {
+    /// Hands the sketch something that re-runs modifier plugins when their
+    /// sources change (#184); kept for documents opened later.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_plugin_runner(
+        &mut self,
+        runner: Option<std::sync::Arc<dyn locus_doc::generated::PluginRunner>>,
+    ) {
+        self.plugin_runner = runner.clone();
+        self.sketcher.set_plugin_runner(runner);
+    }
+
+    /// The selected curves a modifier can take (lines, arcs, circles).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn selected_curves(&self) -> Vec<EntityId> {
+        let doc = self.sketcher.document();
+        self.selection
+            .iter()
+            .filter(|id| {
+                doc.line(*id).is_some() || doc.arc(*id).is_some() || doc.circle(*id).is_some()
+            })
+            .collect()
+    }
+
+    /// Whether a modifier object's output was made from older source
+    /// geometry (its plugin is missing or failed).
+    pub fn plugin_object_stale(&self, rid: RecipeId) -> bool {
+        locus_doc::generated::is_stale(self.sketcher.document(), rid)
+    }
+
+    /// The plugin object the selection belongs to: an instance it drew, one
+    /// of a generator object's frame points, or a modifier object's source.
+    /// The flag is true for a modifier.
+    pub fn selected_plugin_object(&self) -> Option<(RecipeId, PluginRef, bool)> {
         let doc = self.sketcher.document();
         let generated = |rid: RecipeId| match doc.recipe(rid).map(|r| &r.kind) {
-            Some(RecipeKind::Generated { plugin, .. }) => Some((rid, plugin.clone())),
+            Some(RecipeKind::Generated { plugin, .. }) => Some((rid, plugin.clone(), false)),
+            Some(RecipeKind::Modified { plugin, .. }) => Some((rid, plugin.clone(), true)),
             _ => None,
         };
         self.selection.iter().find_map(|id| {
@@ -74,6 +107,5 @@ impl Canvas {
                     ui.end_row();
                 }
             });
-        ui.weak("Drag or constrain its two frame points to place and turn it.");
     }
 }

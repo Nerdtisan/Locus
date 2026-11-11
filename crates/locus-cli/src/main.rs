@@ -16,13 +16,16 @@ const USAGE: &str = "\
 usage:
   locus-cli info <file.locus>
   locus-cli validate <file.locus> [--fix]
-  locus-cli export <file.locus> --format svg|pdf|dxf --out <file> [--fix] [--force]
+  locus-cli export <file.locus> --format <id> --out <file> [--fix] [--force]
+                   [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli plugin pack --manifest <plugin.toml> --wasm <file.wasm> --out <file.locusplugin>
                         [--readme <README.md>] [--icon <icon.png>]
 
 validate prints errors and warnings and exits 1 when errors remain.
 --fix applies the safe auto-fixes to the exported geometry (never to the file).
-export refuses to write when errors remain unless --force is given.
+export refuses to write when errors remain unless --force is given. Formats:
+svg, pdf, dxf, plus those of exporter plugins given with --plugin (a file) or
+--plugins (an installed-plugins folder).
 plugin pack wraps a wasm32 build of a plugin into a checked .locusplugin.";
 
 /// Largest input read, matching the file loader's own cap (SPEC §10).
@@ -78,6 +81,14 @@ fn run(args: &[String]) -> Result<(), CliError> {
         }
         Some("export") => {
             let opts = ExportOpts::parse(&args[1..]).map_err(CliError::Usage)?;
+            let registry = plugin::exporters(&opts.plugin_files, opts.plugins_dir.as_deref())?;
+            if registry.get(&opts.format).is_none() {
+                return Err(CliError::Usage(format!(
+                    "unsupported format `{}` (one of: {})",
+                    opts.format,
+                    registry.ids().join(", ")
+                )));
+            }
             let doc = read_document(&opts.input)?;
             let prepared = locus_export::prepare(&doc, opts.fix);
             if prepared.blocked() && !opts.force {
@@ -87,7 +98,6 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     "export blocked by validation errors (use --fix, or --force to export anyway)"
                 )));
             }
-            let registry = locus_export::Registry::builtin();
             let exporter = registry
                 .get(&opts.format)
                 .context("unknown export format")?;
@@ -136,6 +146,8 @@ struct ExportOpts {
     format: String,
     fix: bool,
     force: bool,
+    plugin_files: Vec<PathBuf>,
+    plugins_dir: Option<PathBuf>,
 }
 
 impl ExportOpts {
@@ -144,9 +156,16 @@ impl ExportOpts {
         let mut out = None;
         let mut format = None;
         let (mut fix, mut force) = (false, false);
+        let (mut plugin_files, mut plugins_dir) = (Vec::new(), None);
         let mut it = args.iter();
         while let Some(a) = it.next() {
             match a.as_str() {
+                "--plugin" => {
+                    plugin_files.push(PathBuf::from(it.next().ok_or("--plugin needs a value")?))
+                }
+                "--plugins" => {
+                    plugins_dir = Some(PathBuf::from(it.next().ok_or("--plugins needs a value")?));
+                }
                 "--format" => format = Some(it.next().ok_or("--format needs a value")?.as_str()),
                 "--out" => out = Some(PathBuf::from(it.next().ok_or("--out needs a value")?)),
                 "--fix" => fix = true,
@@ -160,19 +179,14 @@ impl ExportOpts {
             }
         }
         let format = format.ok_or("--format is required")?.to_owned();
-        let registry = locus_export::Registry::builtin();
-        if registry.get(&format).is_none() {
-            return Err(format!(
-                "unsupported format `{format}` (one of: {})",
-                registry.ids().join(", ")
-            ));
-        }
         Ok(Self {
             input: input.ok_or("no input file given")?,
             out: out.ok_or("--out is required")?,
             format,
             fix,
             force,
+            plugin_files,
+            plugins_dir,
         })
     }
 }

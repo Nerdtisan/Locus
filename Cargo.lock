@@ -1955,6 +1955,7 @@ name = "locus-plugin-host"
 version = "0.0.0"
 dependencies = [
  "locus-doc",
+ "locus-export",
  "locus-geom",
  "serde",
  "sha2",
