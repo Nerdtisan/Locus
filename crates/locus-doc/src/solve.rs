@@ -569,7 +569,7 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
         let kind = match &e.geom {
             // A Bézier's points are ordinary solver points; its only
             // constraints (G1 tangency) lower to point constraints below.
-            Geom::Point { .. } | Geom::Bezier { .. } => continue,
+            Geom::Point { .. } | Geom::Bezier { .. } | Geom::Text { .. } => continue,
             Geom::Line { start, end } => ls::CurveKind::Line {
                 a: low.point(*start)?,
                 b: low.point(*end)?,
@@ -625,7 +625,7 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
                     driven: false,
                 });
             }
-            Geom::Line { .. } | Geom::Arc { .. } | Geom::Bezier { .. } => {}
+            Geom::Line { .. } | Geom::Arc { .. } | Geom::Bezier { .. } | Geom::Text { .. } => {}
         }
     }
     for id in pinned {

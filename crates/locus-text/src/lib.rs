@@ -12,6 +12,7 @@
 pub mod bundled;
 pub mod error;
 pub mod geometry;
+pub mod library;
 pub mod outline;
 pub mod stroke;
 
@@ -22,6 +23,7 @@ use std::sync::Arc;
 pub use bundled::BundledFont;
 pub use error::TextError;
 pub use geometry::{Contour, Seg, TextGeometry};
+pub use library::{BundledProvider, FontLibrary, FontProvider, FontRef, SystemFontSource};
 pub use outline::OutlineFont;
 pub use stroke::{StrokeFont, StrokeGlyph};
 

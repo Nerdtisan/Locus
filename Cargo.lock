@@ -1570,6 +1570,7 @@ dependencies = [
  "locus-geom",
  "locus-region",
  "locus-solver",
+ "locus-text",
  "proptest",
  "ron",
  "serde",
