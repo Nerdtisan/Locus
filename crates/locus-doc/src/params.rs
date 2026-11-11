@@ -34,7 +34,7 @@ pub fn check_name(name: &str) -> Result<(), DocError> {
             "`{name}` is not a valid parameter name (letters, digits and _, not starting with a digit, at most {MAX_NAME})"
         )));
     }
-    if name == "pi" || Func::name_is_function(name) {
+    if crate::expr::constant(name).is_some() || Func::name_is_function(name) {
         return Err(DocError::Invalid(format!("`{name}` is a built-in name")));
     }
     Ok(())

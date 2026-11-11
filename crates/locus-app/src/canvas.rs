@@ -23,6 +23,7 @@ mod layers_panel;
 mod machine;
 mod offsets;
 mod params_panel;
+mod pattern_labels;
 mod patterns_panel;
 mod regions;
 mod text_ui;
@@ -39,6 +40,8 @@ enum DimTarget {
     Existing(ConstraintId),
     /// A live offset's distance (#164).
     Offset(locus_doc::RecipeId),
+    /// A pattern's count and spacing / angle (#168, #169).
+    Pattern(locus_doc::RecipeId),
 }
 
 /// A constraint the solver refused (SPEC §5 Solver UX): shown with the set it
@@ -400,9 +403,10 @@ impl Canvas {
             target: DimTarget::Existing(id),
             what: c.name(),
             angle,
-            text: doc
-                .dimension_expr(id)
-                .map_or_else(|| format_value(dim.value, angle, units), str::to_owned),
+            text: doc.dimension_expr(id).map_or_else(
+                || format_value(dim.value, angle, units),
+                |s| to_display(s, units),
+            ),
             at,
             fresh: true,
         });
@@ -557,10 +561,19 @@ impl Canvas {
     /// in degrees). Returns whether it was applied; on failure the editor
     /// stays open with the reason shown.
     fn commit_dimension(&mut self, edit: &DimEdit, units: Units) -> bool {
+        if let DimTarget::Pattern(rid) = edit.target {
+            return match self.pattern_command(rid, &edit.text, units) {
+                Ok(cmd) => self.apply_reporting(&cmd),
+                Err(why) => {
+                    self.notice = Some(why);
+                    false
+                }
+            };
+        }
         if let DimTarget::Offset(rid) = edit.target {
             let mm =
                 parse_number(&edit.text).map(|v| if units == Units::Inch { v * 25.4 } else { v });
-            return match self.offset_command(rid, mm, &edit.text) {
+            return match self.offset_command(rid, mm, &to_stored(&edit.text, units)) {
                 Some(cmd) => self.apply_reporting(&cmd),
                 None => false,
             };
@@ -578,11 +591,15 @@ impl Canvas {
                     constraint: spec.constraint(value, false),
                 },
                 DimTarget::Existing(id) => Command::SetDimension { id, value },
-                DimTarget::Offset(_) => return false,
+                DimTarget::Offset(_) | DimTarget::Pattern(_) => return false,
             };
             return self.apply_reporting(&cmd);
         }
-        let expr = edit.text.trim().to_owned();
+        let expr = if edit.angle {
+            edit.text.trim().to_owned()
+        } else {
+            to_stored(&edit.text, units)
+        };
         let cmd = match edit.target {
             DimTarget::New(spec) => Command::AddDimensionExpr {
                 constraint: spec.constraint(1.0, false),
@@ -592,7 +609,7 @@ impl Canvas {
                 id,
                 expr: Some(expr),
             },
-            DimTarget::Offset(_) => return false,
+            DimTarget::Offset(_) | DimTarget::Pattern(_) => return false,
         };
         self.apply_reporting(&cmd)
     }
@@ -1032,6 +1049,7 @@ impl Canvas {
         }
         grid::rulers(&painter, &self.view, rect);
         self.draw_offset_labels(&painter, rect, dark, settings.units);
+        self.draw_pattern_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
 
@@ -1450,7 +1468,16 @@ impl Canvas {
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(&(rid, _)) = self.offset_rects.iter().find(|(_, r)| r.contains(p))
         {
-            self.edit_offset(rid, units);
+            if self
+                .sketcher
+                .document()
+                .recipe(rid)
+                .is_some_and(|r| r.kind.is_pattern())
+            {
+                self.edit_pattern(rid, units);
+            } else {
+                self.edit_offset(rid, units);
+            }
         } else if resp.double_clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(&(id, _)) = self.dim_rects.iter().find(|(_, r)| r.contains(p))
@@ -1532,6 +1559,35 @@ fn format_value(value: f64, angle: bool, units: Units) -> String {
     // Trim trailing zeros: "20.0000" → "20".
     let s = s.trim_end_matches('0').trim_end_matches('.');
     s.to_owned()
+}
+
+/// Inch-mode entry of a length expression (SPEC §5): bare numbers follow the
+/// display unit like plain numbers do, so `1/2 + 0.125` typed in inches is
+/// stored as `(1/2 + 0.125) * in`. An expression that names parameters or a
+/// unit is already unambiguous (parameters are in millimetres) and is kept
+/// as typed.
+pub(crate) fn to_stored(text: &str, units: Units) -> String {
+    let t = text.trim();
+    if units != Units::Inch {
+        return t.to_owned();
+    }
+    match locus_doc::expr::parse(t) {
+        Ok(e) if e.references().is_empty() => format!("({t}) * in"),
+        _ => t.to_owned(),
+    }
+}
+
+/// The inverse of [`to_stored`], for showing a stored expression back.
+pub(crate) fn to_display(stored: &str, units: Units) -> String {
+    if units == Units::Inch
+        && let Some(inner) = stored
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(") * in"))
+        && locus_doc::expr::parse(inner).is_ok_and(|e| e.references().is_empty())
+    {
+        return inner.to_owned();
+    }
+    stored.to_owned()
 }
 
 /// A plain decimal, optionally followed by a unit suffix the box shows.
@@ -1685,11 +1741,69 @@ mod tests {
 
     #[test]
     #[allow(clippy::unwrap_used)]
+    fn pattern_label_edit_sets_count_and_spacing_with_units() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddRecipe {
+            kind: RecipeKind::Linear {
+                dir1: locus_doc::LinearDir {
+                    axis: locus_doc::Axis::X,
+                    count: "3".to_owned(),
+                    spacing: "10".to_owned(),
+                    symmetric: false,
+                },
+                dir2: None,
+            },
+            sources: vec![p],
+        });
+        let rid = *c.document().recipes().keys().next().unwrap();
+        c.edit_pattern(rid, Units::Mm);
+        assert_eq!(c.dim_edit.as_ref().unwrap().text, "3, 10");
+        let edit = |text: &str| DimEdit {
+            target: DimTarget::Pattern(rid),
+            what: "count, spacing",
+            angle: false,
+            text: text.to_owned(),
+            at: Vec2::ZERO,
+            fresh: false,
+        };
+        assert!(c.commit_dimension(&edit("5, 20"), Units::Mm));
+        assert_eq!(c.document().recipe(rid).unwrap().active, 4);
+        // Inch mode: the spacing is inches, like a plain number.
+        assert!(c.commit_dimension(&edit("2, 1"), Units::Inch));
+        let far = c
+            .document()
+            .recipe(rid)
+            .unwrap()
+            .instances()
+            .map(|e| c.document().point_pos(e).unwrap().x)
+            .fold(0.0_f64, f64::max);
+        assert!((far - 25.4).abs() < 1e-9);
+        c.edit_pattern(rid, Units::Inch);
+        assert_eq!(c.dim_edit.as_ref().unwrap().text, "2, 1");
+        // A malformed entry is refused with a reason.
+        assert!(!c.commit_dimension(&edit("7"), Units::Mm));
+        assert!(c.notice.is_some());
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
     fn patterns_panel_creates_edits_and_suppresses() {
         let mut c = Canvas::default();
         let ctx = egui::Context::default();
         let frame = |c: &mut Canvas| {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui));
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui, Units::Mm));
         };
         frame(&mut c);
         c.apply_reporting(&Command::AddEntity {
@@ -1729,6 +1843,84 @@ mod tests {
         }));
         frame(&mut c);
         assert_eq!(c.document().recipe(rid).unwrap().instances().count(), 2);
+    }
+
+    #[test]
+    fn expressions_follow_the_display_unit_like_plain_numbers() {
+        // Bare numbers are inches in inch mode, stored unambiguously.
+        assert_eq!(to_stored("1/2 + 0.125", Units::Inch), "(1/2 + 0.125) * in");
+        assert_eq!(to_stored("1/2 + 0.125", Units::Mm), "1/2 + 0.125");
+        // Parameters (mm) and explicit units are kept as typed.
+        assert_eq!(to_stored("w * 2", Units::Inch), "w * 2");
+        assert_eq!(to_stored("0.5 * in", Units::Inch), "0.5 * in");
+        // Showing it back strips the wrapper again.
+        assert_eq!(to_display("(1/2 + 0.125) * in", Units::Inch), "1/2 + 0.125");
+        assert_eq!(to_display("(1/2) * in", Units::Mm), "(1/2) * in");
+        assert_eq!(to_display("(w) * in", Units::Inch), "(w) * in");
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn inch_mode_expression_entry_gives_the_same_length_as_a_plain_number() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Circle {
+                center: p,
+                radius: 1.0,
+            },
+        });
+        let circle = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddConstraint {
+            constraint: locus_doc::Constraint::Diameter {
+                curve: circle,
+                dim: locus_doc::Dimension::driving(2.0),
+            },
+        });
+        let cid = *c.document().constraints().keys().next_back().unwrap();
+        let edit = |text: &str| DimEdit {
+            target: DimTarget::Existing(cid),
+            what: "diameter",
+            angle: false,
+            text: text.to_owned(),
+            at: Vec2::ZERO,
+            fresh: false,
+        };
+        let value = |c: &Canvas| {
+            c.document()
+                .constraint(cid)
+                .unwrap()
+                .dimension()
+                .unwrap()
+                .value
+        };
+        assert!(c.commit_dimension(&edit("0.5"), Units::Inch));
+        assert!((value(&c) - 12.7).abs() < 1e-9, "plain number: inches");
+        assert!(c.commit_dimension(&edit("1/4 + 1/4"), Units::Inch));
+        assert!((value(&c) - 12.7).abs() < 1e-9, "expression: same inches");
+        assert_eq!(c.document().dimension_expr(cid), Some("(1/4 + 1/4) * in"));
+        // Switching the display unit later does not move the geometry.
+        assert!(c.commit_dimension(&edit("12.7"), Units::Mm));
+        assert!((value(&c) - 12.7).abs() < 1e-9);
     }
 
     #[test]
