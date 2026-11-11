@@ -85,7 +85,7 @@ fn fields(kind: &RecipeKind) -> Vec<(&'static str, String)> {
 }
 
 /// `kind` with expression box `idx` (as numbered by [`fields`]) set to `text`.
-fn with_field(kind: &RecipeKind, idx: usize, text: String) -> RecipeKind {
+pub(super) fn with_field(kind: &RecipeKind, idx: usize, text: String) -> RecipeKind {
     let mut k = kind.clone();
     match &mut k {
         RecipeKind::Linear { dir1, dir2 } => match idx {

@@ -23,6 +23,7 @@ mod layers_panel;
 mod machine;
 mod offsets;
 mod params_panel;
+mod pattern_labels;
 mod patterns_panel;
 mod regions;
 mod text_ui;
@@ -39,6 +40,8 @@ enum DimTarget {
     Existing(ConstraintId),
     /// A live offset's distance (#164).
     Offset(locus_doc::RecipeId),
+    /// A pattern's count and spacing / angle (#168, #169).
+    Pattern(locus_doc::RecipeId),
 }
 
 /// A constraint the solver refused (SPEC §5 Solver UX): shown with the set it
@@ -558,6 +561,15 @@ impl Canvas {
     /// in degrees). Returns whether it was applied; on failure the editor
     /// stays open with the reason shown.
     fn commit_dimension(&mut self, edit: &DimEdit, units: Units) -> bool {
+        if let DimTarget::Pattern(rid) = edit.target {
+            return match self.pattern_command(rid, &edit.text, units) {
+                Ok(cmd) => self.apply_reporting(&cmd),
+                Err(why) => {
+                    self.notice = Some(why);
+                    false
+                }
+            };
+        }
         if let DimTarget::Offset(rid) = edit.target {
             let mm =
                 parse_number(&edit.text).map(|v| if units == Units::Inch { v * 25.4 } else { v });
@@ -579,7 +591,7 @@ impl Canvas {
                     constraint: spec.constraint(value, false),
                 },
                 DimTarget::Existing(id) => Command::SetDimension { id, value },
-                DimTarget::Offset(_) => return false,
+                DimTarget::Offset(_) | DimTarget::Pattern(_) => return false,
             };
             return self.apply_reporting(&cmd);
         }
@@ -597,7 +609,7 @@ impl Canvas {
                 id,
                 expr: Some(expr),
             },
-            DimTarget::Offset(_) => return false,
+            DimTarget::Offset(_) | DimTarget::Pattern(_) => return false,
         };
         self.apply_reporting(&cmd)
     }
@@ -1037,6 +1049,7 @@ impl Canvas {
         }
         grid::rulers(&painter, &self.view, rect);
         self.draw_offset_labels(&painter, rect, dark, settings.units);
+        self.draw_pattern_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
 
@@ -1455,7 +1468,16 @@ impl Canvas {
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(&(rid, _)) = self.offset_rects.iter().find(|(_, r)| r.contains(p))
         {
-            self.edit_offset(rid, units);
+            if self
+                .sketcher
+                .document()
+                .recipe(rid)
+                .is_some_and(|r| r.kind.is_pattern())
+            {
+                self.edit_pattern(rid, units);
+            } else {
+                self.edit_offset(rid, units);
+            }
         } else if resp.double_clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(&(id, _)) = self.dim_rects.iter().find(|(_, r)| r.contains(p))
@@ -1715,6 +1737,64 @@ mod tests {
                 c.layers_ui(ui, &settings);
             });
         }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn pattern_label_edit_sets_count_and_spacing_with_units() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.apply_reporting(&Command::AddRecipe {
+            kind: RecipeKind::Linear {
+                dir1: locus_doc::LinearDir {
+                    axis: locus_doc::Axis::X,
+                    count: "3".to_owned(),
+                    spacing: "10".to_owned(),
+                    symmetric: false,
+                },
+                dir2: None,
+            },
+            sources: vec![p],
+        });
+        let rid = *c.document().recipes().keys().next().unwrap();
+        c.edit_pattern(rid, Units::Mm);
+        assert_eq!(c.dim_edit.as_ref().unwrap().text, "3, 10");
+        let edit = |text: &str| DimEdit {
+            target: DimTarget::Pattern(rid),
+            what: "count, spacing",
+            angle: false,
+            text: text.to_owned(),
+            at: Vec2::ZERO,
+            fresh: false,
+        };
+        assert!(c.commit_dimension(&edit("5, 20"), Units::Mm));
+        assert_eq!(c.document().recipe(rid).unwrap().active, 4);
+        // Inch mode: the spacing is inches, like a plain number.
+        assert!(c.commit_dimension(&edit("2, 1"), Units::Inch));
+        let far = c
+            .document()
+            .recipe(rid)
+            .unwrap()
+            .instances()
+            .map(|e| c.document().point_pos(e).unwrap().x)
+            .fold(0.0_f64, f64::max);
+        assert!((far - 25.4).abs() < 1e-9);
+        c.edit_pattern(rid, Units::Inch);
+        assert_eq!(c.dim_edit.as_ref().unwrap().text, "2, 1");
+        // A malformed entry is refused with a reason.
+        assert!(!c.commit_dimension(&edit("7"), Units::Mm));
+        assert!(c.notice.is_some());
     }
 
     #[test]
