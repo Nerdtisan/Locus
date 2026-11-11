@@ -27,6 +27,7 @@ use wasmtime::component::types::ComponentItem;
 use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 
+use crate::api::{PACKAGE as API_PACKAGE, SUPPORTED_API_MAJORS};
 use crate::types::{
     Compensation, Constraint, Entity, ExportModel, FormatInfo, Generated, Kind, Operation, Param,
     ParamKind, ParamSpec, ParamValue, Path, PluginFailure, PluginInfo, Segment, Shape, Vec2,
@@ -70,11 +71,6 @@ use bindings::generator::locus::plugin::params as wparams;
 use bindings::generator::locus::plugin::types as wtypes;
 use bindings::modifier::exports::locus::plugin::modifier as wmod;
 
-/// The WIT package this host implements (ADR 0009).
-pub const API_PACKAGE: &str = "locus:plugin";
-/// The API major versions this host accepts: the current one, and the
-/// previous one once there is one (§15.3).
-pub const SUPPORTED_API_MAJORS: &[u64] = &[1];
 /// Largest component accepted, before compiling it.
 pub const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -305,11 +301,7 @@ fn types_only(engine: &Engine, item: &ComponentItem) -> bool {
 
 /// Finds the `locus:plugin` exports and checks their API major (§15.3).
 fn api_version<'a, I>(exports: impl Iterator<Item = (&'a str, I)>) -> Result<String, LoadError> {
-    let supported = SUPPORTED_API_MAJORS
-        .iter()
-        .map(|m| format!("{m}.x"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let supported = crate::manifest::supported_list();
     let mut found: Option<String> = None;
     for (name, _) in exports {
         let Some(rest) = name
