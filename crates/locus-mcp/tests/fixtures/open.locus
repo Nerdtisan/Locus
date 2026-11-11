@@ -1,0 +1,27 @@
+(
+  format_version: 1,
+  units: Mm,
+  next_id: 20,
+  parameters: {},
+  layers: {
+    1: (
+      name: "Cut",
+      colour: (255, 0, 0),
+      operation: Cut,
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    3: (layer: 1, construction: false, geom: Point(pos: (x: 0.0, y: 0.0))),
+    4: (layer: 1, construction: false, geom: Point(pos: (x: 10.0, y: 0.0))),
+    5: (layer: 1, construction: false, geom: Point(pos: (x: 10.0, y: 10.0))),
+    6: (layer: 1, construction: false, geom: Point(pos: (x: 0.0, y: 10.0))),
+    7: (layer: 1, construction: false, geom: Line(start: 3, end: 4)),
+    8: (layer: 1, construction: false, geom: Line(start: 4, end: 5)),
+    9: (layer: 1, construction: false, geom: Line(start: 5, end: 6)),
+  },
+  constraints: {},
+)
