@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 8;
+pub const CURRENT_VERSION: u32 = 9;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -354,8 +354,44 @@ struct FileV8 {
     view: Option<View>,
 }
 
-/// The newest on-disk shape. When adding v9, point this at `FileV9`.
-type Latest = FileV8;
+/// Version 9: text entities (SPEC §9, #179). A v8 file holds no text, so the
+/// migration is the identity on the data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV9 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+impl From<FileV8> for FileV9 {
+    fn from(f: FileV8) -> Self {
+        FileV9 {
+            format_version: 9,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v10, point this at `FileV10`.
+type Latest = FileV9;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -409,22 +445,25 @@ pub fn load(text: &str) -> Result<Document, FileError> {
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
     let latest = match header.format_version {
         0 => return Err(FileError::UnknownVersion(0)),
-        1 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(FileV4::from(
-            FileV3::from(FileV2::from(parse::<FileV1>(text)?)),
+        1 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
+            FileV4::from(FileV3::from(FileV2::from(parse::<FileV1>(text)?))),
         ))))),
-        2 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(FileV4::from(
-            FileV3::from(parse::<FileV2>(text)?),
+        2 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
+            FileV4::from(FileV3::from(parse::<FileV2>(text)?)),
         ))))),
-        3 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(FileV4::from(
-            parse::<FileV3>(text)?,
+        3 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
+            FileV4::from(parse::<FileV3>(text)?),
         ))))),
-        4 => FileV8::from(FileV7::from(FileV6::from(FileV5::from(parse::<FileV4>(
+        4 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
+            parse::<FileV4>(text)?,
+        ))))),
+        5 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(parse::<FileV5>(
             text,
         )?)))),
-        5 => FileV8::from(FileV7::from(FileV6::from(parse::<FileV5>(text)?))),
-        6 => FileV8::from(FileV7::from(parse::<FileV6>(text)?)),
-        7 => FileV8::from(parse::<FileV7>(text)?),
-        8 => parse::<FileV8>(text)?,
+        6 => FileV9::from(FileV8::from(FileV7::from(parse::<FileV6>(text)?))),
+        7 => FileV9::from(FileV8::from(parse::<FileV7>(text)?)),
+        8 => FileV9::from(parse::<FileV8>(text)?),
+        9 => parse::<FileV9>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -905,78 +944,174 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v9 sample: `sample_v8()` plus a text entity (SPEC §9, #179), laid
+    /// out with a bundled single-line font so the fixture stays small.
+    pub(crate) fn sample_v9() -> Document {
+        use locus_text::{Align, BundledFont, BundledProvider, FontRef};
+        let mut ed = Editor::new(sample_v8());
+        let mut pt = |x: f64, y: f64| {
+            ed.apply(&Command::AddEntity {
+                layer: L,
+                construction: false,
+                geom: Geom::Point {
+                    pos: Vec2::new(x, y),
+                },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let (anchor, dir) = (pt(5.0, 50.0), pt(15.0, 50.0));
+        let text = crate::text::TextData::new(
+            "Locus",
+            FontRef::bundled(BundledFont::HersheySans),
+            6.0,
+            Align::Left,
+            1.0,
+            &BundledProvider,
+        )
+        .unwrap();
+        ed.apply(&Command::AddEntity {
+            layer: L,
+            construction: false,
+            geom: Geom::Text {
+                anchor,
+                dir,
+                text: Box::new(text),
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
     #[test]
-    fn v8_fixture_is_current_and_loads() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v8/plate.locus");
+    fn v9_fixture_is_current_and_loads() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v9/plate.locus");
         if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v8()).unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v9()).unwrap()).unwrap();
         }
         let text = std::fs::read_to_string(path).unwrap();
-        assert!(text.contains("format_version: 8"));
-        assert!(text.contains("Offset("));
-        assert_eq!(load(&text).unwrap(), sample_v8());
+        assert!(text.contains("format_version: 9"));
+        assert!(text.contains("Text("));
+        assert_eq!(load(&text).unwrap(), sample_v9());
         assert_eq!(
-            save(&sample_v8()).unwrap(),
+            save(&sample_v9()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
     }
 
-    /// The v7 fixture is frozen; it migrates to v8 with no offsets.
+    /// Opening a document whose font is not here is not an error: the cached
+    /// geometry is all a file needs (#179).
     #[test]
-    fn v7_fixture_migrates_to_v8() {
+    fn text_with_a_missing_font_round_trips_unchanged() {
+        let mut doc = sample_v9();
+        let id = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Text { .. }))
+            .map(|(i, _)| i)
+            .unwrap();
+        if let Some(Entity {
+            geom: Geom::Text { text, .. },
+            ..
+        }) = doc.entities.get_mut(id)
+        {
+            text.font = locus_text::FontRef::File("NotInstalled.ttf".into());
+        }
+        let saved = save(&doc).unwrap();
+        let back = load(&saved).unwrap();
+        assert_eq!(back, doc);
+        assert_eq!(save(&back).unwrap(), saved, "save → load → save is stable");
+        let (t, ..) = back.text(id).unwrap();
+        assert!(t.font_missing(&locus_text::BundledProvider));
+        assert!(!t.layout.contours.is_empty());
+        assert!(back.text_geometry(id).is_some());
+    }
+
+    #[test]
+    fn hostile_text_is_rejected_on_load() {
+        let good = save(&sample_v9()).unwrap();
+        for (from, to) in [
+            ("size: 6.0", "size: -1.0"),
+            ("size: 6.0", "size: NaN"),
+            ("line_spacing: 1.0", "line_spacing: 0.0"),
+            ("Bundled(\"hershey-sans\")", "Bundled(\"\")"),
+        ] {
+            let bad = good.replacen(from, to, 1);
+            assert_ne!(bad, good, "{from}");
+            assert!(load(&bad).is_err(), "{from} -> {to}");
+        }
+        // A text whose anchor is a missing point.
+        let dangling = good.replacen("anchor: ", "anchor: 9", 1);
+        assert!(load(&dangling).is_err());
+    }
+
+    /// The v8 fixture is frozen; it migrates to v9 with no text.
+    #[test]
+    fn v8_fixture_migrates_to_v9() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v8/plate.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 8"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v8());
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
+    }
+
+    /// The v7 fixture is frozen; it migrates to v9.
+    #[test]
+    fn v7_fixture_migrates_to_v9() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v7/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 7"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v7());
-        assert!(save(&doc).unwrap().contains("format_version: 8"));
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
     }
 
     /// The v6 fixture is frozen; it migrates to v7 with crosshatch off.
     #[test]
-    fn v6_fixture_migrates_to_v8() {
+    fn v6_fixture_migrates_to_v9() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v6/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 6"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v6());
-        assert!(save(&doc).unwrap().contains("format_version: 8"));
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
     }
 
     /// The v5 fixture is frozen; it migrates to v6 with no expressions.
     #[test]
-    fn v5_fixture_migrates_to_v8() {
+    fn v5_fixture_migrates_to_v9() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v5/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 5"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v5());
-        assert!(save(&doc).unwrap().contains("format_version: 8"));
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
     }
 
     /// The v4 fixture is frozen; it migrates to v5 with no recipes.
     #[test]
-    fn v4_fixture_migrates_to_v8() {
+    fn v4_fixture_migrates_to_v9() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v4/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 4"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v4());
         assert!(doc.recipes().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 8"));
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
     }
 
     /// The v3 fixture is frozen; it migrates to v4 unchanged.
     #[test]
-    fn v3_fixture_migrates_to_v8() {
+    fn v3_fixture_migrates_to_v9() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v3/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 3"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v3());
-        assert!(save(&doc).unwrap().contains("format_version: 8"));
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
     }
 
     #[test]
@@ -1007,14 +1142,14 @@ mod tests {
 
     /// The v2 fixture is frozen; it migrates to v4 with no recipes.
     #[test]
-    fn v2_fixture_migrates_to_v8() {
+    fn v2_fixture_migrates_to_v9() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v2/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 2"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 8"));
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
     }
 
     #[test]
@@ -1030,7 +1165,7 @@ mod tests {
     /// The v1 fixture is frozen; it must keep loading, with default
     /// parameters on its layers (SPEC §10 migration).
     #[test]
-    fn v1_fixture_migrates_to_v8() {
+    fn v1_fixture_migrates_to_v9() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 1"));
@@ -1040,7 +1175,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 8"));
+        assert!(save(&doc).unwrap().contains("format_version: 9"));
     }
 
     #[test]
@@ -1062,13 +1197,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 8", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 9", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(9)),
+            load(&v(10)),
             Err(FileError::FutureVersion {
-                found: 9,
-                supported: 8
+                found: 10,
+                supported: 9
             })
         );
         // Dangling reference: a line pointing at a missing point.

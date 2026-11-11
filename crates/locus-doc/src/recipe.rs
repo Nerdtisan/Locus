@@ -498,6 +498,14 @@ pub(crate) fn copy_geom(src: &Geom, xf: Xf, map: &impl Fn(EntityId) -> EntityId)
             end_ctrl: map(*end_ctrl),
             end: map(*end),
         },
+        // The layout cache is in the text's local frame, so a copy only needs
+        // its anchor/direction points re-pointed (a mirrored copy reads
+        // correctly, not mirrored).
+        Geom::Text { anchor, dir, text } => Geom::Text {
+            anchor: map(*anchor),
+            dir: map(*dir),
+            text: text.clone(),
+        },
         Geom::Arc { center, start, end } => {
             let (s, e) = if xf.flips() {
                 (end, start)

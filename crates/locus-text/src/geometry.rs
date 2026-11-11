@@ -5,9 +5,10 @@
 //! cubics, so one curve type reaches the document (the `Bezier` entity, #159).
 
 use locus_geom::{Aabb, Affine2, Cubic, Vec2};
+use serde::{Deserialize, Serialize};
 
 /// One segment of a [`Contour`], ending at `end`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Seg {
     Line { end: Vec2 },
     Cubic { c0: Vec2, c1: Vec2, end: Vec2 },
@@ -50,7 +51,7 @@ impl Seg {
 
 /// A connected run of segments. Outline glyphs give closed contours (the last
 /// segment ends at `start`); single-line glyphs give open strokes (SPEC §9).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Contour {
     pub start: Vec2,
     pub segs: Vec<Seg>,
@@ -98,7 +99,7 @@ impl Contour {
 }
 
 /// Laid-out text: contours plus the line metrics callers need to constrain it.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct TextGeometry {
     pub contours: Vec<Contour>,
     /// Widest line, mm.

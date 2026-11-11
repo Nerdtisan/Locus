@@ -15,6 +15,7 @@ workspace = true
 locus-geom.workspace = true
 locus-region.workspace = true
 locus-solver.workspace = true
+locus-text.workspace = true
 ron.workspace = true
 serde.workspace = true
 thiserror.workspace = true

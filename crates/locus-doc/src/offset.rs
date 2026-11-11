@@ -68,6 +68,11 @@ pub(crate) fn chain(
             | Geom::Bezier { start, end, .. } => Some((start, end)),
             Geom::Circle { .. } => None,
             Geom::Point { .. } => return Err(bad("points can't be offset")),
+            Geom::Text { .. } => {
+                return Err(bad(
+                    "text can't be offset (offset its exported outline instead)",
+                ));
+            }
         };
         items.push(Item { id: *id, ends });
     }

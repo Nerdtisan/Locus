@@ -1545,6 +1545,7 @@ dependencies = [
  "locus-export",
  "locus-geom",
  "locus-region",
+ "locus-text",
  "rfd",
  "serde",
  "serde_json",
@@ -1570,6 +1571,7 @@ dependencies = [
  "locus-geom",
  "locus-region",
  "locus-solver",
+ "locus-text",
  "proptest",
  "ron",
  "serde",
@@ -1583,6 +1585,7 @@ dependencies = [
  "locus-doc",
  "locus-geom",
  "locus-region",
+ "locus-text",
  "thiserror 2.0.21",
 ]
 

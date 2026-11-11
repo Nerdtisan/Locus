@@ -19,7 +19,8 @@ pub fn region_curves(doc: &Document) -> Vec<Curve> {
         .flat_map(|(id, e)| {
             let key = id.get();
             let shapes: Vec<Shape> = match e.geom {
-                Geom::Point { .. } => Vec::new(),
+                // Text outlines are not regions (SPEC §9); they export as paths.
+                Geom::Point { .. } | Geom::Text { .. } => Vec::new(),
                 Geom::Line { .. } => doc.line(id).map(Shape::Line).into_iter().collect(),
                 Geom::Circle { .. } => doc.circle(id).map(Shape::Circle).into_iter().collect(),
                 Geom::Arc { .. } => doc.arc(id).map(Shape::Arc).into_iter().collect(),

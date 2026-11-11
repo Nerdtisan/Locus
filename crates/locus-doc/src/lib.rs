@@ -26,6 +26,7 @@ pub mod pattern;
 pub mod recipe;
 pub mod regions;
 pub mod solve;
+pub mod text;
 pub mod transform;
 
 #[cfg(test)]
@@ -44,3 +45,4 @@ pub use operation::{
 };
 pub use recipe::{Axis, LinearDir, MAX_INSTANCE_ENTITIES, MAX_INSTANCES, Recipe, RecipeKind};
 pub use solve::{ConstraintGroup, DragFrame, LockReport, Sketcher, SolveState, Status};
+pub use text::TextData;
