@@ -17,12 +17,15 @@ use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
 use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, LayerId, Sketcher};
 use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
+use text_ui::{FontCatalog, TextSettings};
 
 mod layers_panel;
 mod machine;
 mod offsets;
 mod params_panel;
+mod patterns_panel;
 mod regions;
+mod text_ui;
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
@@ -107,6 +110,7 @@ pub struct Canvas {
     active_layer: LayerId,
     layer_ui: layers_panel::LayerUi,
     param_ui: params_panel::ParamUi,
+    pattern_ui: patterns_panel::PatternUi,
     /// Region selection, hover and the boolean combine (#122, #124).
     region_ui: regions::RegionUi,
     /// Machine preview on, and its polylines (#176).
@@ -124,6 +128,11 @@ pub struct Canvas {
     pub corner: CornerSettings,
     /// Move/rotate/scale values, edited in the tool strip.
     pub transform: TransformSettings,
+    /// Settings for the next text the Text tool places, and the fonts it can use (#180).
+    text_settings: TextSettings,
+    fonts: FontCatalog,
+    /// The selected text being edited: its id and the not-yet-committed settings.
+    text_edit: Option<(EntityId, TextSettings)>,
 }
 
 impl Default for Canvas {
@@ -151,6 +160,7 @@ impl Default for Canvas {
             active_layer: Document::default_layer(),
             layer_ui: layers_panel::LayerUi::default(),
             param_ui: params_panel::ParamUi::default(),
+            pattern_ui: patterns_panel::PatternUi::default(),
             region_ui: regions::RegionUi::default(),
             machine_on: false,
             machine: Vec::new(),
@@ -160,6 +170,9 @@ impl Default for Canvas {
             corner_first: None,
             corner: CornerSettings::default(),
             transform: TransformSettings::default(),
+            text_settings: TextSettings::default(),
+            fonts: FontCatalog::headless(),
+            text_edit: None,
         };
         c.load(demo::sketch());
         c
@@ -380,6 +393,7 @@ impl Canvas {
                 Geom::Circle { .. } => doc.circle(r).map(|c| c.center),
                 Geom::Arc { .. } => doc.arc(r).map(|a| a.center),
                 Geom::Bezier { .. } => doc.cubic(r).map(|c| c.eval(0.5)),
+                Geom::Text { anchor, .. } => doc.point_pos(anchor),
             })
             .unwrap_or(Vec2::ZERO);
         self.dim_edit = Some(DimEdit {
@@ -681,7 +695,12 @@ impl Canvas {
             Outcome::Pending => {}
             Outcome::Rejected(why) => self.notice = Some(why.to_owned()),
             Outcome::Commit(cmd) => match self.apply(&cmd) {
-                Ok(()) => self.notice = None,
+                Ok(()) => {
+                    self.notice = None;
+                    if let Some(id) = self.draft.take_placed() {
+                        self.selection.set_all([id]);
+                    }
+                }
                 Err(e) => {
                     // The draft's predicted IDs are void after a failure.
                     self.draft.cancel();
@@ -810,6 +829,15 @@ impl Canvas {
         if let Some(s) = self.region_summary() {
             ui.label(s);
         }
+        let selected_text = self
+            .selection
+            .iter()
+            .next()
+            .filter(|_| self.selection.len() == 1)
+            .and_then(|id| {
+                let (t, anchor, dir) = self.sketcher.document().text(id)?;
+                Some((id, anchor, dir, t.clone()))
+            });
         let doc = self.sketcher.document();
         match self.selection.len() {
             0 if !self.region_ui.selected.is_empty() => {}
@@ -830,19 +858,95 @@ impl Canvas {
             }
             n => {
                 ui.label(format!("{n} entities selected"));
-                let mut counts = [0usize; 4];
+                let mut counts = [0usize; 6];
                 for id in self.selection.iter() {
                     if let Some(e) = doc.entity(id) {
                         counts[e.geom.kind() as usize] += 1;
                     }
                 }
-                for (name, c) in ["Points", "Lines", "Circles", "Arcs"].iter().zip(counts) {
+                for (name, c) in ["Points", "Lines", "Circles", "Arcs", "Béziers", "Texts"]
+                    .iter()
+                    .zip(counts)
+                {
                     if c > 0 {
                         ui.label(format!("{name}: {c}"));
                     }
                 }
             }
         }
+        if let Some((id, anchor, dir, text)) = selected_text {
+            ui.separator();
+            self.edit_text(ui, id, anchor, dir, &text);
+        } else {
+            self.text_edit = None;
+        }
+    }
+
+    /// Edit the selected text's content, font and style. Style changes apply
+    /// at once; the content applies when its field loses focus, so one edit
+    /// is one undo step (SPEC §11). With the font missing only the font can
+    /// change (the content can't be re-laid out), and picking one re-lays
+    /// the saved text out in it.
+    fn edit_text(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: EntityId,
+        anchor: EntityId,
+        dir: EntityId,
+        stored: &locus_doc::TextData,
+    ) {
+        let mut s = match self.text_edit.take() {
+            Some((i, s)) if i == id => s,
+            _ => TextSettings::from_data(stored),
+        };
+        // An undo/redo or solver change under the buffer: show the stored text
+        // unless the user is mid-edit of the content.
+        let live = TextSettings::from_data(stored);
+        if s.content != live.content && !ui.memory(|m| m.focused().is_some()) {
+            s = live;
+        }
+        let missing = self.fonts.missing(&stored.font);
+        let mut edited = text_ui::controls(ui, &mut s, &mut self.fonts, !missing, 3);
+        if s.content != stored.content
+            && !missing
+            && ui
+                .button("Apply text")
+                .on_hover_text("Ctrl+Enter, or click away from the field")
+                .clicked()
+        {
+            edited.content_done = true;
+        }
+        if edited.commit() && s != TextSettings::from_data(stored) {
+            match s.to_data(&self.fonts.library) {
+                Ok(text) => {
+                    let cmd = Command::ModifyEntity {
+                        id,
+                        geom: Geom::Text {
+                            anchor,
+                            dir,
+                            text: Box::new(text),
+                        },
+                    };
+                    match self.apply(&cmd) {
+                        Ok(()) => self.notice = None,
+                        Err(e) => self.notice = Some(e.to_string()),
+                    }
+                }
+                Err(e) => self.notice = Some(e.to_string()),
+            }
+        }
+        self.text_edit = Some((id, s));
+    }
+
+    /// Tool-bar controls while the Text tool is active.
+    pub fn text_tool_ui(&mut self, ui: &mut egui::Ui) {
+        // Keep the strip compact: the controls go in a wrapped row.
+        text_ui::controls(ui, &mut self.text_settings, &mut self.fonts, true, 1);
+    }
+
+    /// Swap in the app's real font catalog (system fonts, browser picker).
+    pub fn install_fonts(&mut self, ctx: &egui::Context) {
+        self.fonts = FontCatalog::new(ctx);
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, settings: &Settings, status: &mut Status) {
@@ -984,6 +1088,15 @@ impl Canvas {
             && let Some(pick) = self.cursor
         {
             self.draft.set_layer(self.active_layer());
+            if self.draft.tool() == Tool::Text {
+                match self.text_settings.to_data(&self.fonts.library) {
+                    Ok(t) => self.draft.set_text(Some(t)),
+                    Err(e) => {
+                        self.draft.set_text(None);
+                        self.notice = Some(e.to_string());
+                    }
+                }
+            }
             let out = self.draft.click(pick, self.sketcher.document().next_id());
             self.typed.clear();
             self.run(out);
@@ -1228,6 +1341,8 @@ impl Canvas {
             Some(Geom::Circle { center, .. } | Geom::Arc { center, .. }) => *center,
             // A Bézier moves by its end nearer the cursor, like a line.
             Some(Geom::Bezier { start, end, .. }) => near(*start, *end),
+            // Text is dragged by its anchor.
+            Some(Geom::Text { anchor, .. }) => *anchor,
             None => return false,
         };
         match self.sketcher.begin_drag(point) {
@@ -1464,6 +1579,7 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
         Geom::Circle { .. } => "Circle",
         Geom::Arc { .. } => "Arc",
         Geom::Bezier { .. } => "Bézier",
+        Geom::Text { .. } => "Text",
     };
     let mut rows = vec![
         ("ID".to_owned(), id.to_string()),
@@ -1511,6 +1627,16 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
                 rows.push(("Length".to_owned(), units.format_len(c.length())));
             }
         }
+        Geom::Text { .. } => {
+            if let Some((t, anchor, _)) = doc.text(id) {
+                rows.push(("Text".to_owned(), t.content.clone()));
+                rows.push(("Font".to_owned(), t.font.display_name()));
+                rows.push(("Size".to_owned(), units.format_len(t.size)));
+                if let Some(p) = doc.point_pos(anchor) {
+                    rows.push(("Anchor".to_owned(), pt(p)));
+                }
+            }
+        }
     }
     rows
 }
@@ -1518,6 +1644,7 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use locus_doc::RecipeKind;
 
     #[test]
     fn describe_reports_a_line_and_a_circle() {
@@ -1554,6 +1681,54 @@ mod tests {
                 c.layers_ui(ui, &settings);
             });
         }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn patterns_panel_creates_edits_and_suppresses() {
+        let mut c = Canvas::default();
+        let ctx = egui::Context::default();
+        let frame = |c: &mut Canvas| {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui));
+        };
+        frame(&mut c);
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point {
+                pos: Vec2::new(1.0, 1.0),
+            },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        let kind = RecipeKind::Linear {
+            dir1: locus_doc::LinearDir {
+                axis: locus_doc::Axis::X,
+                count: "4".to_owned(),
+                spacing: "5".to_owned(),
+                symmetric: false,
+            },
+            dir2: None,
+        };
+        assert!(c.apply_reporting(&Command::AddRecipe {
+            kind,
+            sources: vec![p]
+        }));
+        frame(&mut c);
+        let rid = *c.document().recipes().keys().next().unwrap();
+        assert_eq!(c.document().recipe(rid).unwrap().active, 3);
+        assert!(c.apply_reporting(&Command::SetInstanceSuppressed {
+            id: rid,
+            index: 0,
+            suppressed: true
+        }));
+        frame(&mut c);
+        assert_eq!(c.document().recipe(rid).unwrap().instances().count(), 2);
     }
 
     #[test]

@@ -164,6 +164,13 @@ pub enum Command {
     },
     /// Change a recipe's parameters (e.g. an offset's distance); the kind
     /// must stay the same and the sources are kept. The instances follow.
+    /// Suppress or restore one copy of a pattern (SPEC §6.2.1). `index` is
+    /// the copy's position in generation order (row by row for a grid).
+    SetInstanceSuppressed {
+        id: RecipeId,
+        index: usize,
+        suppressed: bool,
+    },
     EditRecipe {
         id: RecipeId,
         kind: RecipeKind,
@@ -215,6 +222,12 @@ impl Command {
             Command::AddRecipe { kind, .. } => format!("Add {}", kind.name().to_lowercase()),
             Command::ExplodeRecipe { .. } => "Explode".to_owned(),
             Command::RemoveRecipe { .. } => "Remove recipe".to_owned(),
+            Command::SetInstanceSuppressed { suppressed, .. } => if *suppressed {
+                "Suppress instance"
+            } else {
+                "Restore instance"
+            }
+            .to_owned(),
             Command::EditRecipe { kind, .. } => format!("Edit {}", kind.name().to_lowercase()),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
@@ -246,6 +259,7 @@ pub struct LayerProps {
 /// One reversible state change: the state of an item before and after.
 /// `None` means "absent".
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Patch {
     Entity {
         id: EntityId,
@@ -597,6 +611,23 @@ fn exec(
                         set_dim_expr(doc, id, Some(e), patches);
                     }
                 }
+                let rids: Vec<RecipeId> = doc.recipes.keys().copied().collect();
+                for rid in rids {
+                    let Some(b) = doc.recipe(rid).cloned() else {
+                        continue;
+                    };
+                    let kind = b.kind.map_expressions(&|s| params::rename_in(s, from, to));
+                    if kind != b.kind {
+                        let mut after = b.clone();
+                        after.kind = kind;
+                        let p = Patch::Recipe {
+                            id: rid,
+                            before: Some(b),
+                            after: Some(after),
+                        };
+                        record(doc, patches, p);
+                    }
+                }
                 revalue(doc, patches)?;
             }
         }
@@ -898,7 +929,42 @@ fn exec(
                     after: Some(after),
                 },
             );
-            crate::offset::regenerate(doc, *id, patches)?;
+            regenerate_one(doc, *id, patches)?;
+        }
+        Command::SetInstanceSuppressed {
+            id,
+            index,
+            suppressed,
+        } => {
+            let before = doc.recipe(*id).ok_or(DocError::UnknownRecipe(*id))?.clone();
+            if !before.kind.is_pattern() {
+                return Err(DocError::Invalid(
+                    "only pattern copies can be suppressed".to_owned(),
+                ));
+            }
+            if *index >= before.active {
+                return Err(DocError::Invalid(format!(
+                    "the pattern has no copy {index}"
+                )));
+            }
+            let mut after = before.clone();
+            if *suppressed {
+                after.suppressed.insert(*index);
+            } else {
+                after.suppressed.remove(index);
+            }
+            if after != before {
+                record(
+                    doc,
+                    patches,
+                    Patch::Recipe {
+                        id: *id,
+                        before: Some(before),
+                        after: Some(after),
+                    },
+                );
+                regenerate_one(doc, *id, patches)?;
+            }
         }
         Command::ApplySolution { points, radii } => apply_solution(doc, points, radii)?,
     }
@@ -921,6 +987,26 @@ fn add_recipe(
             doc.check_unlocked(e.layer)?;
         }
     }
+    if kind.is_pattern() {
+        let rid = RecipeId::new(doc.alloc_id()?);
+        record(
+            doc,
+            patches,
+            Patch::Recipe {
+                id: rid,
+                before: None,
+                after: Some(crate::pattern::empty(kind.clone(), sources)),
+            },
+        );
+        crate::pattern::regenerate(doc, rid, patches)?;
+        out.entities.extend(
+            doc.recipe(rid)
+                .map(|r| r.instances().collect::<Vec<_>>())
+                .unwrap_or_default(),
+        );
+        out.recipes.push(rid);
+        return Ok(());
+    }
     if !kind.solved() {
         // An offset: no copies of the sources; its instances are generated.
         let rid = RecipeId::new(doc.alloc_id()?);
@@ -929,6 +1015,7 @@ fn add_recipe(
             sources,
             pool: vec![Vec::new()],
             active: 0,
+            suppressed: std::collections::BTreeSet::new(),
             constraints: Vec::new(),
         };
         record(
@@ -1026,6 +1113,7 @@ fn add_recipe(
         sources,
         pool: vec![set],
         active: 1,
+        suppressed: std::collections::BTreeSet::new(),
         constraints: owned,
     };
     record(
@@ -1441,9 +1529,19 @@ pub(crate) fn regenerate_all(doc: &mut Document, patches: &mut Vec<Patch>) -> Re
         .map(|(id, _)| *id)
         .collect();
     for id in ids {
-        crate::offset::regenerate(doc, id, patches)?;
+        regenerate_one(doc, id, patches)?;
     }
     Ok(())
+}
+
+/// Regenerate one non-solved recipe, whatever its kind.
+fn regenerate_one(
+    doc: &mut Document,
+    id: RecipeId,
+    patches: &mut Vec<Patch>,
+) -> Result<(), DocError> {
+    crate::offset::regenerate(doc, id, patches)?;
+    crate::pattern::regenerate(doc, id, patches)
 }
 
 /// Solver output in document terms (`crate::solve`).

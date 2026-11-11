@@ -27,6 +27,8 @@ pub enum Tab {
     Regions,
     /// Named parameters for dimension expressions (#171).
     Parameters,
+    /// Linear and circular patterns (#168, #169).
+    Patterns,
 }
 
 impl Tab {
@@ -38,6 +40,7 @@ impl Tab {
             Tab::Constraints => "Constraints",
             Tab::Regions => "Regions",
             Tab::Parameters => "Parameters",
+            Tab::Patterns => "Patterns",
         }
     }
 }
@@ -48,7 +51,13 @@ fn default_layout() -> DockState<Tab> {
     let [_canvas, right] = tree.split_right(
         NodeIndex::root(),
         0.76,
-        vec![Tab::Properties, Tab::Layers, Tab::Regions, Tab::Parameters],
+        vec![
+            Tab::Properties,
+            Tab::Layers,
+            Tab::Regions,
+            Tab::Parameters,
+            Tab::Patterns,
+        ],
     );
     tree.split_below(right, 0.55, vec![Tab::Constraints]);
     dock
@@ -97,7 +106,11 @@ impl App {
         Self {
             dock,
             settings,
-            canvas: Canvas::default(),
+            canvas: {
+                let mut c = Canvas::default();
+                c.install_fonts(&cc.egui_ctx);
+                c
+            },
             status: Status::default(),
             files: FileIo::new(&cc.egui_ctx, cc.storage),
         }
@@ -197,6 +210,7 @@ impl App {
                     Tab::Layers,
                     Tab::Regions,
                     Tab::Parameters,
+                    Tab::Patterns,
                     Tab::Constraints,
                 ] {
                     let mut shown = self.dock.find_tab(&tab).is_some();
@@ -302,6 +316,10 @@ impl App {
             }
             ui.separator();
             self.corner_sizes(ui);
+            if self.canvas.tool() == Tool::Text {
+                self.canvas.text_tool_ui(ui);
+                ui.separator();
+            }
             if self.canvas.tool() == Tool::Polygon {
                 let (mut sides, mut outside) = self.canvas.polygon();
                 let changed = ui
@@ -554,6 +572,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
             Tab::Regions => self.canvas.regions_ui(ui),
             Tab::Parameters => self.canvas.parameters_ui(ui),
+            Tab::Patterns => self.canvas.patterns_ui(ui),
         }
     }
 
@@ -619,7 +638,7 @@ mod tests {
     #[test]
     fn layout_round_trips() {
         let json = serde_json::to_string(&default_layout()).unwrap_or_default();
-        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 6);
+        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 7);
     }
 
     #[test]

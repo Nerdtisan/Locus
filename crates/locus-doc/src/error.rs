@@ -69,6 +69,10 @@ pub enum DocError {
     },
     #[error("{what} must be finite and in range, got {value}")]
     BadValue { what: &'static str, value: f64 },
+    #[error("text: {0}")]
+    BadText(String),
+    #[error("font `{0}` is not available: choose another font to edit this text")]
+    FontUnavailable(String),
     #[error("entity {id} is still used by {} other item(s)", .entities.len() + .constraints.len())]
     EntityInUse {
         id: EntityId,

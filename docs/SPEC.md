@@ -277,6 +277,7 @@ Export is always one-way. Native file is the source of truth.
 - Text ships in core (`locus-text`), not as a plugin: it must work on the web, where plugins aren't available yet, and it's a live constrainable entity ([ADR-0009](adr/0009-plugin-api.md), decided in M2).
 - Text entity has a constrained baseline/anchor (can be constrained like any entity, e.g. centred on a region).
 - Bundle only fonts with compatible licences (OFL/public domain).
+- Representation, caching and font references: [ADR-0012](adr/0012-text-entity.md). Documents store the font *reference* and the cached geometry, never the font file; user fonts and (desktop only) system fonts are resolved by the app shell.
 
 ---
 
@@ -285,6 +286,7 @@ Export is always one-way. Native file is the source of truth.
 - Extension: `.locus`.
 - Human-readable **RON** for clean git diffs and easy debugging ([ADR-0004](adr/0004-file-format.md); JSON only as an export view).
 - Top-level: `format_version`, `units`, `next_id` (ID counter, [ADR-0003](adr/0003-entity-ids.md)), `parameters`, `layers`, `entities`, `constraints`, `booleans` (boolean recipes over region keys, format v3, #123; regions themselves are derived and not stored), `view` (optional, can be ignored by diff tools).
+- Text entities (format v9, #179) store content, a font reference and the laid-out geometry, so a file opens and exports without the font ([ADR-0012](adr/0012-text-entity.md)).
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
 - Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.
 - Deterministic serialisation (stable ordering) so unchanged documents produce identical files.

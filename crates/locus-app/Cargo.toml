@@ -20,6 +20,7 @@ locus-geom.workspace = true
 locus-doc.workspace = true
 locus-region.workspace = true
 locus-export.workspace = true
+locus-text.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_dock.workspace = true
