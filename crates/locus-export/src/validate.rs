@@ -307,13 +307,19 @@ mod tests {
         );
     }
 
-    /// A top-left machine's bed extends below the document origin.
+    /// The bed is the same rectangle whichever corner is the machine origin.
     #[test]
-    fn bed_check_follows_the_origin_corner() {
+    fn bed_check_ignores_the_origin_corner() {
         use crate::profile::Origin;
-        let part = rect(1, 10.0, -20.0, 30.0, -10.0);
-        assert!(bed_issues(part.clone(), &bed(Origin::TopLeft)).is_empty());
-        assert_eq!(bed_issues(part, &bed(Origin::BottomLeft)).len(), 1);
+        let part = rect(1, 10.0, 10.0, 30.0, 20.0);
+        for o in Origin::ALL {
+            assert!(bed_issues(part.clone(), &bed(o)).is_empty(), "{o:?}");
+        }
+        // Below the origin is off the bed for every corner.
+        let below = rect(1, 10.0, -20.0, 30.0, -10.0);
+        for o in Origin::ALL {
+            assert_eq!(bed_issues(below.clone(), &bed(o)).len(), 1, "{o:?}");
+        }
     }
 
     #[test]

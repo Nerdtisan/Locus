@@ -28,7 +28,7 @@ impl Canvas {
             Color32::from_rgb(0, 110, 190)
         };
         painter.rect_stroke(screen, 0.0, Stroke::new(1.5, colour), StrokeKind::Middle);
-        let origin: Pos2 = self.view.to_screen(Vec2::ZERO, rect);
+        let origin: Pos2 = self.view.to_screen(bed.origin_point(), rect);
         painter.rect_filled(
             Rect::from_center_size(origin, egui::vec2(6.0, 6.0)),
             0.0,
