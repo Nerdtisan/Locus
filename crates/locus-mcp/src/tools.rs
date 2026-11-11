@@ -639,6 +639,7 @@ fn issue_kind(k: locus_export::IssueKind) -> &'static str {
         K::SelfIntersection => "self_intersection",
         K::DuplicateSegment => "duplicate_segment",
         K::Degenerate => "degenerate",
+        K::OutsideBed => "outside_bed",
     }
 }
 
