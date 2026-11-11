@@ -191,7 +191,9 @@ impl RecipeKind {
         }
     }
 
-    pub(crate) fn name(&self) -> &'static str {
+    /// A short display name.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
         match self {
             Self::Mirror { .. } => "Mirror",
             Self::Offset { .. } => "Offset",
