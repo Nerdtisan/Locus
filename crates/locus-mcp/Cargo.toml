@@ -17,6 +17,8 @@ locus-doc.workspace = true
 locus-export.workspace = true
 locus-geom.workspace = true
 locus-plugin-host.workspace = true
+locus-region.workspace = true
+locus-text.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -39,4 +41,9 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 tokio-util = "0.7"
 tower-service = "0.3"
+# render_preview (#231): headless rasteriser + PNG encoder.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-std", "net", "time"] }
+
+[dev-dependencies]
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "png-format"] }

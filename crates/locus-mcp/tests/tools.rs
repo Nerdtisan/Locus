@@ -304,7 +304,7 @@ async fn resources_and_bad_arguments() {
 fn every_tool_has_an_object_schema_and_annotations() {
     let t = setup("plate.locus", Grants::default(), false);
     let tools = t.server.tools();
-    assert_eq!(tools.len(), 21);
+    assert_eq!(tools.len(), 22);
     for tool in tools {
         assert_eq!(
             tool.input_schema.get("type"),

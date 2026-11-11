@@ -21,6 +21,7 @@ pub mod host;
 pub mod http;
 pub mod plugins;
 pub mod policy;
+pub mod preview;
 pub mod server;
 pub mod stdio;
 pub mod tools;
