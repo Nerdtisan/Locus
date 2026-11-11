@@ -23,6 +23,7 @@ mod layers_panel;
 mod machine;
 mod offsets;
 mod params_panel;
+mod patterns_panel;
 mod regions;
 mod text_ui;
 
@@ -109,6 +110,7 @@ pub struct Canvas {
     active_layer: LayerId,
     layer_ui: layers_panel::LayerUi,
     param_ui: params_panel::ParamUi,
+    pattern_ui: patterns_panel::PatternUi,
     /// Region selection, hover and the boolean combine (#122, #124).
     region_ui: regions::RegionUi,
     /// Machine preview on, and its polylines (#176).
@@ -158,6 +160,7 @@ impl Default for Canvas {
             active_layer: Document::default_layer(),
             layer_ui: layers_panel::LayerUi::default(),
             param_ui: params_panel::ParamUi::default(),
+            pattern_ui: patterns_panel::PatternUi::default(),
             region_ui: regions::RegionUi::default(),
             machine_on: false,
             machine: Vec::new(),
@@ -1641,6 +1644,7 @@ fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(String, String)>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use locus_doc::RecipeKind;
 
     #[test]
     fn describe_reports_a_line_and_a_circle() {
@@ -1677,6 +1681,54 @@ mod tests {
                 c.layers_ui(ui, &settings);
             });
         }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn patterns_panel_creates_edits_and_suppresses() {
+        let mut c = Canvas::default();
+        let ctx = egui::Context::default();
+        let frame = |c: &mut Canvas| {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.patterns_ui(ui));
+        };
+        frame(&mut c);
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point {
+                pos: Vec2::new(1.0, 1.0),
+            },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        let kind = RecipeKind::Linear {
+            dir1: locus_doc::LinearDir {
+                axis: locus_doc::Axis::X,
+                count: "4".to_owned(),
+                spacing: "5".to_owned(),
+                symmetric: false,
+            },
+            dir2: None,
+        };
+        assert!(c.apply_reporting(&Command::AddRecipe {
+            kind,
+            sources: vec![p]
+        }));
+        frame(&mut c);
+        let rid = *c.document().recipes().keys().next().unwrap();
+        assert_eq!(c.document().recipe(rid).unwrap().active, 3);
+        assert!(c.apply_reporting(&Command::SetInstanceSuppressed {
+            id: rid,
+            index: 0,
+            suppressed: true
+        }));
+        frame(&mut c);
+        assert_eq!(c.document().recipe(rid).unwrap().instances().count(), 2);
     }
 
     #[test]
