@@ -96,6 +96,41 @@ fn good_archive_installs_lists_loads_and_runs() {
     ));
 }
 
+/// #235: disable without uninstalling; a disabled plugin is listed but not
+/// loaded, stays disabled across a reinstall, and enables again.
+#[test]
+fn disable_and_enable_without_uninstalling() {
+    let host = Host::new().unwrap();
+    let dir = TempDir::new();
+    let reg = Registry::new(&dir.0);
+    let id = "com.example.fixture";
+    let bytes = Archive::write(&good_manifest(), &wasm(), None, Some("# Fixture\n")).unwrap();
+    assert!(reg.install(&host, &bytes).unwrap().enabled);
+    assert!(reg.get(id).unwrap().capabilities().is_empty());
+
+    reg.set_enabled(id, false).unwrap();
+    assert!(!reg.list()[0].enabled);
+    assert!(matches!(reg.load(&host, id), Err(InstallError::Disabled)));
+    // Disabling twice is fine; the README is still readable.
+    reg.set_enabled(id, false).unwrap();
+    assert_eq!(reg.readme(id).as_deref(), Some("# Fixture\n"));
+
+    // A reinstall keeps it disabled.
+    assert!(!reg.install(&host, &bytes).unwrap().enabled);
+
+    reg.set_enabled(id, true).unwrap();
+    reg.set_enabled(id, true).unwrap();
+    assert!(reg.list()[0].enabled);
+    assert!(reg.load(&host, id).is_ok());
+
+    assert!(matches!(
+        reg.set_enabled("com.example.nothing", false),
+        Err(InstallError::NotInstalled)
+    ));
+    assert!(reg.readme("com.example.nothing").is_none());
+    assert!(reg.readme("../escape").is_none());
+}
+
 #[test]
 fn write_is_deterministic() {
     let a = Archive::write(&good_manifest(), &wasm(), None, None).unwrap();

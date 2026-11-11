@@ -3,8 +3,11 @@
 //!
 //! - **Install** a `.locusplugin` into the app's plugin folder; the host
 //!   checks the archive, manifest and component first (§15.7).
-//! - **Manage**: the installed list, each labelled Unsigned until signing
-//!   lands (§15.4), with uninstall.
+//! - **Plugin manager** (#235): each installed plugin with its version,
+//!   kinds, author, licence, Unsigned label (until signing lands, §15.4) and
+//!   granted capabilities (none in v1, said plainly); enable/disable without
+//!   uninstalling, the README as plain text, uninstall with confirmation. A
+//!   disabled plugin is never loaded: its objects show "plugin missing".
 //! - **Generators**: the parameter panel is drawn from the plugin's schema
 //!   (§15.3). Inserting or editing is one command, so one undo step (§11). A
 //!   failed call shows its error and changes nothing.
@@ -114,6 +117,11 @@ pub struct Plugins {
     exporters_dirty: bool,
     /// Importer plugin id chosen in the menu, run on the next frame.
     pending_import: Option<String>,
+    /// The README being shown: plugin name and its text.
+    readme: Option<(String, String)>,
+    /// "Install plugin…" was clicked in the manager; opens the file dialog
+    /// after the frame.
+    pending_install: bool,
 }
 
 impl Plugins {
@@ -156,7 +164,7 @@ impl Plugins {
         let ids: Vec<String> = self
             .installed
             .iter()
-            .filter(|i| i.manifest.kinds.contains(&Kind::Exporter))
+            .filter(|i| i.enabled && i.manifest.kinds.contains(&Kind::Exporter))
             .map(|i| i.manifest.id.clone())
             .collect();
         let mut skipped = Vec::new();
@@ -193,7 +201,7 @@ impl Plugins {
         let ids: Vec<String> = self
             .installed
             .iter()
-            .filter(|i| i.manifest.kinds.contains(&Kind::Validator))
+            .filter(|i| i.enabled && i.manifest.kinds.contains(&Kind::Validator))
             .map(|i| i.manifest.id.clone())
             .collect();
         let mut plugins = Vec::new();
@@ -273,7 +281,7 @@ impl Plugins {
             ui.close();
             self.install();
         }
-        if ui.button("Manage plugins…").clicked() {
+        if ui.button("Plugin manager…").clicked() {
             ui.close();
             self.refresh();
             self.manage = true;
@@ -282,7 +290,7 @@ impl Plugins {
         let generators: Vec<(String, String)> = self
             .installed
             .iter()
-            .filter(|i| i.manifest.kinds.contains(&Kind::Generator))
+            .filter(|i| i.enabled && i.manifest.kinds.contains(&Kind::Generator))
             .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
             .collect();
         if generators.is_empty() {
@@ -297,13 +305,13 @@ impl Plugins {
         let modifiers: Vec<(String, String)> = self
             .installed
             .iter()
-            .filter(|i| i.manifest.kinds.contains(&Kind::Modifier))
+            .filter(|i| i.enabled && i.manifest.kinds.contains(&Kind::Modifier))
             .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
             .collect();
         let importers: Vec<(String, String)> = self
             .installed
             .iter()
-            .filter(|i| i.manifest.kinds.contains(&Kind::Importer))
+            .filter(|i| i.enabled && i.manifest.kinds.contains(&Kind::Importer))
             .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
             .collect();
         if !importers.is_empty() {
@@ -503,6 +511,10 @@ impl Plugins {
         if let Some(id) = self.pending_import.take() {
             self.import(canvas, &id);
         }
+        if std::mem::take(&mut self.pending_install) {
+            self.install();
+        }
+        self.readme_window(ctx);
         self.panel_window(ctx, canvas);
         self.manage_window(ctx);
         if let Some(msg) = self.message.clone() {
@@ -588,40 +600,128 @@ impl Plugins {
         }
         let mut open = true;
         let mut uninstall = None;
-        egui::Window::new("Installed plugins")
+        let mut toggle: Option<(String, bool)> = None;
+        let mut readme: Option<String> = None;
+        egui::Window::new("Plugin manager")
             .open(&mut open)
             .collapsible(false)
+            .resizable(true)
             .show(ctx, |ui| {
+                if ui.button("Install plugin…").clicked() {
+                    self.pending_install = true;
+                }
+                ui.separator();
                 if self.installed.is_empty() {
                     ui.weak("No plugins installed.");
                 }
-                egui::Grid::new("plugins").num_columns(4).show(ui, |ui| {
-                    for i in &self.installed {
-                        let m = &i.manifest;
-                        ui.label(RichText::new(&m.name).strong())
-                            .on_hover_text(format!("{}\n{}\n{}", m.id, m.author, m.licence));
-                        ui.label(&m.version);
-                        let kinds: Vec<&str> = m.kinds.iter().map(|k| k.name()).collect();
-                        ui.weak(kinds.join(", "));
-                        ui.horizontal(|ui| {
-                            ui.colored_label(ui.visuals().warn_fg_color, i.trust_label())
-                                .on_hover_text("Plugin signing isn't available yet.");
-                            if self.confirm.as_deref() == Some(m.id.as_str()) {
-                                if ui.button("Really uninstall").clicked() {
-                                    uninstall = Some(m.id.clone());
+                egui::ScrollArea::vertical()
+                    .max_height(420.0)
+                    .show(ui, |ui| {
+                        for i in &self.installed {
+                            let m = &i.manifest;
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    let mut on = i.enabled;
+                                    if ui
+                                        .checkbox(&mut on, "")
+                                        .on_hover_text(
+                                            "Enabled. A disabled plugin stays installed; \
+                                             documents that use it open from their saved \
+                                             geometry.",
+                                        )
+                                        .changed()
+                                    {
+                                        toggle = Some((m.id.clone(), on));
+                                    }
+                                    ui.label(RichText::new(&m.name).strong());
+                                    ui.label(&m.version);
+                                    ui.colored_label(ui.visuals().warn_fg_color, i.trust_label())
+                                        .on_hover_text(
+                                            "Plugin signing isn't available yet, so every \
+                                             plugin is unsigned.",
+                                        );
+                                    if !i.enabled {
+                                        ui.weak("(disabled)");
+                                    }
+                                });
+                                egui::Grid::new(("plugin-details", &m.id))
+                                    .num_columns(2)
+                                    .show(ui, |ui| {
+                                        let kinds: Vec<&str> =
+                                            m.kinds.iter().map(|k| k.name()).collect();
+                                        let kinds = kinds.join(", ");
+                                        for (k, v) in [
+                                            ("Id", m.id.as_str()),
+                                            ("Kinds", kinds.as_str()),
+                                            ("Author", m.author.as_str()),
+                                            ("Licence", m.licence.as_str()),
+                                        ] {
+                                            ui.weak(k);
+                                            ui.label(v);
+                                            ui.end_row();
+                                        }
+                                        ui.weak("Capabilities");
+                                        if i.capabilities().is_empty() {
+                                            ui.label(
+                                                "None: no files, network, clock or system access",
+                                            )
+                                            .on_hover_text(
+                                                "Locus grants plugins no capabilities. Locus \
+                                                     does every file dialog, read and write \
+                                                     itself (SPEC §15.4).",
+                                            );
+                                        } else {
+                                            ui.label(i.capabilities().join(", "));
+                                        }
+                                        ui.end_row();
+                                    });
+                                if !m.description.is_empty() {
+                                    ui.label(&m.description);
                                 }
-                            } else if ui.button("Uninstall").clicked() {
-                                self.confirm = Some(m.id.clone());
-                            }
-                        });
-                        ui.end_row();
-                    }
-                });
+                                ui.horizontal(|ui| {
+                                    if ui.button("README…").clicked() {
+                                        readme = Some(m.id.clone());
+                                    }
+                                    if self.confirm.as_deref() == Some(m.id.as_str()) {
+                                        if ui.button("Really uninstall").clicked() {
+                                            uninstall = Some(m.id.clone());
+                                        }
+                                        if ui.button("Keep").clicked() {
+                                            self.confirm = None;
+                                        }
+                                    } else if ui.button("Uninstall…").clicked() {
+                                        self.confirm = Some(m.id.clone());
+                                    }
+                                });
+                            });
+                        }
+                    });
                 ui.weak(
-                    "Plugins run sandboxed: no files, network, clock or system access. \
-                     Documents keep plugin output when a plugin is removed.",
+                    "Plugins run sandboxed, with a time and memory limit on every call. \
+                     Documents keep plugin output when a plugin is disabled or removed.",
                 );
             });
+        if let Some(id) = readme {
+            let name = self
+                .installed
+                .iter()
+                .find(|i| i.manifest.id == id)
+                .map_or_else(|| id.clone(), |i| i.manifest.name.clone());
+            let text = Self::registry()
+                .ok()
+                .and_then(|r| r.readme(&id))
+                .unwrap_or_else(|| "This plugin has no README.".to_owned());
+            self.readme = Some((name, text));
+        }
+        if let Some((id, on)) = toggle {
+            self.loaded.remove(&id);
+            if let Err(e) =
+                Self::registry().and_then(|r| r.set_enabled(&id, on).map_err(|e| e.to_string()))
+            {
+                self.message = Some(format!("Couldn't change the plugin: {e}"));
+            }
+            self.changed();
+        }
         if let Some(id) = uninstall {
             self.confirm = None;
             self.loaded.remove(&id);
@@ -635,6 +735,27 @@ impl Plugins {
         if !open {
             self.manage = false;
             self.confirm = None;
+        }
+    }
+
+    /// A plugin's README, as plain text: never rendered as markup or links,
+    /// since it comes from the plugin's author.
+    fn readme_window(&mut self, ctx: &egui::Context) {
+        let Some((name, text)) = &self.readme else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(format!("{name}: README"))
+            .open(&mut open)
+            .resizable(true)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(480.0)
+                    .show(ui, |ui| ui.label(text.as_str()));
+            });
+        if !open {
+            self.readme = None;
         }
     }
 
@@ -658,9 +779,12 @@ impl Plugins {
             })
             .strong(),
         );
-        let installed = self
-            .installed(&pref.id)
-            .map(|i| (i.manifest.version.clone(), i.manifest.kinds.contains(&kind)));
+        let installed = self.installed(&pref.id).map(|i| {
+            (
+                i.manifest.version.clone(),
+                i.enabled && i.manifest.kinds.contains(&kind),
+            )
+        });
         let (edit, update) = if modifier {
             (Target::EditModifier(rid), Target::EditModifier(rid))
         } else {
@@ -670,8 +794,8 @@ impl Plugins {
             None | Some((_, false)) => {
                 ui.colored_label(ui.visuals().warn_fg_color, "⚠ Plugin missing")
                     .on_hover_text(
-                        "Shown and exported from its saved geometry. Install the plugin \
-                         to change its parameters.",
+                        "Shown and exported from its saved geometry. Install or enable \
+                         the plugin to change its parameters.",
                     );
             }
             Some((version, true)) => {

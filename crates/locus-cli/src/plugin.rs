@@ -54,7 +54,7 @@ pub fn load(
     if let Some(dir) = dir {
         let installed = Registry::new(dir);
         for i in installed.list() {
-            if i.manifest.kinds.contains(&kind) {
+            if i.enabled && i.manifest.kinds.contains(&kind) {
                 let (_, p) = installed
                     .load(&host, &i.manifest.id)
                     .map_err(|e| anyhow!("installed plugin: {e}"))?;
