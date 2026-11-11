@@ -35,3 +35,5 @@ web-sys = { workspace = true, features = ["Window", "Document", "HtmlCanvasEleme
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd.workspace = true
+# Plugins are desktop-only (SPEC §0, §15).
+locus-plugin-host.workspace = true

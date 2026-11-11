@@ -314,3 +314,62 @@ fn bad_plugin_id_fails_the_load() {
         Err(LoadError::Describe(CallError::Malformed(_)))
     ));
 }
+
+// ── Document unchanged after any failure (#181, #186) ───────────────────────
+
+/// What the app and CLI do: run the generator, and only on success turn the
+/// output into one `AddGenerated` command.
+fn insert(ed: &mut locus_doc::Editor, plugin: &locus_plugin_host::Plugin) -> Result<(), CallError> {
+    use locus_plugin_host::doc::{plugin_ref, to_cache};
+    let g = plugin.generate(&params())?;
+    let info = plugin.info();
+    ed.apply(&locus_doc::Command::AddGenerated {
+        layer: locus_doc::Document::default_layer(),
+        origin: locus_geom::Vec2::new(5.0, 5.0),
+        plugin: plugin_ref(&info.id, &info.version, &params()),
+        output: to_cache(&g),
+    })
+    .map_err(|e| CallError::Host(e.to_string()))?;
+    Ok(())
+}
+
+#[test]
+fn every_failure_leaves_the_document_unchanged() {
+    let host = Host::with_limits(Limits {
+        fuel: 200_000_000,
+        memory_bytes: 16 * 1024 * 1024,
+        timeout: Duration::from_millis(300),
+    })
+    .unwrap();
+    let mut ed = locus_doc::Editor::new(locus_doc::Document::new());
+    let good = host.load(&Fixture::well_behaved().build()).unwrap();
+    insert(&mut ed, &good).unwrap();
+    let before = ed.document().clone();
+
+    let hog =
+        "(loop $l (br_if $l (i32.ne (memory.grow (i32.const 16)) (i32.const -1)))) unreachable";
+    let bad = [
+        Fixture::well_behaved().with_generate("unreachable"),
+        Fixture::well_behaved().with_generate(SPIN),
+        Fixture::well_behaved().with_generate(hog),
+        Fixture::well_behaved()
+            .with_data(POINTS, f64s(&[0.0, 0.0, f64::NAN, 0.0, 1.0, 1.0, 0.0, 1.0])),
+        Fixture::well_behaved().with_data(
+            RESULT,
+            ok_generated((0xFFFF_0000, 4), (ENTITIES, 4), (CONSTRAINTS, 2)),
+        ),
+        Fixture::well_behaved()
+            .with_data(ERROR_MSG, b"no".to_vec())
+            .with_data(RESULT, err_generated(2, (ERROR_MSG, 2))),
+    ];
+    for f in bad {
+        let plugin = host.load(&f.build()).unwrap();
+        assert!(insert(&mut ed, &plugin).is_err());
+        assert_eq!(ed.document(), &before, "a failed call changed the document");
+    }
+    // The good one still inserts, as one more undo step.
+    insert(&mut ed, &good).unwrap();
+    assert_eq!(ed.document().recipes().len(), 2);
+    ed.undo().unwrap();
+    assert_eq!(ed.document().recipes().len(), 1);
+}

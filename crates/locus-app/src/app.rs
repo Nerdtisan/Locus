@@ -92,6 +92,8 @@ pub struct App {
     canvas: Canvas,
     status: Status,
     files: FileIo,
+    #[cfg(not(target_arch = "wasm32"))]
+    plugins: crate::plugins::Plugins,
 }
 
 impl App {
@@ -109,6 +111,8 @@ impl App {
             canvas: Canvas::default(),
             status: Status::default(),
             files: FileIo::new(&cc.egui_ctx, cc.storage),
+            #[cfg(not(target_arch = "wasm32"))]
+            plugins: crate::plugins::Plugins::default(),
         }
     }
 
@@ -278,6 +282,12 @@ impl App {
                     &mut self.settings.auto_constrain,
                     "Auto-constrain while drawing (hold Alt to suppress)",
                 );
+            });
+            ui.menu_button("Plugins", |ui| {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.plugins.menu(ui);
+                #[cfg(target_arch = "wasm32")]
+                ui.weak("Plugins run in the desktop app.");
             });
             ui.menu_button("Help", |ui| {
                 ui.hyperlink_to("Locus on GitHub", "https://github.com/Nerdtisan/Locus");
@@ -547,6 +557,8 @@ struct Viewer<'a> {
     canvas: &'a mut Canvas,
     settings: &'a Settings,
     status: &'a mut Status,
+    #[cfg(not(target_arch = "wasm32"))]
+    plugins: &'a mut crate::plugins::Plugins,
 }
 
 impl TabViewer for Viewer<'_> {
@@ -559,7 +571,18 @@ impl TabViewer for Viewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
         match tab {
             Tab::Canvas => self.canvas.ui(ui, self.settings, self.status),
-            Tab::Properties => self.canvas.properties_ui(ui, self.settings),
+            Tab::Properties => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.plugins.properties_ui(ui, self.canvas);
+                #[cfg(target_arch = "wasm32")]
+                if let Some((_, plugin)) = self.canvas.selected_plugin_object() {
+                    ui.label(egui::RichText::new("Plugin object").strong());
+                    self.canvas.plugin_object_ui(ui, &plugin);
+                    ui.weak("Plugins run in the desktop app; this one is shown from its saved geometry.");
+                    ui.separator();
+                }
+                self.canvas.properties_ui(ui, self.settings);
+            }
             Tab::Layers => self.canvas.layers_ui(ui, self.settings),
             Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
             Tab::Regions => self.canvas.regions_ui(ui),
@@ -594,6 +617,8 @@ impl eframe::App for App {
         }
         self.history_shortcuts(ui.ctx());
         self.files.update(ui.ctx(), &mut self.canvas);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.plugins.windows(ui.ctx(), &mut self.canvas);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::top("constraints").show(ui, |ui| self.constraint_bar(ui));
@@ -602,6 +627,8 @@ impl eframe::App for App {
             canvas: &mut self.canvas,
             settings: &self.settings,
             status: &mut self.status,
+            #[cfg(not(target_arch = "wasm32"))]
+            plugins: &mut self.plugins,
         };
         DockArea::new(&mut self.dock)
             .show_leaf_collapse_buttons(false)

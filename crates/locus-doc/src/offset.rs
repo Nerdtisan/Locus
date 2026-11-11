@@ -208,7 +208,7 @@ fn orient(segs: &mut [Seg]) {
 
 /// One output entity, referring to others by index.
 #[derive(Debug, Clone, PartialEq)]
-enum Out {
+pub(crate) enum Out {
     Point(Vec2),
     Line(usize, usize),
     /// CCW: centre, start, end.
@@ -342,6 +342,20 @@ pub(crate) fn regenerate(
         .iter()
         .find_map(|s| doc.entity(*s).map(|e| e.layer))
         .unwrap_or_else(Document::default_layer);
+    write_flat(doc, rid, r, layer, &out, patches)
+}
+
+/// Writes a flat recipe's instances (an offset, or a plugin object) from
+/// `out`, reusing the IDs in `pool[0]` and allocating more as needed (ADR
+/// 0003: an instance keeps its ID for good). Recorded in `patches`.
+pub(crate) fn write_flat(
+    doc: &mut Document,
+    rid: RecipeId,
+    r: crate::recipe::Recipe,
+    layer: crate::ids::LayerId,
+    out: &[Out],
+    patches: &mut Vec<Patch>,
+) -> Result<(), DocError> {
     let mut pool = r.pool.first().cloned().unwrap_or_default();
     while pool.len() < out.len() {
         pool.push(EntityId::new(doc.alloc_id()?));

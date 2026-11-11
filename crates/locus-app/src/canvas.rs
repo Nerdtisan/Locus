@@ -23,6 +23,7 @@ mod machine;
 mod offsets;
 mod params_panel;
 mod patterns_panel;
+pub mod plugin_objects;
 mod regions;
 
 /// Pick radius in screen points (converted to mm by the zoom).

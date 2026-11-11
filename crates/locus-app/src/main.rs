@@ -13,6 +13,8 @@ mod grid;
 mod hit;
 mod infer;
 mod modify_tool;
+#[cfg(not(target_arch = "wasm32"))]
+mod plugins;
 mod render;
 mod scene;
 mod settings;

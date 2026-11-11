@@ -8,6 +8,7 @@
 // Tests may unwrap; library code may not (CLAUDE.md, Code Style).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod doc;
 pub mod manifest;
 pub mod types;
 pub mod validate;
