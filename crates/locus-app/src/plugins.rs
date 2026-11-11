@@ -44,7 +44,7 @@ use crate::canvas::Canvas;
 use crate::file_io::FileIo;
 
 /// The app's plugin folder, next to its settings.
-fn plugin_dir() -> Option<PathBuf> {
+pub(crate) fn plugin_dir() -> Option<PathBuf> {
     eframe::storage_dir("locus").map(|d| d.join("plugins"))
 }
 
