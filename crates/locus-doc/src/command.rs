@@ -152,6 +152,17 @@ pub enum Command {
         kind: RecipeKind,
         sources: Vec<EntityId>,
     },
+    /// Insert a generator plugin's output (SPEC §15.3, §15.5; #183): an
+    /// origin point at `origin`, a direction point 10 mm along +x from it,
+    /// and a [`RecipeKind::Generated`] recipe drawing `output` in that frame,
+    /// all on `layer`, as one undo step. IDs: the two points come first in
+    /// [`Applied::entities`], then the instances.
+    AddGenerated {
+        layer: LayerId,
+        origin: Vec2,
+        plugin: crate::generated::PluginRef,
+        output: crate::generated::GeneratedGeometry,
+    },
     /// Turn a recipe's instances into ordinary, independent geometry and drop
     /// the recipe. Constraints it created stay, as ordinary constraints.
     ExplodeRecipe {
@@ -220,6 +231,7 @@ impl Command {
                 format!("Add {} constraint", constraint.name())
             }
             Command::AddRecipe { kind, .. } => format!("Add {}", kind.name().to_lowercase()),
+            Command::AddGenerated { .. } => "Add plugin object".to_owned(),
             Command::ExplodeRecipe { .. } => "Explode".to_owned(),
             Command::RemoveRecipe { .. } => "Remove recipe".to_owned(),
             Command::SetInstanceSuppressed { suppressed, .. } => if *suppressed {
@@ -894,6 +906,47 @@ fn exec(
         Command::AddRecipe { kind, sources } => {
             add_recipe(doc, kind, sources, patches, out)?;
         }
+        Command::AddGenerated {
+            layer,
+            origin,
+            plugin,
+            output,
+        } => {
+            // Check the payload before allocating anything.
+            plugin.validate()?;
+            output.validate()?;
+            doc.check_unlocked(*layer)?;
+            if !(origin.x.is_finite() && origin.y.is_finite()) {
+                return Err(DocError::Invalid(
+                    "plugin object origin is not finite".into(),
+                ));
+            }
+            let mut frame = Vec::with_capacity(2);
+            for pos in [*origin, *origin + Vec2::new(10.0, 0.0)] {
+                let id = EntityId::new(doc.alloc_id()?);
+                let e = Entity {
+                    layer: *layer,
+                    construction: false,
+                    geom: Geom::Point { pos },
+                };
+                record(
+                    doc,
+                    patches,
+                    Patch::Entity {
+                        id,
+                        before: None,
+                        after: Some(e),
+                    },
+                );
+                out.entities.push(id);
+                frame.push(id);
+            }
+            let kind = RecipeKind::Generated {
+                plugin: plugin.clone(),
+                output: output.clone(),
+            };
+            add_recipe(doc, &kind, &frame, patches, out)?;
+        }
         Command::ExplodeRecipe { id } => {
             let before = doc.recipe(*id).ok_or(DocError::UnknownRecipe(*id))?.clone();
             let p = Patch::Recipe {
@@ -980,7 +1033,11 @@ fn add_recipe(
     out: &mut Applied,
 ) -> Result<(), DocError> {
     let mut sources = sources.to_vec();
-    sources.sort_unstable();
+    // A plugin object's sources are ordered (origin, direction); every other
+    // kind keeps them sorted.
+    if !matches!(kind, RecipeKind::Generated { .. }) {
+        sources.sort_unstable();
+    }
     recipe::validate(doc, kind, &sources, None)?;
     for id in &sources {
         if let Some(e) = doc.entity(*id) {
@@ -1027,7 +1084,7 @@ fn add_recipe(
                 after: Some(recipe),
             },
         );
-        crate::offset::regenerate(doc, rid, patches)?;
+        regenerate_one(doc, rid, patches)?;
         out.entities.extend(
             doc.recipe(rid)
                 .map(|r| r.instances().collect::<Vec<_>>())
@@ -1541,7 +1598,8 @@ fn regenerate_one(
     patches: &mut Vec<Patch>,
 ) -> Result<(), DocError> {
     crate::offset::regenerate(doc, id, patches)?;
-    crate::pattern::regenerate(doc, id, patches)
+    crate::pattern::regenerate(doc, id, patches)?;
+    crate::generated::regenerate(doc, id, patches)
 }
 
 /// Solver output in document terms (`crate::solve`).

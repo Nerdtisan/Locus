@@ -25,6 +25,7 @@ mod offsets;
 mod params_panel;
 mod pattern_labels;
 mod patterns_panel;
+pub mod plugin_objects;
 mod regions;
 mod text_ui;
 

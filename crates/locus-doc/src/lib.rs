@@ -17,6 +17,7 @@ pub mod entity;
 pub mod error;
 pub mod expr;
 pub mod file;
+pub mod generated;
 pub mod ids;
 pub mod modify;
 pub mod offset;

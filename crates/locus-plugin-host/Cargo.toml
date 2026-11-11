@@ -12,6 +12,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+locus-doc.workspace = true
+locus-geom.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 toml = { version = "1.2", default-features = false, features = ["parse", "serde", "std"] }

@@ -1883,6 +1883,7 @@ dependencies = [
  "locus-doc",
  "locus-export",
  "locus-geom",
+ "locus-plugin-host",
  "locus-region",
  "locus-text",
  "rfd",
@@ -1953,6 +1954,8 @@ dependencies = [
 name = "locus-plugin-host"
 version = "0.0.0"
 dependencies = [
+ "locus-doc",
+ "locus-geom",
  "serde",
  "sha2",
  "thiserror 2.0.21",

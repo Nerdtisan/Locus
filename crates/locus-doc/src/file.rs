@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 9;
+pub const CURRENT_VERSION: u32 = 10;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -390,8 +390,44 @@ impl From<FileV8> for FileV9 {
     }
 }
 
-/// The newest on-disk shape. When adding v10, point this at `FileV10`.
-type Latest = FileV9;
+/// Version 10: plugin objects, the `Generated` recipe (SPEC §15.5, #183). A
+/// v9 file holds none, so the migration is the identity on the data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV10 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+}
+
+impl From<FileV9> for FileV10 {
+    fn from(f: FileV9) -> Self {
+        FileV10 {
+            format_version: 10,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v11, point this at `FileV11`.
+type Latest = FileV10;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -406,6 +442,11 @@ fn finite(v: f64, what: &str) -> Result<(), FileError> {
     } else {
         Err(FileError::Invalid(format!("{what} is not finite")))
     }
+}
+
+/// v9 → v10 (and on to newer versions as they are added).
+fn v9_to_latest(f: FileV9) -> Latest {
+    FileV10::from(f)
 }
 
 /// Serialise to `.locus` text.
@@ -445,25 +486,30 @@ pub fn load(text: &str) -> Result<Document, FileError> {
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
     let latest = match header.format_version {
         0 => return Err(FileError::UnknownVersion(0)),
-        1 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
-            FileV4::from(FileV3::from(FileV2::from(parse::<FileV1>(text)?))),
+        1 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+            FileV5::from(FileV4::from(FileV3::from(FileV2::from(parse::<FileV1>(
+                text,
+            )?)))),
         ))))),
-        2 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
-            FileV4::from(FileV3::from(parse::<FileV2>(text)?)),
+        2 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+            FileV5::from(FileV4::from(FileV3::from(parse::<FileV2>(text)?))),
         ))))),
-        3 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
-            FileV4::from(parse::<FileV3>(text)?),
+        3 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+            FileV5::from(FileV4::from(parse::<FileV3>(text)?)),
         ))))),
-        4 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(FileV5::from(
-            parse::<FileV4>(text)?,
+        4 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+            FileV5::from(parse::<FileV4>(text)?),
         ))))),
-        5 => FileV9::from(FileV8::from(FileV7::from(FileV6::from(parse::<FileV5>(
+        5 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+            parse::<FileV5>(text)?,
+        ))))),
+        6 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(parse::<FileV6>(
             text,
         )?)))),
-        6 => FileV9::from(FileV8::from(FileV7::from(parse::<FileV6>(text)?))),
-        7 => FileV9::from(FileV8::from(parse::<FileV7>(text)?)),
-        8 => FileV9::from(parse::<FileV8>(text)?),
-        9 => parse::<FileV9>(text)?,
+        7 => v9_to_latest(FileV9::from(FileV8::from(parse::<FileV7>(text)?))),
+        8 => v9_to_latest(FileV9::from(parse::<FileV8>(text)?)),
+        9 => v9_to_latest(parse::<FileV9>(text)?),
+        10 => parse::<FileV10>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -983,22 +1029,103 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v10 sample: `sample_v9()` plus a plugin object (SPEC §15.5,
+    /// #183): a 10 mm square with one constraint, as a generator returns it.
+    pub(crate) fn sample_v10() -> Document {
+        use crate::generated::{
+            GenConstraint, GenEntity, GeneratedGeometry, PluginParam, PluginRef, PluginValue,
+        };
+        let mut ed = Editor::new(sample_v9());
+        ed.apply(&Command::AddGenerated {
+            layer: L,
+            origin: Vec2::new(60.0, 10.0),
+            plugin: PluginRef {
+                id: "com.example.square".into(),
+                version: "1.0.0".into(),
+                params: vec![PluginParam {
+                    key: "size".into(),
+                    value: PluginValue::Number(10.0),
+                }],
+            },
+            output: GeneratedGeometry {
+                points: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(10.0, 0.0),
+                    Vec2::new(10.0, 10.0),
+                    Vec2::new(0.0, 10.0),
+                ],
+                entities: vec![
+                    GenEntity::Line(0, 1),
+                    GenEntity::Line(1, 2),
+                    GenEntity::Line(2, 3),
+                    GenEntity::Line(3, 0),
+                ],
+                constraints: vec![GenConstraint::Horizontal(0)],
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    /// The v9 fixture is frozen; it migrates to v10 with no plugin objects.
     #[test]
-    fn v9_fixture_is_current_and_loads() {
+    fn v9_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v9/plate.locus");
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v9()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 9"));
         assert!(text.contains("Text("));
-        assert_eq!(load(&text).unwrap(), sample_v9());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v9());
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
+    }
+
+    #[test]
+    fn v10_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v10/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v10()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 10"));
+        assert!(text.contains("Generated("));
+        assert_eq!(load(&text).unwrap(), sample_v10());
         assert_eq!(
-            save(&sample_v9()).unwrap(),
+            save(&sample_v10()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    /// A plugin object opens from its cache alone: no plugin is involved in
+    /// loading (§15.5), and a hostile cache is refused.
+    #[test]
+    fn plugin_object_round_trips_and_hostile_caches_are_rejected() {
+        let good = save(&sample_v10()).unwrap();
+        let back = load(&good).unwrap();
+        assert_eq!(save(&back).unwrap(), good, "save → load → save is stable");
+        for (from, to) in [
+            ("Line(3, 0)", "Line(3, 99)"),
+            ("Horizontal(0)", "Horizontal(77)"),
+            ("id: \"com.example.square\"", "id: \"../../evil\""),
+            ("value: Number(10.0)", "value: Number(NaN)"),
+        ] {
+            let bad = good.replacen(from, to, 1);
+            assert_ne!(bad, good, "{from}");
+            assert!(load(&bad).is_err(), "{from} -> {to}");
+        }
+        // The cache's last point (the plugin object is last in the file),
+        // moved beyond the 1 km bound.
+        let at = good.rfind("x: 0.0,").unwrap();
+        let far = format!(
+            "{}x: 5000000.0,{}",
+            &good[..at],
+            &good[at + "x: 0.0,".len()..]
+        );
+        assert!(load(&far).is_err());
     }
 
     /// Opening a document whose font is not here is not an error: the cached
@@ -1049,69 +1176,69 @@ mod tests {
 
     /// The v8 fixture is frozen; it migrates to v9 with no text.
     #[test]
-    fn v8_fixture_migrates_to_v9() {
+    fn v8_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v8/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 8"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v8());
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     /// The v7 fixture is frozen; it migrates to v9.
     #[test]
-    fn v7_fixture_migrates_to_v9() {
+    fn v7_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v7/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 7"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v7());
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     /// The v6 fixture is frozen; it migrates to v7 with crosshatch off.
     #[test]
-    fn v6_fixture_migrates_to_v9() {
+    fn v6_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v6/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 6"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v6());
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     /// The v5 fixture is frozen; it migrates to v6 with no expressions.
     #[test]
-    fn v5_fixture_migrates_to_v9() {
+    fn v5_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v5/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 5"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v5());
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     /// The v4 fixture is frozen; it migrates to v5 with no recipes.
     #[test]
-    fn v4_fixture_migrates_to_v9() {
+    fn v4_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v4/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 4"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v4());
         assert!(doc.recipes().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     /// The v3 fixture is frozen; it migrates to v4 unchanged.
     #[test]
-    fn v3_fixture_migrates_to_v9() {
+    fn v3_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v3/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 3"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v3());
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     #[test]
@@ -1142,14 +1269,14 @@ mod tests {
 
     /// The v2 fixture is frozen; it migrates to v4 with no recipes.
     #[test]
-    fn v2_fixture_migrates_to_v9() {
+    fn v2_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v2/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 2"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     #[test]
@@ -1165,7 +1292,7 @@ mod tests {
     /// The v1 fixture is frozen; it must keep loading, with default
     /// parameters on its layers (SPEC §10 migration).
     #[test]
-    fn v1_fixture_migrates_to_v9() {
+    fn v1_fixture_migrates_to_v10() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v1/plate.locus");
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 1"));
@@ -1175,7 +1302,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 9"));
+        assert!(save(&doc).unwrap().contains("format_version: 10"));
     }
 
     #[test]
@@ -1197,13 +1324,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 9", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 10", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(10)),
+            load(&v(11)),
             Err(FileError::FutureVersion {
-                found: 10,
-                supported: 9
+                found: 11,
+                supported: 10
             })
         );
         // Dangling reference: a line pointing at a missing point.
