@@ -22,6 +22,7 @@ pub mod modify;
 pub mod offset;
 pub mod operation;
 pub mod params;
+pub mod pattern;
 pub mod recipe;
 pub mod regions;
 pub mod solve;
@@ -41,5 +42,5 @@ pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 pub use operation::{
     Compensation, CutParams, DragKnifeParams, DrawParams, EngraveParams, Operation, OperationKind,
 };
-pub use recipe::{MAX_INSTANCE_ENTITIES, MAX_INSTANCES, Recipe, RecipeKind};
+pub use recipe::{Axis, LinearDir, MAX_INSTANCE_ENTITIES, MAX_INSTANCES, Recipe, RecipeKind};
 pub use solve::{ConstraintGroup, DragFrame, LockReport, Sketcher, SolveState, Status};

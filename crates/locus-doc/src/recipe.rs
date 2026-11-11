@@ -17,6 +17,7 @@
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
 use crate::error::DocError;
+use crate::expr;
 use crate::ids::{ConstraintId, EntityId, RecipeId};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,28 @@ pub const MAX_INSTANCES: usize = 10_000;
 /// Upper bound on the entities one recipe generates (instances × entities
 /// per instance), so a hostile file or a big source can't exhaust memory.
 pub const MAX_INSTANCE_ENTITIES: usize = 200_000;
+
+/// A direction of a linear pattern.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Axis {
+    X,
+    Y,
+    /// Along a line, from its start to its end (follows the line if it moves).
+    Line(EntityId),
+}
+
+/// One direction of a linear pattern. `count` and `spacing` are expressions
+/// over the document parameters (SPEC §5), in millimetres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinearDir {
+    pub axis: Axis,
+    /// Copies in this direction **including** the source.
+    pub count: String,
+    pub spacing: String,
+    /// Spread the copies to both sides of the source.
+    #[serde(default)]
+    pub symmetric: bool,
+}
 
 /// What a recipe does, with its parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,6 +71,24 @@ pub enum RecipeKind {
         #[serde(default)]
         expr: Option<String>,
     },
+    /// Rows and grids (SPEC §6.2.1, #168). Not solved: the copies are written
+    /// after each solve (`crate::pattern`).
+    Linear {
+        dir1: LinearDir,
+        dir2: Option<LinearDir>,
+    },
+    /// Copies around a centre point (#169). `count` includes the source;
+    /// `angle` is the total sweep in degrees (an expression; 360 = a full
+    /// circle).
+    Circular {
+        centre: EntityId,
+        count: String,
+        angle: String,
+        #[serde(default)]
+        symmetric: bool,
+        /// Turn the copies with the pattern, or keep their orientation.
+        rotate: bool,
+    },
 }
 
 impl RecipeKind {
@@ -57,8 +98,15 @@ impl RecipeKind {
     pub fn solved(&self) -> bool {
         match self {
             Self::Mirror { .. } => true,
-            Self::Offset { .. } => false,
+            Self::Offset { .. } | Self::Linear { .. } | Self::Circular { .. } => false,
         }
+    }
+
+    /// Whether this is a pattern (copies of the sources, written after the
+    /// solve) rather than a mirror or an offset.
+    #[must_use]
+    pub fn is_pattern(&self) -> bool {
+        matches!(self, Self::Linear { .. } | Self::Circular { .. })
     }
 
     /// How many copies of the source geometry the recipe currently makes.
@@ -66,6 +114,8 @@ impl RecipeKind {
     pub fn instance_count(&self) -> usize {
         match self {
             Self::Mirror { .. } | Self::Offset { .. } => 1,
+            // Patterns: depends on the document; see `slots`.
+            Self::Linear { .. } | Self::Circular { .. } => 0,
         }
     }
 
@@ -75,6 +125,69 @@ impl RecipeKind {
         match self {
             Self::Mirror { axis } => vec![*axis],
             Self::Offset { .. } => Vec::new(),
+            Self::Linear { dir1, dir2 } => [Some(dir1), dir2.as_ref()]
+                .into_iter()
+                .flatten()
+                .filter_map(|d| match d.axis {
+                    Axis::Line(l) => Some(l),
+                    Axis::X | Axis::Y => None,
+                })
+                .collect(),
+            Self::Circular { centre, .. } => vec![*centre],
+        }
+    }
+
+    /// The expressions a pattern holds (for "who uses this parameter").
+    #[must_use]
+    pub fn expressions(&self) -> Vec<&str> {
+        match self {
+            Self::Mirror { .. } => Vec::new(),
+            Self::Offset { expr, .. } => expr.as_deref().into_iter().collect(),
+            Self::Linear { dir1, dir2 } => [Some(dir1), dir2.as_ref()]
+                .into_iter()
+                .flatten()
+                .flat_map(|d| [d.count.as_str(), d.spacing.as_str()])
+                .collect(),
+            Self::Circular { count, angle, .. } => vec![count.as_str(), angle.as_str()],
+        }
+    }
+
+    /// A copy with every expression passed through `f` (parameter renames).
+    #[must_use]
+    pub fn map_expressions(&self, f: &impl Fn(&str) -> String) -> Self {
+        let dir = |d: &LinearDir| LinearDir {
+            count: f(&d.count),
+            spacing: f(&d.spacing),
+            ..d.clone()
+        };
+        match self {
+            Self::Mirror { .. } => self.clone(),
+            Self::Offset {
+                distance,
+                sharp,
+                expr,
+            } => Self::Offset {
+                distance: *distance,
+                sharp: *sharp,
+                expr: expr.as_deref().map(f),
+            },
+            Self::Linear { dir1, dir2 } => Self::Linear {
+                dir1: dir(dir1),
+                dir2: dir2.as_ref().map(dir),
+            },
+            Self::Circular {
+                centre,
+                count,
+                angle,
+                symmetric,
+                rotate,
+            } => Self::Circular {
+                centre: *centre,
+                count: f(count),
+                angle: f(angle),
+                symmetric: *symmetric,
+                rotate: *rotate,
+            },
         }
     }
 
@@ -82,6 +195,8 @@ impl RecipeKind {
         match self {
             Self::Mirror { .. } => "Mirror",
             Self::Offset { .. } => "Offset",
+            Self::Linear { .. } => "Linear pattern",
+            Self::Circular { .. } => "Circular pattern",
         }
     }
 }
@@ -99,6 +214,10 @@ pub struct Recipe {
     pub pool: Vec<Vec<EntityId>>,
     /// How many leading copies of `pool` exist as entities right now.
     pub active: usize,
+    /// Copies (indices below `active`) the user suppressed: they have no
+    /// entities, but keep their IDs in the pool. Patterns only.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub suppressed: BTreeSet<usize>,
     /// Constraints the recipe created and owns (mirror's `Symmetric` ties).
     #[serde(default)]
     pub constraints: Vec<ConstraintId>,
@@ -117,9 +236,17 @@ impl Recipe {
         };
         self.pool
             .iter()
+            .enumerate()
             .take(copies)
-            .flat_map(move |set| set.iter().take(per))
+            .filter(move |(k, _)| flat || !self.suppressed.contains(k))
+            .flat_map(move |(_, set)| set.iter().take(per))
             .copied()
+    }
+
+    /// Whether copy `k` of a mirror or pattern currently exists as entities.
+    #[must_use]
+    pub fn is_live(&self, k: usize) -> bool {
+        k < self.active && !self.suppressed.contains(&k)
     }
 
     /// Whether `pool[0]` is a flat ID list (offsets) rather than one set of
@@ -157,6 +284,8 @@ pub fn closure(doc: &Document, sources: &[EntityId]) -> BTreeSet<EntityId> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Xf {
     Reflect { a: Vec2, b: Vec2 },
+    Translate(Vec2),
+    Rotate { c: Vec2, angle: f64 },
 }
 
 impl Xf {
@@ -171,24 +300,24 @@ impl Xf {
                 let v = p - a;
                 a + d * (2.0 * v.dot(d)) - v
             }
+            Self::Translate(t) => p + t,
+            Self::Rotate { c, angle } => c + (p - c).rotated(angle),
         }
     }
 
     /// Reflections reverse orientation, so a counter-clockwise arc must swap
     /// its end points to stay counter-clockwise.
     pub(crate) fn flips(self) -> bool {
-        match self {
-            Self::Reflect { .. } => true,
-        }
+        matches!(self, Self::Reflect { .. })
     }
 }
 
 /// The map for copy `k` of `kind`, from the document's current geometry.
 pub(crate) fn transform(doc: &Document, kind: &RecipeKind, _k: usize) -> Result<Xf, DocError> {
     match kind {
-        RecipeKind::Offset { .. } => Err(DocError::Invalid(
-            "an offset is not a copy of its sources".to_owned(),
-        )),
+        RecipeKind::Offset { .. } | RecipeKind::Linear { .. } | RecipeKind::Circular { .. } => Err(
+            DocError::Invalid("this recipe has no single transform".to_owned()),
+        ),
         RecipeKind::Mirror { axis } => {
             let line = doc.line(*axis).ok_or(DocError::UnknownEntity(*axis))?;
             if (line.b - line.a).length() <= f64::EPSILON {
@@ -200,6 +329,144 @@ pub(crate) fn transform(doc: &Document, kind: &RecipeKind, _k: usize) -> Result<
                 a: line.a,
                 b: line.b,
             })
+        }
+    }
+}
+
+fn eval(doc: &Document, src: &str) -> Result<f64, DocError> {
+    Ok(expr::evaluate(src, doc.parameters())?)
+}
+
+/// A whole number of copies from an expression; at least 1, and bounded so a
+/// hostile expression can't ask for billions.
+fn eval_count(doc: &Document, src: &str) -> Result<usize, DocError> {
+    let v = eval(doc, src)?.floor();
+    if v < 1.0 {
+        return Err(DocError::Invalid(format!(
+            "a count must be at least 1, got {v}"
+        )));
+    }
+    if v > MAX_INSTANCES as f64 + 1.0 {
+        return Err(DocError::InstanceLimit {
+            requested: MAX_INSTANCES + 1,
+            limit: MAX_INSTANCES,
+        });
+    }
+    Ok(v as usize)
+}
+
+/// Offsets (in steps from the source) of `n` copies; 0 is the source itself.
+fn steps(n: usize, symmetric: bool) -> Vec<i64> {
+    let n = i64::try_from(n).unwrap_or(i64::MAX);
+    if symmetric {
+        let neg = (n - 1) / 2;
+        let pos = n - 1 - neg;
+        (-neg..=pos).collect()
+    } else {
+        (0..n).collect()
+    }
+}
+
+fn axis_dir(doc: &Document, axis: &Axis) -> Result<Vec2, DocError> {
+    match axis {
+        Axis::X => Ok(Vec2::new(1.0, 0.0)),
+        Axis::Y => Ok(Vec2::new(0.0, 1.0)),
+        Axis::Line(id) => {
+            let l = doc.line(*id).ok_or(DocError::UnknownEntity(*id))?;
+            (l.b - l.a).normalized(f64::EPSILON).ok_or_else(|| {
+                DocError::Invalid("a pattern direction line has zero length".to_owned())
+            })
+        }
+    }
+}
+
+/// The map for every copy of a pattern (source excluded), from the document's
+/// current geometry and parameters. The length is the instance count.
+pub(crate) fn slots(
+    doc: &Document,
+    kind: &RecipeKind,
+    sources: &[EntityId],
+) -> Result<Vec<Xf>, DocError> {
+    match kind {
+        RecipeKind::Mirror { .. } | RecipeKind::Offset { .. } => Ok(Vec::new()),
+        RecipeKind::Linear { dir1, dir2 } => {
+            let one = |d: &LinearDir| -> Result<(Vec2, f64, Vec<i64>), DocError> {
+                let n = eval_count(doc, &d.count)?;
+                let s = eval(doc, &d.spacing)?;
+                Ok((axis_dir(doc, &d.axis)?, s, steps(n, d.symmetric)))
+            };
+            let (v1, s1, m1) = one(dir1)?;
+            let (v2, s2, m2) = match dir2 {
+                Some(d) => one(d)?,
+                None => (Vec2::new(0.0, 0.0), 0.0, vec![0]),
+            };
+            if m1.len().saturating_mul(m2.len()) > MAX_INSTANCES + 1 {
+                return Err(DocError::InstanceLimit {
+                    requested: m1.len().saturating_mul(m2.len()),
+                    limit: MAX_INSTANCES,
+                });
+            }
+            let mut v = Vec::new();
+            for b in &m2 {
+                for a in &m1 {
+                    if *a != 0 || *b != 0 {
+                        v.push(Xf::Translate(v1 * (s1 * *a as f64) + v2 * (s2 * *b as f64)));
+                    }
+                }
+            }
+            Ok(v)
+        }
+        RecipeKind::Circular {
+            centre,
+            count,
+            angle,
+            symmetric,
+            rotate,
+        } => {
+            let c = doc
+                .point_pos(*centre)
+                .ok_or(DocError::UnknownEntity(*centre))?;
+            let n = eval_count(doc, count)?;
+            let total = eval(doc, angle)?.to_radians();
+            if !total.is_finite() || total == 0.0 {
+                return Err(DocError::Invalid(
+                    "a circular pattern needs a non-zero angle".to_owned(),
+                ));
+            }
+            let full = total.abs() >= std::f64::consts::TAU - 1e-9;
+            let step = if full || n < 2 {
+                total / n as f64
+            } else {
+                total / (n - 1) as f64
+            };
+            let ms: Vec<i64> = if full {
+                (0..i64::try_from(n).unwrap_or(0)).collect()
+            } else {
+                steps(n, *symmetric)
+            };
+            // Orientation-keeping copies move by what the source's centroid
+            // does under the rotation.
+            let pts: Vec<Vec2> = closure(doc, sources)
+                .into_iter()
+                .filter_map(|id| doc.point_pos(id))
+                .collect();
+            let pivot = if pts.is_empty() {
+                c
+            } else {
+                pts.iter().fold(Vec2::new(0.0, 0.0), |a, p| a + *p) / pts.len() as f64
+            };
+            Ok(ms
+                .into_iter()
+                .filter(|m| *m != 0)
+                .map(|m| {
+                    let a = step * m as f64;
+                    if *rotate {
+                        Xf::Rotate { c, angle: a }
+                    } else {
+                        Xf::Translate(c + (pivot - c).rotated(a) - pivot)
+                    }
+                })
+                .collect())
         }
     }
 }
@@ -306,9 +573,54 @@ pub(crate) fn validate(
             }
             crate::offset::chain(doc, sources)?;
         }
+        RecipeKind::Linear { dir1, dir2 } => {
+            let cl = closure(doc, sources);
+            for d in [Some(dir1), dir2.as_ref()].into_iter().flatten() {
+                if let Axis::Line(l) = d.axis {
+                    let found = doc.entity(l).map_or(EntityKind::Point, |e| e.geom.kind());
+                    if found != EntityKind::Line {
+                        return Err(DocError::WrongKind {
+                            what: "pattern direction",
+                            entity: l,
+                            expected: "line",
+                            found,
+                        });
+                    }
+                    if cl.contains(&l) {
+                        return Err(DocError::SameEntity {
+                            what: "pattern direction",
+                            entity: l,
+                        });
+                    }
+                }
+            }
+        }
+        RecipeKind::Circular { centre, .. } => {
+            let found = doc
+                .entity(*centre)
+                .map_or(EntityKind::Line, |e| e.geom.kind());
+            if found != EntityKind::Point {
+                return Err(DocError::WrongKind {
+                    what: "pattern centre",
+                    entity: *centre,
+                    expected: "point",
+                    found,
+                });
+            }
+            if closure(doc, sources).contains(centre) {
+                return Err(DocError::SameEntity {
+                    what: "pattern centre",
+                    entity: *centre,
+                });
+            }
+        }
     }
     let per = closure(doc, sources).len();
-    let n = kind.instance_count();
+    let n = if kind.is_pattern() {
+        slots(doc, kind, sources)?.len()
+    } else {
+        kind.instance_count()
+    };
     if n > MAX_INSTANCES {
         return Err(DocError::InstanceLimit {
             requested: n,
@@ -336,8 +648,9 @@ pub(crate) fn instances_of(doc: &Document, source: EntityId) -> Vec<(EntityId, R
             out.extend(
                 r.pool
                     .iter()
-                    .take(r.active)
-                    .filter_map(|set| set.get(i))
+                    .enumerate()
+                    .filter(|(k, _)| r.is_live(*k))
+                    .filter_map(|(_, set)| set.get(i))
                     .map(|e| (*e, *rid)),
             );
         }
@@ -369,7 +682,7 @@ pub(crate) fn validate_all(doc: &Document) -> Result<(), DocError> {
                 if id.get() >= doc.next_id() || !seen.insert(*id) {
                     return Err(bad("instance ID reused or beyond the counter"));
                 }
-                let live = if flat { i < r.active } else { k < r.active };
+                let live = if flat { i < r.active } else { r.is_live(k) };
                 if live != doc.entity(*id).is_some() {
                     return Err(bad("instance entities do not match the active count"));
                 }
