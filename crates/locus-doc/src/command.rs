@@ -62,6 +62,12 @@ pub enum Command {
         id: ConstraintId,
         value: f64,
     },
+    /// Measure a dimension to the centreline or a stroke edge (SPEC §5, #239).
+    /// The value is kept; the geometry re-solves to honour it at the new edge.
+    SetDimensionEdge {
+        id: ConstraintId,
+        edge: crate::constraint::Edge,
+    },
     /// Switch a dimensional constraint between driving and driven (reference).
     SetDriven {
         id: ConstraintId,
@@ -217,6 +223,7 @@ impl Command {
             }
             Command::RemoveConstraint { .. } => "Remove constraint".to_owned(),
             Command::SetDimension { .. } => "Set dimension".to_owned(),
+            Command::SetDimensionEdge { .. } => "Set dimension edge".to_owned(),
             Command::SetDriven { .. } => "Set driven".to_owned(),
             Command::AddLayer { .. } => "Add layer".to_owned(),
             Command::SetLayerProps { .. } => "Change layer".to_owned(),
@@ -539,6 +546,9 @@ fn exec(
         Command::SetDimension { id, value } => {
             edit_dimension(doc, *id, patches, |d| d.value = *value)?;
             set_dim_expr(doc, *id, None, patches);
+        }
+        Command::SetDimensionEdge { id, edge } => {
+            edit_dimension(doc, *id, patches, |d| d.edge = *edge)?;
         }
         Command::SetDriven { id, driven } => {
             edit_dimension(doc, *id, patches, |d| d.driven = *driven)?;

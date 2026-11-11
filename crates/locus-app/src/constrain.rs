@@ -6,7 +6,7 @@
 //! `Sketcher` (SPEC §11); the solver's pre-check refuses conflicting
 //! constraints there. Nothing here touches the document.
 
-use locus_doc::{Command, Constraint, Dimension, Document, EntityId, EntityKind};
+use locus_doc::{Command, Constraint, Dimension, Document, Edge, EntityId, EntityKind};
 use locus_geom::Vec2;
 
 /// Lines closer than this (radians) to parallel are dimensioned by distance,
@@ -359,7 +359,7 @@ pub enum DimSpec {
 impl DimSpec {
     /// The constraint with `value` (mm, or radians for an angle).
     pub fn constraint(self, value: f64, driven: bool) -> Constraint {
-        let dim = Dimension { value, driven };
+        let dim = Dimension::new(value, driven, Edge::Centre);
         match self {
             DimSpec::Distance(a, b) => Constraint::Distance { a, b, dim },
             DimSpec::Radius(curve) => Constraint::Radius { curve, dim },
@@ -663,10 +663,7 @@ mod tests {
             as_driven(&d),
             Some(Constraint::Radius {
                 curve: EntityId::new(5),
-                dim: Dimension {
-                    value: 3.0,
-                    driven: true
-                }
+                dim: Dimension::new(3.0, true, Edge::Centre)
             })
         );
         assert_eq!(
