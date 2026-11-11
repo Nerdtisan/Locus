@@ -10,3 +10,23 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+# Desktop-only (SPEC §0, ADR 0005): never part of the wasm32 build.
+[dependencies]
+locus-doc.workspace = true
+locus-export.workspace = true
+locus-geom.workspace = true
+locus-plugin-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rmcp = { version = "3.8", default-features = false, features = [
+    "server",
+    "macros",
+    "transport-io",
+    "transport-streamable-http-server",
+] }
+schemars = "1"
+base64 = "0.23"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-std", "net", "time"] }
