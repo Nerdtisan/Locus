@@ -90,3 +90,55 @@ fn pack_refuses_garbage() {
     assert_eq!(out.status.code(), Some(1));
     assert!(!out_file.exists());
 }
+
+// ── Exporter plugins (#184) ─────────────────────────────────────────────────
+
+fn fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
+
+#[test]
+fn hpgl_plugin_exports_the_plate_golden() {
+    let Some(hpgl) = packed("hpgl") else {
+        return;
+    };
+    let out_file = scratch("plate.plt");
+    let input = fixture("plate.locus");
+    let out = cli(&[
+        "export".as_ref(),
+        input.as_os_str(),
+        "--format".as_ref(),
+        "hpgl".as_ref(),
+        "--plugin".as_ref(),
+        hpgl.as_os_str(),
+        "--out".as_ref(),
+        out_file.as_os_str(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&out_file).unwrap();
+    examples::golden(&fixture(""), "plate.plt", &bytes);
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.starts_with("IN;\n") && text.ends_with("SP0;\n"));
+}
+
+#[test]
+fn plugin_formats_need_their_plugin() {
+    let input = fixture("plate.locus");
+    let out_file = scratch("nope.plt");
+    let out = cli(&[
+        "export".as_ref(),
+        input.as_os_str(),
+        "--format".as_ref(),
+        "hpgl".as_ref(),
+        "--out".as_ref(),
+        out_file.as_os_str(),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("svg, pdf, dxf"));
+}

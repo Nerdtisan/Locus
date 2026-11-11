@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Plugins in the desktop app (SPEC §15; #182, #183).
+//! Plugins in the desktop app (SPEC §15; #182, #183, #184).
 //!
 //! - **Install** a `.locusplugin` into the app's plugin folder; the host
 //!   checks the archive, manifest and component first (§15.7).
@@ -8,10 +8,16 @@
 //! - **Generators**: the parameter panel is drawn from the plugin's schema
 //!   (§15.3). Inserting or editing is one command, so one undo step (§11). A
 //!   failed call shows its error and changes nothing.
+//! - **Modifiers** (§15.2): applied to the selected chain as a
+//!   non-destructive object; the sketch re-runs the installed plugin when
+//!   the chain changes ([`RegistryRunner`]).
+//! - **Exporters** (§15.2): listed in File ▸ Export beside the built-ins,
+//!   never replacing one.
 //! - **Plugin objects**: edit their parameters, or update them to the
-//!   installed plugin version, explicitly; nothing re-runs a plugin on its
+//!   installed plugin version, explicitly; a generator never re-runs on its
 //!   own (§15.5). Without the plugin they keep working from their cached
-//!   geometry, with a "plugin missing" badge.
+//!   geometry, with a "plugin missing" badge (modifiers: "out of date" once
+//!   their source changes).
 //!
 //! Desktop-only (SPEC §0). Calls run on the UI thread under the host's
 //! limits (a CPU budget, 256 MB, 5 s).
@@ -20,15 +26,22 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use egui::{RichText, Ui};
-use locus_doc::generated::PluginRef;
-use locus_doc::{Command, RecipeId, RecipeKind};
+use std::sync::Arc;
+
+use locus_doc::generated::{PluginRef, input_hash, modifier_input};
+use locus_doc::{Command, EntityId, RecipeId, RecipeKind};
 use locus_plugin_host::archive::MAX_ARCHIVE_BYTES;
-use locus_plugin_host::doc::{from_stored, plugin_ref, resolve, to_cache};
+use locus_plugin_host::doc::{
+    from_stored, paths_to_cache, plugin_ref, resolve, to_cache, to_paths,
+};
+use locus_plugin_host::export::PluginExporter;
 use locus_plugin_host::registry::{Installed, Registry};
+use locus_plugin_host::runner::RegistryRunner;
 use locus_plugin_host::types::{Kind, Param, ParamKind, ParamSpec, ParamValue};
 use locus_plugin_host::{Host, Plugin};
 
 use crate::canvas::Canvas;
+use crate::file_io::FileIo;
 
 /// The app's plugin folder, next to its settings.
 fn plugin_dir() -> Option<PathBuf> {
@@ -47,10 +60,22 @@ fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     Ok(data)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Target {
+    /// A new generator object.
     Insert,
+    /// A generator object's parameters.
     Edit(RecipeId),
+    /// A new modifier object over these curves.
+    Modify(Vec<EntityId>),
+    /// A modifier object's parameters.
+    EditModifier(RecipeId),
+}
+
+impl Target {
+    fn modifier(&self) -> bool {
+        matches!(self, Target::Modify(_) | Target::EditModifier(_))
+    }
 }
 
 /// The open parameter panel.
@@ -76,6 +101,9 @@ pub struct Plugins {
     /// Plugin id awaiting "really uninstall?".
     confirm: Option<String>,
     message: Option<String>,
+    runner: Option<Arc<RegistryRunner>>,
+    /// The installed set changed: rebuild the export formats.
+    exporters_dirty: bool,
 }
 
 impl Plugins {
@@ -99,6 +127,65 @@ impl Plugins {
         self.listed = true;
     }
 
+    /// Connects the plugins to the sketch (modifier re-runs) and to File ▸
+    /// Export (exporter plugins). Called once at start-up.
+    pub fn attach(&mut self, canvas: &mut Canvas, files: &mut FileIo) {
+        if let Ok(reg) = Self::registry() {
+            let runner = Arc::new(RegistryRunner::new(reg));
+            canvas.set_plugin_runner(Some(runner.clone()));
+            self.runner = Some(runner);
+        }
+        self.refresh();
+        self.update_exporters(files);
+    }
+
+    /// The built-in formats plus every installed exporter plugin that loads.
+    /// A plugin can't take a built-in's id (`Registry::add`).
+    fn update_exporters(&mut self, files: &mut FileIo) {
+        let mut formats = locus_export::Registry::builtin();
+        let ids: Vec<String> = self
+            .installed
+            .iter()
+            .filter(|i| i.manifest.kinds.contains(&Kind::Exporter))
+            .map(|i| i.manifest.id.clone())
+            .collect();
+        let mut skipped = Vec::new();
+        for id in ids {
+            let loaded = Self::registry().and_then(|reg| {
+                let host = self.host()?;
+                let (_, p) = reg.load(host, &id).map_err(|e| e.to_string())?;
+                PluginExporter::new(p).map_err(|e| e.to_string())
+            });
+            match loaded {
+                Ok(e) => {
+                    if !formats.add(Box::new(e)) {
+                        skipped.push(id);
+                    }
+                }
+                Err(_) => skipped.push(id),
+            }
+        }
+        if !skipped.is_empty() {
+            self.message = Some(format!(
+                "Some exporter plugins couldn't be added to File ▸ Export \
+                 (they failed to load or use a format id that's taken): {}",
+                skipped.join(", ")
+            ));
+        }
+        files.set_exporters(formats);
+        self.exporters_dirty = false;
+    }
+
+    /// After an install or uninstall: reload plugins everywhere.
+    fn changed(&mut self) {
+        self.loaded.clear();
+        if let Some(r) = &self.runner {
+            r.reload();
+        }
+        self.refresh();
+        self.exporters_dirty = true;
+    }
+
     fn installed(&mut self, id: &str) -> Option<&Installed> {
         if !self.listed {
             self.refresh();
@@ -120,7 +207,7 @@ impl Plugins {
 
     // ── Menu ────────────────────────────────────────────────────────────────
 
-    pub fn menu(&mut self, ui: &mut Ui) {
+    pub fn menu(&mut self, ui: &mut Ui, canvas: &Canvas) {
         if !self.listed {
             self.refresh();
         }
@@ -149,6 +236,29 @@ impl Plugins {
                 self.open(&id, Target::Insert, None);
             }
         }
+        let modifiers: Vec<(String, String)> = self
+            .installed
+            .iter()
+            .filter(|i| i.manifest.kinds.contains(&Kind::Modifier))
+            .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
+            .collect();
+        if !modifiers.is_empty() {
+            ui.separator();
+            let curves = canvas.selected_curves();
+            for (id, name) in modifiers {
+                if ui
+                    .add_enabled(
+                        !curves.is_empty(),
+                        egui::Button::new(format!("Apply {name} to selection…")),
+                    )
+                    .on_disabled_hover_text("Select a chain of lines and arcs, or a circle.")
+                    .clicked()
+                {
+                    ui.close();
+                    self.open(&id, Target::Modify(curves.clone()), None);
+                }
+            }
+        }
     }
 
     fn install(&mut self) {
@@ -165,7 +275,6 @@ impl Plugins {
         });
         self.message = Some(match result {
             Ok(i) => {
-                self.loaded.remove(&i.manifest.id);
                 format!(
                     "Installed {} {} ({}).",
                     i.manifest.name,
@@ -175,7 +284,7 @@ impl Plugins {
             }
             Err(e) => format!("Couldn't install the plugin: {e}"),
         });
-        self.refresh();
+        self.changed();
     }
 
     // ── Parameter panel ─────────────────────────────────────────────────────
@@ -183,8 +292,14 @@ impl Plugins {
     /// Opens the panel for a plugin; `stored` pre-fills an existing object's
     /// values (ones the current schema no longer has are dropped).
     fn open(&mut self, id: &str, target: Target, stored: Option<&PluginRef>) {
+        let modifier = target.modifier();
         let opened = self.plugin(id).and_then(|p| {
-            let schema = p.generator_schema().map_err(|e| e.to_string())?;
+            let schema = if modifier {
+                p.modifier_schema()
+            } else {
+                p.generator_schema()
+            }
+            .map_err(|e| e.to_string())?;
             Ok((p.info().name.clone(), schema))
         });
         match opened {
@@ -209,7 +324,7 @@ impl Plugins {
         }
     }
 
-    /// Runs the generator and applies one command; `Err` changes nothing.
+    /// Runs the plugin and applies one command; `Err` changes nothing.
     fn run(
         &mut self,
         canvas: &mut Canvas,
@@ -218,10 +333,37 @@ impl Plugins {
         target: Target,
     ) -> Result<(), String> {
         let plugin = self.plugin(id)?;
+        let info = plugin.info().clone();
+        if target.modifier() {
+            let schema = plugin.modifier_schema().map_err(|e| e.to_string())?;
+            let params = resolve(&schema, &values).map_err(|e| e.to_string())?;
+            let doc = canvas.document();
+            let sources = match &target {
+                Target::Modify(curves) => curves.clone(),
+                Target::EditModifier(rid) => doc
+                    .recipe(*rid)
+                    .map(|r| r.sources.clone())
+                    .ok_or("the modifier object is gone")?,
+                _ => Vec::new(),
+            };
+            let input = modifier_input(doc, &sources).map_err(|e| e.to_string())?;
+            let out = plugin
+                .modify(&to_paths(&input), &params)
+                .map_err(|e| e.to_string())?;
+            let kind = RecipeKind::Modified {
+                plugin: plugin_ref(&info.id, &info.version, &params),
+                input_hash: input_hash(&input),
+                output: paths_to_cache(&out),
+            };
+            let cmd = match target {
+                Target::EditModifier(rid) => Command::EditRecipe { id: rid, kind },
+                _ => Command::AddRecipe { kind, sources },
+            };
+            return canvas.apply(&cmd).map_err(|e| e.to_string());
+        }
         let schema = plugin.generator_schema().map_err(|e| e.to_string())?;
         let params = resolve(&schema, &values).map_err(|e| e.to_string())?;
         let generated = plugin.generate(&params).map_err(|e| e.to_string())?;
-        let info = plugin.info();
         let pref = plugin_ref(&info.id, &info.version, &params);
         let output = to_cache(&generated);
         let cmd = match target {
@@ -231,18 +373,22 @@ impl Plugins {
                 plugin: pref,
                 output,
             },
-            Target::Edit(rid) => Command::EditRecipe {
+            Target::Edit(rid) | Target::EditModifier(rid) => Command::EditRecipe {
                 id: rid,
                 kind: RecipeKind::Generated {
                     plugin: pref,
                     output,
                 },
             },
+            Target::Modify(_) => return Err("not a generator".into()),
         };
         canvas.apply(&cmd).map_err(|e| e.to_string())
     }
 
-    pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut Canvas, files: &mut FileIo) {
+        if self.exporters_dirty {
+            self.update_exporters(files);
+        }
         self.panel_window(ctx, canvas);
         self.manage_window(ctx);
         if let Some(msg) = self.message.clone() {
@@ -271,8 +417,8 @@ impl Plugins {
             .collect();
         let (mut apply, mut cancel) = (false, false);
         let verb = match panel.target {
-            Target::Insert => "Insert",
-            Target::Edit(_) => "Apply",
+            Target::Insert | Target::Modify(_) => "Insert",
+            Target::Edit(_) | Target::EditModifier(_) => "Apply",
         };
         egui::Window::new(&panel.name)
             .collapsible(false)
@@ -301,7 +447,7 @@ impl Plugins {
         if cancel {
             self.panel = None;
         } else if apply {
-            let (id, target) = (panel.id.clone(), panel.target);
+            let (id, target) = (panel.id.clone(), panel.target.clone());
             let values: Vec<Param> = panel
                 .schema
                 .iter()
@@ -370,7 +516,7 @@ impl Plugins {
             {
                 self.message = Some(format!("Couldn't uninstall: {e}"));
             }
-            self.refresh();
+            self.changed();
         }
         if !open {
             self.manage = false;
@@ -382,16 +528,30 @@ impl Plugins {
 
     /// The selected plugin object's section of the Properties panel.
     pub fn properties_ui(&mut self, ui: &mut Ui, canvas: &mut Canvas) {
-        let Some((rid, pref)) = canvas.selected_plugin_object() else {
+        let Some((rid, pref, modifier)) = canvas.selected_plugin_object() else {
             return;
         };
-        ui.label(RichText::new("Plugin object").strong());
-        let installed = self.installed(&pref.id).map(|i| {
-            (
-                i.manifest.version.clone(),
-                i.manifest.kinds.contains(&Kind::Generator),
-            )
-        });
+        let kind = if modifier {
+            Kind::Modifier
+        } else {
+            Kind::Generator
+        };
+        ui.label(
+            RichText::new(if modifier {
+                "Modifier"
+            } else {
+                "Plugin object"
+            })
+            .strong(),
+        );
+        let installed = self
+            .installed(&pref.id)
+            .map(|i| (i.manifest.version.clone(), i.manifest.kinds.contains(&kind)));
+        let (edit, update) = if modifier {
+            (Target::EditModifier(rid), Target::EditModifier(rid))
+        } else {
+            (Target::Edit(rid), Target::Edit(rid))
+        };
         match installed {
             None | Some((_, false)) => {
                 ui.colored_label(ui.visuals().warn_fg_color, "⚠ Plugin missing")
@@ -403,7 +563,7 @@ impl Plugins {
             Some((version, true)) => {
                 ui.horizontal(|ui| {
                     if ui.button("Edit parameters…").clicked() {
-                        self.open(&pref.id, Target::Edit(rid), Some(&pref));
+                        self.open(&pref.id, edit, Some(&pref));
                     }
                     if version != pref.version
                         && ui
@@ -416,10 +576,16 @@ impl Plugins {
                     {
                         let values = self
                             .plugin(&pref.id)
-                            .and_then(|p| p.generator_schema().map_err(|e| e.to_string()))
+                            .and_then(|p| {
+                                if modifier {
+                                    p.modifier_schema()
+                                } else {
+                                    p.generator_schema()
+                                }
+                                .map_err(|e| e.to_string())
+                            })
                             .map(|schema| from_stored(&schema, &pref.params));
-                        let result =
-                            values.and_then(|v| self.run(canvas, &pref.id, v, Target::Edit(rid)));
+                        let result = values.and_then(|v| self.run(canvas, &pref.id, v, update));
                         if let Err(e) = result {
                             self.message = Some(format!("Couldn't update the object: {e}"));
                         }
@@ -427,7 +593,17 @@ impl Plugins {
                 });
             }
         }
+        if modifier && canvas.plugin_object_stale(rid) {
+            ui.colored_label(ui.visuals().warn_fg_color, "⚠ Out of date")
+                .on_hover_text(
+                    "Its source changed and the plugin couldn't run again (missing, a \
+                     different version, or it failed). The saved output is shown.",
+                );
+        }
         canvas.plugin_object_ui(ui, &pref);
+        if !modifier {
+            ui.weak("Drag or constrain its two frame points to place and turn it.");
+        }
         if ui
             .button("Explode")
             .on_hover_text("Turn it into ordinary, editable geometry.")

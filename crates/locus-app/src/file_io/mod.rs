@@ -84,6 +84,13 @@ impl FileIo {
         }
     }
 
+    /// Replace the export formats, e.g. the built-ins plus installed
+    /// exporter plugins (#184).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_exporters(&mut self, exporters: locus_export::Registry) {
+        self.exporters = exporters;
+    }
+
     pub fn save_state(&self, storage: &mut dyn eframe::Storage) {
         if let Ok(json) = serde_json::to_string(&self.recent) {
             storage.set_string(RECENT_KEY, json);
@@ -194,11 +201,14 @@ impl FileIo {
             ui.close();
         }
         ui.menu_button("Export", |ui| {
-            let formats: Vec<(&'static str, &'static str)> =
-                self.exporters.iter().map(|e| (e.id(), e.name())).collect();
+            let formats: Vec<(String, String)> = self
+                .exporters
+                .iter()
+                .map(|e| (e.id().to_owned(), e.name().to_owned()))
+                .collect();
             for (id, name) in formats {
                 if ui.button(format!("{name}…")).clicked() {
-                    self.begin_export(id, canvas);
+                    self.begin_export(&id, canvas);
                     ui.close();
                 }
             }
@@ -328,13 +338,13 @@ impl FileIo {
 
     /// Validate, then either write straight away (nothing to report) or open
     /// the pre-export panel. Export always goes through validation (#128, #133).
-    fn begin_export(&mut self, format: &'static str, canvas: &Canvas) {
+    fn begin_export(&mut self, format: &str, canvas: &Canvas) {
         let prepared = locus_export::prepare(canvas.document(), false);
         if prepared.report.issues.is_empty() {
             self.write_export(format, &prepared);
         } else {
             self.export = Some(ExportPanel {
-                format,
+                format: format.to_owned(),
                 fixed: false,
                 prepared,
             });
@@ -350,7 +360,7 @@ impl FileIo {
         web::Web::download(
             &format!("{stem}.{}", done.extension),
             &done.bytes,
-            done.mime,
+            &done.mime,
         );
     }
 
@@ -363,7 +373,7 @@ impl FileIo {
         let filter = format!("{} file", format.to_uppercase());
         let Some(path) = pick_save(
             &format!("{stem}.{}", done.extension),
-            done.extension,
+            &done.extension,
             &filter,
         ) else {
             return;
@@ -417,8 +427,8 @@ impl FileIo {
         });
         let title = self
             .exporters
-            .get(panel.format)
-            .map_or("Export", |e| e.name());
+            .get(&panel.format)
+            .map_or_else(|| "Export".to_owned(), |e| e.name().to_owned());
         egui::Window::new(format!("Export {title}"))
             .collapsible(false)
             .resizable(true)
@@ -491,12 +501,12 @@ impl FileIo {
             Some(Do::Export) => {
                 // Re-prepare: the sketch may have changed while the panel was open.
                 let prepared = locus_export::prepare(canvas.document(), panel.fixed);
-                let format = panel.format;
+                let format = panel.format.clone();
                 if prepared.blocked() {
                     panel.prepared = prepared;
                 } else {
                     self.export = None;
-                    self.write_export(format, &prepared);
+                    self.write_export(&format, &prepared);
                 }
             }
             Some(Do::Cancel) => self.export = None,
@@ -607,7 +617,7 @@ impl FileIo {
 #[derive(Debug)]
 struct ExportPanel {
     /// Id of the exporter in [`locus_export::Registry`].
-    format: &'static str,
+    format: String,
     /// Auto-fixes have been applied to `prepared`.
     fixed: bool,
     prepared: Prepared,

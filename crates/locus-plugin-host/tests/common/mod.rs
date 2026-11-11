@@ -80,6 +80,8 @@ pub struct Fixture {
     pub memory_pages: u32,
     /// Import a clock function, which the sandbox must refuse.
     pub import_clock: bool,
+    /// A modifier (`modify` returns its input unchanged) instead of a generator.
+    pub modifier: bool,
 }
 
 impl Fixture {
@@ -105,6 +107,17 @@ impl Fixture {
             ],
             memory_pages: 2,
             import_clock: false,
+            modifier: false,
+        }
+    }
+
+    /// An identity modifier: `modify` returns the input paths as they are.
+    pub fn modifier_identity() -> Fixture {
+        Fixture {
+            id: b"com.example.identity".to_vec(),
+            name: b"Identity".to_vec(),
+            modifier: true,
+            ..Fixture::well_behaved()
         }
     }
 
@@ -163,15 +176,29 @@ impl Fixture {
             w,
             "  (func (export \"locus:plugin/info@{v}#describe\") (result i32) i32.const {INFO})"
         );
-        let _ = writeln!(
-            w,
-            "  (func (export \"locus:plugin/generator@{v}#schema\") (result i32) i32.const {SCHEMA})"
-        );
-        let _ = writeln!(
-            w,
-            "  (func (export \"locus:plugin/generator@{v}#generate\") (param i32 i32) (result i32)\n    {})",
-            self.generate
-        );
+        if self.modifier {
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/modifier@{v}#schema\") (result i32) i32.const {SCHEMA})"
+            );
+            // result<list<path>, _>::ok(input): discriminant 0, then (ptr, len).
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/modifier@{v}#modify\") (param i32 i32 i32 i32) (result i32)\n    (i32.store (i32.const {RESULT}) (i32.const 0))\n    (i32.store (i32.const {}) (local.get 0))\n    (i32.store (i32.const {}) (local.get 1))\n    i32.const {RESULT})",
+                RESULT + 4,
+                RESULT + 8
+            );
+        } else {
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/generator@{v}#schema\") (result i32) i32.const {SCHEMA})"
+            );
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/generator@{v}#generate\") (param i32 i32) (result i32)\n    {})",
+                self.generate
+            );
+        }
         w += &self.extra;
         for (addr, bytes) in &data {
             let _ = write!(w, "  (data (i32.const {addr}) \"");
@@ -200,9 +227,12 @@ impl Fixture {
         }
         let mut resolve = Resolve::new();
         let pkg = resolve.push_str("plugin.wit", &wit).unwrap();
-        let world = resolve
-            .select_world(&[pkg], Some("generator-plugin"))
-            .unwrap();
+        let world_name = if self.modifier {
+            "modifier-plugin"
+        } else {
+            "generator-plugin"
+        };
+        let world = resolve.select_world(&[pkg], Some(world_name)).unwrap();
 
         let mut module = wat::parse_str(self.wat()).unwrap();
         embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8, false)

@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 locus-doc.workspace = true
+locus-export.workspace = true
 locus-geom.workspace = true
 serde.workspace = true
 thiserror.workspace = true

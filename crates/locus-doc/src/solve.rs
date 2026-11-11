@@ -187,6 +187,15 @@ impl Sketcher {
         Ok(out)
     }
 
+    /// Set (or clear) what re-runs modifier plugins when their sources
+    /// change (SPEC §15.2, #184).
+    pub fn set_plugin_runner(
+        &mut self,
+        runner: Option<std::sync::Arc<dyn crate::generated::PluginRunner>>,
+    ) {
+        self.editor.set_plugin_runner(runner);
+    }
+
     /// Undo the last step. Positions come back exactly from the history, so
     /// no solve is needed.
     ///

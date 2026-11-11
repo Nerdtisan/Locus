@@ -30,19 +30,19 @@ pub enum ExportError {
 pub struct Exported {
     pub bytes: Vec<u8>,
     /// File extension without the dot, e.g. `svg`.
-    pub extension: &'static str,
-    pub mime: &'static str,
+    pub extension: String,
+    pub mime: String,
 }
 
 /// A file-format writer.
 pub trait Exporter: Send + Sync {
     /// Stable identifier used on the command line and in plugin manifests, e.g. `svg`.
-    fn id(&self) -> &'static str;
+    fn id(&self) -> &str;
     /// Human-readable name for menus, e.g. `SVG`.
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
     /// File extension without the dot.
-    fn extension(&self) -> &'static str;
-    fn mime(&self) -> &'static str;
+    fn extension(&self) -> &str;
+    fn mime(&self) -> &str;
     /// Write validated, ordered geometry (see [`prepare`](crate::prepare)).
     ///
     /// # Errors
@@ -56,23 +56,23 @@ macro_rules! builtin {
         pub struct $ty;
 
         impl Exporter for $ty {
-            fn id(&self) -> &'static str {
+            fn id(&self) -> &str {
                 $id
             }
-            fn name(&self) -> &'static str {
+            fn name(&self) -> &str {
                 $name
             }
-            fn extension(&self) -> &'static str {
+            fn extension(&self) -> &str {
                 $ext
             }
-            fn mime(&self) -> &'static str {
+            fn mime(&self) -> &str {
                 $mime
             }
             fn export(&self, model: &ExportModel) -> Result<Exported, ExportError> {
                 Ok(Exported {
                     bytes: $write(model),
-                    extension: $ext,
-                    mime: $mime,
+                    extension: $ext.to_owned(),
+                    mime: $mime.to_owned(),
                 })
             }
         }
@@ -138,6 +138,17 @@ impl Registry {
         }
     }
 
+    /// Add an exporter only if its id is free: plugin exporters (§15.2) may
+    /// sit beside the built-ins but never replace one. Returns whether it
+    /// was added.
+    pub fn add(&mut self, exporter: Box<dyn Exporter>) -> bool {
+        if self.get(exporter.id()).is_some() {
+            return false;
+        }
+        self.exporters.push(exporter);
+        true
+    }
+
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&dyn Exporter> {
         self.exporters
@@ -152,7 +163,7 @@ impl Registry {
 
     /// Ids in menu order, for usage messages.
     #[must_use]
-    pub fn ids(&self) -> Vec<&'static str> {
+    pub fn ids(&self) -> Vec<&str> {
         self.iter().map(Exporter::id).collect()
     }
 }
@@ -176,7 +187,10 @@ mod tests {
         assert_eq!(r.ids(), ["svg", "pdf", "dxf"]);
         let svg = r.get("svg").unwrap().export(&m).unwrap();
         assert_eq!(svg.bytes, crate::to_svg_model(&m));
-        assert_eq!((svg.extension, svg.mime), ("svg", "image/svg+xml"));
+        assert_eq!(
+            (svg.extension.as_str(), svg.mime.as_str()),
+            ("svg", "image/svg+xml")
+        );
         assert_eq!(
             r.get("pdf").unwrap().export(&m).unwrap().bytes,
             crate::to_pdf_model(&m)
@@ -190,16 +204,16 @@ mod tests {
 
     struct Fake(&'static str);
     impl Exporter for Fake {
-        fn id(&self) -> &'static str {
+        fn id(&self) -> &str {
             self.0
         }
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "Fake"
         }
-        fn extension(&self) -> &'static str {
+        fn extension(&self) -> &str {
             "fake"
         }
-        fn mime(&self) -> &'static str {
+        fn mime(&self) -> &str {
             "text/plain"
         }
         fn export(&self, _: &ExportModel) -> Result<Exported, ExportError> {
@@ -216,5 +230,14 @@ mod tests {
         assert_eq!(r.ids().len(), 4);
         assert_eq!(r.get("svg").unwrap().name(), "Fake");
         assert!(r.get("fake").unwrap().export(&model()).is_err());
+    }
+
+    #[test]
+    fn add_never_replaces() {
+        let mut r = Registry::builtin();
+        assert!(!r.add(Box::new(Fake("svg"))));
+        assert_eq!(r.get("svg").unwrap().name(), "SVG");
+        assert!(r.add(Box::new(Fake("hpgl"))));
+        assert_eq!(r.ids(), ["svg", "pdf", "dxf", "hpgl"]);
     }
 }

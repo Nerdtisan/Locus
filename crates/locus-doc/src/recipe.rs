@@ -98,6 +98,15 @@ pub enum RecipeKind {
         plugin: crate::generated::PluginRef,
         output: crate::generated::GeneratedGeometry,
     },
+    /// A modifier plugin's output over the source chain (SPEC §15.2; #184),
+    /// cached in world coordinates. `input_hash` fingerprints the input it
+    /// was made from (`crate::generated::input_hash`), so a changed source is
+    /// noticed and the plugin re-run when a runner is available.
+    Modified {
+        plugin: crate::generated::PluginRef,
+        input_hash: u64,
+        output: crate::generated::GeneratedGeometry,
+    },
 }
 
 impl RecipeKind {
@@ -110,7 +119,8 @@ impl RecipeKind {
             Self::Offset { .. }
             | Self::Linear { .. }
             | Self::Circular { .. }
-            | Self::Generated { .. } => false,
+            | Self::Generated { .. }
+            | Self::Modified { .. } => false,
         }
     }
 
@@ -125,7 +135,10 @@ impl RecipeKind {
     #[must_use]
     pub fn instance_count(&self) -> usize {
         match self {
-            Self::Mirror { .. } | Self::Offset { .. } | Self::Generated { .. } => 1,
+            Self::Mirror { .. }
+            | Self::Offset { .. }
+            | Self::Generated { .. }
+            | Self::Modified { .. } => 1,
             // Patterns: depends on the document; see `slots`.
             Self::Linear { .. } | Self::Circular { .. } => 0,
         }
@@ -136,7 +149,7 @@ impl RecipeKind {
     pub fn references(&self) -> Vec<EntityId> {
         match self {
             Self::Mirror { axis } => vec![*axis],
-            Self::Offset { .. } | Self::Generated { .. } => Vec::new(),
+            Self::Offset { .. } | Self::Generated { .. } | Self::Modified { .. } => Vec::new(),
             Self::Linear { dir1, dir2 } => [Some(dir1), dir2.as_ref()]
                 .into_iter()
                 .flatten()
@@ -153,7 +166,7 @@ impl RecipeKind {
     #[must_use]
     pub fn expressions(&self) -> Vec<&str> {
         match self {
-            Self::Mirror { .. } | Self::Generated { .. } => Vec::new(),
+            Self::Mirror { .. } | Self::Generated { .. } | Self::Modified { .. } => Vec::new(),
             Self::Offset { expr, .. } => expr.as_deref().into_iter().collect(),
             Self::Linear { dir1, dir2 } => [Some(dir1), dir2.as_ref()]
                 .into_iter()
@@ -173,7 +186,7 @@ impl RecipeKind {
             ..d.clone()
         };
         match self {
-            Self::Mirror { .. } | Self::Generated { .. } => self.clone(),
+            Self::Mirror { .. } | Self::Generated { .. } | Self::Modified { .. } => self.clone(),
             Self::Offset {
                 distance,
                 sharp,
@@ -212,6 +225,7 @@ impl RecipeKind {
             Self::Linear { .. } => "Linear pattern",
             Self::Circular { .. } => "Circular pattern",
             Self::Generated { .. } => "Plugin object",
+            Self::Modified { .. } => "Modifier",
         }
     }
 }
@@ -270,7 +284,7 @@ impl Recipe {
     pub fn is_flat(&self) -> bool {
         matches!(
             self.kind,
-            RecipeKind::Offset { .. } | RecipeKind::Generated { .. }
+            RecipeKind::Offset { .. } | RecipeKind::Generated { .. } | RecipeKind::Modified { .. }
         )
     }
 
@@ -336,7 +350,8 @@ pub(crate) fn transform(doc: &Document, kind: &RecipeKind, _k: usize) -> Result<
         RecipeKind::Offset { .. }
         | RecipeKind::Linear { .. }
         | RecipeKind::Circular { .. }
-        | RecipeKind::Generated { .. } => Err(DocError::Invalid(
+        | RecipeKind::Generated { .. }
+        | RecipeKind::Modified { .. } => Err(DocError::Invalid(
             "this recipe has no single transform".to_owned(),
         )),
         RecipeKind::Mirror { axis } => {
@@ -409,9 +424,10 @@ pub(crate) fn slots(
     sources: &[EntityId],
 ) -> Result<Vec<Xf>, DocError> {
     match kind {
-        RecipeKind::Mirror { .. } | RecipeKind::Offset { .. } | RecipeKind::Generated { .. } => {
-            Ok(Vec::new())
-        }
+        RecipeKind::Mirror { .. }
+        | RecipeKind::Offset { .. }
+        | RecipeKind::Generated { .. }
+        | RecipeKind::Modified { .. } => Ok(Vec::new()),
         RecipeKind::Linear { dir1, dir2 } => {
             let one = |d: &LinearDir| -> Result<(Vec2, f64, Vec<i64>), DocError> {
                 let n = eval_count(doc, &d.count)?;
@@ -628,6 +644,11 @@ pub(crate) fn validate(
         }
         RecipeKind::Generated { plugin, output } => {
             crate::generated::validate(doc, sources)?;
+            plugin.validate()?;
+            output.validate()?;
+        }
+        RecipeKind::Modified { plugin, output, .. } => {
+            crate::generated::validate_modifier_sources(doc, sources)?;
             plugin.validate()?;
             output.validate()?;
         }

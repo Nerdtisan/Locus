@@ -76,6 +76,8 @@ pub struct Canvas {
     /// Every document change goes through `Sketcher::apply` (SPEC §11): the
     /// command and the re-solve are one undo step.
     sketcher: Sketcher,
+    /// Re-runs modifier plugins (#184); kept across document loads.
+    plugin_runner: Option<std::sync::Arc<dyn locus_doc::generated::PluginRunner>>,
     scene: Scene,
     view: View,
     /// Keep the view fitted to the content, re-fitting when the canvas
@@ -143,6 +145,7 @@ impl Default for Canvas {
     fn default() -> Self {
         let mut c = Self {
             sketcher: Sketcher::new(Document::new()),
+            plugin_runner: None,
             scene: Scene::default(),
             view: View::default(),
             auto_fit: true,
@@ -187,6 +190,7 @@ impl Canvas {
     /// Replace the document (new / sample). Clears the undo history.
     pub fn load(&mut self, doc: Document) {
         self.sketcher = Sketcher::new(doc);
+        self.sketcher.set_plugin_runner(self.plugin_runner.clone());
         self.layer_ui = layers_panel::LayerUi::default();
         self.region_ui = regions::RegionUi::default();
         self.active_layer = self.active_layer();

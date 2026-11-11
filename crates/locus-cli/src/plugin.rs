@@ -7,6 +7,51 @@ use std::path::{Path, PathBuf};
 
 use crate::{CliError, write_file};
 use locus_plugin_host::Host;
+use locus_plugin_host::archive::{Archive, MAX_ARCHIVE_BYTES};
+use locus_plugin_host::export::PluginExporter;
+use locus_plugin_host::registry::{Registry, verify};
+use locus_plugin_host::types::Kind;
+
+/// The built-in export formats plus the exporter plugins named on the
+/// command line (#184): `.locusplugin` files, and every exporter installed
+/// in `dir`. A plugin can't replace a built-in format.
+pub fn exporters(files: &[PathBuf], dir: Option<&Path>) -> Result<locus_export::Registry> {
+    let mut reg = locus_export::Registry::builtin();
+    if files.is_empty() && dir.is_none() {
+        return Ok(reg);
+    }
+    let host = Host::new().map_err(|e| anyhow!("{e}"))?;
+    let mut add = |p: locus_plugin_host::Plugin| -> Result<()> {
+        if !p.kinds().contains(&Kind::Exporter) {
+            return Ok(());
+        }
+        let e = PluginExporter::new(p).map_err(|e| anyhow!("exporter plugin: {e}"))?;
+        let id = locus_export::Exporter::id(&e).to_owned();
+        if !reg.add(Box::new(e)) {
+            return Err(anyhow!(
+                "an exporter plugin uses the format id `{id}`, which is taken"
+            ));
+        }
+        Ok(())
+    };
+    for f in files {
+        let bytes = read_limited(f, MAX_ARCHIVE_BYTES, "plugin file")?;
+        let archive = Archive::parse(&bytes).map_err(|e| anyhow!("plugin file: {e}"))?;
+        add(verify(&host, &archive).map_err(|e| anyhow!("plugin file: {e}"))?)?;
+    }
+    if let Some(dir) = dir {
+        let installed = Registry::new(dir);
+        for i in installed.list() {
+            if i.manifest.kinds.contains(&Kind::Exporter) {
+                let (_, p) = installed
+                    .load(&host, &i.manifest.id)
+                    .map_err(|e| anyhow!("installed plugin: {e}"))?;
+                add(p)?;
+            }
+        }
+    }
+    Ok(reg)
+}
 
 /// Reads a file of at most `limit` bytes. Errors never name the file.
 pub fn read_limited(path: &Path, limit: usize, what: &str) -> Result<Vec<u8>> {

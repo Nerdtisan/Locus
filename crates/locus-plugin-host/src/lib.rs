@@ -25,9 +25,13 @@ pub mod api {
 #[cfg(not(target_arch = "wasm32"))]
 pub mod archive;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod export;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod pack;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod registry;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod runner;
 #[cfg(not(target_arch = "wasm32"))]
 mod runtime;
 

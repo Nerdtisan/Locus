@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Between plugins and documents (#183, §15.3, §15.5): parameter values and
-//! defaults, and generator output as a document cache.
+//! Between plugins and documents (#183, #184, §15.3, §15.5): parameter
+//! values and defaults, generator and modifier output as document caches.
 //!
 //! Plugins never touch the document: these turn validated plugin output into
 //! the data a `locus-doc` command carries, and the caller applies the command
@@ -9,11 +9,14 @@
 //! document is unchanged.
 
 use locus_doc::generated::{
-    GenConstraint, GenEntity, GeneratedGeometry, PluginParam, PluginRef, PluginValue,
+    GenConstraint, GenEntity, GenPath, GenShape, GeneratedGeometry, PluginParam, PluginRef,
+    PluginValue,
 };
 use locus_geom::Vec2 as DocVec2;
 
-use crate::types::{Constraint, Entity, Generated, Param, ParamKind, ParamSpec, ParamValue};
+use crate::types::{
+    Constraint, Entity, Generated, Param, ParamKind, ParamSpec, ParamValue, Path, Segment, Shape,
+};
 
 /// Every parameter at its schema default. `doc-parameter` bindings default to 0.
 #[must_use]
@@ -201,6 +204,81 @@ pub fn to_cache(g: &Generated) -> GeneratedGeometry {
             })
             .collect(),
     }
+}
+
+// ── Modifiers (#184) ────────────────────────────────────────────────────────
+
+fn hv(p: DocVec2) -> crate::types::Vec2 {
+    crate::types::Vec2 { x: p.x, y: p.y }
+}
+
+/// A modifier's document input in plugin terms.
+#[must_use]
+pub fn to_paths(input: &[GenPath]) -> Vec<Path> {
+    input
+        .iter()
+        .map(|p| Path {
+            segments: p
+                .segments
+                .iter()
+                .map(|s| Segment {
+                    shape: match s.shape {
+                        GenShape::Line { a, b } => Shape::Line { a: hv(a), b: hv(b) },
+                        GenShape::Arc { center, start, end } => Shape::Arc {
+                            center: hv(center),
+                            start: hv(start),
+                            end: hv(end),
+                        },
+                        GenShape::Circle { center, radius } => Shape::Circle {
+                            center: hv(center),
+                            radius,
+                        },
+                    },
+                    reversed: s.reversed,
+                })
+                .collect(),
+            closed: p.closed,
+        })
+        .collect()
+}
+
+/// Validated modifier output as a document cache: shared end points become
+/// shared points, so paths stay connected in the document.
+#[must_use]
+pub fn paths_to_cache(paths: &[Path]) -> GeneratedGeometry {
+    let mut g = GeneratedGeometry::default();
+    let point = |p: crate::types::Vec2, g: &mut GeneratedGeometry| -> u32 {
+        let found = g
+            .points
+            .iter()
+            .position(|q| q.x.to_bits() == p.x.to_bits() && q.y.to_bits() == p.y.to_bits());
+        found.unwrap_or_else(|| {
+            g.points.push(DocVec2::new(p.x, p.y));
+            g.points.len() - 1
+        }) as u32
+    };
+    for path in paths {
+        for seg in &path.segments {
+            let e = match seg.shape {
+                Shape::Line { a, b } => {
+                    let (i, j) = (point(a, &mut g), point(b, &mut g));
+                    if i == j {
+                        continue;
+                    }
+                    GenEntity::Line(i, j)
+                }
+                Shape::Arc { center, start, end } => {
+                    let c = point(center, &mut g);
+                    GenEntity::Arc(c, point(start, &mut g), point(end, &mut g))
+                }
+                Shape::Circle { center, radius } => {
+                    GenEntity::Circle(point(center, &mut g), radius)
+                }
+            };
+            g.entities.push(e);
+        }
+    }
+    g
 }
 
 #[cfg(test)]

@@ -16,6 +16,13 @@
 //! direction, so dragging or constraining either point moves or turns the
 //! object without running the plugin.
 //!
+//! A modifier plugin's output (#184) is the same kind of cache in a second
+//! recipe kind, [`RecipeKind::Modified`], whose sources are the curves it
+//! modifies. It is drawn as is (world coordinates), and run again through a
+//! [`PluginRunner`] when its sources change (§15.2); without a runner (the
+//! web build, or the plugin missing) the cache stays and the object is
+//! reported stale.
+//!
 //! Plugin output is untrusted, and so is a `.locus` file: everything here is
 //! validated with bounded sizes before it reaches the document.
 
@@ -234,15 +241,54 @@ pub(crate) fn regenerate(
     doc: &mut Document,
     rid: RecipeId,
     patches: &mut Vec<crate::command::Patch>,
+    runner: Option<&dyn PluginRunner>,
 ) -> Result<(), DocError> {
-    let Some(r) = doc.recipe(rid).cloned() else {
+    let Some(mut r) = doc.recipe(rid).cloned() else {
         return Ok(());
     };
-    let RecipeKind::Generated { output, .. } = &r.kind else {
-        return Ok(());
+    let (output, origin, angle) = match &r.kind {
+        RecipeKind::Generated { output, .. } => {
+            let (o, a) = frame(doc, &r.sources).unwrap_or((Vec2::ZERO, 0.0));
+            (output.clone(), o, a)
+        }
+        RecipeKind::Modified {
+            plugin,
+            input_hash: h,
+            output,
+        } => {
+            let mut output = output.clone();
+            // Re-run only when the sources changed and a runner is here; a
+            // failure keeps the cached output (the object reports stale).
+            if let (Some(runner), Ok(input)) = (runner, modifier_input(doc, &r.sources)) {
+                let now = input_hash(&input);
+                if now != *h
+                    && let Ok(fresh) = runner
+                        .modify(plugin, &input)
+                        .and_then(|g| g.validate().map(|()| g).map_err(|e| e.to_string()))
+                {
+                    let mut next = r.clone();
+                    next.kind = RecipeKind::Modified {
+                        plugin: plugin.clone(),
+                        input_hash: now,
+                        output: fresh.clone(),
+                    };
+                    crate::command::record(
+                        doc,
+                        patches,
+                        crate::command::Patch::Recipe {
+                            id: rid,
+                            before: Some(r.clone()),
+                            after: Some(next.clone()),
+                        },
+                    );
+                    r = next;
+                    output = fresh;
+                }
+            }
+            (output, Vec2::ZERO, 0.0)
+        }
+        _ => return Ok(()),
     };
-    let output = output.clone();
-    let (origin, angle) = frame(doc, &r.sources).unwrap_or((Vec2::ZERO, 0.0));
     let (s, c) = angle.sin_cos();
     let place = |p: Vec2| Vec2::new(origin.x + p.x * c - p.y * s, origin.y + p.x * s + p.y * c);
     let mut out: Vec<crate::offset::Out> = output
@@ -285,4 +331,140 @@ pub(crate) fn validate(doc: &Document, sources: &[EntityId]) -> Result<(), DocEr
         }
     }
     Ok(())
+}
+
+// ── Modifiers (#184, §15.2) ─────────────────────────────────────────────────
+
+/// One shape of a modifier's input path (mirrors the WIT `shape`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GenShape {
+    Line {
+        a: Vec2,
+        b: Vec2,
+    },
+    /// Counter-clockwise from `start` to `end`.
+    Arc {
+        center: Vec2,
+        start: Vec2,
+        end: Vec2,
+    },
+    Circle {
+        center: Vec2,
+        radius: f64,
+    },
+}
+
+/// A shape placed in a path; `reversed`: traversed end to start.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GenSegment {
+    pub shape: GenShape,
+    pub reversed: bool,
+}
+
+/// A modifier's input: the selected chain, as the plugin sees it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GenPath {
+    pub segments: Vec<GenSegment>,
+    pub closed: bool,
+}
+
+/// Runs modifier plugins again when their source geometry changes (§15.2).
+/// The document can't run plugins itself (core crates have no plugin host,
+/// and the web build has none at all), so the app or CLI hands one to the
+/// [`crate::Editor`]. Without one, modifier objects keep their cached output.
+pub trait PluginRunner: Send + Sync + core::fmt::Debug {
+    /// The plugin's output for `input`, or why there is none. An error keeps
+    /// the cached output; it never fails the edit that changed the source.
+    fn modify(&self, plugin: &PluginRef, input: &[GenPath]) -> Result<GeneratedGeometry, String>;
+}
+
+/// The modifier input for `sources`: one chained path (lines, arcs, or a
+/// single circle). Béziers aren't part of the plugin interface (ADR 0009).
+pub fn modifier_input(doc: &Document, sources: &[EntityId]) -> Result<Vec<GenPath>, DocError> {
+    let (items, closed) = crate::offset::chain(doc, sources)?;
+    let mut segments = Vec::with_capacity(items.len());
+    for (id, reversed) in items {
+        let shape = if let Some(l) = doc.line(id) {
+            GenShape::Line { a: l.a, b: l.b }
+        } else if let Some(a) = doc.arc(id) {
+            GenShape::Arc {
+                center: a.center,
+                start: a.start,
+                end: a.end,
+            }
+        } else if let Some(c) = doc.circle(id) {
+            GenShape::Circle {
+                center: c.center,
+                radius: c.radius,
+            }
+        } else {
+            return Err(bad("modifiers take lines, arcs and circles"));
+        };
+        segments.push(GenSegment { shape, reversed });
+    }
+    Ok(vec![GenPath { segments, closed }])
+}
+
+/// A stable fingerprint of a modifier's input (FNV-1a over the exact bits),
+/// stored with the object so a changed source is noticed. Not `Hash`: this
+/// is saved in files and must not change between Rust versions.
+#[must_use]
+pub fn input_hash(input: &[GenPath]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |v: u64| {
+        for b in v.to_le_bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for p in input {
+        eat(p.segments.len() as u64);
+        eat(u64::from(p.closed));
+        for s in &p.segments {
+            eat(u64::from(s.reversed));
+            match s.shape {
+                GenShape::Line { a, b } => {
+                    eat(1);
+                    for v in [a.x, a.y, b.x, b.y] {
+                        eat(v.to_bits());
+                    }
+                }
+                GenShape::Arc { center, start, end } => {
+                    eat(2);
+                    for v in [center.x, center.y, start.x, start.y, end.x, end.y] {
+                        eat(v.to_bits());
+                    }
+                }
+                GenShape::Circle { center, radius } => {
+                    eat(3);
+                    for v in [center.x, center.y, radius] {
+                        eat(v.to_bits());
+                    }
+                }
+            }
+        }
+    }
+    h
+}
+
+/// Whether a modifier object's cached output was made from different input
+/// than its sources hold now (its plugin is missing, failed, or not run).
+#[must_use]
+pub fn is_stale(doc: &Document, rid: RecipeId) -> bool {
+    match doc.recipe(rid) {
+        Some(r) => match &r.kind {
+            RecipeKind::Modified { input_hash: h, .. } => {
+                modifier_input(doc, &r.sources).map_or(true, |i| input_hash(&i) != *h)
+            }
+            _ => false,
+        },
+        None => false,
+    }
+}
+
+pub(crate) fn validate_modifier_sources(
+    doc: &Document,
+    sources: &[EntityId],
+) -> Result<(), DocError> {
+    modifier_input(doc, sources).map(|_| ())
 }

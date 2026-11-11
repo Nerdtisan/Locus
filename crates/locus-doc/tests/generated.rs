@@ -199,3 +199,158 @@ fn explode_leaves_plain_geometry() {
         .unwrap();
     assert!(ed.apply(&Command::DeleteEntity { id: line }).is_ok());
 }
+
+// ── Modifiers (#184) ────────────────────────────────────────────────────────
+
+mod modifiers {
+    use super::*;
+    use locus_doc::generated::{
+        GenPath, GenShape, PluginRunner, input_hash, is_stale, modifier_input,
+    };
+    use locus_doc::{EntityId, RecipeId};
+    use std::sync::Arc;
+
+    /// Stands in for a plugin: draws each input line shifted 1 mm along +y.
+    #[derive(Debug)]
+    struct Shift {
+        fail: bool,
+    }
+
+    fn shifted(input: &[GenPath]) -> GeneratedGeometry {
+        let mut g = GeneratedGeometry::default();
+        for p in input {
+            for s in &p.segments {
+                if let GenShape::Line { a, b } = s.shape {
+                    let i = g.points.len() as u32;
+                    g.points.push(a + Vec2::new(0.0, 1.0));
+                    g.points.push(b + Vec2::new(0.0, 1.0));
+                    g.entities.push(GenEntity::Line(i, i + 1));
+                }
+            }
+        }
+        g
+    }
+
+    impl PluginRunner for Shift {
+        fn modify(&self, _: &PluginRef, input: &[GenPath]) -> Result<GeneratedGeometry, String> {
+            if self.fail {
+                Err("plugin missing".into())
+            } else {
+                Ok(shifted(input))
+            }
+        }
+    }
+
+    fn point(ed: &mut Editor, x: f64, y: f64) -> EntityId {
+        ed.apply(&Command::AddEntity {
+            layer: Document::default_layer(),
+            construction: false,
+            geom: Geom::Point {
+                pos: Vec2::new(x, y),
+            },
+        })
+        .unwrap()
+        .entities[0]
+    }
+
+    /// A line (0,0)–(10,0) with a modifier object over it.
+    fn setup(ed: &mut Editor) -> (EntityId, EntityId, RecipeId) {
+        let (a, b) = (point(ed, 0.0, 0.0), point(ed, 10.0, 0.0));
+        let line = ed
+            .apply(&Command::AddEntity {
+                layer: Document::default_layer(),
+                construction: false,
+                geom: Geom::Line { start: a, end: b },
+            })
+            .unwrap()
+            .entities[0];
+        let input = modifier_input(ed.document(), &[line]).unwrap();
+        let rid = ed
+            .apply(&Command::AddRecipe {
+                kind: RecipeKind::Modified {
+                    plugin: plugin(1.0),
+                    input_hash: input_hash(&input),
+                    output: shifted(&input),
+                },
+                sources: vec![line],
+            })
+            .unwrap()
+            .recipes[0];
+        (b, line, rid)
+    }
+
+    fn move_point(ed: &mut Editor, id: EntityId, x: f64, y: f64) {
+        ed.apply(&Command::ModifyEntity {
+            id,
+            geom: Geom::Point {
+                pos: Vec2::new(x, y),
+            },
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn rerun_when_the_source_changes_in_the_same_undo_step() {
+        let mut ed = Editor::new(Document::new());
+        ed.set_plugin_runner(Some(Arc::new(Shift { fail: false })));
+        let (b, _, rid) = setup(&mut ed);
+        assert!(close(points(ed.document())[1], Vec2::new(10.0, 1.0)));
+
+        move_point(&mut ed, b, 20.0, 0.0);
+        assert!(close(points(ed.document())[1], Vec2::new(20.0, 1.0)));
+        assert!(!is_stale(ed.document(), rid));
+
+        ed.undo().unwrap();
+        assert!(close(points(ed.document())[1], Vec2::new(10.0, 1.0)));
+        assert!(!is_stale(ed.document(), rid));
+    }
+
+    #[test]
+    fn without_a_runner_or_on_failure_the_cache_stays_and_is_stale() {
+        for runner in [
+            None,
+            Some(Arc::new(Shift { fail: true }) as Arc<dyn PluginRunner>),
+        ] {
+            let mut ed = Editor::new(Document::new());
+            ed.set_plugin_runner(runner);
+            let (b, _, rid) = setup(&mut ed);
+            move_point(&mut ed, b, 20.0, 0.0);
+            // The edit succeeded; the modifier output is the old one, flagged.
+            assert!(close(points(ed.document())[1], Vec2::new(10.0, 1.0)));
+            assert!(is_stale(ed.document(), rid));
+        }
+    }
+
+    #[test]
+    fn modifier_sources_must_be_a_chain_of_lines_arcs_or_a_circle() {
+        let mut ed = Editor::new(Document::new());
+        let p = point(&mut ed, 1.0, 1.0);
+        let before = ed.document().clone();
+        let r = ed.apply(&Command::AddRecipe {
+            kind: RecipeKind::Modified {
+                plugin: plugin(1.0),
+                input_hash: 0,
+                output: GeneratedGeometry::default(),
+            },
+            sources: vec![p],
+        });
+        assert!(r.is_err());
+        assert_eq!(ed.document(), &before);
+    }
+
+    #[test]
+    fn input_hash_is_stable_and_sensitive() {
+        let mut ed = Editor::new(Document::new());
+        let (b, line, _) = setup(&mut ed);
+        let h1 = input_hash(&modifier_input(ed.document(), &[line]).unwrap());
+        assert_eq!(
+            h1,
+            input_hash(&modifier_input(ed.document(), &[line]).unwrap())
+        );
+        move_point(&mut ed, b, 10.000_000_001, 0.0);
+        assert_ne!(
+            h1,
+            input_hash(&modifier_input(ed.document(), &[line]).unwrap())
+        );
+    }
+}
