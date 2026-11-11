@@ -109,7 +109,11 @@ impl App {
         let mut app = Self {
             dock,
             settings,
-            canvas: Canvas::default(),
+            canvas: {
+                let mut c = Canvas::default();
+                c.install_fonts(&cc.egui_ctx);
+                c
+            },
             status: Status::default(),
             files: FileIo::new(&cc.egui_ctx, cc.storage),
             #[cfg(not(target_arch = "wasm32"))]
@@ -326,6 +330,10 @@ impl App {
             }
             ui.separator();
             self.corner_sizes(ui);
+            if self.canvas.tool() == Tool::Text {
+                self.canvas.text_tool_ui(ui);
+                ui.separator();
+            }
             if self.canvas.tool() == Tool::Polygon {
                 let (mut sides, mut outside) = self.canvas.polygon();
                 let changed = ui
@@ -594,7 +602,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
             Tab::Regions => self.canvas.regions_ui(ui),
             Tab::Parameters => self.canvas.parameters_ui(ui),
-            Tab::Patterns => self.canvas.patterns_ui(ui),
+            Tab::Patterns => self.canvas.patterns_ui(ui, self.settings.units),
         }
     }
 

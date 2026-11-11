@@ -105,9 +105,10 @@ impl Canvas {
             target: DimTarget::Offset(rid),
             what: "offset",
             angle: false,
-            text: expr
-                .clone()
-                .unwrap_or_else(|| super::format_value(d, false, units)),
+            text: expr.as_ref().map_or_else(
+                || super::format_value(d, false, units),
+                |s| super::to_display(s, units),
+            ),
             at: label_anchor(doc, rid).unwrap_or(Vec2::ZERO),
             fresh: true,
         });
