@@ -1,6 +1,6 @@
 # ADR-0017: Fusion-style UI: ribbon, marking menu, one tool model, action registry
 
-- **Status:** Proposed (accepted when the owner signs off the M5 design)
+- **Status:** Accepted (owner approved design revision 3, 2026-11-13)
 - **Date:** 2026-11-13
 - **Spec:** `docs/SPEC.md §6`, `§11`, `§12.1` (closes §12 item 15), `§4`, `§7`; builds on ADR 0001
 - **Issue:** Nerdtisan/Locus#293 (epic #283); refactor #294

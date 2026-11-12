@@ -30,6 +30,6 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | [0014](0014-stroke-edge-dimensions.md) | Stroke-edge dimensions: edge on the dimension, solver gets the centreline value | Accepted | §5, §7 |
 | [0015](0015-two-phase-solve-for-pattern-instances.md) | Two-phase solve: constraints onto pattern instances with the pattern held fixed | Accepted | §6.2.1 |
 | [0016](0016-web-plugin-runtime.md) | Web plugin runtime: the component's core module in a Web Worker, canonical ABI in Rust | Accepted | §15, §0, §12.14 |
-| [0017](0017-fusion-style-ui.md) | Fusion-style UI: ribbon, marking menu, one tool model, action registry | Proposed | §6, §11, §12.1, §12.15 |
+| [0017](0017-fusion-style-ui.md) | Fusion-style UI: ribbon, marking menu, one tool model, action registry | Accepted | §6, §11, §12.1, §12.15 |
 
 All §12 M0 decisions are recorded.

@@ -4,7 +4,7 @@
 - **Decision record:** [ADR 0017](../adr/0017-fusion-style-ui.md)
 - **Mockup:** the clickable prototype is [`m5-mockup.html`](m5-mockup.html), which is also published as a private Artifact for the owner. It is a static design, not an editor.
 - **Spec:** §4, §6, §7, §8, §9, §11, §12.1, ADR 0001
-- **Status:** revision 3 for owner sign-off (2026-11-13). Revision 1 was reviewed as "much better". Revision 2 added the owner's five requests (§2.3, §5.1, §6.5, §6.6, §6.8). Revision 3 adds plugins (§6.13), the View menu and navigation bar (§2.4), and constraints as symbols with no letter keys (owner decision, §2, §5).
+- **Status:** **approved** by the owner (revision 3, 2026-11-13). Revision 1 was reviewed as "much better". Revision 2 added the owner's five requests (§2.3, §5.1, §6.5, §6.6, §6.8). Revision 3 added plugins (§6.13), the View menu and navigation bar (§2.4), and constraints as symbols with no letter keys (owner decision, §2, §5). The §9 defaults stand.
 
 Owner testing in M4 found Locus hard to use and not CAD-like enough. This document fixes how M5 should look and behave before anything is built. Where Fusion 360 and SolidCraft differ, it follows Fusion (owner decision, 2026-11-13). Fusion is a behaviour reference only (§18); no assets or code are copied.
 
