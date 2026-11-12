@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Deleting a selection (SPEC §4 rule 5, §11).
 //!
 //! [`Command::DeleteEntity`] refuses while anything still references the
