@@ -1,0 +1,25 @@
+[package]
+name = "locus-plugin-worker"
+description = "Web Worker that runs Locus plugins in the browser (ADR 0016)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Built by trunk as a Web Worker (`data-type="worker"` in locus-app's
+# index.html). On desktop it is an empty program.
+[[bin]]
+name = "locus-plugin-worker"
+path = "src/main.rs"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+locus-plugin-host.workspace = true
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+serde_json.workspace = true
+web-sys = { workspace = true, features = ["DedicatedWorkerGlobalScope", "MessageEvent"] }

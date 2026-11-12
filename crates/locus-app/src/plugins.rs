@@ -46,17 +46,15 @@ use std::path::{Path, PathBuf};
 use egui::{RichText, Ui};
 use std::sync::Arc;
 
-use locus_doc::generated::{GenPath, GeneratedGeometry, PluginRef, input_hash, modifier_input};
-use locus_doc::{Command, EntityId, LayerId, RecipeId, RecipeKind};
+use locus_doc::generated::{GenPath, PluginRef, modifier_input};
+use locus_doc::{EntityId, LayerId};
 use locus_geom::Vec2;
 use locus_plugin_host::archive::MAX_ARCHIVE_BYTES;
-use locus_plugin_host::doc::{
-    from_stored, import_command, paths_to_cache, plugin_ref, resolve, to_cache, to_paths,
-};
+use locus_plugin_host::doc::{from_stored, import_command, resolve, to_paths};
 use locus_plugin_host::export::PluginExporter;
 use locus_plugin_host::registry::{Installed, Registry};
 use locus_plugin_host::runner::RegistryRunner;
-use locus_plugin_host::types::{Kind, Param, ParamKind, ParamSpec, ParamValue, Severity};
+use locus_plugin_host::types::{Kind, Param, Severity};
 use locus_plugin_host::validate::MAX_IMPORT_BYTES;
 use locus_plugin_host::validators;
 use locus_plugin_host::{Host, Plugin};
@@ -64,6 +62,9 @@ use locus_plugin_host::{Host, Plugin};
 use crate::canvas::Canvas;
 use crate::file_io::{ExtraChecks, ExtraFinding, FileIo};
 use crate::plugin_job::{Job, Poll};
+use crate::plugin_ui::{
+    Done, Panel, PanelAction, Placement, Target, command, doc_parameters, show_panel,
+};
 
 /// The app's plugin folder, next to its settings.
 pub(crate) fn plugin_dir() -> Option<PathBuf> {
@@ -80,35 +81,6 @@ fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
         return Err("the file is too large".into());
     }
     Ok(data)
-}
-
-#[derive(Debug, Clone)]
-enum Target {
-    /// A new generator object.
-    Insert,
-    /// A generator object's parameters.
-    Edit(RecipeId),
-    /// A new modifier object over these curves.
-    Modify(Vec<EntityId>),
-    /// A modifier object's parameters.
-    EditModifier(RecipeId),
-}
-
-impl Target {
-    fn modifier(&self) -> bool {
-        matches!(self, Target::Modify(_) | Target::EditModifier(_))
-    }
-}
-
-/// The open parameter panel.
-#[derive(Debug)]
-struct Panel {
-    id: String,
-    name: String,
-    schema: Vec<ParamSpec>,
-    values: Vec<ParamValue>,
-    target: Target,
-    error: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -151,13 +123,6 @@ struct Running {
     job: Job<Result<Done, String>>,
 }
 
-/// A finished call's output, ready to become a command.
-#[derive(Debug)]
-enum Done {
-    Generated(PluginRef, GeneratedGeometry),
-    Modified(RecipeKind),
-}
-
 /// The plugin call itself, on the background thread. Everything it needs is
 /// owned, so it never touches the document (§15.3).
 fn call(plugin: &Plugin, values: &[Param], input: Option<Vec<GenPath>>) -> Result<Done, String> {
@@ -168,20 +133,13 @@ fn call(plugin: &Plugin, values: &[Param], input: Option<Vec<GenPath>>) -> Resul
             let schema = plugin.modifier_schema().map_err(err)?;
             let params = resolve(&schema, values).map_err(|e| e.to_string())?;
             let out = plugin.modify(&to_paths(&input), &params).map_err(err)?;
-            Ok(Done::Modified(RecipeKind::Modified {
-                plugin: plugin_ref(&info.id, &info.version, &params),
-                input_hash: input_hash(&input),
-                output: paths_to_cache(&out),
-            }))
+            Ok(Done::modified(info, &params, &input, &out))
         }
         None => {
             let schema = plugin.generator_schema().map_err(err)?;
             let params = resolve(&schema, values).map_err(|e| e.to_string())?;
             let generated = plugin.generate(&params).map_err(err)?;
-            Ok(Done::Generated(
-                plugin_ref(&info.id, &info.version, &params),
-                to_cache(&generated),
-            ))
+            Ok(Done::generated(info, &params, &generated))
         }
     }
 }
@@ -552,28 +510,13 @@ impl Plugins {
     /// nothing. The document may have changed while the call ran: an object
     /// that's gone makes the command fail cleanly.
     fn finish(canvas: &mut Canvas, r: Running, done: Done) -> Result<(), String> {
-        let cmd = match (done, r.target) {
-            (Done::Modified(kind), Target::EditModifier(rid)) => {
-                Command::EditRecipe { id: rid, kind }
-            }
-            (Done::Modified(kind), _) => Command::AddRecipe {
-                kind,
-                sources: r.sources,
-            },
-            (Done::Generated(plugin, output), Target::Insert) => Command::AddGenerated {
-                layer: r.layer,
-                origin: r.origin,
-                plugin,
-                output,
-            },
-            (Done::Generated(plugin, output), Target::Edit(rid) | Target::EditModifier(rid)) => {
-                Command::EditRecipe {
-                    id: rid,
-                    kind: RecipeKind::Generated { plugin, output },
-                }
-            }
-            (Done::Generated(..), Target::Modify(_)) => return Err("not a generator".into()),
+        let place = Placement {
+            target: r.target,
+            sources: r.sources,
+            layer: r.layer,
+            origin: r.origin,
         };
+        let cmd = command(place, done)?;
         canvas.apply(&cmd).map_err(|e| e.to_string())
     }
 
@@ -645,77 +588,24 @@ impl Plugins {
         let Some(panel) = self.panel.as_mut() else {
             return;
         };
-        let doc_params: Vec<(String, f64)> = canvas
-            .document()
-            .parameters()
-            .iter()
-            .map(|(n, p)| (n.clone(), p.value))
-            .collect();
-        let (mut apply, mut cancel, mut stop) = (false, false, false);
         let running = self.running.as_ref().map(|r| r.job.elapsed());
-        let verb = match panel.target {
-            Target::Insert | Target::Modify(_) => "Insert",
-            Target::Edit(_) | Target::EditModifier(_) => "Apply",
-        };
-        egui::Window::new(&panel.name)
-            .collapsible(false)
-            .resizable(true)
-            .show(ctx, |ui| {
-                egui::Grid::new("plugin-params")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        for (spec, value) in panel.schema.iter().zip(panel.values.iter_mut()) {
-                            ui.label(&spec.label).on_hover_text(&spec.help);
-                            param_widget(ui, spec, value, &doc_params);
-                            ui.end_row();
-                        }
-                    });
-                if panel.schema.is_empty() {
-                    ui.weak("This plugin has no parameters.");
+        match show_panel(ctx, panel, &doc_parameters(canvas), running) {
+            PanelAction::None => {}
+            PanelAction::Close => self.panel = None,
+            PanelAction::Stop => {
+                self.cancel_running();
+                if let Some(p) = self.panel.as_mut() {
+                    p.error = Some("Cancelled. Nothing was changed.".into());
                 }
-                if let Some(e) = &panel.error {
-                    ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+            PanelAction::Apply(values) => {
+                let (id, target) = (panel.id.clone(), panel.target.clone());
+                panel.error = None;
+                if let Err(e) = self.start(canvas, &id, values, target)
+                    && let Some(p) = self.panel.as_mut()
+                {
+                    p.error = Some(e);
                 }
-                ui.horizontal(|ui| match running {
-                    Some(t) => {
-                        ui.spinner();
-                        ui.label(format!("Running… {:.1} s", t.as_secs_f32()));
-                        stop = ui
-                            .button("Cancel")
-                            .on_hover_text("Stop the plugin. Nothing is changed.")
-                            .clicked();
-                    }
-                    None => {
-                        apply = ui.button(verb).clicked();
-                        cancel = ui.button("Close").clicked();
-                    }
-                });
-            });
-        if stop {
-            self.cancel_running();
-            if let Some(p) = self.panel.as_mut() {
-                p.error = Some("Cancelled. Nothing was changed.".into());
-            }
-        } else if cancel {
-            self.panel = None;
-        } else if apply {
-            let (id, target) = (panel.id.clone(), panel.target.clone());
-            let values: Vec<Param> = panel
-                .schema
-                .iter()
-                .zip(&panel.values)
-                .map(|(s, v)| Param {
-                    key: s.key.clone(),
-                    value: v.clone(),
-                })
-                .collect();
-            if let Some(p) = self.panel.as_mut() {
-                p.error = None;
-            }
-            if let Err(e) = self.start(canvas, &id, values, target)
-                && let Some(p) = self.panel.as_mut()
-            {
-                p.error = Some(e);
             }
         }
     }
@@ -989,65 +879,5 @@ impl Plugins {
             }
         }
         ui.separator();
-    }
-}
-
-/// One parameter's editor, from its spec (§15.3).
-fn param_widget(
-    ui: &mut Ui,
-    spec: &ParamSpec,
-    value: &mut ParamValue,
-    doc_params: &[(String, f64)],
-) {
-    match (&spec.kind, value) {
-        (ParamKind::Number(n), ParamValue::Number(v)) => {
-            let lo = n.min.unwrap_or(f64::MIN);
-            let hi = n.max.unwrap_or(f64::MAX);
-            let mut w = egui::DragValue::new(v).range(lo..=hi).speed(0.1);
-            if !n.unit.is_empty() {
-                w = w.suffix(format!(" {}", n.unit));
-            }
-            ui.add(w);
-        }
-        (ParamKind::Integer(n), ParamValue::Integer(v)) => {
-            let lo = n.min.unwrap_or(i64::MIN);
-            let hi = n.max.unwrap_or(i64::MAX);
-            ui.add(egui::DragValue::new(v).range(lo..=hi));
-        }
-        (ParamKind::Boolean(_), ParamValue::Boolean(b)) => {
-            ui.checkbox(b, "");
-        }
-        (ParamKind::Choice(c), ParamValue::Choice(i)) => {
-            let current = c.options.get(*i as usize).cloned().unwrap_or_default();
-            egui::ComboBox::from_id_salt(&spec.key)
-                .selected_text(current)
-                .show_ui(ui, |ui| {
-                    for (k, o) in c.options.iter().enumerate() {
-                        ui.selectable_value(i, k as u32, o);
-                    }
-                });
-        }
-        (ParamKind::Text(t), ParamValue::Text(s)) => {
-            ui.add(egui::TextEdit::singleline(s).char_limit(t.max_length as usize));
-        }
-        (ParamKind::DocParameter, ParamValue::Number(v)) => {
-            // Bound to a document parameter (§5): pick one; its value is passed.
-            let shown = doc_params
-                .iter()
-                .find(|(_, x)| x.to_bits() == v.to_bits())
-                .map_or_else(|| "pick a parameter".to_owned(), |(n, _)| n.clone());
-            egui::ComboBox::from_id_salt(&spec.key)
-                .selected_text(shown)
-                .show_ui(ui, |ui| {
-                    for (name, x) in doc_params {
-                        if ui.selectable_label(false, name).clicked() {
-                            *v = *x;
-                        }
-                    }
-                });
-        }
-        _ => {
-            ui.weak("(unsupported)");
-        }
     }
 }

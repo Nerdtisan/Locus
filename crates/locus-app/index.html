@@ -8,6 +8,10 @@
   <!-- Same wasm-opt flags as the eframe spike (ADR 0001). -->
   <link data-trunk rel="rust" data-bin="locus" data-wasm-opt="z"
     data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
+  <!-- Plugin calls run in this worker, one fresh worker per call (ADR 0016). -->
+  <link data-trunk rel="rust" href="../locus-plugin-worker/Cargo.toml" data-bin="locus-plugin-worker"
+    data-type="worker" data-loader-shim data-wasm-opt="z"
+    data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1b1b; }
     #locus_canvas { display: block; width: 100%; height: 100%; }

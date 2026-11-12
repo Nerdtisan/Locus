@@ -7,7 +7,9 @@
 //! generated code or on wasmtime, and builds on every target.
 
 /// The plugin kinds of §15.2, one WIT world each (ADR 0009).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub enum Kind {
     Generator,
     Modifier,
@@ -42,14 +44,14 @@ impl Kind {
 }
 
 /// A point or vector in millimetres.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq)]
 pub struct Vec2 {
     pub x: f64,
     pub y: f64,
 }
 
 /// One shape of a path. Arcs run counter-clockwise from `start` to `end`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq)]
 pub enum Shape {
     Line {
         a: Vec2,
@@ -67,20 +69,20 @@ pub enum Shape {
 }
 
 /// A shape placed in a path; `reversed` means traversed end to start.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq)]
 pub struct Segment {
     pub shape: Shape,
     pub reversed: bool,
 }
 
 /// Segments joined end to end.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Default)]
 pub struct Path {
     pub segments: Vec<Segment>,
     pub closed: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum Compensation {
     None,
     Inside,
@@ -88,7 +90,7 @@ pub enum Compensation {
 }
 
 /// A layer's machine operation and its settings (§7).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq)]
 pub enum Operation {
     Cut {
         kerf_width: f64,
@@ -110,7 +112,7 @@ pub enum Operation {
     Reference,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
 pub struct Layer {
     pub name: String,
     /// 0xRRGGBB.
@@ -120,13 +122,13 @@ pub struct Layer {
 }
 
 /// Validated export geometry, as the built-in writers receive it (§8).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Default)]
 pub struct ExportModel {
     pub layers: Vec<Layer>,
 }
 
 /// What a plugin says about itself (`info.describe`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct PluginInfo {
     pub id: String,
     pub name: String,
@@ -134,7 +136,7 @@ pub struct PluginInfo {
 }
 
 /// An error the plugin itself reported (as opposed to a trap or a limit).
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PluginFailure {
     #[error("bad parameter: {0}")]
     BadParameter(String),
@@ -146,7 +148,7 @@ pub enum PluginFailure {
 
 // ── Parameters (§15.3) ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
 pub struct NumberSpec {
     pub unit: String,
     pub min: Option<f64>,
@@ -154,26 +156,26 @@ pub struct NumberSpec {
     pub default: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct IntegerSpec {
     pub min: Option<i64>,
     pub max: Option<i64>,
     pub default: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct ChoiceSpec {
     pub options: Vec<String>,
     pub default: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct TextSpec {
     pub default: String,
     pub max_length: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
 pub enum ParamKind {
     Number(NumberSpec),
     Integer(IntegerSpec),
@@ -183,7 +185,7 @@ pub enum ParamKind {
     DocParameter,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
 pub struct ParamSpec {
     pub key: String,
     pub label: String,
@@ -191,7 +193,7 @@ pub struct ParamSpec {
     pub kind: ParamKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
 pub enum ParamValue {
     Number(f64),
     Integer(i64),
@@ -200,7 +202,7 @@ pub enum ParamValue {
     Text(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
 pub struct Param {
     pub key: String,
     pub value: ParamValue,
@@ -209,7 +211,7 @@ pub struct Param {
 // ── Generators ───────────────────────────────────────────────────────────────
 
 /// Generator geometry; curves refer to `Generated::points` by index.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq)]
 pub enum Entity {
     Point(u32),
     Line(u32, u32),
@@ -218,7 +220,7 @@ pub enum Entity {
 }
 
 /// Constraints a generator may emit; indices refer to `Generated::entities`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq)]
 pub enum Constraint {
     Coincident(u32, u32),
     Horizontal(u32),
@@ -231,7 +233,7 @@ pub enum Constraint {
     Radius(u32, f64),
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Default)]
 pub struct Generated {
     pub points: Vec<Vec2>,
     pub entities: Vec<Entity>,
@@ -240,7 +242,7 @@ pub struct Generated {
 
 // ── Exporters ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct FormatInfo {
     pub id: String,
     pub name: String,
@@ -250,7 +252,9 @@ pub struct FormatInfo {
 
 // ── Validators (M4, #234) ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub enum Severity {
     Error,
     Warning,
@@ -258,7 +262,7 @@ pub enum Severity {
 
 /// One problem a validator plugin found. `layer` and `path` index the export
 /// model the plugin received (checked by the host against that model).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub severity: Severity,
     pub message: String,

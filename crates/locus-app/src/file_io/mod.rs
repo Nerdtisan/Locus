@@ -44,6 +44,12 @@ impl std::fmt::Debug for ExtraChecks {
     }
 }
 
+/// Hands the browser a file to download (web build).
+#[cfg(target_arch = "wasm32")]
+pub fn download_file(name: &str, data: &[u8], mime: &str) {
+    web::Web::download(name, data, mime);
+}
+
 const RECENT_KEY: &str = "recent_files";
 const MAX_RECENT: usize = 10;
 
@@ -123,6 +129,7 @@ impl FileIo {
     }
 
     /// Replace the extra pre-export checks (validator plugins, #234).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_checks(&mut self, checks: Option<ExtraChecks>) {
         self.checks = checks;
     }

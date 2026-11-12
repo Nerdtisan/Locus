@@ -1,3 +1,4 @@
 *.wasm
 *.locusplugin
 target/
+serve*/

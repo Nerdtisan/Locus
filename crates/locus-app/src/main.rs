@@ -17,6 +17,7 @@ mod mcp;
 mod modify_tool;
 #[cfg(not(target_arch = "wasm32"))]
 mod plugin_job;
+mod plugin_ui;
 #[cfg(not(target_arch = "wasm32"))]
 mod plugins;
 mod render;
@@ -25,6 +26,8 @@ mod settings;
 mod shapes;
 mod tools;
 mod view;
+#[cfg(target_arch = "wasm32")]
+mod web_plugins;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
