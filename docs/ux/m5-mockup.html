@@ -85,6 +85,21 @@ header.top p{margin:4px 0 0;color:var(--page-muted);max-width:70ch;line-height:1
 .grp .btns .empty{font-size:10px;color:var(--muted);align-self:center;padding:0 6px}
 .tb.ins::before{content:"";position:absolute;left:-2px;top:3px;bottom:3px;width:3px;border-radius:2px;background:var(--accent)}
 .tb[draggable="true"]{cursor:grab}
+.amenu{position:relative;display:inline-block}
+.amenu .menu{top:calc(100% + 2px)}
+.tb.sm{width:27px}.tb.sm svg{width:17px;height:17px}
+.navbar .menu{top:auto;bottom:calc(100% + 6px);left:auto;right:0}
+.menu .mi.chk::before{content:"";width:14px;flex:none;text-align:center;font-size:11px;color:var(--accent)}
+.menu .mi.chk.on::before{content:"✓"}
+.menu .mi.dis{opacity:.5;cursor:default}
+.menu .mrow{display:flex;align-items:center;gap:8px;padding:4px 8px;font-size:12px}
+.menu .mrow .lb{color:var(--muted);flex:0 0 52px}
+.pchip{font:600 9px var(--f-ui);letter-spacing:.06em;padding:0 4px;border-radius:3px;background:color-mix(in srgb,var(--preview) 18%,transparent);color:var(--preview);margin-left:4px}
+.rul{position:absolute;background:var(--panel-2);color:var(--muted);font:9px var(--f-mono);z-index:5;pointer-events:none;overflow:hidden}
+.rul.top{left:18px;right:0;top:0;height:18px;border-bottom:1px solid var(--line);background-image:repeating-linear-gradient(90deg,var(--line) 0 1px,transparent 1px 10px);background-size:100% 6px;background-repeat:no-repeat;background-position:bottom}
+.rul.left{top:18px;bottom:0;left:0;width:18px;border-right:1px solid var(--line);background-image:repeating-linear-gradient(180deg,var(--line) 0 1px,transparent 1px 10px);background-size:6px 100%;background-repeat:no-repeat;background-position:right}
+.rul span{position:absolute}
+.cv .glyph svg{overflow:visible}
 #keysFloat{position:absolute;inset:0;pointer-events:none;z-index:44}
 #keysFloat>*{pointer-events:auto}
 .keyspane .r{display:flex;justify-content:space-between;gap:6px;padding:2px 0;border-bottom:1px dotted var(--line);font-size:11px}
@@ -274,7 +289,7 @@ table.t td.mono{font-family:var(--f-mono)}
   <div class="frame" id="frame" role="application" aria-label="Locus mockup">
     <div class="appbar">
       <span class="logo">LOCUS</span>
-      <button class="ib" data-menu="file">File ▾</button>
+      <span class="amenu"><button class="ib" data-amenu="File">File ▾</button></span><span class="amenu"><button class="ib" data-amenu="Edit">Edit ▾</button></span><span class="amenu"><button class="ib" data-amenu="View">View ▾</button></span><span class="amenu"><button class="ib" data-amenu="Plugins">Plugins ▾</button></span><span class="amenu"><button class="ib" data-amenu="Help">Help ▾</button></span>
       <button class="ib" title="Save (Ctrl+S)"><svg class="ico" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg></button>
       <button class="ib" title="Undo (Ctrl+Z)"><svg class="ico" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h10a5 5 0 0 1 0 10h-2"/></svg></button>
       <button class="ib" title="Redo (Ctrl+Y)"><svg class="ico" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M20 12H10a5 5 0 0 0 0 10h2"/></svg></button>
@@ -284,7 +299,7 @@ table.t td.mono{font-family:var(--f-mono)}
       <button class="ib" id="searchBtn" title="Tool search (S)"><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></svg> Search <span class="kbd">S</span></button>
       <button class="ib" data-go="shortcuts" title="Shortcut map (?)">?</button>
     </div>
-    <div class="tabs"><button class="on" id="tabSketch">SKETCH</button><button id="tabOutput">OUTPUT</button></div>
+    <div class="tabs"><button class="on" data-tab="sketch">SKETCH</button><button data-tab="output">OUTPUT</button><button data-tab="util">UTILITIES</button></div>
     <div class="ribbon" id="ribbon"></div>
     <div class="main">
       <aside class="pane" id="browserPane">
@@ -312,17 +327,17 @@ table.t td.mono{font-family:var(--f-mono)}
   <div class="notes">
     <div class="card" id="notesFlow"></div>
     <div class="card">
-      <h2>Defaults chosen</h2>
-      <p>The owner hasn't ruled on these, so the design uses the recommended option for each. The owner can still change any of them.</p>
+      <h2>Decisions and defaults</h2>
+      <p>The owner decided item 1. Items 2–5 use the recommended option; the owner can still change them.</p>
       <ol>
-        <li><b>Constraint keys.</b> Locus's letters stay where they don't clash with Fusion (H, K, E, F, Q, W, Y). The clashing ones move to Shift: Shift+T tangent, Shift+O concentric, Shift+M midpoint, Shift+X collinear.</li>
-        <li><b>Horizontal/Vertical.</b> One combined tool on H, as in Fusion; it picks by the line's angle.</li>
+        <li><b>Constraint keys: decided by the owner.</b> No letters, as in Fusion. Constraints are symbol buttons with name tooltips, reachable from tool search (S), the marking-menu list, and pinning.</li>
+        <li><b>Horizontal/Vertical.</b> One combined symbol, as in Fusion; it picks by the line's angle.</li>
         <li><b>Machine layers export in the profile's colour and hairline.</b> Cut, Score and Drag-knife use them because LightBurn and Cricut read colour as the operation. Draw and Engrave export each object's own style.</li>
         <li><b>Marking menu: fixed ring, contextual list.</b> The 8 ring slots never move, so flicks become muscle memory; the list beneath changes with context.</li>
         <li><b>Current style.</b> New geometry takes the current style, set in the Inspector or with the eyedropper when nothing is selected.</li>
       </ol>
       <h3>Revised from the owner's first review</h3>
-      <p>Customisable toolbar · pattern handles on the canvas · offset drag and flip on the canvas · text: resizable font list, All/System/Custom filter, Add font, letter spacing · shortcuts as a dockable pane.</p>
+      <p>Customisable toolbar · pattern handles on the canvas · offset drag and flip on the canvas · text: resizable font list, All/System/Custom filter, Add font, letter spacing · shortcuts as a dockable pane. <b>Revision 3:</b> plugins (Insert, Modify, Export, Utilities, Plugins menu), View menu and navigation bar, constraints as symbols without letters.</p>
       <h3>Not in this mockup</h3>
       <p>Machine preview, validation, plugins, MCP and touch keep their current behaviour and move into the new chrome unchanged. Touch long-press opens the same marking menu.</p>
     </div>
@@ -391,6 +406,18 @@ snap:'<path d="M6 4v8a6 6 0 0 0 12 0V4"/><path d="M6 8h4M14 8h4"/>',
 stroke:'<path d="M4 17C8 7 16 7 20 17" stroke-width="3.5"/>',
 eyedrop:'<path d="m14 4 6 6-3 3-6-6z"/><path d="m11 7-7 7v6h6l7-7"/>',
 pin:'<path d="M9 3h6l-1 6 3 3H7l3-3z"/><path d="M12 12v9"/>',
+smooth:'<path d="M3 18c5 0 6-12 11-12"/><path d="M14 6c3 0 5 3 7 5"/><circle cx="14" cy="6" r="1.6"/>',
+box:'<path d="M4 8h3v-2h3v2h4v-2h3v2h3v11H4z"/>',
+hinge:'<rect x="4" y="5" width="16" height="14" rx="1"/><path d="M8 5v6M8 13v6M12 8v8M16 5v6M16 13v6"/>',
+gear:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="6.5"/>',
+dogbone:'<path d="M5 19V8h11"/><circle cx="7" cy="10" r="2.6"/>',
+tabs:'<rect x="4" y="6" width="16" height="12"/><path d="M10 5v2M14 5v2M10 17v2M14 17v2" stroke-width="3"/>',
+mcp:'<rect x="4" y="5" width="16" height="11" rx="2"/><path d="M8 20h8M9 10h.01M15 10h.01M9 13c2 1.5 4 1.5 6 0"/>',
+rulers:'<path d="M3 7h18v5H3zM7 7v2.5M11 7v2.5M15 7v2.5M19 7v2.5"/><path d="M3 12v9h5v-9"/>',
+zoomin:'<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5M8 11h6M11 8v6"/>',
+zoomout:'<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5M8 11h6"/>',
+zoomsel:'<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><circle cx="15" cy="15" r="4"/><path d="m21 21-3-3"/>',
+display:'<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8M12 17v4M7 13l3-4 3 3 4-5"/>',
 font:'<path d="M4 20 10 4h1l6 16M6.5 14h8"/><path d="M17 8h4M19 6v4"/>',
 param:'<path d="M5 7h14M5 12h9M5 17h11"/><text x="17" y="18" font-size="7" stroke="none" fill="currentColor">ƒ</text>'
 };
@@ -432,20 +459,25 @@ const A=[
  ['modify.construction','Normal/Construction','construction','X','Modify',1,'construction'],
  ['modify.explode','Explode recipe','break','','Modify'],
  ['modify.style','Style…','eyedrop','','Modify',0,'style'],
+ ['hdr','Plugins','Modify'],
+ ['plugin.dogbone','Dogbone corners','dogbone','','Modify',0,'','plugin'],
+ ['plugin.tabs','Tabs and bridges','tabs','','Modify',0,'','plugin'],
+ ['sep'],
  ['edit.delete','Delete','delete','Del','Modify'],
  ['constrain.dimension','Sketch Dimension','dimension','D','Constrain',1],
  ['sep'],
- ['constrain.coincident','Coincident','coincident','K','Constrain',1],
- ['constrain.collinear','Collinear','collinear','⇧X','Constrain'],
- ['constrain.concentric','Concentric','concentric','⇧O','Constrain'],
- ['constrain.midpoint','Midpoint','midpoint','⇧M','Constrain'],
- ['constrain.fix','Fix/Unfix','fix','F','Constrain'],
- ['constrain.parallel','Parallel','parallel','Q','Constrain'],
- ['constrain.perp','Perpendicular','perp','W','Constrain'],
- ['constrain.hv','Horizontal/Vertical','hv','H','Constrain',1],
- ['constrain.tangent','Tangent','tangent','⇧T','Constrain',1],
- ['constrain.equal','Equal','equal','E','Constrain'],
- ['constrain.symmetric','Symmetric','symmetric','Y','Constrain'],
+ ['constrain.coincident','Coincident','coincident','','Constrain',1],
+ ['constrain.collinear','Collinear','collinear','','Constrain',1],
+ ['constrain.concentric','Concentric','concentric','','Constrain',1],
+ ['constrain.midpoint','Midpoint','midpoint','','Constrain',1],
+ ['constrain.fix','Fix/Unfix','fix','','Constrain',1],
+ ['constrain.parallel','Parallel','parallel','','Constrain',1],
+ ['constrain.perp','Perpendicular','perp','','Constrain',1],
+ ['constrain.hv','Horizontal/Vertical','hv','','Constrain',1],
+ ['constrain.tangent','Tangent','tangent','','Constrain',1],
+ ['constrain.smooth','Smooth (G2): not in spec §5 yet','smooth','','Constrain',1],
+ ['constrain.equal','Equal','equal','','Constrain',1],
+ ['constrain.symmetric','Symmetric','symmetric','','Constrain',1],
  ['sep'],
  ['constrain.auto','Auto-constrain while drawing','snap','','Constrain'],
  ['inspect.measure','Measure','measure','I','Inspect',1],
@@ -454,7 +486,10 @@ const A=[
  ['inspect.validate','Validate for export','validate','','Inspect',1],
  ['insert.svg','Insert SVG…','import','','Insert',1],
  ['insert.dxf','Insert DXF…','import','','Insert'],
- ['insert.plugin','Plugin object…','plugin','','Insert',1],
+ ['hdr','Plugins','Insert'],
+ ['plugin.box','Finger-joint box','box','','Insert',1,'plugin','plugin'],
+ ['plugin.hinge','Living hinge','hinge','','Insert',0,'','plugin'],
+ ['plugin.gear','Spur gear','gear','','Insert',0,'','plugin'],
  ['select.select','Select','select','Esc','Select',1],
  ['select.window','Window select','window','','Select'],
  ['select.chain','Select chain','chain','dbl-click','Select',1,'chain'],
@@ -467,41 +502,68 @@ const OUT=[
  ['output.validate','Validate','validate','','Preview',1],
  ['output.export','Export…','export','Ctrl+E','Export',1,'export'],
  ['output.profiles','Machine profiles…','profile','','Export',1,'profiles'],
- ['output.plugins','Exporter plugins…','plugin','','Export',1],
+ ['output.plugins','Exporter plugins…','plugin','','Export',0,'plugins'],
+ ['util.install','Install plugin…','import','','Plugins',1,'plugininstall'],
+ ['util.manage','Manage plugins…','plugin','','Plugins',1,'plugins'],
+ ['util.mcp','MCP server…','mcp','','Automation',1,'mcp'],
+ ['util.keys','Keyboard shortcuts','dimension','?','Automation',0,'shortcuts'],
 ];
 const groups=['Create','Modify','Constrain','Inspect','Insert','Select'];
 let tab='sketch';
-const ALLACT=()=>A.concat(OUT).filter(a=>a[0]!=='sep');
+const ALLACT=()=>A.concat(OUT).filter(a=>a[0]!=='sep'&&a[0]!=='hdr');
+const TABG={sketch:groups,output:['Preview','Export'],util:['Plugins','Automation']};
 const findA=id=>ALLACT().find(a=>a[0]===id);
 /* Toolbar pins: per group, ordered, saved per user (locus.toolbar.v1 in the app; localStorage here). */
 const DEFAULT_PINS={};
-for(const g of groups.concat(['Preview','Export'])) DEFAULT_PINS[g]=ALLACT().filter(a=>a[4]===g&&a[5]).map(a=>a[0]);
+for(const g of groups.concat(TABG.output,TABG.util)) DEFAULT_PINS[g]=ALLACT().filter(a=>a[4]===g&&a[5]).map(a=>a[0]);
 let pins=JSON.parse(JSON.stringify(DEFAULT_PINS));
 try{const v=JSON.parse(localStorage.getItem('locus-m5-pins')||'null'); if(v&&typeof v==='object') for(const g in DEFAULT_PINS) if(Array.isArray(v[g])) pins[g]=v[g].filter(id=>findA(id));}catch(e){}
 function savePins(){try{localStorage.setItem('locus-m5-pins',JSON.stringify(pins));}catch(e){}}
 const groupOf=id=>Object.keys(pins).find(g=>pins[g].includes(id));
 function ribbon(){
-  const gs=tab==='sketch'?groups:['Preview','Export'];
+  const gs=TABG[tab];
   let h='';
   for(const g of gs){
     const items=pins[g].map(findA).filter(Boolean);
-    h+=`<div class="grp"><div class="btns" data-dropg="${g}">${items.map(a=>`<button class="tb" draggable="true" data-drag="${a[0]}" data-from="ribbon" data-act="${a[0]}" title="${a[1]}${a[3]?' ('+a[3]+')':''} · drag to reorder, drag off to remove">${ic(a[2])}</button>`).join('')||'<span class="empty">drop here</span>'}</div><button class="glabel" data-grp="${g}">${g.toUpperCase()} ▾</button></div>`;
+    const sm=g==='Constrain'?' sm':'';
+    h+=`<div class="grp"><div class="btns" data-dropg="${g}">${items.map(a=>`<button class="tb${sm}" draggable="true" data-drag="${a[0]}" data-from="ribbon" data-act="${a[0]}" title="${a[1]}${a[3]?' ('+a[3]+')':''} · drag to reorder, drag off to remove">${ic(a[2])}</button>`).join('')||'<span class="empty">drop here</span>'}</div><button class="glabel" data-grp="${g}">${g.toUpperCase()} ▾</button></div>`;
   }
   if(tab==='sketch')h+=`<div class="grp finish"><div class="btns"><button class="tb" data-go="export" title="Export (Ctrl+E)">${ic('export')}</button></div><button class="glabel" data-go="export">EXPORT</button></div>`;
   $('#ribbon').innerHTML=h;
   markActive();
 }
 function groupMenu(g,anchor){
-  const list=(tab==='sketch'?A:OUT);
+  const list=A.concat(OUT);
   let h='',last=null;
   for(const a of list){
     if(a[0]==='sep'){ if(last===g) h+='<div class="sep"></div>'; continue;}
+    if(a[0]==='hdr'){ if(a[2]===g) h+=`<div class="mh">${a[1].toUpperCase()} <span class="pchip">SANDBOXED</span></div>`; continue;}
     last=a[4]; if(a[4]!==g) continue;
     const on=!!groupOf(a[0]);
-    h+=`<div class="mi" role="menuitem" tabindex="0" draggable="true" data-drag="${a[0]}" data-from="menu" data-act="${a[0]}">${ic(a[2])}${a[1]}<span class="k">${a[3]||''}</span><button class="pinb ${on?'on':''}" data-pin="${a[0]}" data-g="${g}" title="${on?'Unpin from toolbar':'Pin to toolbar'}">${ic('pin')}</button></div>`;
+    h+=`<div class="mi" role="menuitem" tabindex="0" draggable="true" data-drag="${a[0]}" data-from="menu" data-act="${a[0]}">${ic(a[2])}${a[1]}${a[7]?'<span class="pchip">PLUGIN</span>':''}<span class="k">${a[3]||''}</span><button class="pinb ${on?'on':''}" data-pin="${a[0]}" data-g="${g}" title="${on?'Unpin from toolbar':'Pin to toolbar'}">${ic('pin')}</button></div>`;
   }
   h+=`<div class="sep"></div><div class="hintline">Drag a tool onto the toolbar, or click its pin. Drag a toolbar button sideways to reorder it, or off the toolbar to remove it.</div><div class="mi" role="menuitem" tabindex="0" data-resetpins="${g}">Reset ${g} toolbar</div>`;
   closeMenus();
+  const m=document.createElement('div'); m.className='menu'; m.innerHTML=h; anchor.parentElement.appendChild(m);
+}
+function appMenu(name,anchor){
+  closeMenus();
+  const it=(l,k,attrs)=>`<div class="mi" ${attrs||''}>${l}<span class="k">${k||''}</span></div>`;
+  let h='';
+  if(name==='File') h=it('New','Ctrl+N')+it('Open…','Ctrl+O')+it('Save','Ctrl+S')+it('Save as…','Ctrl+Shift+S')+'<div class="sep"></div>'+it('Insert SVG…','','data-act="insert.svg"')+it('Insert DXF…','','data-act="insert.dxf"')+it('Export…','Ctrl+E','data-go="export"')+it('Machine profiles…','','data-go="profiles"')+'<div class="sep"></div>'+it('Samples ▸')+it('Quit','Ctrl+Q');
+  if(name==='Edit') h=it('Undo Offset','Ctrl+Z')+it('Redo','Ctrl+Y')+'<div class="sep"></div>'+it('Cut','Ctrl+X')+it('Copy','Ctrl+C')+it('Paste','Ctrl+V')+it('Duplicate','Ctrl+D')+it('Delete','Del','data-act="edit.delete"')+'<div class="sep"></div>'+it('Select all','Ctrl+A')+it('Deselect','Esc')+'<div class="sep"></div>'+it('Preferences…','Ctrl+,');
+  if(name==='View') h=it('Fit to content','F6','data-zoom="fit"')+it('Zoom in','Ctrl+=','data-zoom="in"')+it('Zoom out','Ctrl+-','data-zoom="out"')+it('Zoom to selection','','data-zoom="sel"')+'<div class="sep"></div>'+
+    '<div class="mh">GRID AND SNAPS</div>'+chk('grid','Show grid')+chk('snap','Snap to grid')+chk('geo','Snap to geometry')+chk('rulers','Rulers')+'<div class="sep"></div>'+
+    '<div class="mh">DISPLAY</div>'+chk('preview','Machine preview')+chk('stroke','Stroke width')+chk('consgeo','Construction geometry')+chk('dims','Dimensions')+chk('glyphs','Constraint symbols')+'<div class="sep"></div>'+
+    '<div class="mh">PANES</div>'+['Browser','Sketch palette','Inspector','Constraints','Parameters'].map(p=>`<div class="mi chk on" data-pane="${p}">${p}<span class="k"></span></div>`).join('')+`<div class="mi chk${state.keys!=='off'?' on':''}" data-pane="Shortcuts">Shortcuts<span class="k">?</span></div>`+it('Reset layout','','data-resetlayout="1"')+'<div class="sep"></div>'+
+    `<div class="mrow"><span class="lb">Theme</span><span class="seg">${['Light','Dark','System'].map(t=>`<button class="${(state.theme||'System')===t?'on':''}" data-theme-set="${t}">${t}</button>`).join('')}</span></div>`+
+    `<div class="mrow"><span class="lb">Units</span><span class="seg">${['mm','cm','in'].map(u=>`<button class="${(state.units||'mm')===u?'on':''}" data-units="${u}">${u}</button>`).join('')}</span></div>`+'<div class="sep"></div>'+
+    it('MCP server…','desktop','data-go="mcp"');
+  if(name==='Plugins') h=it('Install plugin…','','data-go="plugininstall"')+it('Manage plugins…','','data-go="plugins"')+'<div class="sep"></div>'+
+    '<div class="mh">GENERATORS · also in INSERT ▾</div>'+ALLACT().filter(a=>a[7]&&a[4]==='Insert').map(a=>`<div class="mi" data-act="${a[0]}" draggable="true" data-drag="${a[0]}" data-from="menu">${ic(a[2])}${a[1]}<span class="k"></span></div>`).join('')+
+    '<div class="mh">MODIFIERS · also in MODIFY ▾</div>'+ALLACT().filter(a=>a[7]&&a[4]==='Modify').map(a=>`<div class="mi" data-act="${a[0]}" draggable="true" data-drag="${a[0]}" data-from="menu">${ic(a[2])}${a[1]}<span class="k"></span></div>`).join('')+
+    '<div class="mh">EXPORTERS · in the Export dialog</div>'+it('HPGL','','data-go="export"')+it('G-code (laser)','','data-go="export"')+'<div class="sep"></div><div class="hintline">Plugins run sandboxed: no files, network or clock. Drag a generator or modifier onto the toolbar to pin it.</div>';
+  if(name==='Help') h=it('Keyboard shortcuts','?','data-pane="Shortcuts"')+it('Tool search','S','data-go="search"')+'<div class="sep"></div>'+it('Locus on GitHub')+it('About Locus');
   const m=document.createElement('div'); m.className='menu'; m.innerHTML=h; anchor.parentElement.appendChild(m);
 }
 function togglePin(id,g){
@@ -552,16 +614,16 @@ function closeMenus(){document.querySelectorAll('.menu').forEach(m=>m.remove());
 const OUTER=[['o1','M104 70 H696'],['o2','M696 70 A24 24 0 0 1 720 94'],['o3','M720 94 V446'],['o4','M720 446 A24 24 0 0 1 696 470'],['o5','M696 470 H104'],['o6','M104 470 A24 24 0 0 1 80 446'],['o7','M80 446 V94'],['o8','M80 94 A24 24 0 0 1 104 70']];
 const SLOT=(x1,x2,y,r)=>`M${x1} ${y-r} H${x2} A${r} ${r} 0 0 1 ${x2} ${y+r} H${x1} A${r} ${r} 0 0 1 ${x1} ${y-r} Z`;
 function grid(){let g='';for(let x=0;x<=800;x+=20)g+=`<line x1="${x}" y1="0" x2="${x}" y2="560" class="${x%100?'gridm':'gridM'}" stroke-width="1"/>`;for(let y=0;y<=560;y+=20)g+=`<line x1="0" y1="${y}" x2="800" y2="${y}" class="${y%100?'gridm':'gridM'}" stroke-width="1"/>`;return g;}
-const glyph=(x,y,t)=>`<g class="glyph"><rect x="${x}" y="${y}" width="14" height="13" rx="2"/><text x="${x+7}" y="${y+9.5}" text-anchor="middle">${t}</text></g>`;
+const glyph=(x,y,icn,name)=>`<g class="glyph" style="cursor:help"><title>${name} constraint</title><rect x="${x}" y="${y}" width="16" height="16" rx="3"/><svg x="${x+2}" y="${y+2}" width="12" height="12" viewBox="0 0 24 24" style="stroke:var(--muted);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round">${I[icn]}</svg></g>`;
 function dimH(x1,x2,y,yFrom,val){return `<g><line class="dimln" x1="${x1}" y1="${yFrom-4}" x2="${x1}" y2="${y-6}"/><line class="dimln" x1="${x2}" y1="${yFrom-4}" x2="${x2}" y2="${y-6}"/><line class="dimln" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" marker-start="url(#ar)" marker-end="url(#ar)"/><rect class="dimbg" x="${(x1+x2)/2-26}" y="${y-9}" width="52" height="17"/><text class="dimtx" x="${(x1+x2)/2}" y="${y+4}" text-anchor="middle">${val}</text></g>`}
 function dimV(y1,y2,x,xFrom,val){return `<g><line class="dimln" x1="${xFrom-4}" y1="${y1}" x2="${x-6}" y2="${y1}"/><line class="dimln" x1="${xFrom-4}" y1="${y2}" x2="${x-6}" y2="${y2}"/><line class="dimln" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" marker-start="url(#ar)" marker-end="url(#ar)"/><rect class="dimbg" x="${x-26}" y="${(y1+y2)/2-9}" width="52" height="17"/><text class="dimtx" x="${x}" y="${(y1+y2)/2+4}" text-anchor="middle">${val}</text></g>`}
 function drawCanvas(){
   const s=state;
   const sel=id=>s.sel.has(id)?' sel':'';
-  const hide=id=>s.hidden.has(id)?' style="display:none"':'';
+  const hide=id=>(s.hidden.has(id)||(id==='cl'&&!s.pal.consgeo))?' style="display:none"':'';
   let g=`<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1 9 5 0 9z" fill="var(--dim)" stroke="none"/></marker>
   <marker id="arp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 1 9 5 0 9z" fill="var(--preview)" stroke="none"/></marker></defs>`;
-  g+=grid();
+  if(s.pal.grid) g+=grid();
   // construction centre line (mirror axis)
   g+=`<line id="cl" class="pick cons${sel('cl')}"${hide('cl')} x1="400" y1="48" x2="400" y2="496"/>`;
   // outer (Cut, fully constrained)
@@ -577,15 +639,39 @@ function drawCanvas(){
   // text
   g+=`<text id="tx" class="pick geo g-free${sel('tx')}"${hide('tx')} x="400" y="282" text-anchor="middle" style="font:700 96px ${state.font||'var(--f-head)'};letter-spacing:${6+(state.track||0)*4}px;stroke-width:1.4">LOCUS</text>`;
   // dimensions + glyphs
-  if(s.dims){
+  if(s.pal.dims){
     g+=dimH(80,720,36,70,'160.00')+dimV(70,470,44,80,'100.00');
     g+=`<g><line class="dimln" x1="87" y1="77" x2="66" y2="58"/><rect class="dimbg" x="40" y="48" width="44" height="17"/><text class="dimtx" x="62" y="61" text-anchor="middle">R6.00</text></g>`;
     g+=`<g><line class="dimln" x1="140" y1="130" x2="168" y2="156"/><rect class="dimbg" x="160" y="150" width="46" height="17"/><text class="dimtx" x="183" y="163" text-anchor="middle">⌀7.00</text></g>`;
     g+=`<g><line class="dimln" x1="260" y1="372" x2="260" y2="350"/><rect class="dimbg" x="238" y="336" width="46" height="17"/><text class="dimtx" x="261" y="349" text-anchor="middle">20.00</text></g>`;
-    g+=glyph(240,52,'—')+glyph(726,260,'|')+glyph(392,500,'⋮')+glyph(304,388,'=')+glyph(584,388,'=');
   }
+  if(s.pal.glyphs) g+=glyph(240,50,'hv','Horizontal')+glyph(726,258,'hv','Vertical')+glyph(392,500,'fix','Fix')+glyph(306,388,'equal','Equal')+glyph(586,388,'equal','Equal')+glyph(408,372,'symmetric','Symmetric')+glyph(84,98,'tangent','Tangent')+glyph(146,104,'concentric','Concentric');
   if(s.extra) g+=s.extra; // tool previews and handles draw on top
   $('#cv').innerHTML=g;
+  const z=s.zoom||1, w=800/z, h=560/z, c=s.zoomC||[400,280];
+  $('#cv').setAttribute('viewBox',`${c[0]-w/2} ${c[1]-h/2} ${w} ${h}`);
+  rulers();
+}
+function rulers(){
+  const cw=$('#cw'); cw.querySelectorAll('.rul').forEach(r=>r.remove());
+  if(!state.pal.rulers) return;
+  let t='<div class="rul top">', l='<div class="rul left">';
+  for(let i=0;i<=16;i++) t+=`<span style="left:${i*6.25}%;top:1px">${i*10}</span>`;
+  for(let i=0;i<=10;i++) l+=`<span style="top:${i*10}%;left:1px">${i*10}</span>`;
+  cw.insertAdjacentHTML('afterbegin',t+'</div>'+l+'</div>');
+}
+function toggleView(k){
+  state.pal[k]=!state.pal[k];
+  const names={grid:'Grid',snap:'Snap to grid',geo:'Snap to geometry',auto:'Auto-constrain',prof:'Profiles',pts:'Points',dims:'Dimensions',glyphs:'Constraint symbols',consgeo:'Construction geometry',stroke:'Stroke width',preview:'Machine preview',rulers:'Rulers'};
+  drawCanvas(); palette(); navbar();
+  if(['preview','stroke','prof','pts','snap','geo','auto'].includes(k)) toast(`${names[k]} ${state.pal[k]?'on':'off'}`);
+}
+function zoom(op){
+  if(op==='in') state.zoom=Math.min(4,(state.zoom||1)*1.25);
+  if(op==='out') state.zoom=Math.max(0.5,(state.zoom||1)/1.25);
+  if(op==='fit'){ state.zoom=1; state.zoomC=[400,280]; }
+  if(op==='sel'){ if(!state.sel.size){ toast('Select something to zoom to'); return; } const el=$('#'+[...state.sel][0]); if(el&&el.getBBox){ const b=el.getBBox(); state.zoomC=[b.x+b.width/2,b.y+b.height/2]; state.zoom=Math.min(4,Math.max(1,0.6*Math.min(800/Math.max(b.width,1),560/Math.max(b.height,1)))); } }
+  drawCanvas(); toast(`Zoom ${Math.round((state.zoom||1)*100)}%`);
 }
 
 /* ---------- side panes ---------- */
@@ -613,10 +699,10 @@ function palette(){
   const p=state.pal;
   const ck=(k,l)=>`<div class="ck ${p[k]?'on':''}" data-pal="${k}"><i></i>${l}</div>`;
   $('#palette').innerHTML=`<div class="sec" style="padding-top:2px">
-   <div class="row"><span class="lb">Linetype</span><span class="seg"><button class="${p.cons?'':'on'}" data-lt="0" title="Normal">Normal</button><button class="${p.cons?'on':''}" data-lt="1" title="Construction (X)">Construction</button></span></div>
+   <div class="row"><span class="lb">Linetype</span><span class="seg"><button class="${state.linetype?'':'on'}" data-lt="0" title="Normal">Normal</button><button class="${state.linetype?'on':''}" data-lt="1" title="Construction (X)">Construction</button></span></div>
    ${state.toolOpt||''}
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 6px;margin-top:4px">
-   ${ck('grid','Sketch grid')}${ck('snap','Snap')}${ck('auto','Auto-constrain')}${ck('prof','Show profiles')}${ck('pts','Show points')}${ck('dims','Show dimensions')}${ck('cons','Show constraints')}${ck('stroke','Stroke width')}
+   ${ck('grid','Sketch grid')}${ck('snap','Snap')}${ck('auto','Auto-constrain')}${ck('prof','Show profiles')}${ck('pts','Show points')}${ck('dims','Show dimensions')}${ck('glyphs','Show constraints')}${ck('consgeo','Show construction')}${ck('stroke','Stroke width')}
    </div></div>`;
 }
 const STYLEBLOCK=(o)=>`<div class="sec"><h4>Style<span class="sp"></span><button class="ib ${state.eyedrop?'on':''}" id="eyedrop" title="Eyedropper: copy style from another object">${ic('eyedrop')}</button></h4>
@@ -675,7 +761,18 @@ function status(){
   <span class="mono">x 132.40  y 58.10 mm</span><span>Snap ✓</span><span>Auto-constrain ✓</span><span class="mono">mm</span>`;
 }
 function navbar(){
-  $('#navbar').innerHTML=['pan','zoom','fit'].map(n=>`<button class="tb" title="${{pan:'Pan (middle-drag or Space+drag)',zoom:'Zoom (wheel)',fit:'Fit (double middle-click)'}[n]}">${ic(n)}</button>`).join('')+'<span class="div"></span>'+['grid','snap','stroke','preview'].map(n=>`<button class="tb" title="${{grid:'Grid',snap:'Snap',stroke:'Stroke width',preview:'Machine preview'}[n]}">${ic(n)}</button>`).join('');
+  const on=k=>state.pal[k]?' on':'';
+  $('#navbar').innerHTML=`<button class="tb" title="Pan: middle-drag or Space+drag">${ic('pan')}</button><button class="tb" data-zoom="in" title="Zoom in (Ctrl+=, or the wheel)">${ic('zoomin')}</button><button class="tb" data-zoom="out" title="Zoom out (Ctrl+-)">${ic('zoomout')}</button><button class="tb" data-zoom="fit" title="Fit to content (F6, or double middle-click)">${ic('fit')}</button><button class="tb" data-zoom="sel" title="Zoom to selection">${ic('zoomsel')}</button>
+  <span class="div"></span><button class="tb${on('grid')}" data-navpop="grid" title="Grid and snaps">${ic('grid')}</button><button class="tb${on('rulers')}" data-vt="rulers" title="Rulers">${ic('rulers')}</button>
+  <span class="div"></span><button class="tb" data-navpop="display" title="Display settings">${ic('display')}</button><button class="tb${on('stroke')}" data-vt="stroke" title="Stroke width">${ic('stroke')}</button><button class="tb${on('preview')}" data-vt="preview" title="Machine preview">${ic('preview')}</button>`;
+}
+const chk=(k,l,extra)=>`<div class="mi chk${state.pal[k]?' on':''}" data-vt="${k}">${l}<span class="k">${extra||''}</span></div>`;
+function navPop(which,anchor){
+  closeMenus();
+  let h='';
+  if(which==='grid') h=`<div class="mh">GRID AND SNAPS</div>${chk('grid','Show grid')}${chk('snap','Snap to grid')}${chk('geo','Snap to geometry')}${chk('rulers','Rulers')}<div class="sep"></div><div class="mrow"><span class="lb">Spacing</span><span class="fld" style="width:70px">5.00<span class="u">mm</span></span></div><div class="mrow"><span class="lb">Minor</span><span class="fld" style="width:70px">4</span><span class="note" style="margin:0">per major</span></div>`;
+  if(which==='display') h=`<div class="mh">DISPLAY</div>${chk('consgeo','Construction geometry')}${chk('dims','Dimensions')}${chk('glyphs','Constraint symbols')}${chk('pts','Points')}${chk('prof','Profiles')}<div class="sep"></div>${chk('stroke','Stroke width')}${chk('preview','Machine preview')}`;
+  const m=document.createElement('div'); m.className='menu'; m.innerHTML=h; $('#navbar').appendChild(m);
 }
 
 /* ---------- flows ---------- */
@@ -736,12 +833,46 @@ const F={
   <li>Layers keep operation settings only. Draw layers lose pen width and pen number (spec §7 changes with #287).</li>
   <li>Stroke-edge dimensions (ADR 0014) read the pen width from each object instead of its layer.</li>
   <li>On Cut, Score and Drag-knife layers the export uses the profile's colour and hairline (#284); the Style section says so.</li></ul><p>Try the eyedropper: click it, then click a slot.</p>`},
- export:{name:'Export',prompt:'Export: choose a profile and layers.',insp:'doc',modal:'export',
+ view:{name:'View',prompt:'View: the View menu and the navigation bar at the bottom of the canvas hold the same toggles.',insp:'doc',openApp:'View',
+  notes:`<h2>View</h2><p>Today's View menu, laid out the Fusion way: a <b>View ▾</b> menu in the app bar plus the <b>navigation bar</b> at the bottom of the canvas.</p><ul>
+  <li><b>Navigation bar</b>: pan, zoom in / out, fit (F6, or double middle-click), zoom to selection · <b>Grid and snaps ▾</b> (show grid, snap to grid, snap to geometry, rulers, spacing) · rulers · <b>Display ▾</b> (construction, dimensions, constraint symbols, points, profiles, stroke width, machine preview) · stroke width · machine preview.</li>
+  <li><b>View ▾</b> has the same toggles, plus panes (show / hide each, Shortcuts with ?), Reset layout, Theme (light / dark / system), Units (mm / cm / in) and MCP server… (desktop only).</li>
+  <li>The sketch palette's display checkboxes are the same settings, so all three places stay in step.</li>
+  <li>View settings are per user, not stored in documents (except the document's units, §4).</li></ul><p>Try: zoom with the navigation bar, turn on Rulers, open Display ▾, switch the theme.</p>`},
+ constrain:{name:'Constraint symbols',prompt:'Constraints: select geometry, then click a symbol. Hover a symbol for its name.',insp:'slot',sel:['s1'],openMenu:'Constrain',
+  notes:`<h2>Constraint symbols</h2><p>Owner decision: constraints use symbols, as in Fusion, and have <b>no letter keys</b>.</p><ul>
+  <li>The CONSTRAIN group shows every constraint as a symbol: coincident, collinear, concentric, midpoint, fix, parallel, perpendicular, horizontal/vertical, tangent, smooth, equal, symmetric. Hovering shows the name.</li>
+  <li>The same symbols mark constraints on the canvas; hover one for its name, and right-click it to delete or toggle it.</li>
+  <li>They're reachable from tool search (S, e.g. "tan"), the marking-menu list (Constrain ▸), and pinning like any tool. Sketch Dimension keeps D.</li>
+  <li>Users can still bind a key to any constraint in Settings ▸ Keyboard; none are bound by default.</li>
+  <li><b>Smooth (G2)</b> is not in spec §5 yet; it is flagged and needs a solver ticket before it can ship.</li></ul>`},
+ plugin:{name:'Plugin: generator',prompt:'Finger-joint box: set the parameters; the preview updates. Enter inserts it as one undoable command.',insp:'doc',dlg:'plugin',
+  notes:`<h2>Plugins in the tools</h2><p>Plugins sit where their kind belongs, as Fusion keeps generators in Insert (§15.2):</p><ul>
+  <li><b>Generators</b> (finger-joint box, living hinge, gear) are under <b>INSERT ▾</b>, with a PLUGIN tag.</li>
+  <li><b>Modifiers</b> (dogbone corners, tabs and bridges) are under <b>MODIFY ▾</b>.</li>
+  <li><b>Exporters</b> add formats to the Export dialog.</li>
+  <li>Each is an ordinary action in the registry, so it shows in tool search (S) and can be pinned to the toolbar.</li>
+  <li>The dialog is drawn by the app from the plugin's parameter schema (§15.3): numbers with units and ranges, integers, booleans, choices, text, and document-parameter references. Plugins draw no UI of their own.</li>
+  <li>The preview runs the plugin in its sandbox (5 s time limit, 256 MB memory cap). OK inserts the result as one undoable command; a failure shows the error and leaves the document unchanged.</li></ul>`},
+ plugins:{name:'Plugin manager',prompt:'Plugins: install, enable or disable, review capabilities.',insp:'doc',modal:'plugins',tab:'util',
+  notes:`<h2>Plugin manager</h2><p>Fusion keeps add-ins under Utilities ▸ Add-Ins; Locus has <b>UTILITIES</b> ▸ Plugins and the <b>Plugins ▾</b> menu.</p><ul>
+  <li>Lists each installed plugin: name, version, author, licence, kinds, API version, signed or unsigned, and enabled.</li>
+  <li><b>Capabilities</b>: generators and modifiers need none; exporters and importers receive bytes from the app. Nothing gets files, network, clock, environment or randomness (§15.4).</li>
+  <li>Disabling a plugin removes its actions from the menus, toolbar and search; documents that use it keep their cached output (§15.5).</li>
+  <li>Install plugin… opens a .locusplugin and shows its manifest for review before anything runs.</li>
+  <li>On the web, plugins run in a Web Worker with the same limits (ADR 0016).</li></ul>`},
+ plugininstall:{name:'Install plugin',prompt:'Install plugin: review the manifest and capabilities.',insp:'doc',modal:'plugininstall',tab:'util',
+  notes:`<h2>Install plugin</h2><ul><li>Pick a <code>.locusplugin</code> file. It is untrusted: the archive is size-bounded and the manifest validated before anything runs.</li>
+  <li>The review shows id, version, author, licence, kinds, API version (<code>locus:plugin@1.x</code> supported), SHA-256, signature status and requested capabilities; unsigned plugins are labelled.</li>
+  <li>Install adds its actions to the right groups, tool search and the Plugins menu.</li></ul>`},
+ mcp:{name:'MCP server',prompt:'MCP server settings (desktop).',insp:'doc',modal:'mcp',tab:'util',
+  notes:`<h2>MCP server</h2><p>Unchanged from M4 (§16), reached from View ▾ and UTILITIES. Off by default; the status indicator stays visible while it runs.</p>`},
+ export:{name:'Export',prompt:'Export: choose a profile and layers.',insp:'doc',modal:'export',tab:'output',
   notes:`<h2>Export dialog</h2><ul><li><b>Profile picker</b> at the top; "Manage…" opens the profile manager.</li>
   <li>The layer table lists every layer with its operation, colour and object count; Reference layers and empty layers can't be ticked.</li>
   <li><b>Export each layer as a separate file</b> (#291) shows the file names it will write (<code>document-layer.svg</code>, unsafe characters replaced). Desktop asks for a folder once and asks before overwriting; the web build downloads one .zip.</li>
   <li>Validation (§8) runs per layer and shows errors and warnings in the same dialog; "Show" selects the problem on the canvas.</li></ul>`},
- profiles:{name:'Profile manager',prompt:'Machine profiles',insp:'doc',modal:'profiles',
+ profiles:{name:'Profile manager',prompt:'Machine profiles',insp:'doc',modal:'profiles',tab:'output',
   notes:`<h2>Profile manager</h2><p>Machine profiles become editable in the app (#286, §7).</p><ul>
   <li>Built-in presets are read-only and locked; <b>Duplicate</b> makes an editable copy.</li>
   <li>User profiles: New, Duplicate, Rename, Delete, Import .json and Export .json. Imports are untrusted: size-bounded and validated.</li>
@@ -798,8 +929,8 @@ const F={
   <li>Web: the same pane floats inside the browser window.</li>
   <li>The saved layout becomes <code>locus.layout.v2</code>; v1 layouts migrate (see the design doc).</li></ul>`}
 };
-const ORDER=['layout','toolbar','line','marking','search','shortcuts','style','text','offset','move','pattern','mirror','construction','chain','export','profiles','undock'];
-const state={flow:'layout',sel:new Set(),hidden:new Set(),dims:true,insp:'doc',layer:-1,prompt:'',pal:{grid:1,snap:1,auto:1,prof:0,pts:1,dims:1,cons:1,stroke:0},extra:'',eyedrop:false,moveTab:'Move'};
+const ORDER=['layout','toolbar','view','constrain','line','marking','search','shortcuts','style','text','offset','move','pattern','mirror','construction','chain','plugin','plugins','export','profiles','undock'];
+const state={flow:'layout',sel:new Set(),hidden:new Set(),dims:true,insp:'doc',layer:-1,prompt:'',pal:{grid:1,snap:1,geo:1,auto:1,prof:0,pts:1,dims:1,glyphs:1,consgeo:1,stroke:0,preview:0,rulers:0},zoom:1,linetype:false,extra:'',eyedrop:false,moveTab:'Move'};
 
 function dialog(){
   const f=F[state.flow]; let h='';
@@ -812,6 +943,13 @@ function dialog(){
    ${r('Distance',num('od',110,'mm'))}
    ${r('Direction',`<button class="btn" data-oflip="1">⇅ Flip</button> <span class="note" style="margin:0">${os.flip?'inside':'outside'}</span>`)}${r('Corners',`<span class="seg"><button class="${os.sharp?'':'on'}" data-osharp="0">Round</button><button class="${os.sharp?'on':''}" data-osharp="1">Sharp</button></span>`)}
    <div class="note">The offset stays live: it follows the source until you explode it.</div></div>${foot}</div>`;
+  if(f.dlg==='plugin') h=`<div class="dlg" style="width:290px"><div class="dh">${ic('box')}Finger-joint box<span class="pchip">PLUGIN</span><span class="sp"></span></div><div class="db">
+   <div class="note" style="margin:0 0 4px">Box Maker 1.2.0 · drawn from its parameter schema</div>
+   ${r('Width',`<span class="fld" style="width:90px">120.00<span class="u">mm</span></span>`)}${r('Depth',`<span class="fld" style="width:90px">80.00<span class="u">mm</span></span>`)}${r('Height',`<span class="fld" style="width:90px">50.00<span class="u">mm</span></span>`)}
+   ${r('Thickness',`<span class="fld expr" style="width:90px">material<span class="u">= 3 mm</span></span>`)}${r('Finger width',`<span class="fld" style="width:90px">10.00<span class="u">mm</span></span>`)}
+   ${r('Lid',`<span class="seg"><button>None</button><button class="on">Flat</button><button>Sliding</button></span>`)}${r('',`<div class="ck on"><i></i>Compensate kerf</div>`)}
+   ${r('Layer',`<span class="fld w"><span class="sw" style="background:#d33;margin-right:6px"></span>Cut — outer</span>`)}
+   <div class="note">Preview: 0.18 s in the sandbox · 6 panels, 212 curves. Values can reference document parameters.</div></div>${foot}</div>`;
   if(f.dlg==='mirror') h=`<div class="dlg"><div class="dh">${ic('mirror')}Mirror</div><div class="db">
    ${r('Objects',sb('4 curves'))}${r('Mirror line',sb('1 line'))}${r('',`<div class="ck on"><i></i>Merge on mirror line</div>`)}</div>${foot}</div>`;
   if(f.dlg==='pattern'){
@@ -940,6 +1078,17 @@ function offsetExtra(){
   ${hudBox(272,hy-26,fmt(os.d),'mm')}
   <g data-flip="1"><rect x="232" y="${hy-30}" width="22" height="20" rx="4" fill="var(--panel)" stroke="var(--preview)"/><text x="243" y="${hy-15}" text-anchor="middle" style="font:600 12px var(--f-ui);fill:var(--preview)">⇅</text></g>`;
 }
+function fingerEdgeRect(x,y,w,h,f){
+  // a rectangle whose top and bottom edges carry finger joints of depth f
+  let d=`M${x} ${y}`; const n=Math.max(3,Math.round(w/(f*3))|1), step=w/n;
+  for(let i=0;i<n;i++){ const up=i%2?0:-f; d+=` L${x+i*step} ${y+up} L${x+(i+1)*step} ${y+up}`; }
+  d+=` L${x+w} ${y+h}`;
+  for(let i=n-1;i>=0;i--){ const dn=i%2?0:f; d+=` L${x+(i+1)*step} ${y+h+dn} L${x+i*step} ${y+h+dn}`; }
+  return d+' Z';
+}
+function boxExtra(){
+  return `<path class="pv" d="${fingerEdgeRect(470,112,90,56,5)}"/><path class="pv" d="${fingerEdgeRect(570,112,60,56,5)}"/><path class="pv" d="${fingerEdgeRect(470,184,90,36,5)}"/><text class="lbl" x="470" y="102">Box Maker preview</text>`;
+}
 function syncFields(){
   document.querySelectorAll('[data-pf]').forEach(inp=>{ if(document.activeElement===inp) return; const k=inp.dataset.pf;
     const v=k==='od'?os.d:ps[k]; inp.value=(k==='qx'||k==='qy'||k==='cq')?v:fmt(v); });
@@ -967,7 +1116,8 @@ function modal(kind){
     const rows=[['#d33','Cut — outer','Cut',9,1,'ok'],['#2a6fd6','Score — border','Score',1,1,'ok'],['#222','Engrave — logo','Engrave',5,1,'warn'],['#2f8a4c','Draw — notes','Draw',0,0,'empty'],['#999','Reference','Reference',2,0,'ref']];
     h=`<div class="modal" style="width:640px"><div class="mh2">${ic('export')}Export<span class="sp"></span><button class="ib" data-close="1">✕</button></div><div class="mb">
     <div class="row"><span class="lb">Profile</span><span class="fld" style="width:260px">LightBurn (SVG) ▾</span><button class="btn" data-go="profiles">Manage…</button></div>
-    <div class="row"><span class="lb">Format</span><span class="seg"><button class="on">SVG</button><button>DXF</button><button>PDF</button><button>HPGL (plugin)</button></span></div>
+    <div class="row"><span class="lb">Format</span><span class="seg"><button class="on">SVG</button><button>DXF</button><button>PDF</button><button>HPGL<span class="pchip">PLUGIN</span></button><button>G-code<span class="pchip">PLUGIN</span></button></span></div>
+    <div class="note" style="margin-left:98px">Exporter plugins add formats here. They get the same validated export model as the built-in writers; the app does the file dialog and writing (§15.4).</div>
     <table class="t" style="margin-top:10px"><tr><th></th><th>Layer</th><th>Operation</th><th>Objects</th><th>Validation</th></tr>
     ${rows.map(r=>`<tr style="${r[4]?'':'opacity:.55'}"><td><span class="ck ${r[4]?'on':''}"><i></i></span></td><td><span class="sw" style="background:${r[0]};display:inline-block;margin-right:6px"></span>${r[1]}</td><td>${r[2]}</td><td class="mono">${r[3]}</td>
     <td>${r[5]==='ok'?'<span class="v-ok">✓ ready</span>':r[5]==='warn'?'<span class="v-warn">⚠ 2 self-intersections</span> <button class="btn" style="padding:1px 6px">Show</button>':r[5]==='empty'?'<span style="color:var(--muted)">empty, skipped</span>':'<span style="color:var(--muted)">never exported</span>'}</td></tr>`).join('')}</table>
@@ -1004,13 +1154,38 @@ function modal(kind){
      </div></div>
      <div class="mf"><span class="lft">Profiles are saved in app settings, not in documents.</span><button class="btn" data-close="1">Close</button></div></div>`;
   }
+  if(kind==='plugins'){
+    const P=[['Box Maker','dev.locus.boxmaker','1.2.0','Generator','MIT','signed','none',1],['Living Hinge','dev.locus.hinge','0.9.1','Generator','MIT','signed','none',1],['Gears','org.example.gears','2.0.0','Generator','Apache-2.0','unsigned','none',1],['Dogbone','dev.locus.dogbone','1.0.0','Modifier','MIT','signed','none',1],['Tabs & Bridges','org.example.tabs','0.4.0','Modifier','MIT','unsigned','none',0],['HPGL','dev.locus.hpgl','1.1.0','Exporter','MIT','signed','bytes to the app',1],['G-code Laser','org.example.gcode','0.7.2','Exporter','GPL-3.0','unsigned','bytes to the app',1]];
+    h=`<div class="modal" style="width:820px"><div class="mh2">${ic('plugin')}Plugins<span class="sp"></span><button class="btn pri" data-go="plugininstall">Install plugin…</button><button class="ib" data-close="1">✕</button></div><div class="mb">
+    <table class="t"><tr><th>On</th><th>Plugin</th><th>Kind</th><th>Version</th><th>Licence</th><th>Signature</th><th>Capabilities</th><th></th></tr>
+    ${P.map(r=>`<tr><td><span class="ck${r[7]?' on':''}"><i></i></span></td><td><b>${r[0]}</b><br><span class="note" style="font-family:var(--f-mono)">${r[1]}</span></td><td>${r[3]}</td><td class="mono">${r[2]}</td><td>${r[4]}</td><td>${r[5]==='signed'?'<span class="v-ok">✓ signed</span>':'<span class="v-warn">unsigned</span>'}</td><td>${r[6]}</td><td><button class="btn" style="padding:1px 6px">Remove</button></td></tr>`).join('')}</table>
+    <div class="note" style="margin-top:8px">Limits per call: 5 s time limit (generators), 256 MB memory. A plugin that traps or overruns is stopped and the document is left unchanged. Plugins never get files, network, clock, environment or randomness (§15.4).</div></div>
+    <div class="mf"><span class="lft">API locus:plugin@1.0.0 · plugins run in wasmtime on the desktop and a Web Worker on the web</span><button class="btn" data-close="1">Close</button></div></div>`;
+  }
+  if(kind==='plugininstall'){
+    h=`<div class="modal" style="width:560px"><div class="mh2">${ic('import')}Install plugin<span class="sp"></span><button class="ib" data-close="1">✕</button></div><div class="mb">
+    <div class="row"><span class="lb">File</span><span class="fld w">gears-2.0.0.locusplugin</span></div>
+    <table class="t" style="margin-top:8px"><tr><td style="width:120px;color:var(--muted)">Name</td><td><b>Gears</b> 2.0.0 · org.example.gears</td></tr><tr><td style="color:var(--muted)">Author · licence</td><td>Example Labs · Apache-2.0</td></tr><tr><td style="color:var(--muted)">Provides</td><td>Generator: Spur gear, Rack</td></tr><tr><td style="color:var(--muted)">API</td><td class="mono">locus:plugin@1.0.0 <span class="v-ok">✓ supported</span></td></tr><tr><td style="color:var(--muted)">SHA-256</td><td class="mono" style="font-size:10.5px">9f2c…e41a</td></tr><tr><td style="color:var(--muted)">Signature</td><td><span class="v-warn">⚠ Unsigned.</span> Only install plugins from people you trust.</td></tr><tr><td style="color:var(--muted)">Capabilities</td><td>None requested. It can't read files, use the network, or see the clock.</td></tr></table>
+    <div class="banner" style="margin-top:10px">It will appear in INSERT ▾, the Plugins menu and tool search. Pin it to the toolbar like any tool.</div></div>
+    <div class="mf"><button class="btn" data-close="1">Cancel</button><button class="btn pri" data-close="1" data-toast="Installed Gears 2.0.0 · Spur gear is in INSERT ▾">Install</button></div></div>`;
+  }
+  if(kind==='mcp'){
+    h=`<div class="modal" style="width:520px"><div class="mh2">${ic('mcp')}MCP server<span class="sp"></span><button class="ib" data-close="1">✕</button></div><div class="mb">
+    <div class="row"><span class="lb">Server</span><span class="seg"><button class="on">Off</button><button>On</button></span><span class="note" style="margin:0 0 0 8px">Desktop only</span></div>
+    <div class="row"><span class="lb">Address</span><span class="fld">127.0.0.1:7351</span></div>
+    <div class="row"><span class="lb">Scopes</span><div class="ck on"><i></i>Read</div><div class="ck"><i></i>Write</div><div class="ck"><i></i>Export</div></div>
+    <div class="row"><span class="lb">Approval</span><span class="fld w">Ask for every write ▾</span></div>
+    <div class="note">Unchanged from M4 (§16.4): loopback only, a per-session token, Origin checks, separate scopes, and AI edits grouped into labelled undo steps.</div></div>
+    <div class="mf"><button class="btn" data-close="1">Close</button></div></div>`;
+  }
   $('#overlay').innerHTML=`<div class="scrim" data-scrim="1">${h}</div>`;
 }
 
 /* ---------- shortcuts pane (dockable / undockable) ---------- */
 const KEYS=[['Fusion sketch keys',[['S','Tool search','was Select'],['L','Line',''],['R','2-Point Rectangle','was Center Arc'],['C','Center Circle',''],['A','3-Point Arc',''],['D','Sketch Dimension',''],['T','Trim','was Tangent'],['O','Offset','was Concentric'],['M','Move/Copy','was Midpoint'],['X','Normal/Construction','was Collinear'],['I','Measure','was Tangent Arc']]],
- ['Other Locus tools',[['P','Point',''],['G','Polygon',''],['U','Slot',''],['N','Bézier pen',''],['F','Fix/Unfix',''],['H','Horizontal/Vertical','V merged in'],['K','Coincident',''],['Q','Parallel',''],['W','Perpendicular',''],['Y','Symmetric',''],['E','Equal',''],['⇧T','Tangent','was T'],['⇧O','Concentric','was O'],['⇧M','Midpoint','was M'],['⇧X','Collinear','was X']]],
- ['Edit, view and mouse',[['Del / ⌫','Delete selection','now deletes'],['Esc','Cancel step · Select',''],['Enter','Commit',''],['Tab','Next typed field',''],['Ctrl+Z / Y','Undo / redo',''],['Ctrl+C / V / D','Copy · paste · duplicate',''],['Ctrl+A','Select all',''],['Ctrl+E','Export…',''],['Right-click','Marking menu','was pan'],['Middle / Space+drag','Pan',''],['Wheel','Zoom',''],['Dbl middle-click','Fit',''],['Alt (hold)','No auto-constraints',''],['?','Toggle this pane','']]]];
+ ['Other Locus tools',[['P','Point',''],['G','Polygon',''],['U','Slot',''],['N','Bézier pen','']]],
+ ['Constraints',[['—','No keys, as in Fusion. Use the CONSTRAIN symbols, S, or the marking menu','was H V K Q W E Y F']]],
+ ['Edit, view and mouse',[['F6','Fit to content',''],['Ctrl+= / Ctrl+-','Zoom in / out',''],['Del / ⌫','Delete selection','now deletes'],['Esc','Cancel step · Select',''],['Enter','Commit',''],['Tab','Next typed field',''],['Ctrl+Z / Y','Undo / redo',''],['Ctrl+C / V / D','Copy · paste · duplicate',''],['Ctrl+A','Select all',''],['Ctrl+E','Export…',''],['Right-click','Marking menu','was pan'],['Middle / Space+drag','Pan',''],['Wheel','Zoom',''],['Dbl middle-click','Fit',''],['Alt (hold)','No auto-constraints',''],['?','Toggle this pane','']]]];
 state.keys='off';
 function keysBody(){
   return `<div style="padding:6px 8px 0"><input id="keysq" class="fld w" placeholder="Filter keys or actions" value="${state.keysq||''}" style="font-family:var(--f-ui)"></div><div class="pb keyspane" id="keysList">${keysRows((state.keysq||'').toLowerCase())}</div>`;
@@ -1044,13 +1219,13 @@ function markingMenu(x,y){
 }
 /* ---------- tool search ---------- */
 function toolSearch(q=''){
-  const all=A.filter(a=>a[0]!=='sep').concat(OUT);
+  const all=ALLACT();
   const needsSel=['modify.move','modify.rotate','modify.scale','sketch.offset','modify.construction','edit.delete','constrain.hv','constrain.parallel','constrain.tangent','sketch.mirror'];
   const qq=q.trim().toLowerCase();
-  let items=qq?all.filter(a=>(a[1]+' '+a[0]).toLowerCase().includes(qq)):[all.find(a=>a[0]==='sketch.offset'),all.find(a=>a[0]==='sketch.line'),all.find(a=>a[0]==='constrain.tangent'),all.find(a=>a[0]==='output.export')];
+  let items=qq?all.filter(a=>(a[1]+' '+a[0]).toLowerCase().includes(qq)):[all.find(a=>a[0]==='sketch.offset'),all.find(a=>a[0]==='sketch.line'),all.find(a=>a[0]==='constrain.tangent'),all.find(a=>a[0]==='output.export'),all.find(a=>a[0]==='plugin.box')];
   items=items.slice(0,9);
   const box=$('.search .res');
-  const h=(qq?'':'<div class="note" style="padding:4px 8px">Recent</div>')+items.map((a,i)=>{const dis=!state.sel.size&&needsSel.includes(a[0]);return `<button class="mi ${i===0?'hot':''} ${dis?'dis':''}" data-act="${a[0]}">${ic(a[2])}<span>${a[1]}<span class="grp2"> · ${a[4]}</span>${dis?'<span class="why">select something first</span>':''}</span><span class="k">${a[3]||''}</span></button>`}).join('')+(items.length?'':'<div class="note" style="padding:8px">No matching tool</div>');
+  const h=(qq?'':'<div class="note" style="padding:4px 8px">Recent</div>')+items.map((a,i)=>{const dis=!state.sel.size&&needsSel.includes(a[0]);return `<button class="mi ${i===0?'hot':''} ${dis?'dis':''}" data-act="${a[0]}">${ic(a[2])}<span>${a[1]}<span class="grp2"> · ${a[4]}${a[7]?' · plugin':''}</span>${dis?'<span class="why">select something first</span>':''}</span><span class="k">${a[3]||''}</span></button>`}).join('')+(items.length?'':'<div class="note" style="padding:8px">No matching tool</div>');
   if(box) box.innerHTML=h; else {
     $('#overlay').innerHTML=`<div class="search" style="left:470px;top:150px"><input id="sq" placeholder="Search tools… (try “pat”, “tan”, “exp”)" autocomplete="off"><div class="res">${h}</div></div>`;
     const inp=$('#sq'); inp.focus();
@@ -1070,10 +1245,9 @@ function markActive(){
 function setFlow(id){
   const f=F[id]; if(!f) return;
   state.flow=id; state.sel=new Set(f.sel||[]); state.hidden=new Set(f.hidden||[]); state.insp=f.insp||'doc'; state.layer=-1; state.prompt=f.prompt; state.eyedrop=false;
-  state.pal.cons=!!(f.pal&&f.pal.cons); state.toolOpt=f.toolOpt||'';
+  state.linetype=!!(f.pal&&f.pal.cons); state.toolOpt=f.toolOpt||'';
   if(id==='move') state.moveTab=state.moveTab||'Move';
-  if(id==='export'||id==='profiles'||id==='undock'){ if(tab!=='output'&&id!=='undock'){tab='output';$('#tabOutput').classList.add('on');$('#tabSketch').classList.remove('on');} }
-  else if(tab!=='sketch'){tab='sketch';$('#tabSketch').classList.add('on');$('#tabOutput').classList.remove('on');}
+  setTab(f.tab||'sketch',true);
   render();
   closeOverlay();
   if(f.modal) modal(f.modal);
@@ -1081,6 +1255,7 @@ function setFlow(id){
   if(f.search) toolSearch('');
   if(f.float) floatPane();
   if(f.keys){ state.keys=state.lastKeys||'dock'; keysPane(); }
+  if(f.openApp){ const b=document.querySelector(`[data-amenu="${f.openApp}"]`); if(b) appMenu(f.openApp,b); }
   if(f.openMenu){ const gl=document.querySelector(`[data-grp="${f.openMenu}"]`); if(gl) groupMenu(f.openMenu,gl); }
   document.querySelectorAll('#flows button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.flow===id));
   $('#notesFlow').innerHTML=f.notes;
@@ -1088,7 +1263,7 @@ function setFlow(id){
 }
 function render(keepDlg){
   const f=F[state.flow];
-  state.extra=(f.extra||'')+(state.flow==='pattern'?patternExtra():'')+(state.flow==='move'?moveExtra():'')+(state.flow==='offset'?offsetExtra():'');
+  state.extra=(f.extra||'')+(state.flow==='pattern'?patternExtra():'')+(state.flow==='move'?moveExtra():'')+(state.flow==='offset'?offsetExtra():'')+(state.flow==='plugin'?boxExtra():'');
   if(keepDlg){ drawCanvas(); syncFields(); return; }
   ribbon();drawCanvas();browser();palette();inspector();status();dialog();
 }
@@ -1114,12 +1289,20 @@ function deleteSel(){
 /* ---------- events ---------- */
 $('#flows').innerHTML=ORDER.map(id=>`<button data-flow="${id}" aria-pressed="false">${F[id].name}</button>`).join('');
 $('#flows').addEventListener('click',e=>{const b=e.target.closest('[data-flow]');if(b)setFlow(b.dataset.flow);});
-$('#tabSketch').onclick=()=>{tab='sketch';$('#tabSketch').classList.add('on');$('#tabOutput').classList.remove('on');ribbon();};
-$('#tabOutput').onclick=()=>{tab='output';$('#tabOutput').classList.add('on');$('#tabSketch').classList.remove('on');ribbon();};
+function setTab(t,quiet){ tab=t; document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('on',b.dataset.tab===t)); if(!quiet) ribbon(); }
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{closeMenus();setTab(b.dataset.tab);});
 $('#searchBtn').onclick=()=>setFlow('search');
 frame.addEventListener('click',e=>{
   const t=e.target;
   const g=t.closest('[data-grp]'); if(g){ if(g.parentElement.querySelector('.menu')){closeMenus();} else groupMenu(g.dataset.grp,g); return; }
+  const am=t.closest('[data-amenu]'); if(am){ if(am.parentElement.querySelector('.menu')) closeMenus(); else appMenu(am.dataset.amenu,am); return; }
+  const np=t.closest('[data-navpop]'); if(np){ if($('#navbar .menu')) closeMenus(); else navPop(np.dataset.navpop,np); return; }
+  const vt=t.closest('[data-vt]'); if(vt){ const inMenu=vt.closest('.menu'); const k=vt.dataset.vt; toggleView(k); if(inMenu){ const amb=inMenu.parentElement.querySelector('[data-amenu]'); if(amb) appMenu(amb.dataset.amenu,amb); else if(inMenu.parentElement.id==='navbar') navPop(k==='grid'||k==='snap'||k==='geo'||k==='rulers'?'grid':'display'); } return; }
+  const zm=t.closest('[data-zoom]'); if(zm){ closeMenus(); zoom(zm.dataset.zoom); return; }
+  const th=t.closest('[data-theme-set]'); if(th){ state.theme=th.dataset.themeSet; const r=document.documentElement; if(state.theme==='System') r.removeAttribute('data-theme'); else r.setAttribute('data-theme',state.theme.toLowerCase()); const b=document.querySelector('[data-amenu="View"]'); appMenu('View',b); return; }
+  const un=t.closest('[data-units]'); if(un){ state.units=un.dataset.units; const b=document.querySelector('[data-amenu="View"]'); appMenu('View',b); toast(`Display units: ${state.units} (stored as mm, §4)`); return; }
+  const pa=t.closest('[data-pane]'); if(pa){ closeMenus(); if(pa.dataset.pane==='Shortcuts'){ if(state.keys!=='off'){state.keys='off';keysPane();} else {state.keys=state.lastKeys||'dock';keysPane();} } else toast(`${pa.dataset.pane} pane hidden · View ▸ Panes brings it back`); return; }
+  if(t.closest('[data-resetlayout]')){ closeMenus(); state.keys='off'; keysPane(); toast('Layout reset to the default'); return; }
   const pn=t.closest('[data-pin]'); if(pn){ e.stopPropagation(); togglePin(pn.dataset.pin,pn.dataset.g); const gl=document.querySelector(`[data-grp="${pn.dataset.g}"]`); if(gl) groupMenu(pn.dataset.g,gl); return; }
   const rp=t.closest('[data-resetpins]'); if(rp){ const g=rp.dataset.resetpins; pins[g]=DEFAULT_PINS[g].slice(); savePins(); closeMenus(); ribbon(); toast(`${g} toolbar reset`); return; }
   const up=t.closest('[data-unpin]'); if(up){ togglePin(up.dataset.unpin); closeMenus(); return; }
@@ -1136,8 +1319,8 @@ frame.addEventListener('click',e=>{
   const pr=t.closest('[data-prof]'); if(pr){ state.prof=pr.dataset.prof; modal('profiles'); return; }
   const mt=t.closest('[data-mt]'); if(mt){ state.moveTab=mt.dataset.mt; render(); return; }
   if(t.closest('[data-ok]')){ const fl=state.flow; setFlow('layout'); toast({offset:'Offset added · distance stays editable on the canvas',move:'Moved 4 curves · one undo step',pattern:'Pattern updated · 5 instances, 1 suppressed',mirror:'Mirrored 4 curves · symmetric constraints added',text:'Text updated'}[fl]||'Done'); return; }
-  const lt=t.closest('[data-lt]'); if(lt){ state.pal.cons=lt.dataset.lt==='1'; palette(); toast(state.pal.cons?'Drawing tools now create construction geometry':'Drawing tools create normal geometry'); return; }
-  const pal=t.closest('[data-pal]'); if(pal){ const k=pal.dataset.pal; state.pal[k]=!state.pal[k]; if(k==='dims'){state.dims=!!state.pal[k];drawCanvas();} palette(); return; }
+  const lt=t.closest('[data-lt]'); if(lt){ state.linetype=lt.dataset.lt==='1'; palette(); toast(state.linetype?'Drawing tools now create construction geometry':'Drawing tools create normal geometry'); return; }
+  const pal=t.closest('[data-pal]'); if(pal){ toggleView(pal.dataset.pal); return; }
   if(t.closest('#eyedrop')){ state.eyedrop=!state.eyedrop; state.prompt=state.eyedrop?'Eyedropper: click the object to copy its style from. Esc cancels.':F[state.flow].prompt; inspector(); status(); $('#cv').style.cursor=state.eyedrop?'crosshair':''; return; }
   const ly=t.closest('[data-layer]'); if(ly){ state.layer=+ly.dataset.layer; state.insp='layer'; state.sel.clear(); browser(); inspector(); drawCanvas(); status(); return; }
   const xx=t.closest('[data-x]'); if(xx){ setFlow('construction'); return; }
@@ -1230,12 +1413,13 @@ document.addEventListener('keydown',e=>{
   const tag=(e.target.tagName||'').toLowerCase(); if(tag==='input'||tag==='textarea') return;
   const k=e.key;
   if(k==='Escape'){ if($('#overlay').innerHTML||document.querySelector('.menu')){closeOverlay();closeMenus();return;} if(state.eyedrop){state.eyedrop=false;inspector();return;} setFlow('layout'); return; }
-  if(e.ctrlKey||e.metaKey){ if(k.toLowerCase()==='e'){e.preventDefault();setFlow('export');} if(k.toLowerCase()==='a'){e.preventDefault();state.sel=new Set(['o1','o2','o3','o4','o5','o6','o7','o8','ofs','h1','h2','h3','h4','s1','s2','tx']);state.insp='chain';drawCanvas();inspector();status();} return; }
+  if(e.ctrlKey||e.metaKey){ if(k==='='||k==='+'){e.preventDefault();zoom('in');return;} if(k==='-'){e.preventDefault();zoom('out');return;} if(k.toLowerCase()==='e'){e.preventDefault();setFlow('export');} if(k.toLowerCase()==='a'){e.preventDefault();state.sel=new Set(['o1','o2','o3','o4','o5','o6','o7','o8','ofs','h1','h2','h3','h4','s1','s2','tx']);state.insp='chain';drawCanvas();inspector();status();} return; }
   if(k==='Delete'||k==='Backspace'){ e.preventDefault(); deleteSel(); return; }
   if(k==='?'){ if(state.keys!=='off'){ state.keys='off'; keysPane(); } else setFlow('shortcuts'); return; }
   if(k===' '){ e.preventDefault(); state.prompt='Space held: drag to pan'; status(); return; }
-  const m={l:'sketch.line',o:'sketch.offset',m:'modify.move',x:'modify.construction',t:'modify.trim',d:'constrain.dimension',c:'sketch.circle',r:'sketch.rect2',a:'sketch.arc3',h:'constrain.hv',i:'inspect.measure',e:'constrain.equal',p:'sketch.point',g:'sketch.polygon',u:'sketch.slot',n:'sketch.bezier',k:'constrain.coincident',f:'constrain.fix',q:'constrain.parallel',w:'constrain.perp',y:'constrain.symmetric'};
-  if(e.shiftKey){ const sm={T:'constrain.tangent',O:'constrain.concentric',M:'constrain.midpoint',X:'constrain.collinear'}; if(sm[k]){runAction(sm[k]);} return; }
+  const m={l:'sketch.line',o:'sketch.offset',m:'modify.move',x:'modify.construction',t:'modify.trim',d:'constrain.dimension',c:'sketch.circle',r:'sketch.rect2',a:'sketch.arc3',i:'inspect.measure',p:'sketch.point',g:'sketch.polygon',u:'sketch.slot',n:'sketch.bezier'};
+  if(e.key==='F6'){ e.preventDefault(); zoom('fit'); return; }
+  if(e.shiftKey) return;
   if(k==='s'){ e.preventDefault(); setFlow('search'); return; }
   if(k==='x' && state.sel.size && state.flow!=='construction'){ setFlow('construction'); return; }
   if(m[k]) runAction(m[k]);

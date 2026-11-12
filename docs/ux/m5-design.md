@@ -4,7 +4,7 @@
 - **Decision record:** [ADR 0017](../adr/0017-fusion-style-ui.md)
 - **Mockup:** the clickable prototype is [`m5-mockup.html`](m5-mockup.html), which is also published as a private Artifact for the owner. It is a static design, not an editor.
 - **Spec:** §4, §6, §7, §8, §9, §11, §12.1, ADR 0001
-- **Status:** revision 2 for owner sign-off (2026-11-13). Revision 1 was reviewed as "much better"; this revision adds the owner's five requests (§2.3, §6.5, §6.6, §6.8, §5.1) and records the defaults in §9.
+- **Status:** revision 3 for owner sign-off (2026-11-13). Revision 1 was reviewed as "much better". Revision 2 added the owner's five requests (§2.3, §5.1, §6.5, §6.6, §6.8). Revision 3 adds plugins (§6.13), the View menu and navigation bar (§2.4), and constraints as symbols with no letter keys (owner decision, §2, §5).
 
 Owner testing in M4 found Locus hard to use and not CAD-like enough. This document fixes how M5 should look and behave before anything is built. Where Fusion 360 and SolidCraft differ, it follows Fusion (owner decision, 2026-11-13). Fusion is a behaviour reference only (§18); no assets or code are copied.
 
@@ -14,14 +14,15 @@ Owner testing in M4 found Locus hard to use and not CAD-like enough. This docume
 2. **Style belongs to each object**, not to its layer: stroke colour, stroke width, pen number, fill and opacity (#287). Layers keep only their operation settings.
 3. Placed **text stays re-editable** (#222).
 4. Fusion wins wherever Fusion and SolidCraft differ.
+5. **Constraints use symbols, not letters**, as in Fusion: no single-letter constraint keys (owner decision on revision 2).
 
 **Spec conflict, flagged (§17):** §4 lists the fields each entity carries, and §7 puts pen number and pen width on the Draw layer. Decision 2 changes both. This PR records the decision in §0 and §12, and adds a note to §7. The data-model change (format version, migration of Draw-layer pens onto their objects) lands with #287.
 
 ## 2. Layout
 
 ```
-┌ App bar: File · Save · Undo · Redo ········· document · profile · units ········· Search (S) · ? ┐
-├ [SKETCH] [OUTPUT] ───────────────────────────────────────────────────────────────────────────────┤
+┌ App bar: File Edit View Plugins Help · Save · Undo · Redo ··· document · profile ··· Search (S) · ? ┐
+├ [SKETCH] [OUTPUT] [UTILITIES] ───────────────────────────────────────────────────────────────────┤
 │ CREATE ▾ │ MODIFY ▾ │ CONSTRAIN ▾ │ INSPECT ▾ │ INSERT ▾ │ SELECT ▾ │                      EXPORT │
 ├──────────────┬──────────────────────────────────────────────────────────┬────────────────────────┤
 │ BROWSER    ⧉ │                                          ┌ command ─────┐│ SKETCH PALETTE       ⧉ │
@@ -29,7 +30,7 @@ Owner testing in M4 found Locus hard to use and not CAD-like enough. This docume
 │ ▾ Parameters │               canvas                     │ (tool fields)││ grid · snap · auto · … │
 │ ▾ Recipes    │                                          └──────────────┘│ tool options           │
 │ ▸ Regions    │                                                          ├────────────────────────┤
-│ ▸ Constraints│             [pan zoom fit | grid snap stroke preview]    │ INSPECTOR            ⧉ │
+│ ▸ Constraints│  [pan ± fit sel | grid&snaps▾ rulers | display▾ stroke prev] │ INSPECTOR          ⧉ │
 │              │                                                          │ (changes with context) │
 ├──────────────┴──────────────────────────────────────────────────────────┴────────────────────────┤
 │ prompt for the next click ·········· Under-constrained · 3 DOF · 1 selected · x y · snap · mm    │
@@ -40,11 +41,13 @@ Owner testing in M4 found Locus hard to use and not CAD-like enough. This docume
 |---|---|---|
 | **Ribbon, SKETCH tab** | Groups Create / Modify / Constrain / Inspect / Insert / Select. Each shows its 2–5 most used tools as icons; the group label (▾) opens the full list with shortcuts. EXPORT sits at the right end, as Fusion's FINISH SKETCH does. | The flat tool strip (`app.rs` `tool_bar`) and the Sketch / Constrain menus |
 | **Ribbon, OUTPUT tab** | Machine preview, Validate, Export…, Machine profiles…, Exporter plugins. | View ▸ Machine preview, File ▸ Export |
+| **Ribbon, UTILITIES tab** | PLUGINS (Install plugin…, Manage plugins…) and AUTOMATION (MCP server…, Keyboard shortcuts), as Fusion keeps add-ins under Utilities. | Plugins menu items, View ▸ MCP |
+| **App menus** | File, Edit, View (§2.4), Plugins (§6.13), Help: the full command set, as today's menu bar, and the place for rarely used commands. | Today's menu bar, reorganised |
 | **Browser** (left) | One tree: Layers (visibility, lock, operation), Parameters, Recipes (patterns, mirrors, offsets, text, plugin objects), Regions, Constraints. Selecting a row selects its geometry. Right-click opens the marking menu with that row's items. | The Layers, Parameters, Patterns and Regions tabs |
 | **Sketch palette** (right, top) | Linetype (Normal / Construction), sketch grid, snap, auto-constrain, show profiles / points / dimensions / constraints, stroke width. The active tool's options appear here (polygon sides, fillet radius…). | Scattered toggles in View and Constrain menus and the tool strip |
 | **Inspector** (right, bottom) | Context-sensitive; see §2.1. | The Properties tab |
 | **Command dialog** | Docked to the canvas's top-right corner while a dialog tool runs (Offset, Move, Pattern, Mirror, Text, Fillet…): selection boxes, fields, OK / Cancel. | Tool-strip widgets in `corner_sizes` and the Patterns tab |
-| **Navigation bar** | Bottom centre of the canvas: pan, zoom, fit, grid, snap, stroke-width and machine-preview toggles. | — |
+| **Navigation bar** | Bottom centre of the canvas, as Fusion's: pan, zoom, fit, zoom to selection, Grid and snaps ▾, rulers, Display ▾, stroke width, machine preview (§2.4). | View menu toggles |
 | **Status bar** | The next click's prompt, sketch DOF state (§5 Solver UX), selection count, cursor position, snap, units. | Status bar (kept, reorganised) |
 
 The ribbon groups, in Fusion's order and naming:
@@ -52,13 +55,33 @@ The ribbon groups, in Fusion's order and naming:
 | Group | Tools (key) |
 |---|---|
 | Create | Line (L); 2-Point / Center / 3-Point Rectangle (R); Center Diameter / 2-Point / 3-Point Circle (C); 3-Point (A) / Center / Tangent Arc; Polygon (G); Slot (U); Bézier Pen (N); Point (P); Text; Mirror; Circular Pattern; Rectangular Pattern; Offset (O) |
-| Modify | Fillet; Chamfer; Trim (T); Extend; Break; Move/Copy (M); Rotate; Sketch Scale; Normal/Construction (X); Explode recipe; Style…; Delete (Del) |
-| Constrain | Sketch Dimension (D); Coincident (K); Collinear (⇧X); Concentric (⇧O); Midpoint (⇧M); Fix/Unfix (F); Parallel (Q); Perpendicular (W); Horizontal/Vertical (H); Tangent (⇧T); Equal (E); Symmetric (Y); Auto-constrain toggle |
+| Modify | Fillet; Chamfer; Trim (T); Extend; Break; Move/Copy (M); Rotate; Sketch Scale; Normal/Construction (X); Explode recipe; Style…; Delete (Del); then **modifier plugins** (e.g. Dogbone corners, Tabs and bridges) |
+| Constrain | Sketch Dimension (D); then **symbol buttons, no keys**: Coincident, Collinear, Concentric, Midpoint, Fix/Unfix, Parallel, Perpendicular, Horizontal/Vertical, Tangent, Smooth (G2)\*, Equal, Symmetric; Auto-constrain toggle |
 | Inspect | Measure (I); Machine preview; Show stroke width; Validate for export |
-| Insert | Insert SVG…; Insert DXF…; Plugin object… |
+| Insert | Insert SVG…; Insert DXF…; then **generator plugins** (e.g. Finger-joint box, Living hinge, Spur gear) |
 | Select | Select (Esc); Window select; Select chain; Select layer; Select all (Ctrl+A); Selection filters |
 
 As in Fusion, Mirror, the patterns and Offset sit in Create, because they create geometry.
+
+**Constraint symbols.** The CONSTRAIN group shows every constraint as a symbol button by default (they are small, so all twelve fit, as in Fusion). Hovering one shows its name. The same symbols mark constraints on the canvas; hovering one names it, and right-clicking it offers Delete. Constraints have no letter keys (owner decision): they are reached from the symbols, tool search (S), the marking-menu list (Constrain ▸), and pinning. A user can still bind a key to any constraint in Settings ▸ Keyboard; none are bound by default.
+
+\* **Smooth (G2 curvature continuity)** is in Fusion's set but **not in spec §5** or the solver. It is flagged (§17): the mockup shows its symbol for completeness, but the app hides it until a spec change and a solver ticket add it.
+
+### 2.4 View menu and navigation bar (revision 3)
+
+Today's View menu, laid out as Fusion lays it out: the everyday toggles on a **navigation bar** at the bottom of the canvas, and everything in a **View ▾** app menu. Both, and the sketch palette's display checkboxes, are views of the same settings, so they never disagree.
+
+| Navigation bar | |
+|---|---|
+| Pan · Zoom in · Zoom out · Fit (F6, double middle-click) · Zoom to selection | Wheel zooms about the cursor; Ctrl+= / Ctrl+- zoom about the centre |
+| **Grid and snaps ▾** | Show grid, snap to grid, snap to geometry, rulers, grid spacing and minor divisions |
+| Rulers | Top and left rulers in display units |
+| **Display ▾** | Construction geometry, dimensions, constraint symbols, points, profiles, stroke width, machine preview |
+| Stroke width · Machine preview | One-click toggles for the two most used display modes |
+
+**View ▾** holds: Fit to content, Zoom in / out / to selection; Grid and snaps; Display; **Panes** (show or hide each pane, Shortcuts with ?) and Reset layout; **Theme** (light / dark / system); **Units** (mm / cm / in; stored as mm, §4); and **MCP server…** (desktop only, §16).
+
+View settings are per user and stored in app settings, not in documents, except the document's display units.
 
 ### 2.1 Inspector contents
 
@@ -129,7 +152,7 @@ Right-click opens a ring of 8 actions around the cursor, with a list underneath.
 
 ## 5. Shortcut map
 
-These follow Fusion's sketch keys. Constraints have no letters in Fusion, so the constraint keys below are Locus extras. Keys that clashed with Fusion's move to Shift (default, §9 #1; the alternative is no letters at all).
+These follow Fusion's sketch keys. **Constraints have no letter keys**, as in Fusion (owner decision): use the CONSTRAIN symbols, tool search, the marking menu or a pinned button.
 
 | Key | Action | Today |
 |---|---|---|
@@ -145,10 +168,8 @@ These follow Fusion's sketch keys. Constraints have no letters in Fusion, so the
 | **X** | Normal/Construction | Collinear |
 | I | Measure | Tangent Arc |
 | P, G, U, N | Point, Polygon, Slot, Bézier pen | unchanged |
-| H | Horizontal/Vertical (combined, as Fusion) | Horizontal |
-| K, E, F, Q, W, Y | Coincident, Equal, Fix, Parallel, Perpendicular, Symmetric | unchanged |
-| ⇧T, ⇧O, ⇧M, ⇧X | Tangent, Concentric, Midpoint, Collinear | T, O, M, X |
-| — | Vertical (merged into H), 2-Point Rectangle (B) | V, B |
+| — | All constraints (symbols only) | K H V Q W T X O E Y M F |
+| — | 2-Point Rectangle moves from B to R | B |
 | **Del** / Backspace | Delete the selection (#223) | — (didn't delete) |
 | Esc | Cancel the step; again: back to Select | — |
 | Enter / Tab | Commit / next typed field | — |
@@ -156,6 +177,7 @@ These follow Fusion's sketch keys. Constraints have no letters in Fusion, so the
 | Ctrl+C / V / D | Copy, paste, duplicate | — |
 | Ctrl+A | Select all | — |
 | Ctrl+S / Ctrl+E | Save / Export… | — / — |
+| F6 · Ctrl+= · Ctrl+- | Fit · zoom in · zoom out | — |
 | ? | Shortcut map | — |
 | Alt (hold) | Suppress auto-constraints | unchanged |
 | Space (hold) | Pan with the left button | — |
@@ -254,6 +276,24 @@ See §3.1. Single click still selects one curve.
 
 Del and Backspace delete the selection in one command. Deleting geometry that recipes or constraints depend on removes them too, and the status bar says what went ("Deleted 3 curves, 4 constraints"). Undo restores everything (§11). Layer delete keeps its warning (§4 rule 4).
 
+### 6.13 Plugins (revision 3)
+
+Plugins (§15) appear where their kind belongs, the way Fusion keeps generators in Insert and add-ins under Utilities:
+
+| Kind (§15.2) | Where it appears |
+|---|---|
+| Generator | **INSERT ▾**, under a "Plugins" heading, tagged PLUGIN. Running one opens a command dialog that the app draws from the plugin's parameter schema (§15.3): numbers with units and ranges, integers, booleans, choices, text, and document-parameter references. The preview runs in the sandbox; OK inserts the result as one undoable command. |
+| Modifier | **MODIFY ▾**, under "Plugins". It works on the selection, with the same schema-drawn dialog. |
+| Exporter | The **Export dialog's format list** (e.g. HPGL, G-code), tagged PLUGIN. It gets the same validated export model as the built-in writers; the app does the file dialog and I/O (§15.4). |
+| Importer, validator (M4) | Insert ▸ Insert file… picks importers by file type; validators add rows to the export dialog's validation column. |
+
+- **Plugins ▾** app menu: Install plugin…, Manage plugins…, then the installed generators, modifiers and exporters listed by kind.
+- **UTILITIES ▸ PLUGINS** on the ribbon: Install plugin…, Manage plugins….
+- **Plugin manager**: each plugin's name, id, version, author, licence, kinds, API version, signed or unsigned, capabilities and an enable switch, with Remove. Disabling a plugin removes its actions from menus, the toolbar and search; documents that used it keep their cached output (§15.5). The footer states the limits (time limit, 256 MB memory) and that plugins get no files, network, clock, environment or randomness.
+- **Install plugin…** opens a `.locusplugin` and shows a review before anything runs: manifest, API version support, SHA-256, signature status (unsigned is labelled) and requested capabilities. The archive is untrusted: size-bounded and validated.
+- Plugin actions are **ordinary registry actions** (§7.1, ids `plugin.<id>.<command>`), so they show in tool search with a "plugin" tag and can be pinned to the toolbar. If a pinned plugin is removed or disabled, its button disappears; it comes back in place if the plugin is re-enabled.
+- On the web, plugins run in a Web Worker with the same limits (ADR 0016).
+
 ## 7. Architecture for the foundation refactor (#294)
 
 The aim is a structure that several M5 feature sessions can build on without colliding in `canvas.rs`. **#294 changes no behaviour.** It moves today's UI onto the new structure; the new layout and flows above come after it.
@@ -294,7 +334,7 @@ pub enum ActionKind {
 pub struct Registry { actions: Vec<Action>, keys: KeyMap }
 ```
 
-- **One static table** (`actions::BUILTIN`) holds every built-in action. Plugin commands (§15) are appended at load time with ids under `plugin.<id>.<command>`.
+- **One static table** (`actions::BUILTIN`) holds every built-in action. Plugin commands (§15) are appended when plugins load, with ids under `plugin.<id>.<command>`, a `Group` from their kind (generator → Insert, modifier → Modify), and a `source: Plugin(id)` field that the menus use for the PLUGIN tag. Exporters register formats with the export dialog, not actions. Enabling, disabling or removing a plugin adds or removes its actions; `Toolbar` keeps the pin and hides the button while the action is missing.
 - **Layout is data too.** `DEFAULT_RIBBON: &[(Group, &[ActionId])]` lists each group's default pinned tools; `MARKING_RING: [ActionId; 8]`; `fn marking_list(&AppState) -> Vec<ActionId>`. Menus, the ribbon, the marking menu, tool search, the shortcuts pane and touch long-press all read from the registry; none keep their own list.
 - **Pinned actions** (§2.3). The registry owns a `Toolbar { groups: BTreeMap<Group, Vec<ActionId>> }`, starting from `DEFAULT_RIBBON` and overridden by the user's `locus.toolbar.v1`. It has `pin(id, group, index)`, `unpin(id)`, `move_to(id, group, index)` and `reset(group)`. The ribbon draws `Toolbar`, and each group's ▾ menu draws every action in that group with an `is_pinned` flag for the pin icon. Loading drops unknown ids and duplicates, so a plugin that is removed can't leave a dead button. Pins are UI settings and never touch the document.
 - **Keys.** `KeyMap` is built from `default_key` plus user overrides saved in settings (`locus.keys.v1`). It is checked when it loads: two actions on one key is an error in a test for the defaults, and a refused rebinding for user overrides. Hotkey dispatch is one loop over `KeyMap`, keeping today's guard that a focused text field or the dimension editor gets keys first.
@@ -379,16 +419,19 @@ Today `app.rs` stores `DockState<Tab>` as JSON under `locus.layout.v1`, and fall
 | #285 undock | §2.2, §7.4 | layout v2 |
 | Customisable toolbar (new, revision 2) | §2.3 | registry `Toolbar` |
 | Shortcuts pane (new, revision 2) | §5.1 | registry + views + layout v2 |
+| View menu and navigation bar (revision 3) | §2.4 | registry toggles + views |
+| Plugins in the tools (revision 3) | §6.13 | registry plugin actions + views |
+| Constraint symbols (revision 3) | §2, §5 | registry (no default keys) + canvas glyphs |
 | Ribbon, browser, palette, inspector, status | §2 | registry + views |
 
-## 9. Defaults (owner may still change them)
+## 9. Decisions and defaults
 
-The owner reviewed revision 1 without ruling on these five points, so the design goes ahead with the recommended option for each (2026-11-13). Each one is a small, contained change if the owner later wants the alternative.
+The owner decided item 1 on revision 2. Items 2–5 weren't ruled on, so the design uses the recommended option for each (2026-11-13). Each is a small, contained change if the owner later wants the alternative.
 
 | # | Default | Alternative |
 |---|---|---|
-| 1 | **Constraint keys:** keep the Locus letters that don't clash with Fusion (H, K, E, F, Q, W, Y); the clashing ones move to Shift (⇧T tangent, ⇧O concentric, ⇧M midpoint, ⇧X collinear) | No constraint letters, as in Fusion |
-| 2 | **Horizontal/Vertical** combined on H, as in Fusion | Separate H and V |
+| 1 | **Decided (owner):** constraints have **no letter keys**; they are symbol buttons with tooltips, reachable from tool search, the marking menu and pinning | — |
+| 2 | **Horizontal/Vertical** as one combined constraint, as in Fusion | Separate Horizontal and Vertical |
 | 3 | **Cut, Score and Drag-knife** export in the profile's colour and hairline; Draw and Engrave export each object's style | Object style everywhere |
 | 4 | **Marking menu:** a fixed ring of 8 with a contextual list beneath | A ring that changes with context |
 | 5 | **Current style** for new geometry, set in the Inspector or with the eyedropper | New geometry takes a fixed default style |

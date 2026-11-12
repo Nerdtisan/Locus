@@ -39,10 +39,10 @@ SolidCraft (§18) is the closest Rust reference.
 - A ribbon grouped Create / Modify / Constrain / Inspect / Insert / Select, with an OUTPUT tab.
 - A browser tree, a sketch palette, a context-sensitive inspector, command dialogs and a status bar.
 - A right-click marking menu: a fixed ring of 8 and a context list. Pan moves to middle-drag and Space+drag.
-- Fusion's sketch keys.
+- Fusion's sketch keys; constraints as symbol buttons with no letter keys (owner decision).
 - One four-step tool model: pick → drag or type with a live preview → Enter / Esc → values stay as dimensions.
 - Per-object style. Re-editable text.
-- A customisable toolbar (pin, reorder, remove; saved per user), on-canvas handles for patterns and offset kept in sync with their dialogs, and a dockable / undockable shortcuts pane (owner's first review).
+- A customisable toolbar (pin, reorder, remove; saved per user), on-canvas handles for patterns and offset kept in sync with their dialogs, and a dockable / undockable shortcuts pane (owner's first review); plugins placed by kind (generators in Insert, modifiers in Modify, exporters in Export, management under Utilities), and a View menu plus a Fusion-style navigation bar (owner's second review).
 - Underneath: one action registry feeding every menu, key and search, a `Tool` trait for every tool family, `Canvas` split into state plus views, and the saved layout migrated from v1 to v2.
 
 ## Measurements
@@ -66,10 +66,11 @@ No runtime performance changes are expected: the registry and trait are dispatch
 ## Consequences
 
 - **Spec.** §4 entities gain a style (stroke colour, width, pen number, fill, opacity), and §7 Draw layers lose pen number and pen width. These are recorded in §0 and noted in §7; the file-format change and migration land with #287. §12 gains item 15 pointing here.
-- **Keys change** for existing users: S, R, T, O, M, X, I and E now do different things, and V and B are freed (design doc §5). The shortcut map (?) shows the changes, and the registry lets users rebind keys.
+- **Keys change** for existing users: S, R, T, O, M, X and I now do different things, B is freed, and constraints lose their letters (K, H, V, Q, W, E, Y, F) in favour of symbols (design doc §2, §5). The shortcut map (?) shows the changes, and the registry lets users rebind keys.
 - **Right-drag no longer pans.** Middle-drag and Space+drag pan instead. Touch is unchanged.
 - **The saved layout** moves to `locus.layout.v2`, migrated from v1. v1 is kept so older builds still open.
 - **Parallel work.** After #294, feature tickets add a view or a tool plus registry entries, so sessions don't collide in one file.
 - **Core crates are untouched** by the UI work; it all lives in `locus-app`. The command API (§11) stays the only way to mutate the document, and views are kept to it by structure.
-- **Defaults** for the five points the owner hasn't ruled on (constraint keys, combined H, profile colour on machine layers, fixed marking ring, current style) are recorded in the design doc §9 and can change without revisiting this ADR.
+- **Spec gap flagged:** Fusion's Smooth (G2) constraint is not in §5; the design reserves its symbol but it needs a spec change and a solver ticket before it ships.
+- **Defaults** for the four points the owner hasn't ruled on (combined Horizontal/Vertical, profile colour on machine layers, fixed marking ring, current style) are recorded in the design doc §9 and can change without revisiting this ADR.
 - **Revisit** if the owner's hands-on check of the M5 build finds the marking menu or the key map worse than today's, or if egui_dock's multi-viewport support (#285) can't restore windows reliably across platforms.
