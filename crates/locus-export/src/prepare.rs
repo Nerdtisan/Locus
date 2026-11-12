@@ -11,7 +11,8 @@ use crate::fix::{Fix, autofix};
 use crate::ops::apply_operations;
 use crate::order::order;
 use crate::pipeline::{ExportModel, collect};
-use crate::validate::{Report, validate};
+use crate::profile::MachineProfile;
+use crate::validate::{Report, validate_for};
 use locus_doc::Document;
 
 /// Result of preparing a document for export.
@@ -36,7 +37,17 @@ impl Prepared {
 /// Collect, optionally fix, validate and order the document's export geometry.
 #[must_use]
 pub fn prepare(doc: &Document, auto_fix: bool) -> Prepared {
+    prepare_for(doc, auto_fix, None)
+}
+
+/// [`prepare`] for a machine profile (SPEC §7): its colour mapping is applied
+/// to the layers before validation and ordering.
+#[must_use]
+pub fn prepare_for(doc: &Document, auto_fix: bool, profile: Option<&MachineProfile>) -> Prepared {
     let mut model = collect(doc);
+    if let Some(p) = profile {
+        p.apply(&mut model);
+    }
     let fixes = if auto_fix {
         autofix(&mut model)
     } else {
@@ -46,7 +57,7 @@ pub fn prepare(doc: &Document, auto_fix: bool) -> Prepared {
     // is what will be cut.
     apply_operations(&mut model);
     // Validate before ordering: the order stage only permutes and re-starts paths.
-    let report = validate(&model);
+    let report = validate_for(&model, profile.and_then(|p| p.bed.as_ref()));
     order(&mut model);
     Prepared {
         model,

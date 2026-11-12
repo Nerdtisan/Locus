@@ -1,0 +1,178 @@
+(
+  format_version: 12,
+  units: Mm,
+  next_id: 21,
+  parameters: {
+    "w": (
+      expr: "30",
+      value: 30.0,
+    ),
+  },
+  layers: {
+    1: (
+      name: "Layer 1",
+      colour: (0, 0, 0),
+      operation: Cut((
+        kerf_width: 0.0,
+        compensation: r#None,
+        passes: 1,
+      )),
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    17: (
+      name: "Holes",
+      colour: (255, 0, 0),
+      operation: Cut((
+        kerf_width: 0.0,
+        compensation: r#None,
+        passes: 1,
+      )),
+      export_order: 1,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    2: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    3: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 30.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    4: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 30.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    5: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    6: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 2,
+        end: 3,
+      ),
+    ),
+    7: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 3,
+        end: 4,
+      ),
+    ),
+    8: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 4,
+        end: 5,
+      ),
+    ),
+    9: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 5,
+        end: 2,
+      ),
+    ),
+    18: (
+      layer: 17,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 15.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    19: (
+      layer: 17,
+      construction: false,
+      geom: Circle(
+        center: 18,
+        radius: 3.0,
+      ),
+    ),
+  },
+  constraints: {
+    10: Fix(
+      point: 2,
+    ),
+    11: Horizontal(
+      line: 6,
+    ),
+    12: Vertical(
+      line: 7,
+    ),
+    13: Horizontal(
+      line: 8,
+    ),
+    14: Vertical(
+      line: 9,
+    ),
+    15: Distance(
+      a: 2,
+      b: 3,
+      dim: (
+        value: 30.0,
+        driven: false,
+      ),
+    ),
+    16: Distance(
+      a: 3,
+      b: 4,
+      dim: (
+        value: 20.0,
+        driven: false,
+      ),
+    ),
+    20: Diameter(
+      curve: 19,
+      dim: (
+        value: 6.0,
+        driven: false,
+      ),
+    ),
+  },
+  booleans: {},
+  recipes: {},
+  dim_exprs: {
+    15: "w",
+  },
+  view: None,
+  profile: None,
+)

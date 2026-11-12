@@ -55,3 +55,7 @@ The interface is `crates/locus-plugin-api/wit/plugin.wit`, package **`locus:plug
 - The WIT test keeps the file valid and enforces the "imports nothing" rule; changing it means changing this ADR.
 - Constraint kinds a generator can emit are a subset of §5; widening it is additive (minor version).
 - Revisit when the first plugin genuinely needs a capability (e.g. a seeded RNG helper or system fonts), or when the browser runtime (#31) lands.
+
+## Follow-up (2026-11-12, #233, #234)
+
+The importer and validator worlds were already part of the published `locus:plugin@1.0.0`, with the shapes M4 needs, so the M4 host runs them **without a version bump**: no WIT changed, and every 1.0.0 plugin keeps working. The issues asked for an additive `1.1.0`; the lead agreed that a bump adding nothing would only make the host match two versions of the same interfaces. The rule stands for real additions: new kinds or types are an additive minor version.

@@ -14,12 +14,54 @@ use crate::error::DocError;
 use crate::ids::EntityId;
 use serde::{Deserialize, Serialize};
 
+/// Which part of a stroked curve a dimension measures to (SPEC §5
+/// Stroke-edge constraint reference, #239, ADR 0014).
+///
+/// A Draw layer's stroke is the pen width wide, a Cut layer's the kerf; other
+/// layers have no stroke, so every edge equals the centreline there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Edge {
+    /// The zero-width centreline (the default).
+    #[default]
+    Centre,
+    /// The edge facing the other operand: the gap between two strokes, or a
+    /// circle's smaller (inner) edge.
+    Inside,
+    /// The far edge: the extent across two strokes, or a circle's larger
+    /// (outer) edge.
+    Outside,
+}
+
+impl Edge {
+    pub const ALL: [Edge; 3] = [Edge::Centre, Edge::Inside, Edge::Outside];
+
+    #[must_use]
+    pub const fn is_centre(&self) -> bool {
+        matches!(self, Edge::Centre)
+    }
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Edge::Centre => "centreline",
+            Edge::Inside => "inside edge",
+            Edge::Outside => "outside edge",
+        }
+    }
+}
+
 /// A dimension value. A `driven` dimension is measured from the geometry and
 /// reported, not enforced (a "reference" dimension).
+///
+/// `value` is measured to [`Dimension::edge`]; the solver is given the
+/// centreline value (see `Document::edge_offset`).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Dimension {
     pub value: f64,
     pub driven: bool,
+    /// Omitted from files while it is the centreline (format v12).
+    #[serde(default, skip_serializing_if = "Edge::is_centre")]
+    pub edge: Edge,
 }
 
 impl Dimension {
@@ -28,6 +70,16 @@ impl Dimension {
         Self {
             value,
             driven: false,
+            edge: Edge::Centre,
+        }
+    }
+
+    #[must_use]
+    pub const fn new(value: f64, driven: bool, edge: Edge) -> Self {
+        Self {
+            value,
+            driven,
+            edge,
         }
     }
 }
@@ -205,6 +257,22 @@ impl Constraint {
         }
     }
 
+    /// Can this dimension measure to a stroke edge? Distances with a line,
+    /// radii and diameters can; point-to-point, horizontal / vertical
+    /// distances and angles cannot (a point has no edge).
+    #[must_use]
+    pub fn has_stroke_edge(&self, doc: &Document) -> bool {
+        let is_line = |id: &EntityId| {
+            doc.entity(*id)
+                .is_some_and(|e| matches!(e.geom, Geom::Line { .. }))
+        };
+        match self {
+            Constraint::Distance { a, b, .. } => is_line(a) || is_line(b),
+            Constraint::Radius { .. } | Constraint::Diameter { .. } => true,
+            _ => false,
+        }
+    }
+
     /// Check that every referenced entity exists in `doc`, has a compatible
     /// kind, that paired operands differ, and that dimension values are sane.
     ///
@@ -212,8 +280,8 @@ impl Constraint {
     /// The first problem found, as a [`DocError`].
     pub fn validate(&self, doc: &Document) -> Result<(), DocError> {
         let w = self.name();
-        let unsolved = doc.unsolved_instances();
-        if let Some(e) = self.references().iter().find(|e| unsolved.contains(e)) {
+        let refused = doc.constraint_free_instances();
+        if let Some(e) = self.references().iter().find(|e| refused.contains(e)) {
             return Err(DocError::Invalid(format!(
                 "entity {} belongs to a live offset, which follows its source; explode the offset to constrain it",
                 e.get()
@@ -350,6 +418,11 @@ impl Constraint {
             }
         }
         if let Some(d) = self.dimension() {
+            if !d.edge.is_centre() && !self.has_stroke_edge(doc) {
+                return Err(DocError::Invalid(
+                    "a stroke edge needs a line or a circle / arc to measure to".to_owned(),
+                ));
+            }
             let ok = d.value.is_finite()
                 && match self {
                     Constraint::Radius { .. } | Constraint::Diameter { .. } => d.value > 0.0,
@@ -486,10 +559,7 @@ mod tests {
             Constraint::VerticalDistance {
                 a: p[0],
                 b: p[3],
-                dim: Dimension {
-                    value: 1.5,
-                    driven: true,
-                },
+                dim: Dimension::new(1.5, true, Edge::Centre),
             },
             Constraint::Angle {
                 a: l[0],

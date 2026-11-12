@@ -17,6 +17,8 @@ locus-doc.workspace = true
 locus-export.workspace = true
 locus-geom.workspace = true
 locus-plugin-host.workspace = true
+locus-region.workspace = true
+locus-text.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -29,4 +31,19 @@ rmcp = { version = "3.8", default-features = false, features = [
 ] }
 schemars = "1"
 base64 = "0.23"
+# Streamable HTTP on 127.0.0.1 (#229): we own the listener and the checks
+# in front of rmcp (ADR 0005 decision 3).
+bytes = "1"
+getrandom = "0.4"
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio-util = "0.7"
+tower-service = "0.3"
+# render_preview (#231): headless rasteriser + PNG encoder.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-std", "net", "time"] }
+
+[dev-dependencies]
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "png-format"] }

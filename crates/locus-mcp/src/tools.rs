@@ -21,8 +21,8 @@ use serde_json::{Map, Value, json};
 use crate::dto::{
     AddConstraintsArgs, AddEntitiesArgs, ApplyModifierArgs, ConstraintSpec, CreateLayerArgs,
     DeleteEntitiesArgs, DimSpec, ExportArgs, GeomSpec, IdArgs, IdsArgs, KindSpec,
-    ListConstraintsArgs, ListEntitiesArgs, ModifyEntityArgs, MoveToLayerArgs, NoArgs, Ref,
-    RunGeneratorArgs, SetDimensionArgs, SetLayerPropsArgs, SetParameterArgs, ValidateArgs,
+    ListConstraintsArgs, ListEntitiesArgs, ModifyEntityArgs, MoveToLayerArgs, NoArgs, PreviewArgs,
+    Ref, RunGeneratorArgs, SetDimensionArgs, SetLayerPropsArgs, SetParameterArgs, ValidateArgs,
 };
 use crate::error::ToolError;
 use crate::host::Workspace;
@@ -57,6 +57,7 @@ pub enum Call {
     GetConflicts,
     ValidateExport(ValidateArgs),
     ListPlugins,
+    RenderPreview(PreviewArgs),
     AddEntities(AddEntitiesArgs),
     ModifyEntity(ModifyEntityArgs),
     DeleteEntities(DeleteEntitiesArgs),
@@ -93,6 +94,7 @@ impl Call {
             "get_conflicts" => parse::<NoArgs>(args).map(|_| Call::GetConflicts),
             "validate_export" => parse(args).map(Call::ValidateExport),
             "list_plugins" => parse::<NoArgs>(args).map(|_| Call::ListPlugins),
+            "render_preview" => parse(args).map(Call::RenderPreview),
             "add_entities" => parse(args).map(Call::AddEntities),
             "modify_entity" => parse(args).map(Call::ModifyEntity),
             "delete_entities" => parse(args).map(Call::DeleteEntities),
@@ -122,7 +124,8 @@ impl Call {
             | Call::GetDofReport
             | Call::GetConflicts
             | Call::ValidateExport(_)
-            | Call::ListPlugins => Scope::Read,
+            | Call::ListPlugins
+            | Call::RenderPreview(_) => Scope::Read,
             Call::Export(_) => Scope::Export,
             _ => Scope::Write,
         }
@@ -201,6 +204,7 @@ impl Call {
             Call::GetConflicts => "read conflicts".to_owned(),
             Call::ValidateExport(_) => "validate for export".to_owned(),
             Call::ListPlugins => "list plugins".to_owned(),
+            Call::RenderPreview(_) => "render a preview".to_owned(),
         }
     }
 
@@ -222,6 +226,8 @@ impl Call {
             Call::GetConflicts => Ok(Output::Json(conflicts(ws.sketcher()))),
             Call::ValidateExport(a) => Ok(Output::Json(validate(ws.sketcher().document(), a.fix))),
             Call::ListPlugins => Ok(Output::Json(list_plugins(ws))),
+            Call::RenderPreview(a) => crate::preview::render(ws.sketcher(), a)
+                .map(|(png, info)| Output::Image { png, info }),
             Call::AddEntities(a) => add_entities(ws, a, &label).map(Output::Json),
             Call::ModifyEntity(a) => modify_entity(ws, a, &label).map(Output::Json),
             Call::DeleteEntities(a) => delete_entities(ws, a, &label).map(Output::Json),
@@ -639,6 +645,7 @@ fn issue_kind(k: locus_export::IssueKind) -> &'static str {
         K::SelfIntersection => "self_intersection",
         K::DuplicateSegment => "duplicate_segment",
         K::Degenerate => "degenerate",
+        K::OutsideBed => "outside_bed",
     }
 }
 
@@ -836,10 +843,11 @@ impl Plan {
                 }
             };
             Ok((
-                Dimension {
-                    value: if angle { value.to_radians() } else { value },
-                    driven: d.driven,
-                },
+                Dimension::new(
+                    if angle { value.to_radians() } else { value },
+                    d.driven,
+                    locus_doc::Edge::Centre,
+                ),
                 d.expr.clone(),
             ))
         };

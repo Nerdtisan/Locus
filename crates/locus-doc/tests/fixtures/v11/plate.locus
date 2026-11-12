@@ -1,0 +1,1049 @@
+(
+  format_version: 11,
+  units: Mm,
+  next_id: 63,
+  parameters: {
+    "plate": (
+      expr: "width / 2",
+      value: 30.0,
+    ),
+    "width": (
+      expr: "60",
+      value: 60.0,
+    ),
+  },
+  layers: {
+    1: (
+      name: "Layer 1",
+      colour: (0, 0, 0),
+      operation: Cut((
+        kerf_width: 0.15,
+        compensation: Outside,
+        passes: 2,
+      )),
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    21: (
+      name: "Score layer",
+      colour: (0, 20, 30),
+      operation: Score,
+      export_order: 1,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    22: (
+      name: "Engrave layer",
+      colour: (10, 20, 30),
+      operation: Engrave((
+        hatch_spacing: 0.25,
+        hatch_angle: 45.0,
+        crosshatch: true,
+      )),
+      export_order: 2,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    23: (
+      name: "Draw layer",
+      colour: (20, 20, 30),
+      operation: Draw((
+        pen_number: 3,
+        pen_width: 0.7,
+      )),
+      export_order: 3,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    24: (
+      name: "Drag knife layer",
+      colour: (30, 20, 30),
+      operation: DragKnife((
+        blade_offset: 0.5,
+      )),
+      export_order: 4,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    25: (
+      name: "Reference layer",
+      colour: (40, 20, 30),
+      operation: Reference,
+      export_order: 5,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    2: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    3: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    4: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 40.0,
+        ),
+      ),
+    ),
+    5: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 40.0,
+        ),
+      ),
+    ),
+    6: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 2,
+        end: 3,
+      ),
+    ),
+    7: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 3,
+        end: 4,
+      ),
+    ),
+    8: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 4,
+        end: 5,
+      ),
+    ),
+    9: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 5,
+        end: 2,
+      ),
+    ),
+    10: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 30.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    11: (
+      layer: 1,
+      construction: false,
+      geom: Circle(
+        center: 10,
+        radius: 5.0,
+      ),
+    ),
+    12: (
+      layer: 1,
+      construction: true,
+      geom: Point(
+        pos: (
+          x: 0.30000000000000004,
+          y: 13.333333333333334,
+        ),
+      ),
+    ),
+    27: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 70.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    28: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 80.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    29: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 90.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    30: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 100.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    31: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 105.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    32: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 110.0,
+          y: 30.0,
+        ),
+      ),
+    ),
+    33: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 120.0,
+          y: 30.0,
+        ),
+      ),
+    ),
+    34: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 125.0,
+          y: 35.0,
+        ),
+      ),
+    ),
+    35: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 27,
+        end: 28,
+      ),
+    ),
+    36: (
+      layer: 1,
+      construction: false,
+      geom: Bezier(
+        start: 28,
+        start_ctrl: 29,
+        end_ctrl: 30,
+        end: 31,
+      ),
+    ),
+    37: (
+      layer: 1,
+      construction: false,
+      geom: Bezier(
+        start: 31,
+        start_ctrl: 32,
+        end_ctrl: 33,
+        end: 34,
+      ),
+    ),
+    42: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: -30.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    43: (
+      layer: 1,
+      construction: false,
+      geom: Circle(
+        center: 42,
+        radius: 5.0,
+      ),
+    ),
+    47: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 30.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    48: (
+      layer: 1,
+      construction: false,
+      geom: Circle(
+        center: 47,
+        radius: 6.5,
+      ),
+    ),
+    49: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 5.0,
+          y: 50.0,
+        ),
+      ),
+    ),
+    50: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 15.0,
+          y: 50.0,
+        ),
+      ),
+    ),
+    51: (
+      layer: 1,
+      construction: false,
+      geom: Text(
+        anchor: 49,
+        dir: 50,
+        text: (
+          content: "Locus",
+          font: Bundled("hershey-sans"),
+          size: 6.0,
+          align: Left,
+          line_spacing: 1.0,
+          layout: (
+            contours: [
+              (
+                start: (
+                  x: 0.75,
+                  y: 3.9375,
+                ),
+                segs: [
+                  Line(
+                    end: (
+                      x: 0.75,
+                      y: 0.0,
+                    ),
+                  ),
+                ],
+                closed: false,
+              ),
+              (
+                start: (
+                  x: 0.75,
+                  y: 0.0,
+                ),
+                segs: [
+                  Line(
+                    end: (
+                      x: 3.0,
+                      y: 0.0,
+                    ),
+                  ),
+                ],
+                closed: false,
+              ),
+              (
+                start: (
+                  x: 4.6875,
+                  y: 2.625,
+                ),
+                segs: [
+                  Line(
+                    end: (
+                      x: 4.3125,
+                      y: 2.4375,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 3.9375,
+                      y: 2.0625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 3.75,
+                      y: 1.5,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 3.75,
+                      y: 1.125,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 3.9375,
+                      y: 0.5625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 4.3125,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 4.6875,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 5.25,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 5.625,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 6.0,
+                      y: 0.5625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 6.1875,
+                      y: 1.125,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 6.1875,
+                      y: 1.5,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 6.0,
+                      y: 2.0625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 5.625,
+                      y: 2.4375,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 5.25,
+                      y: 2.625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 4.6875,
+                      y: 2.625,
+                    ),
+                  ),
+                ],
+                closed: false,
+              ),
+              (
+                start: (
+                  x: 9.5625,
+                  y: 2.0625,
+                ),
+                segs: [
+                  Line(
+                    end: (
+                      x: 9.1875,
+                      y: 2.4375,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 8.8125,
+                      y: 2.625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 8.25,
+                      y: 2.625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 7.875,
+                      y: 2.4375,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 7.5,
+                      y: 2.0625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 7.3125,
+                      y: 1.5,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 7.3125,
+                      y: 1.125,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 7.5,
+                      y: 0.5625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 7.875,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 8.25,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 8.8125,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 9.1875,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 9.5625,
+                      y: 0.5625,
+                    ),
+                  ),
+                ],
+                closed: false,
+              ),
+              (
+                start: (
+                  x: 10.875,
+                  y: 2.625,
+                ),
+                segs: [
+                  Line(
+                    end: (
+                      x: 10.875,
+                      y: 0.75,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 11.0625,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 11.4375,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 12.0,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 12.375,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 12.9375,
+                      y: 0.75,
+                    ),
+                  ),
+                ],
+                closed: false,
+              ),
+              (
+                start: (
+                  x: 12.9375,
+                  y: 2.625,
+                ),
+                segs: [
+                  Line(
+                    end: (
+                      x: 12.9375,
+                      y: 0.0,
+                    ),
+                  ),
+                ],
+                closed: false,
+              ),
+              (
+                start: (
+                  x: 16.3125,
+                  y: 2.0625,
+                ),
+                segs: [
+                  Line(
+                    end: (
+                      x: 16.125,
+                      y: 2.4375,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 15.5625,
+                      y: 2.625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 15.0,
+                      y: 2.625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 14.4375,
+                      y: 2.4375,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 14.25,
+                      y: 2.0625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 14.4375,
+                      y: 1.6875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 14.8125,
+                      y: 1.5,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 15.75,
+                      y: 1.3125,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 16.125,
+                      y: 1.125,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 16.3125,
+                      y: 0.75,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 16.3125,
+                      y: 0.5625,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 16.125,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 15.5625,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 15.0,
+                      y: 0.0,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 14.4375,
+                      y: 0.1875,
+                    ),
+                  ),
+                  Line(
+                    end: (
+                      x: 14.25,
+                      y: 0.5625,
+                    ),
+                  ),
+                ],
+                closed: false,
+              ),
+            ],
+            width: 16.875,
+            ascent: 4.6875,
+            descent: 1.3125,
+            lines: 1,
+          ),
+        ),
+      ),
+    ),
+    52: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    53: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 70.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    55: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    56: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 70.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    57: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 70.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    58: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 60.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    59: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 55,
+        end: 56,
+      ),
+    ),
+    60: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 56,
+        end: 57,
+      ),
+    ),
+    61: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 57,
+        end: 58,
+      ),
+    ),
+    62: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 58,
+        end: 55,
+      ),
+    ),
+  },
+  constraints: {
+    13: Fix(
+      point: 2,
+    ),
+    14: Horizontal(
+      line: 6,
+    ),
+    15: Vertical(
+      line: 7,
+    ),
+    16: Horizontal(
+      line: 8,
+    ),
+    17: Vertical(
+      line: 9,
+    ),
+    18: Distance(
+      a: 2,
+      b: 3,
+      dim: (
+        value: 60.0,
+        driven: false,
+      ),
+    ),
+    19: Radius(
+      curve: 11,
+      dim: (
+        value: 5.0,
+        driven: false,
+      ),
+    ),
+    20: Midpoint(
+      point: 10,
+      line: 6,
+    ),
+    38: Tangent(
+      a: 35,
+      b: 36,
+    ),
+    39: Tangent(
+      a: 36,
+      b: 37,
+    ),
+    40: Fix(
+      point: 27,
+    ),
+    44: Symmetric(
+      a: 10,
+      b: 42,
+      axis: 9,
+    ),
+    45: Equal(
+      a: 11,
+      b: 43,
+    ),
+  },
+  booleans: {
+    26: (
+      op: Subtract,
+      targets: [
+        (
+          bounds: [
+            6,
+            7,
+            8,
+            9,
+          ],
+          index: 0,
+        ),
+        (
+          bounds: [
+            11,
+          ],
+          index: 0,
+        ),
+      ],
+      tools: [
+        (
+          bounds: [
+            11,
+          ],
+          index: 0,
+        ),
+      ],
+    ),
+  },
+  recipes: {
+    41: (
+      kind: Mirror(
+        axis: 9,
+      ),
+      sources: [
+        11,
+      ],
+      pool: [
+        [
+          42,
+          43,
+        ],
+      ],
+      active: 1,
+      constraints: [
+        44,
+        45,
+      ],
+    ),
+    46: (
+      kind: Offset(
+        distance: 1.5,
+        sharp: false,
+        expr: None,
+      ),
+      sources: [
+        11,
+      ],
+      pool: [
+        [
+          47,
+          48,
+        ],
+      ],
+      active: 2,
+      constraints: [],
+    ),
+    54: (
+      kind: Generated(
+        plugin: (
+          id: "com.example.square",
+          version: "1.0.0",
+          params: [
+            (
+              key: "size",
+              value: Number(10.0),
+            ),
+          ],
+        ),
+        output: (
+          points: [
+            (
+              x: 0.0,
+              y: 0.0,
+            ),
+            (
+              x: 10.0,
+              y: 0.0,
+            ),
+            (
+              x: 10.0,
+              y: 10.0,
+            ),
+            (
+              x: 0.0,
+              y: 10.0,
+            ),
+          ],
+          entities: [
+            Line(0, 1),
+            Line(1, 2),
+            Line(2, 3),
+            Line(3, 0),
+          ],
+          constraints: [
+            Horizontal(0),
+          ],
+        ),
+      ),
+      sources: [
+        52,
+        53,
+      ],
+      pool: [
+        [
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+        ],
+      ],
+      active: 8,
+      constraints: [],
+    ),
+  },
+  dim_exprs: {
+    18: "plate * 2",
+  },
+  view: Some((
+    center: (
+      x: 30.0,
+      y: 20.0,
+    ),
+    scale: 4.0,
+  )),
+  profile: Some("lightburn"),
+)

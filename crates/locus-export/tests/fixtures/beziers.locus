@@ -1,5 +1,5 @@
 (
-  format_version: 10,
+  format_version: 12,
   units: Mm,
   next_id: 17,
   parameters: {},
@@ -168,4 +168,5 @@
   recipes: {},
   dim_exprs: {},
   view: None,
+  profile: None,
 )

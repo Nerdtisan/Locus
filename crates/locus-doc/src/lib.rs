@@ -15,6 +15,7 @@ pub mod corner;
 pub mod document;
 pub mod entity;
 pub mod error;
+pub mod explode;
 pub mod expr;
 pub mod file;
 pub mod generated;
@@ -36,10 +37,13 @@ mod testutil;
 
 pub use boolean::{Boolean, BooleanError};
 pub use command::{Applied, Command, Editor, LayerProps};
-pub use constraint::{Constraint, Dimension};
-pub use document::{Document, EntityStore, Layer, LayerDeletion, Parameter, View};
+pub use constraint::{Constraint, Dimension, Edge};
+pub use document::{
+    Document, EntityStore, Layer, LayerDeletion, Parameter, View, check_profile_id,
+};
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
+pub use explode::Exploded;
 pub use file::FileError;
 pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 pub use operation::{
