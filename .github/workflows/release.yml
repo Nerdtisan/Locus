@@ -105,11 +105,100 @@ jobs:
           path: bin/windows
           retention-days: 1
 
+  # -- Windows: Inno Setup installer + portable zip (#245) ---------------------
+  windows:
+    name: Windows installer + zip
+    needs: [version, build]
+    runs-on: windows-2025
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # Pinned Inno Setup (SHA-256 is the one GitHub publishes for the release asset).
+      INNO_VERSION: "7.1.1"
+      INNO_SHA256: "8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-windows
+          path: bin
+
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $d = "dist/Locus-$env:VERSION-windows-portable"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item bin/locus.exe, bin/locus-cli.exe, LICENSE, THIRD-PARTY-NOTICES.md $d
+          Copy-Item packaging/windows/PORTABLE.txt $d/README.txt
+          Compress-Archive -Path $d -DestinationPath "dist/Locus-$env:VERSION-windows-portable.zip"
+
+      - name: Install Inno Setup (pinned)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-$env:INNO_VERSION-x64.exe"
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP/inno.exe"
+          $h = (Get-FileHash "$env:RUNNER_TEMP/inno.exe" -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $env:INNO_SHA256) { throw "Inno Setup hash mismatch: $h" }
+          Start-Process "$env:RUNNER_TEMP/inno.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+          $iscc = Get-ChildItem "$env:LOCALAPPDATA/Programs" -Filter ISCC.exe -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) { throw "ISCC.exe not found after install" }
+          "ISCC=$iscc" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Compile the installer
+        shell: pwsh
+        run: |
+          # AppVersion is free text in Inno; it also names the output file.
+          & $env:ISCC "/DAppVersion=$env:VERSION" "/DSourceDir=$PWD/bin" "/DOutDir=$PWD/dist" packaging/windows/locus.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-ChildItem dist
+
+      - name: Sign (stub - runs only once a certificate secret exists)
+        # To enable: add WINDOWS_CERT_PFX_BASE64 + WINDOWS_CERT_PASSWORD as Actions
+        # secrets, then replace the body with a signtool invocation over
+        # dist/*-setup.exe (and the exes before they are zipped/compiled).
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+        if: env.WINDOWS_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        run: Write-Warning "Windows signing is not implemented yet; artefacts stay unsigned."
+
+      - name: Smoke test - zip
+        shell: pwsh
+        run: |
+          Expand-Archive "dist/Locus-$env:VERSION-windows-portable.zip" "$env:RUNNER_TEMP/zip"
+          & "$env:RUNNER_TEMP/zip/Locus-$env:VERSION-windows-portable/locus-cli.exe" profiles
+          if ($LASTEXITCODE -ne 0) { throw "locus-cli failed from the zip" }
+
+      - name: Smoke test - install, associate, uninstall
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP/locus-inst"
+          $setup = Get-ChildItem dist -Filter *-setup.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$dir" -Wait
+          foreach ($f in "locus.exe","locus-cli.exe","locus.ico") { if (-not (Test-Path "$dir/$f")) { throw "missing $f" } }
+          & "$dir/locus-cli.exe" profiles
+          if ($LASTEXITCODE -ne 0) { throw "locus-cli failed after install" }
+          $cmd = (Get-ItemProperty "HKCU:/Software/Classes/Locus.Document/shell/open/command").'(default)'
+          if ($cmd -notlike '*locus.exe*%1*') { throw "bad .locus open command: $cmd" }
+          if ((Get-ItemProperty "HKCU:/Software/Classes/.locus").'(default)' -ne 'Locus.Document') { throw ".locus not associated" }
+          if (-not (Test-Path "HKCU:/Software/Classes/.locusplugin")) { throw ".locusplugin not associated" }
+          Start-Process "$dir/unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          Start-Sleep 3
+          if (Test-Path "$dir/locus.exe") { throw "uninstall left locus.exe" }
+          if (Test-Path "HKCU:/Software/Classes/.locus") { throw "uninstall left the .locus association" }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-windows
+          path: |
+            dist/*-setup.exe
+            dist/*.zip
+          retention-days: ${{ env.RETENTION_DAYS }}
+
   # Collects every installer artefact into SHA256SUMS. `needs` grows with each
   # packaging job (#245-#249).
   checksums:
     name: SHA-256 sums
-    needs: [version, build]
+    needs: [version, build, windows]
     if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
