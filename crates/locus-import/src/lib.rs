@@ -93,6 +93,70 @@ pub enum ImportError {
     BadDxf,
     #[error("binary DXF files are not supported; save as ASCII DXF")]
     BinaryDxf,
+    #[error("only SVG and ASCII DXF files can be imported")]
+    UnknownFormat,
+    #[error("{0}")]
+    Document(String),
     #[error("the file has no drawable geometry")]
     Empty,
+}
+
+/// A file format the importers read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Svg,
+    Dxf,
+}
+
+/// Longest layer name (matches `locus_doc::document::MAX_LAYER_NAME`).
+const MAX_LAYER_NAME: usize = 128;
+
+/// The format of a file, by extension first and by content otherwise.
+#[must_use]
+pub fn detect(file_name: &str, bytes: &[u8]) -> Option<Format> {
+    let ext = file_name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("svg") => return Some(Format::Svg),
+        Some("dxf") => return Some(Format::Dxf),
+        _ => {}
+    }
+    let head = &bytes[..bytes.len().min(2048)];
+    let head = String::from_utf8_lossy(head);
+    if head.contains("<svg") {
+        Some(Format::Svg)
+    } else if head.contains("SECTION") {
+        Some(Format::Dxf)
+    } else {
+        None
+    }
+}
+
+/// The one command that imports `bytes` (an SVG or DXF file called
+/// `file_name`) as a new locked Reference layer (SPEC §4, §7, §13 M4), plus
+/// warnings about what was skipped or approximated. Shared by the GUI's
+/// File ▸ Import reference… and the importer plugins' path
+/// (`locus_doc::reference`), so both land the same way: one undo step, never
+/// exported, never an editable native document (§1 non-goals).
+pub fn reference_command(
+    doc: &locus_doc::document::Document,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<(locus_doc::command::Command, Vec<String>), ImportError> {
+    let imported = match detect(file_name, bytes).ok_or(ImportError::UnknownFormat)? {
+        Format::Svg => import_svg(bytes)?,
+        Format::Dxf => import_dxf(bytes)?,
+    };
+    // The layer is named after the file, without any directory.
+    let base = file_name.rsplit(['/', '\\']).next().unwrap_or("");
+    let name: String = base.chars().take(MAX_LAYER_NAME).collect();
+    let name = if name.trim().is_empty() {
+        "Reference".to_owned()
+    } else {
+        name
+    };
+    let cmd = locus_doc::reference::import_shapes_command(doc, &name, &imported.shapes)
+        .map_err(|e| ImportError::Document(e.to_string()))?;
+    Ok((cmd, imported.warnings))
 }
