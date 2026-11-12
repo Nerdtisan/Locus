@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Locus web plugin spike (#252)</title>
+<pre id="out">running…</pre>
+<script>
+// Each run gets a fresh worker; a worker that doesn't answer in time is
+// terminated (the timeout parity check, SPEC §15.4).
+const out = document.getElementById("out");
+const log = (s) => { out.textContent += "\n" + s; };
+function run(msg, timeoutMs) {
+  return new Promise((resolve) => {
+    const w = new Worker("worker.js");
+    const t0 = performance.now();
+    const timer = setTimeout(() => {
+      w.terminate();
+      resolve({ ok: false, error: "terminated", after: performance.now() - t0 });
+    }, timeoutMs);
+    w.onmessage = (e) => { clearTimeout(timer); w.terminate(); resolve({ ...e.data, wall: performance.now() - t0 }); };
+    w.postMessage(msg);
+  });
+}
+(async () => {
+  out.textContent = "";
+  const results = {};
+  for (const plugin of ["finger-box", "hpgl"]) {
+    for (const mode of ["pulley", "native"]) {
+      const r = await run({ mode, plugin, calls: 21 }, 30000);
+      results[`${mode}/${plugin}`] = r;
+      log(`${mode}/${plugin}: ${JSON.stringify(r)}`);
+    }
+  }
+  const spin = await run({ mode: "spin" }, 500);
+  results.spin = spin;
+  log(`spin (500 ms timeout): ${JSON.stringify(spin)}`);
+  window.results = results;
+  log("done");
+})();
+</script>
