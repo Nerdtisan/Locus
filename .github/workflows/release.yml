@@ -360,8 +360,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      # Pinned tool version (asserted below); the runtime 26.08 is pinned in the manifest.
-      FLATPAK_BUILDER_VERSION: "1.4.4"
+      # Tool version of the ubuntu-24.04 image (asserted below); the runtime 26.08 is pinned in the manifest.
+      FLATPAK_BUILDER_VERSION: "1.4.2"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
