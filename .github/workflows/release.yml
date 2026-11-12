@@ -266,11 +266,97 @@ jobs:
           path: dist/*.dmg
           retention-days: ${{ env.RETENTION_DAYS }}
 
+  # -- Linux: AppImage (#247) ---------------------------------------------------
+  appimage:
+    name: Linux AppImage
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # Pinned appimagetool (SHA-256 published by GitHub for the release asset).
+      APPIMAGETOOL_VERSION: "1.9.1"
+      APPIMAGETOOL_SHA256: "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-linux
+          path: bin
+      - name: Install build and smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends librsvg2-bin xvfb xauth mesa-vulkan-drivers libvulkan1 libegl1 libgl1-mesa-dri libxkbcommon-x11-0 libxcursor1 libxi6 libxrandr2 libwayland-client0
+      - name: Fetch appimagetool (pinned)
+        run: |
+          curl -sSfLo "$RUNNER_TEMP/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+          echo "${APPIMAGETOOL_SHA256}  $RUNNER_TEMP/appimagetool" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/appimagetool"
+      - name: Build the AppImage
+        run: |
+          chmod +x bin/*
+          bash packaging/linux/build-appimage.sh "$VERSION" bin "$RUNNER_TEMP/appimagetool" dist
+      - name: Smoke test - CLI and headless GUI
+        run: |
+          img=$(ls dist/*.AppImage); chmod +x "$img"
+          "$img" --appimage-extract >/dev/null
+          squashfs-root/usr/bin/locus-cli profiles >/dev/null
+          test -f squashfs-root/usr/share/mime/packages/locus.xml
+          bash packaging/linux/smoke-gui.sh "$img" --appimage-extract-and-run
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-appimage
+          path: dist/*.AppImage
+          retention-days: ${{ env.RETENTION_DAYS }}
+
+  # -- Linux: .deb (#249) -------------------------------------------------------
+  deb:
+    name: Linux .deb
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-linux
+          path: bin
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends librsvg2-bin
+      - name: Build the .deb
+        run: |
+          chmod +x bin/*
+          bash packaging/linux/build-deb.sh "$VERSION" bin dist
+          dpkg-deb --info dist/*.deb
+      - name: Smoke test - install and run in clean Debian and Ubuntu containers
+        run: |
+          for image in debian:bookworm ubuntu:24.04; do
+            echo "::group::$image"
+            docker run --rm -v "$PWD:/w" -w /w "$image" bash -ec '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends ./dist/*.deb xvfb xauth mesa-vulkan-drivers libegl1 libgl1-mesa-dri desktop-file-utils >/dev/null
+              locus-cli profiles >/dev/null
+              desktop-file-validate /usr/share/applications/locus.desktop
+              test -f /usr/share/mime/packages/locus.xml
+              test -f /usr/share/icons/hicolor/256x256/apps/locus.png
+              bash packaging/linux/smoke-gui.sh locus
+              apt-get remove -y -qq locus >/dev/null
+              ! test -e /usr/bin/locus
+            '
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-deb
+          path: dist/*.deb
+          retention-days: ${{ env.RETENTION_DAYS }}
+
   # Collects every installer artefact into SHA256SUMS. `needs` grows with each
   # packaging job (#245-#249).
   checksums:
     name: SHA-256 sums
-    needs: [version, build, windows, macos]
+    needs: [version, build, windows, macos, appimage, deb]
     if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:

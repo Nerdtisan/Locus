@@ -77,3 +77,21 @@ Locus but does not open the file; use File > Open. (The command line `locus file
 macOS says Locus "cannot be opened because Apple cannot check it for malicious software". Once:
 drag Locus to Applications, Control-click it > **Open** > **Open**; or System Settings >
 Privacy & Security > **Open Anyway**; or `xattr -dr com.apple.quarantine /Applications/Locus.app`.
+
+## Linux: AppImage (#247) and .deb (#249)
+
+Artefacts: `Locus-<version>-linux-x86_64.AppImage` (appimagetool 1.9.1) and
+`locus_<version>_amd64.deb`. Both are built from the same staged tree
+(`packaging/linux/stage.sh`): `locus` and `locus-cli`, a desktop entry, MIME types for `.locus`
+and `.locusplugin`, and the icon (SVG plus 48/256/512 px PNGs). The binaries are built in the
+Debian 12 dev container, so they need glibc 2.36 or newer.
+
+The AppImage does not bundle system libraries: it needs a working GPU driver stack
+(Vulkan or OpenGL), `libxkbcommon` and X11 or Wayland on the host, like any wgpu application.
+Run it with `chmod +x Locus-*.AppImage && ./Locus-*.AppImage` (or
+`--appimage-extract-and-run` if FUSE is missing). The `.deb` declares the common ones as
+Recommends; install with `sudo apt install ./locus_*.deb`.
+
+CI smoke tests: the AppImage is extracted, its CLI run and the GUI started under Xvfb with
+software Vulkan; the `.deb` is installed in clean `debian:bookworm` and `ubuntu:24.04`
+containers, the desktop file validated, the GUI started under Xvfb, and the package removed.
