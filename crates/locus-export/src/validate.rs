@@ -7,6 +7,7 @@
 
 use crate::overlap::{Overlap, overlap};
 use crate::pipeline::{ExportLayer, ExportModel, PathSeg};
+use crate::profile::Bed;
 use locus_doc::{EntityId, LayerId, OperationKind};
 use locus_geom::{EXPORT_TOL, Vec2};
 use std::fmt;
@@ -27,6 +28,8 @@ pub enum IssueKind {
     DuplicateSegment,
     /// Zero-length segment; dropped from the export.
     Degenerate,
+    /// Geometry reaches past the selected profile's machine bed (SPEC §8, #237).
+    OutsideBed,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,14 +95,58 @@ impl fmt::Display for Issue {
 /// Run every check. Issues are ordered by layer, then check, then entity.
 #[must_use]
 pub fn validate(model: &ExportModel) -> Report {
+    validate_for(model, None)
+}
+
+/// [`validate`] plus the bed check when the profile has a bed (SPEC §8: a
+/// warning, never blocking).
+#[must_use]
+pub fn validate_for(model: &ExportModel, bed: Option<&Bed>) -> Report {
     let mut issues = Vec::new();
     for layer in &model.layers {
         degenerate(layer, &mut issues);
         open_paths(layer, &mut issues);
         duplicates(layer, &mut issues);
         self_intersections(layer, &mut issues);
+        if let Some(bed) = bed {
+            outside_bed(layer, bed, &mut issues);
+        }
     }
     Report { issues }
+}
+
+/// Segments whose bounding box leaves the bed by more than [`EXPORT_TOL`];
+/// touching the edge is inside. One warning per layer naming every entity.
+fn outside_bed(layer: &ExportLayer, bed: &Bed, out: &mut Vec<Issue>) {
+    let r = bed.rect();
+    let mut entities = Vec::new();
+    for seg in flat(layer) {
+        let b = seg.shape.bbox();
+        let outside = b.min.x < r.min.x - EXPORT_TOL
+            || b.min.y < r.min.y - EXPORT_TOL
+            || b.max.x > r.max.x + EXPORT_TOL
+            || b.max.y > r.max.y + EXPORT_TOL;
+        if outside && !entities.contains(&seg.entity) {
+            entities.push(seg.entity);
+        }
+    }
+    if entities.is_empty() {
+        return;
+    }
+    out.push(Issue {
+        severity: Severity::Warning,
+        kind: IssueKind::OutsideBed,
+        layer: layer.id,
+        message: format!(
+            "layer \"{}\": {} entit{} outside the {} × {} mm machine bed",
+            layer.name,
+            entities.len(),
+            if entities.len() == 1 { "y" } else { "ies" },
+            bed.width_mm,
+            bed.height_mm
+        ),
+        entities,
+    });
 }
 
 fn degenerate(layer: &ExportLayer, out: &mut Vec<Issue>) {
@@ -207,6 +254,71 @@ mod tests {
     fn model(op: OperationKind, segs: Vec<PathSeg>) -> ExportModel {
         ExportModel {
             layers: vec![layer(op, segs)],
+        }
+    }
+
+    fn bed(origin: crate::profile::Origin) -> Bed {
+        Bed {
+            width_mm: 100.0,
+            height_mm: 50.0,
+            origin,
+        }
+    }
+
+    fn bed_issues(segs: Vec<PathSeg>, b: &Bed) -> Vec<Issue> {
+        validate_for(&model(OperationKind::Cut, segs), Some(b)).issues
+    }
+
+    /// Inside, exactly on the edge, and outside the bed (SPEC §8, #237).
+    #[test]
+    fn bed_check_inside_on_and_outside() {
+        use crate::profile::Origin;
+        let b = bed(Origin::BottomLeft);
+        assert!(bed_issues(rect(1, 10.0, 10.0, 20.0, 20.0), &b).is_empty());
+        // On the edge (and within tolerance of it) is inside.
+        assert!(bed_issues(rect(1, 0.0, 0.0, 100.0, 50.0), &b).is_empty());
+        assert!(bed_issues(rect(1, 0.0, 0.0, 100.0 + EXPORT_TOL / 2.0, 50.0), &b).is_empty());
+        // Past it: one warning, naming exactly the offending entities.
+        let issues = bed_issues(rect(1, 90.0, 10.0, 110.0, 20.0), &b);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].kind, IssueKind::OutsideBed);
+        assert_eq!(issues[0].severity, Severity::Warning);
+        assert!(
+            !validate_for(
+                &model(OperationKind::Cut, rect(1, 90.0, 10.0, 110.0, 20.0)),
+                Some(&b)
+            )
+            .has_errors()
+        );
+        let ids: Vec<u64> = issues[0].entities.iter().map(|e| e.get()).collect();
+        assert!(
+            ids.contains(&2),
+            "the right-hand side crosses the edge: {ids:?}"
+        );
+        assert!(
+            !ids.contains(&4),
+            "the left-hand side stays inside: {ids:?}"
+        );
+        // No bed, no check.
+        assert!(
+            validate(&model(OperationKind::Cut, rect(1, 90.0, 10.0, 110.0, 20.0)))
+                .issues
+                .is_empty()
+        );
+    }
+
+    /// The bed is the same rectangle whichever corner is the machine origin.
+    #[test]
+    fn bed_check_ignores_the_origin_corner() {
+        use crate::profile::Origin;
+        let part = rect(1, 10.0, 10.0, 30.0, 20.0);
+        for o in Origin::ALL {
+            assert!(bed_issues(part.clone(), &bed(o)).is_empty(), "{o:?}");
+        }
+        // Below the origin is off the bed for every corner.
+        let below = rect(1, 10.0, -20.0, 30.0, -10.0);
+        for o in Origin::ALL {
+            assert_eq!(bed_issues(below.clone(), &bed(o)).len(), 1, "{o:?}");
         }
     }
 

@@ -12,7 +12,7 @@ use crate::ops::apply_operations;
 use crate::order::order;
 use crate::pipeline::{ExportModel, collect};
 use crate::profile::MachineProfile;
-use crate::validate::{Report, validate};
+use crate::validate::{Report, validate_for};
 use locus_doc::Document;
 
 /// Result of preparing a document for export.
@@ -57,7 +57,7 @@ pub fn prepare_for(doc: &Document, auto_fix: bool, profile: Option<&MachineProfi
     // is what will be cut.
     apply_operations(&mut model);
     // Validate before ordering: the order stage only permutes and re-starts paths.
-    let report = validate(&model);
+    let report = validate_for(&model, profile.and_then(|p| p.bed.as_ref()));
     order(&mut model);
     Prepared {
         model,

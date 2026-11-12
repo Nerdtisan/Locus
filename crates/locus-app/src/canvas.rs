@@ -21,6 +21,7 @@ use text_ui::{FontCatalog, TextSettings};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod ai;
+mod bed;
 mod layers_panel;
 mod machine;
 mod offsets;
@@ -1029,6 +1030,7 @@ impl Canvas {
         let (selection, hovered) = (&self.selection, self.hover);
         let (flag_constraints, flag_entities) = self.flagged();
         self.draw_regions(&painter, rect, dark);
+        self.draw_bed(&painter, rect, dark, settings);
         self.draw_machine(&painter, rect, dark);
         self.drawn = frame.draw_items(&self.scene, |item| {
             if flag_entities.contains(&item.id) {

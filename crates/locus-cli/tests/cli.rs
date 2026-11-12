@@ -230,3 +230,107 @@ fn export_pdf_and_dxf_from_the_cli() {
     let text = std::fs::read_to_string(&dxf).unwrap();
     assert!(text.contains("AC1009") && text.contains("CIRCLE"));
 }
+
+#[test]
+fn profiles_lists_the_presets() {
+    let out = cli(&[s("profiles")]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    for id in [
+        "lightburn",
+        "cricut",
+        "silhouette-basic-24",
+        "hpgl",
+        "generic-dxf",
+    ] {
+        assert!(
+            text.lines().any(|l| l.starts_with(&format!("{id}\t"))),
+            "{id}"
+        );
+    }
+    assert!(text.contains("lightburn\tsvg\t400x400mm"));
+    assert_eq!(cli(&[s("profiles"), s("x")]).status.code(), Some(2));
+}
+
+fn export_profile(args: &[&str], out_path: &std::path::Path) -> Output {
+    let f = fixture("plate.locus");
+    let mut a: Vec<&std::ffi::OsStr> = vec![s("export"), f.as_os_str()];
+    a.extend(args.iter().map(|x| s(x)));
+    a.extend([s("--out"), out_path.as_os_str()]);
+    cli(&a)
+}
+
+#[test]
+fn export_with_a_profile_uses_its_format_and_colours() {
+    // Generic SVG keeps the layer colours: identical to a plain SVG export.
+    let generic = scratch("generic.svg");
+    assert!(
+        export_profile(&["--profile", "generic-svg"], &generic)
+            .status
+            .success()
+    );
+    let golden = std::fs::read_to_string(fixture("plate.svg"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert_eq!(std::fs::read_to_string(&generic).unwrap(), golden);
+    // LightBurn cuts in red.
+    let lb = scratch("lb.svg");
+    assert!(
+        export_profile(&["--profile", "lightburn"], &lb)
+            .status
+            .success()
+    );
+    assert!(
+        std::fs::read_to_string(&lb)
+            .unwrap()
+            .contains("stroke=\"#ff0000\"")
+    );
+    // DXF preset, and a matching explicit --format is accepted.
+    let dxf = scratch("sil.dxf");
+    assert!(
+        export_profile(
+            &["--profile", "silhouette-basic-12", "--format", "dxf"],
+            &dxf
+        )
+        .status
+        .success()
+    );
+    assert!(std::fs::read_to_string(&dxf).unwrap().contains("SECTION"));
+}
+
+#[test]
+fn profile_usage_errors_exit_2() {
+    let x = scratch("never.out");
+    for args in [
+        &["--profile", "nope"][..],
+        &["--profile", "lightburn", "--format", "dxf"],
+        // HPGL needs the exporter plugin, which is not loaded here.
+        &["--profile", "hpgl"],
+        &["--profile", "lightburn", "--profile-file", "p.json"],
+    ] {
+        assert_eq!(export_profile(args, &x).status.code(), Some(2), "{args:?}");
+    }
+    assert!(!x.exists());
+}
+
+#[test]
+fn profile_file_is_validated() {
+    let ok = scratch("mine.json");
+    let mut p = locus_export::profile::find("generic-svg", &[]).unwrap();
+    p.id = "mine".into();
+    std::fs::write(&ok, p.to_json().unwrap()).unwrap();
+    let out_path = scratch("mine.svg");
+    let ok_arg = ok.to_string_lossy().into_owned();
+    assert!(
+        export_profile(&["--profile-file", &ok_arg], &out_path)
+            .status
+            .success()
+    );
+    let bad = scratch("bad.json");
+    std::fs::write(&bad, "{\"id\":\"../x\"}").unwrap();
+    let bad_arg = bad.to_string_lossy().into_owned();
+    let out = export_profile(&["--profile-file", &bad_arg], &scratch("bad.svg"));
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("bad.json"), "no paths in messages");
+}
