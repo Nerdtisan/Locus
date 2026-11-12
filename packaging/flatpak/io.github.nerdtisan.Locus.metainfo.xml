@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.nerdtisan.Locus</id>
+  <name>Locus</name>
+  <summary>Constrained 2D vector editor for plotters and cutters</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <url type="homepage">https://github.com/Nerdtisan/Locus</url>
+  <description>
+    <p>Locus is a constraint-driven 2D vector editor for pen plotters, vinyl cutters and laser cutters. Geometry is driven by a constraint solver, layers map to machine operations, and output is clean SVG, PDF and DXF.</p>
+  </description>
+  <launchable type="desktop-id">io.github.nerdtisan.Locus.desktop</launchable>
+  <provides><binary>locus</binary></provides>
+  <content_rating type="oars-1.1"/>
+</component>

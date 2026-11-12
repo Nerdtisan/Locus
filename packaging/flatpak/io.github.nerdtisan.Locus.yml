@@ -1,0 +1,41 @@
+# Flatpak manifest for Locus (SPEC §0 Packaging, #248). Private single-file bundle only:
+# no Flathub submission (owner decision).
+#
+# This repackages the release binaries CI already built in the dev container instead of
+# compiling Rust inside the sandbox (which would need a vendored, offline crate set).
+# `stage/` is produced by packaging/linux/stage.sh before flatpak-builder runs.
+app-id: io.github.nerdtisan.Locus
+runtime: org.freedesktop.Platform
+runtime-version: "26.08"
+sdk: org.freedesktop.Sdk
+command: locus
+# AppStream catalogue compose is only for software centres (Flathub); a private bundle
+# does not need it (it also failed on the CI host before its SVG loader was installed).
+appstream-compose: false
+
+finish-args:
+  # Display: Wayland first, X11 fallback; GPU for wgpu (Vulkan/GL).
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # No --filesystem: open/save go through the file chooser portal (rfd's xdg-portal
+  # backend), so Locus only sees files the user picks. No network either.
+
+modules:
+  - name: locus
+    buildsystem: simple
+    build-commands:
+      - cp -r usr/. /app/
+      # Flatpak requires the desktop file, MIME file and icons to be named after the app id.
+      - mv /app/share/applications/locus.desktop /app/share/applications/io.github.nerdtisan.Locus.desktop
+      - sed -i 's/^Icon=locus$/Icon=io.github.nerdtisan.Locus/' /app/share/applications/io.github.nerdtisan.Locus.desktop
+      - mv /app/share/mime/packages/locus.xml /app/share/mime/packages/io.github.nerdtisan.Locus.xml
+      - sed -i 's/icon name="locus"/icon name="io.github.nerdtisan.Locus"/' /app/share/mime/packages/io.github.nerdtisan.Locus.xml
+      - for f in $(find /app/share/icons -name 'locus.*'); do mv "$f" "$(dirname "$f")/io.github.nerdtisan.Locus.${f##*.}"; done
+      - install -Dm644 io.github.nerdtisan.Locus.metainfo.xml /app/share/metainfo/io.github.nerdtisan.Locus.metainfo.xml
+    sources:
+      - type: dir
+        path: stage
+      - type: file
+        path: io.github.nerdtisan.Locus.metainfo.xml
