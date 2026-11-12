@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Probe for #252, option B: wasmtime 50 with the Pulley interpreter,
 //! compiled to `wasm32-unknown-unknown` and run in the browser.
 //!
