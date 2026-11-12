@@ -447,3 +447,41 @@ fn delete_layer_refusals_change_nothing() {
         Err(DocError::Invalid(_))
     ));
 }
+
+/// #292: a layer holding a pattern (its source and instances) could never be
+/// deleted — `DeleteLayer` refused with `RecipeInUse` while the dialog still
+/// offered Delete, so the layer "stayed". The recipe goes with the layer.
+#[test]
+fn delete_layer_takes_its_pattern_and_undoes_exactly() {
+    let mut s = Sketcher::new(Document::new());
+    let l2 = add_layer(&mut s, "Pattern", Operation::Reference);
+    let src = pt(&mut s, l2, 5.0, 5.0);
+    let r = s
+        .apply(&Command::AddRecipe {
+            kind: locus_doc::RecipeKind::Linear {
+                dir1: locus_doc::LinearDir {
+                    axis: locus_doc::Axis::X,
+                    count: "3".to_owned(),
+                    spacing: "10".to_owned(),
+                    symmetric: false,
+                },
+                dir2: None,
+            },
+            sources: vec![src],
+        })
+        .unwrap()
+        .recipes[0];
+    let before = s.document().clone();
+    let plan = s.document().layer_deletion(l2).unwrap();
+    assert_eq!(plan.recipes, vec![r], "the dialog names the pattern");
+    assert!(plan.entities.len() > 1, "instances are counted");
+
+    s.apply(&Command::DeleteLayer { id: l2 }).unwrap();
+    let d = s.document();
+    assert!(d.layer(l2).is_none() && d.recipe(r).is_none());
+    assert!(d.entity(src).is_none());
+    assert!(d.entities().iter().all(|(_, e)| e.layer != l2));
+
+    s.undo().unwrap();
+    assert_eq!(s.document(), &before);
+}

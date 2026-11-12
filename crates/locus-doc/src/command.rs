@@ -818,15 +818,6 @@ fn exec(
                     "a document needs at least one layer".to_owned(),
                 ));
             }
-            for e in &plan.entities {
-                let recipes = doc.recipes_involving(*e);
-                if !recipes.is_empty() {
-                    return Err(DocError::RecipeInUse {
-                        entity: *e,
-                        recipes,
-                    });
-                }
-            }
             if !plan.blocked_by.is_empty() {
                 return Err(DocError::LayerInUse {
                     layer: *id,
@@ -852,6 +843,18 @@ fn exec(
                     patches,
                     Patch::Entity {
                         id: *eid,
+                        before,
+                        after: None,
+                    },
+                );
+            }
+            for rid in &plan.recipes {
+                let before = doc.recipe(*rid).cloned();
+                record(
+                    doc,
+                    patches,
+                    Patch::Recipe {
+                        id: *rid,
                         before,
                         after: None,
                     },
