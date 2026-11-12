@@ -17,6 +17,7 @@ pub mod abi;
 pub mod module;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
+pub mod wire;
 
 pub use abi::{Instance, Val};
 pub use module::{CoreModule, ModuleError};

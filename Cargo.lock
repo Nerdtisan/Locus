@@ -2130,6 +2130,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_dock",
+ "js-sys",
  "locus-doc",
  "locus-export",
  "locus-geom",
@@ -2256,6 +2257,7 @@ dependencies = [
  "locus-export",
  "locus-geom",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "toml",
@@ -2265,6 +2267,17 @@ dependencies = [
  "wit-component 0.261.0",
  "wit-parser 0.261.0",
  "zip",
+]
+
+[[package]]
+name = "locus-plugin-worker"
+version = "0.0.0"
+dependencies = [
+ "js-sys",
+ "locus-plugin-host",
+ "serde_json",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

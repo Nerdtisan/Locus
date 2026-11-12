@@ -12,6 +12,7 @@ pub mod core_host;
 pub mod doc;
 pub mod error;
 pub mod manifest;
+pub mod model;
 pub mod types;
 pub mod validate;
 
@@ -24,7 +25,6 @@ pub mod api {
     pub const SUPPORTED_API_MAJORS: &[u64] = &[1];
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod archive;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod export;

@@ -16,8 +16,12 @@ locus-doc.workspace = true
 locus-export.workspace = true
 locus-geom.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 toml = { version = "1.2", default-features = false, features = ["parse", "serde", "std"] }
+# .locusplugin archives (§15.7): read and write zip, deflate via zlib-rs.
+zip = { version = "9.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+sha2 = "0.10"
 # The core-module host (ADR 0016): checks a component and takes out its core
 # module, on every target including the web build.
 wasmparser = { version = "0.263", default-features = false, features = ["std", "validate", "features", "component-model"] }
@@ -31,9 +35,6 @@ wasmtime = { version = "50.0.1", default-features = false, features = [
     "component-model",
     "wat",
 ] }
-# .locusplugin archives (§15.7): read and write zip, deflate via zlib-rs.
-zip = { version = "9.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-sha2 = "0.10"
 # `pack`: wraps a wit-bindgen core module into a component (#185).
 wit-component = "0.261"
 

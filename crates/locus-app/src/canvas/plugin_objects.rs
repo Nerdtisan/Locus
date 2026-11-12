@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Plugin objects on the canvas (#183, #184, SPEC §15.2, §15.3, §15.5):
-//! finding the one the selection belongs to, and describing it. Running plugins is the
-//! desktop-only `crate::plugins`; this part builds everywhere, so the web
-//! build shows a plugin object's details from its cached geometry too.
+//! finding the one the selection belongs to, and describing it. Running plugins is
+//! `crate::plugins` on desktop and `crate::web_plugins` in the browser.
 
 use super::Canvas;
-#[cfg(not(target_arch = "wasm32"))]
-use locus_doc::EntityId;
-#[cfg(not(target_arch = "wasm32"))]
-use locus_doc::LayerId;
 use locus_doc::generated::{PluginRef, PluginValue};
-use locus_doc::{RecipeId, RecipeKind};
-#[cfg(not(target_arch = "wasm32"))]
+use locus_doc::{EntityId, LayerId, RecipeId, RecipeKind};
 use locus_geom::Vec2;
 
 /// Formats a stored parameter value for display.
@@ -30,13 +24,11 @@ pub fn show_value(v: &PluginValue) -> String {
 
 impl Canvas {
     /// Where a newly inserted plugin object goes: the middle of the view.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn insert_point(&self) -> Vec2 {
         self.view.center
     }
 
     /// The layer new geometry goes on.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn current_layer(&self) -> LayerId {
         self.active_layer()
     }
@@ -53,7 +45,6 @@ impl Canvas {
     }
 
     /// The selected curves a modifier can take (lines, arcs, circles).
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn selected_curves(&self) -> Vec<EntityId> {
         let doc = self.sketcher.document();
         self.selection

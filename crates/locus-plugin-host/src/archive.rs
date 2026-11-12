@@ -20,7 +20,7 @@ use std::io::{Cursor, Read, Write};
 use sha2::{Digest, Sha256};
 
 use crate::manifest::{MAX_MANIFEST_BYTES, Manifest, ManifestError};
-use crate::runtime::MAX_COMPONENT_BYTES;
+use crate::validate::MAX_COMPONENT_BYTES;
 
 /// Largest `.locusplugin` file accepted.
 pub const MAX_ARCHIVE_BYTES: usize = 80 * 1024 * 1024;

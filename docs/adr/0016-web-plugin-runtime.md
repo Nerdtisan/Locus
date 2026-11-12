@@ -81,3 +81,15 @@ The one gap is fuel, which only makes the *failure point* deterministic; safety 
 - Determinism (§15.5): the desktop canonicalises NaNs and makes relaxed SIMD deterministic; browsers do neither. NaN output is rejected by validation on both hosts, and the web host refuses core modules that use relaxed-SIMD instructions, so identical inputs still give identical accepted outputs.
 - Components that `wit-component` didn't make in the usual shape (several core modules, adapter modules, imports between them) are refused on the web even where the desktop runs them. Every plugin built with the SDK has the usual shape.
 - **What would change this:** wasmtime gaining a supported `wasm32-unknown-unknown` build (no `unsafe` shims, no `std::time`), at a size the web build can afford; or a plugin needing an import (ADR 0009), which the worker would then provide explicitly.
+
+## Follow-up (2026-11-12, #253)
+
+Measured on the shipped web host, same browser:
+
+| | |
+|---|---|
+| Worker bundle (`locus-plugin-worker`) | 665 KB wasm + 17 KB JS (250 KB + 4 KB gzipped), fetched only when the first plugin call runs |
+| Main app bundle | +353 KB (8.76 → 9.12 MB) for the plugin UI, `.locusplugin` reading (zip) and the host types |
+| One call, including starting a fresh worker, compiling the plugin and the call itself | about 23 ms (finger-box `describe`, `generate`; HPGL `format`) |
+
+The worker sends a ready message before it takes a call: a call posted while the worker was still loading would otherwise be dropped. Importer and validator plugins stay desktop-only in the web build for now; the core-module host already supports them.

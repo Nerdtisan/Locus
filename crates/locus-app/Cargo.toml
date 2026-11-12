@@ -28,16 +28,18 @@ egui_dock.workspace = true
 serde.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
+# Plugins: wasmtime on desktop, the core-module host in a Web Worker on the
+# web (SPEC §15, ADR 0016).
+locus-plugin-host.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
 web-sys = { workspace = true, features = ["Window", "Document", "HtmlCanvasElement", "console"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd.workspace = true
-# Plugins are desktop-only (SPEC §0, §15).
-locus-plugin-host.workspace = true
 # The MCP server is desktop-only too (SPEC §0, §16).
 locus-mcp = { path = "../locus-mcp" }
 

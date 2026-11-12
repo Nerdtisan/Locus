@@ -325,3 +325,39 @@ fn the_module_is_checked_and_its_memory_capped() {
     ));
     assert!(CoreModule::from_component(b"junk").is_err());
 }
+
+/// #253: the worker protocol, end to end over the native engine: the reply
+/// survives JSON, and a failing call comes back as an error message.
+#[test]
+fn worker_protocol_round_trips() {
+    use locus_plugin_host::core_host::wire::{Reply, Request, handle, parse_reply, reply_json};
+    let engine = |m: &CoreModule| WasmtimeCore::new(m, FUEL, MEMORY);
+    let good = Fixture::well_behaved().build();
+
+    let r = handle(engine, &good, Request::Describe);
+    match parse_reply(&reply_json(&r)).unwrap() {
+        Reply::Described { info, api, kinds } => {
+            assert_eq!(info.id, "com.example.fixture");
+            assert_eq!(api, "1.0.0");
+            assert_eq!(kinds, vec![Kind::Generator]);
+        }
+        other => panic!("{other:?}"),
+    }
+    let desktop = host().load(&good).unwrap().generate(&params()).unwrap();
+    let r = handle(engine, &good, Request::Generate(params()));
+    assert_eq!(
+        parse_reply(&reply_json(&r)).unwrap(),
+        Reply::Generated(desktop)
+    );
+
+    let bad = Fixture::well_behaved().with_generate("unreachable").build();
+    let r = handle(engine, &bad, Request::Generate(params()));
+    assert!(
+        parse_reply(&reply_json(&r))
+            .unwrap_err()
+            .contains("crashed")
+    );
+    let r = handle(engine, &good, Request::Format);
+    assert!(parse_reply(&reply_json(&r)).is_err());
+    assert!(parse_reply("not json").is_err());
+}
