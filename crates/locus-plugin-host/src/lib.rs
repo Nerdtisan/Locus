@@ -38,4 +38,4 @@ mod runtime;
 pub mod validators;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use runtime::{CallError, Host, Limits, LoadError, MAX_COMPONENT_BYTES, Plugin};
+pub use runtime::{CallError, CancelToken, Host, Limits, LoadError, MAX_COMPONENT_BYTES, Plugin};

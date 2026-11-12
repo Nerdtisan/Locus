@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use wasmtime::component::types::ComponentItem;
 use wasmtime::component::{Component, InstancePre, Linker};
-use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
+use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap, UpdateDeadline};
 
 use crate::api::{PACKAGE as API_PACKAGE, SUPPORTED_API_MAJORS};
 use crate::types::{
@@ -167,6 +167,31 @@ pub enum CallError {
     NotProvided(&'static str),
     #[error("plugin host error: {0}")]
     Host(String),
+    /// Stopped through its [`CancelToken`] (#214).
+    #[error("the plugin call was cancelled")]
+    Cancelled,
+}
+
+/// Cancels a running call from another thread (#214). Cheap to clone; give
+/// one to [`Plugin::with_cancel`]. The call stops at the next epoch tick
+/// (10 ms) with [`CallError::Cancelled`] and returns nothing.
+#[derive(Debug, Clone, Default)]
+pub struct CancelToken(Arc<AtomicBool>);
+
+impl CancelToken {
+    #[must_use]
+    pub fn new() -> CancelToken {
+        CancelToken::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
 }
 
 impl From<Malformed> for CallError {
@@ -285,6 +310,7 @@ impl Host {
             info_idx,
             kinds,
             api,
+            cancel: None,
             info: PluginInfo {
                 id: String::new(),
                 name: String::new(),
@@ -360,6 +386,7 @@ fn api_version<'a, I>(exports: impl Iterator<Item = (&'a str, I)>) -> Result<Str
     found.ok_or(LoadError::NotAPlugin)
 }
 
+#[derive(Clone)]
 struct Kinds {
     generator: Option<wgen::GuestIndices>,
     modifier: Option<wmod::GuestIndices>,
@@ -395,6 +422,8 @@ struct State {
     cap: usize,
     used: usize,
     exceeded: bool,
+    /// The call stopped because its token was cancelled.
+    cancelled: bool,
 }
 
 impl ResourceLimiter for State {
@@ -438,7 +467,9 @@ impl ResourceLimiter for State {
 }
 
 /// A loaded, checked plugin component. Cheap to call repeatedly: each call
-/// instantiates afresh from the precompiled component.
+/// instantiates afresh from the precompiled component. Cheap to clone too
+/// (the compiled code is shared), and safe to call from any thread.
+#[derive(Clone)]
 pub struct Plugin {
     engine: Engine,
     _ticker: Arc<Ticker>,
@@ -447,6 +478,7 @@ pub struct Plugin {
     info_idx: winfo::GuestIndices,
     kinds: Kinds,
     api: String,
+    cancel: Option<CancelToken>,
     info: PluginInfo,
 }
 
@@ -483,6 +515,16 @@ impl Plugin {
         self.limits = limits;
     }
 
+    /// The same plugin, with calls that stop once `token` is cancelled
+    /// (#214). The limits still apply.
+    #[must_use]
+    pub fn with_cancel(&self, token: CancelToken) -> Plugin {
+        Plugin {
+            cancel: Some(token),
+            ..self.clone()
+        }
+    }
+
     /// Runs `f` in a fresh, limited instance and maps every failure mode.
     fn call<T>(
         &self,
@@ -494,15 +536,33 @@ impl Plugin {
                 cap: self.limits.memory_bytes,
                 used: 0,
                 exceeded: false,
+                cancelled: false,
             },
         );
         store.limiter(|s| s);
         store
             .set_fuel(self.limits.fuel)
             .map_err(|e| CallError::Host(e.to_string()))?;
-        store.epoch_deadline_trap();
-        let ticks = self.limits.timeout.as_nanos().div_ceil(TICK.as_nanos()) + 1;
-        store.set_epoch_deadline(u64::try_from(ticks).unwrap_or(u64::MAX));
+        if self.cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
+            return Err(CallError::Cancelled);
+        }
+        // Checked on every epoch tick: the timeout counts down, and a
+        // cancelled token stops the call at the next tick.
+        let mut left = u64::try_from(self.limits.timeout.as_nanos().div_ceil(TICK.as_nanos()) + 1)
+            .unwrap_or(u64::MAX);
+        let cancel = self.cancel.clone();
+        store.set_epoch_deadline(1);
+        store.epoch_deadline_callback(move |mut ctx| {
+            if cancel.as_ref().is_some_and(CancelToken::is_cancelled) {
+                ctx.data_mut().cancelled = true;
+                return Err(Trap::Interrupt.into());
+            }
+            left = left.saturating_sub(1);
+            if left == 0 {
+                return Err(Trap::Interrupt.into());
+            }
+            Ok(UpdateDeadline::Continue(1))
+        });
 
         let result = self
             .pre
@@ -516,6 +576,9 @@ impl Plugin {
     }
 
     fn classify(&self, store: &Store<State>, e: &wasmtime::Error) -> CallError {
+        if store.data().cancelled {
+            return CallError::Cancelled;
+        }
         if store.data().exceeded {
             return CallError::MemoryLimit(self.limits.memory_bytes);
         }
