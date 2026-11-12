@@ -19,9 +19,13 @@ use tokio::net::TcpStream;
 const TOKEN: &str = "test-token-0123456789abcdefghijklmnopqrstuv";
 
 async fn start(grants: Grants) -> http::Running {
+    start_with(grants, http::Access::default()).await
+}
+
+async fn start_with(grants: Grants, access: http::Access) -> http::Running {
     let backend = LocalBackend::spawn(Headless::new(locus_doc::Document::new())).unwrap();
     let server = LocusServer::new(backend, Arc::new(NeverApprove), grants, Options::default());
-    http::start("127.0.0.1:0".parse().unwrap(), server, TOKEN.into())
+    http::start("127.0.0.1:0".parse().unwrap(), server, TOKEN.into(), access)
         .await
         .unwrap()
 }
@@ -120,7 +124,13 @@ fn non_loopback_bind_is_rejected() {
                 Grants::default(),
                 Options::default(),
             );
-            let r = http::start(addr.parse().unwrap(), server, TOKEN.into()).await;
+            let r = http::start(
+                addr.parse().unwrap(),
+                server,
+                TOKEN.into(),
+                http::Access { allow_docker: true },
+            )
+            .await;
             assert!(matches!(r, Err(HttpError::NotLoopback(_))), "{addr}");
         }
     });
@@ -258,4 +268,88 @@ async fn other_paths_and_stop() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     let r = TcpStream::connect(s.addr).await;
     assert!(r.is_err(), "the listener is closed after stop");
+}
+
+// ── #270: opt-in Docker clients (host.docker.internal) ─────────────────────
+
+async fn summary_from(s: &http::Running, host: &str, origin: Option<&str>) -> Reply {
+    let auth = bearer();
+    let mut h = vec![("Authorization", auth.as_str()), ("Host", host)];
+    if let Some(o) = origin {
+        h.push(("Origin", o));
+    }
+    post_call(s.addr, &h, "get_document_summary", json!({})).await
+}
+
+#[tokio::test]
+async fn docker_host_is_refused_by_default() {
+    let s = start(Grants::default()).await;
+    let host = format!("host.docker.internal:{}", s.addr.port());
+    let r = summary_from(&s, &host, None).await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    let r = summary_from(&s, "host.docker.internal", None).await;
+    assert_eq!(r.status, 403);
+    s.stop();
+}
+
+#[tokio::test]
+async fn docker_host_is_accepted_when_allowed() {
+    let s = start_with(Grants::default(), http::Access { allow_docker: true }).await;
+    let host = format!("host.docker.internal:{}", s.addr.port());
+    let r = summary_from(&s, &host, None).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.message()["result"]["isError"], false);
+    let r = summary_from(&s, "HOST.DOCKER.INTERNAL", None).await;
+    assert_eq!(r.status, 200, "without a port, any case: {}", r.body);
+    // Loopback names still work.
+    let r = summary_from(&s, &format!("127.0.0.1:{}", s.addr.port()), None).await;
+    assert_eq!(r.status, 200);
+    s.stop();
+}
+
+#[tokio::test]
+async fn allowing_docker_lets_in_nothing_else() {
+    let s = start_with(Grants::default(), http::Access { allow_docker: true }).await;
+    for host in [
+        "attacker.example",
+        "host.docker.internal.attacker.example",
+        "docker.internal",
+        "gateway.docker.internal",
+        "192.168.65.254",
+    ] {
+        let r = summary_from(&s, host, None).await;
+        assert!((400..500).contains(&r.status), "{host}: {}", r.status);
+    }
+    // A browser Origin is refused whatever the Host.
+    let host = format!("host.docker.internal:{}", s.addr.port());
+    for origin in ["http://evil.example", "http://host.docker.internal:3000"] {
+        assert_eq!(
+            summary_from(&s, &host, Some(origin)).await.status,
+            403,
+            "{origin}"
+        );
+    }
+    // And the token is still required.
+    let r = post_call(
+        s.addr,
+        &[("Host", host.as_str())],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 401);
+    s.stop();
+}
+
+#[tokio::test]
+async fn origin_is_refused_without_docker_too() {
+    let s = start(Grants::default()).await;
+    let host = format!("127.0.0.1:{}", s.addr.port());
+    assert_eq!(
+        summary_from(&s, &host, Some("http://localhost:3000"))
+            .await
+            .status,
+        403
+    );
+    s.stop();
 }
