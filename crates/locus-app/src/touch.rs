@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use egui::{Event, TouchPhase};
+use egui::{Event, Pos2, TouchPhase};
 
 /// What kind of contact produced the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,9 +45,117 @@ pub struct Touches {
     active: BTreeMap<u64, Contact>,
     /// A second finger landed during this touch sequence.
     latched: bool,
+    /// The lone finger that might become a long press.
+    hold: Option<Hold>,
+    /// A long press fired in this sequence; its release must not click.
+    long_fired: bool,
+    /// Last time a finger (not a pen) was seen, for the coarse tolerance.
+    last_finger: Option<f64>,
+}
+
+/// A finger held down, not yet moved past the slop.
+#[derive(Clone, Copy, Debug)]
+struct Hold {
+    id: u64,
+    start: Pos2,
+    since: f64,
+}
+
+/// Hold time for a long press, in seconds.
+pub const LONG_PRESS_S: f64 = 0.5;
+/// How far a held finger may drift and still be a long press, in points.
+const HOLD_SLOP_PT: f32 = 10.0;
+/// A finger lifted this recently still counts as the pointer's source.
+const COARSE_GRACE_S: f64 = 1.5;
+
+/// What one frame of touch input means for the canvas.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Step {
+    /// Pointer input must not reach the tools (gesture or long press).
+    pub suppress: bool,
+    /// A long press completed at this screen position.
+    pub long_press: Option<Pos2>,
 }
 
 impl Touches {
+    /// [`Self::frame`] plus long-press detection (#251). `now` is egui time
+    /// in seconds. A long press needs one finger held still; it fires once
+    /// per touch sequence, never for a pen, and a second finger cancels it.
+    pub fn update(&mut self, events: &[Event], now: f64) -> Step {
+        let mut seen = self.active.len();
+        for ev in events {
+            let Event::Touch {
+                id,
+                phase,
+                pos,
+                force,
+                ..
+            } = ev
+            else {
+                continue;
+            };
+            if Contact::from_force(*force) == Contact::Finger {
+                self.last_finger = Some(now);
+            }
+            match phase {
+                TouchPhase::Start => {
+                    let finger = Contact::from_force(*force) == Contact::Finger;
+                    self.hold = (seen == 0 && finger).then_some(Hold {
+                        id: id.0,
+                        start: *pos,
+                        since: now,
+                    });
+                    seen += 1;
+                }
+                TouchPhase::Move => {
+                    if let Some(h) = self.hold
+                        && h.id == id.0
+                        && (*pos - h.start).length() > HOLD_SLOP_PT
+                    {
+                        self.hold = None;
+                    }
+                }
+                TouchPhase::End | TouchPhase::Cancel => {
+                    seen = seen.saturating_sub(1);
+                    if self.hold.is_some_and(|h| h.id == id.0) {
+                        self.hold = None;
+                    }
+                }
+            }
+        }
+        let gesture = self.frame(events);
+        if gesture || self.pen_down() {
+            self.hold = None;
+        }
+        let mut long_press = None;
+        if let Some(h) = self.hold
+            && now - h.since >= LONG_PRESS_S
+        {
+            long_press = Some(h.start);
+            self.hold = None;
+            self.long_fired = true;
+        }
+        let suppress = gesture || self.long_fired;
+        if self.active.is_empty() {
+            self.long_fired = false;
+        }
+        Step {
+            suppress,
+            long_press,
+        }
+    }
+
+    /// Seconds until a pending long press fires, to schedule a repaint.
+    pub fn long_press_due(&self, now: f64) -> Option<f64> {
+        self.hold.map(|h| (h.since + LONG_PRESS_S - now).max(0.0))
+    }
+
+    /// The pointer is driven by a finger (down now, or lifted a moment ago):
+    /// selection uses the larger touch tolerance. Mouse and pen never do.
+    pub fn coarse(&self, now: f64) -> bool {
+        self.fingers() > 0 || self.last_finger.is_some_and(|t| now - t < COARSE_GRACE_S)
+    }
+
     /// Fold one frame's events in. Returns `true` when pointer input must not
     /// reach the tools this frame (a multi-finger sequence is in progress,
     /// including the frame its last finger lifts, so the release can't count
@@ -188,5 +296,88 @@ mod tests {
         assert_eq!(Contact::from_force(Some(0.0)), Contact::Finger);
         assert_eq!(Contact::from_force(Some(1.0)), Contact::Finger);
         assert_eq!(Contact::from_force(Some(0.3)), Contact::Pen);
+    }
+
+    fn at(id: u64, phase: TouchPhase, x: f32) -> Event {
+        Event::Touch {
+            device_id: TouchDeviceId(0),
+            id: TouchId(id),
+            phase,
+            pos: pos2(x, 0.0),
+            force: None,
+        }
+    }
+
+    #[test]
+    fn long_press_fires_once_and_swallows_the_release() {
+        let mut s = Touches::default();
+        assert_eq!(
+            s.update(&[at(1, TouchPhase::Start, 5.0)], 0.0),
+            Step::default()
+        );
+        assert_eq!(s.long_press_due(0.2), Some(LONG_PRESS_S - 0.2));
+        let step = s.update(&[], 0.6);
+        assert_eq!(step.long_press, Some(pos2(5.0, 0.0)));
+        assert!(step.suppress);
+        // Held on: no second fire; release is still suppressed (no click).
+        assert_eq!(s.update(&[], 1.0).long_press, None);
+        assert!(s.update(&[at(1, TouchPhase::End, 5.0)], 1.1).suppress);
+        // Next tap is ordinary.
+        assert!(!s.update(&[at(2, TouchPhase::Start, 5.0)], 2.0).suppress);
+    }
+
+    #[test]
+    fn moving_or_a_second_finger_cancels_the_hold() {
+        let mut s = Touches::default();
+        s.update(&[at(1, TouchPhase::Start, 0.0)], 0.0);
+        s.update(&[at(1, TouchPhase::Move, 30.0)], 0.1);
+        assert_eq!(s.update(&[], 1.0).long_press, None);
+
+        let mut s = Touches::default();
+        s.update(&[at(1, TouchPhase::Start, 0.0)], 0.0);
+        s.update(&[at(2, TouchPhase::Start, 50.0)], 0.1);
+        assert_eq!(s.update(&[], 1.0).long_press, None);
+
+        // A short tap never fires.
+        let mut s = Touches::default();
+        s.update(&[at(1, TouchPhase::Start, 0.0)], 0.0);
+        s.update(&[at(1, TouchPhase::End, 0.0)], 0.2);
+        assert_eq!(s.update(&[], 1.0).long_press, None);
+    }
+
+    #[test]
+    fn pen_never_long_presses() {
+        let mut s = Touches::default();
+        let pen = Event::Touch {
+            device_id: TouchDeviceId(0),
+            id: TouchId(1),
+            phase: TouchPhase::Start,
+            pos: pos2(0.0, 0.0),
+            force: Some(0.4),
+        };
+        s.update(&[pen], 0.0);
+        assert_eq!(s.update(&[], 2.0).long_press, None);
+    }
+
+    #[test]
+    fn coarse_only_after_a_finger() {
+        let mut s = Touches::default();
+        assert!(!s.coarse(0.0)); // mouse-only session
+        s.update(&[at(1, TouchPhase::Start, 0.0)], 1.0);
+        assert!(s.coarse(1.0));
+        s.update(&[at(1, TouchPhase::End, 0.0)], 1.1);
+        assert!(s.coarse(2.0));
+        assert!(!s.coarse(3.0));
+        // A pen is precise.
+        let mut s = Touches::default();
+        let pen = Event::Touch {
+            device_id: TouchDeviceId(0),
+            id: TouchId(1),
+            phase: TouchPhase::Start,
+            pos: pos2(0.0, 0.0),
+            force: Some(0.4),
+        };
+        s.update(&[pen], 0.0);
+        assert!(!s.coarse(0.0));
     }
 }

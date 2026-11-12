@@ -518,6 +518,7 @@ impl App {
             if b.on_hover_text("Dimension (D)").clicked() {
                 self.canvas.start_dimension(self.settings.units);
             }
+            self.canvas.touch_modifiers_ui(ui);
         });
     }
 
