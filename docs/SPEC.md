@@ -237,7 +237,7 @@ Layer `operation` enum:
 | Drag-knife (vinyl) | blade offset (swivel arcs at turns over 10°) |
 | Reference | never exported |
 
-Machine profiles (v2): presets bundling export format, colour mapping, units, and offsets for e.g. "LightBurn", "Cricut Design Space", "Generic HPGL plotter".
+Machine profiles (M4, #236): a profile bundles an export format (an exporter id), a colour per operation, display units, the bed (size and origin corner) and default operation parameters. Built-in presets are compiled in: LightBurn (SVG, DXF), Cricut Design Space (SVG, per-shape styles), Silhouette Studio Basic (DXF R12; Cameo 12" and 24" mats), Silhouette Designer+ (SVG), generic HPGL (via the HPGL exporter plugin) and generic SVG / DXF. The laser bed defaults to a generic 400 × 400 mm and is editable. User profiles are JSON in app settings; one profile can be exported or imported as a standalone `.json` file (imports are untrusted: size-bounded and validated). A document stores only the selected profile id (§10, format v11).
 
 ---
 
