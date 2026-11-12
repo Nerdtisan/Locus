@@ -36,6 +36,9 @@ mod text_ui;
 
 /// Pick radius in screen points (converted to mm by the zoom).
 const HIT_TOL_PT: f64 = 6.0;
+/// Pick radius while a finger drives the pointer (#251): a fingertip covers
+/// far more than a mouse pixel. Mouse and pen keep `HIT_TOL_PT`.
+const TOUCH_HIT_TOL_PT: f64 = 14.0;
 /// A drag shorter than this is a click, not a box.
 const MIN_BOX_PT: f32 = 4.0;
 
@@ -98,6 +101,13 @@ pub struct Canvas {
     rubber: Option<Pos2>,
     /// Live touch/pen contacts (#250).
     touches: crate::touch::Touches,
+    /// Pick radius in points for this frame: coarse only for finger input.
+    tol_pt: f64,
+    /// On-screen Shift (add) and Ctrl (toggle) for touch selection (#251).
+    touch_add: bool,
+    touch_toggle: bool,
+    /// Long-press context menu anchor, in screen points (#251).
+    touch_menu: Option<Pos2>,
     /// Béziers whose handles are shown: selected, or with a selected point (#160).
     handles: BTreeSet<EntityId>,
     /// Pen tool: where the button went down and where the pointer is now
@@ -164,6 +174,10 @@ impl Default for Canvas {
             hover: None,
             rubber: None,
             touches: crate::touch::Touches::default(),
+            tol_pt: HIT_TOL_PT,
+            touch_add: false,
+            touch_toggle: false,
+            touch_menu: None,
             handles: BTreeSet::new(),
             pen: None,
             draft: Draft::new(Tool::Select),
@@ -1015,7 +1029,21 @@ impl Canvas {
 
         // Touch: a second finger turns the sequence into a pinch/pan gesture
         // and keeps every tool out of it (#250, epic #30).
-        let suppress = ui.input(|i| self.touches.frame(i.events.iter()));
+        let now = ui.input(|i| i.time);
+        let step = ui.input(|i| self.touches.update(&i.events, now));
+        let suppress = step.suppress;
+        self.tol_pt = if self.touches.coarse(now) {
+            TOUCH_HIT_TOL_PT
+        } else {
+            HIT_TOL_PT
+        };
+        if let Some(due) = self.touches.long_press_due(now) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(due + 0.01));
+        }
+        if let Some(p) = step.long_press {
+            self.open_touch_menu(p, rect);
+        }
         let gesture = if self.touches.gesture_allowed() {
             ui.input(|i| i.multi_touch())
         } else {
@@ -1107,10 +1135,99 @@ impl Canvas {
         self.draw_pattern_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
+        self.touch_menu_ui(ui, rect, settings.units);
 
         status.cursor = hover.map(|p| self.view.to_world(p, rect));
         status.extent_mm = self.view.extent_mm(rect);
         status.grid = grid::label(grid::minor_step(self.view.pt_per_mm).0);
+    }
+
+    /// Long press (#251): in Select, the thing under the finger is selected
+    /// first (unless it already is), then the menu opens at the finger.
+    fn open_touch_menu(&mut self, at: Pos2, rect: egui::Rect) {
+        if self.draft.tool() == Tool::Select && self.modify.is_none() {
+            let tol = self.tol_pt / self.view.pt_per_mm;
+            let w = self.view.to_world(at, rect);
+            if let Some(id) = hit::pick(&self.scene.items, w, tol)
+                && !self.selection.contains(id)
+            {
+                self.selection.set_all([id]);
+            }
+        }
+        self.touch_menu = Some(at);
+    }
+
+    /// The long-press context menu: what the selection supports, plus undo.
+    fn touch_menu_ui(&mut self, ui: &mut egui::Ui, rect: egui::Rect, units: Units) {
+        let Some(at) = self.touch_menu else { return };
+        let mut close = false;
+        let area = egui::Area::new(egui::Id::new("locus-touch-menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .constrain_to(rect)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.spacing_mut().button_padding = egui::vec2(14.0, 10.0);
+                    for kind in Kind::ALL {
+                        let on = self.can_constrain(kind);
+                        if ui
+                            .add_enabled(on, egui::Button::new(kind.label()))
+                            .clicked()
+                        {
+                            self.constrain(kind);
+                            close = true;
+                        }
+                    }
+                    let dim = egui::Button::new("Dimension");
+                    if ui.add_enabled(self.can_dimension(), dim).clicked() {
+                        self.start_dimension(units);
+                        close = true;
+                    }
+                    ui.separator();
+                    if ui.button("Select all").clicked() {
+                        self.select_all();
+                        close = true;
+                    }
+                    if ui.button("Clear selection").clicked() {
+                        self.clear_selection();
+                        close = true;
+                    }
+                    ui.separator();
+                    let undo = egui::Button::new("Undo");
+                    if ui.add_enabled(self.undo_label().is_some(), undo).clicked() {
+                        self.undo();
+                        close = true;
+                    }
+                    let redo = egui::Button::new("Redo");
+                    if ui.add_enabled(self.redo_label().is_some(), redo).clicked() {
+                        self.redo();
+                        close = true;
+                    }
+                });
+            });
+        // A press anywhere outside dismisses it.
+        let outside = ui.input(|i| {
+            i.pointer.any_pressed()
+                && i.pointer
+                    .press_origin()
+                    .is_some_and(|p| !area.response.rect.contains(p))
+        });
+        if close || outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.touch_menu = None;
+        }
+    }
+
+    /// Sticky on-screen Shift / Ctrl for touch selection (#251). Shown once
+    /// a touch screen has been used; mouse sessions never see it.
+    pub fn touch_modifiers_ui(&mut self, ui: &mut egui::Ui) {
+        if !ui.input(|i| i.has_touch_screen()) {
+            return;
+        }
+        ui.separator();
+        ui.toggle_value(&mut self.touch_add, "Add")
+            .on_hover_text("On-screen Shift: tapping adds to the selection");
+        ui.toggle_value(&mut self.touch_toggle, "Toggle")
+            .on_hover_text("On-screen Ctrl: tapping toggles selection membership");
     }
 
     /// A second finger landed: put back whatever the first one had started
@@ -1132,7 +1249,7 @@ impl Canvas {
     fn designate(&self, world: Vec2, auto: bool) -> Pick {
         let opts = infer::Options {
             enabled: auto,
-            tol: HIT_TOL_PT / self.view.pt_per_mm,
+            tol: self.tol_pt / self.view.pt_per_mm,
         };
         let anchor = self
             .draft
@@ -1200,7 +1317,7 @@ impl Canvas {
         m: Modify,
         units: Units,
     ) {
-        let tol = HIT_TOL_PT / self.view.pt_per_mm;
+        let tol = self.tol_pt / self.view.pt_per_mm;
         let at = resp.hover_pos().map(|p| self.view.to_world(p, rect));
         self.hover = at.and_then(|w| hit::pick_curve(&self.scene.items, w, tol));
         if resp.hovered() {
@@ -1493,10 +1610,10 @@ impl Canvas {
         units: Units,
     ) {
         let mods = ui.input(|i| Mods {
-            add: i.modifiers.shift,
-            toggle: i.modifiers.command,
+            add: i.modifiers.shift || self.touch_add,
+            toggle: i.modifiers.command || self.touch_toggle,
         });
-        let tol = HIT_TOL_PT / self.view.pt_per_mm;
+        let tol = self.tol_pt / self.view.pt_per_mm;
         let pick_at = |this: &Self, p: Pos2| {
             let w = this.view.to_world(p, rect);
             hit::pick(&this.scene.items, w, tol)
