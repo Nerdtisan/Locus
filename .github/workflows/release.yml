@@ -195,11 +195,83 @@ jobs:
             dist/*.zip
           retention-days: ${{ env.RETENTION_DAYS }}
 
+  # -- macOS: universal .app in a .dmg (#246) ----------------------------------
+  macos:
+    name: macOS universal dmg
+    needs: [version]
+    runs-on: macos-15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the container's Rust toolchain
+        # Keep in step with RUST_VERSION in .devcontainer/Dockerfile and ci.yml.
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
+          rustup default 1.99.1
+
+      - name: Build both architectures
+        run: |
+          cargo build --release --locked -p locus-app -p locus-cli --target aarch64-apple-darwin
+          cargo build --release --locked -p locus-app -p locus-cli --target x86_64-apple-darwin
+          mkdir -p bin
+          for b in locus locus-cli; do
+            lipo -create -output "bin/$b" "target/aarch64-apple-darwin/release/$b" "target/x86_64-apple-darwin/release/$b"
+            lipo -archs "bin/$b"
+          done
+
+      - name: Sign identity (stub - Developer ID once secrets exist)
+        # To enable: add MACOS_CERT_P12_BASE64 + MACOS_CERT_PASSWORD, import the
+        # certificate into a temporary keychain here, and export SIGN_IDENTITY
+        # (e.g. "Developer ID Application: Name (TEAMID)") via $GITHUB_ENV.
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+        if: env.MACOS_CERT_P12_BASE64 != ''
+        run: echo "::warning::macOS signing is not implemented yet; the app stays ad-hoc signed."
+
+      - name: Build Locus.app and the dmg
+        run: bash packaging/macos/build-dmg.sh "$VERSION" bin/locus bin/locus-cli dist
+
+      - name: Notarise (stub - needs an Apple Developer account)
+        # To enable: add APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD, then run
+        # `xcrun notarytool submit dist/*.dmg --wait` and `xcrun stapler staple`.
+        env:
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        if: env.APPLE_APP_PASSWORD != ''
+        run: echo "::warning::notarisation is not implemented yet; Gatekeeper will warn."
+
+      - name: Smoke test - mount, universal, launch
+        run: |
+          set -euo pipefail
+          dmg=$(ls dist/*.dmg)
+          mnt=$(mktemp -d)
+          hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -quiet
+          app="$mnt/Locus.app"
+          lipo -archs "$app/Contents/MacOS/locus"
+          lipo -archs "$app/Contents/MacOS/locus" | grep -q arm64
+          lipo -archs "$app/Contents/MacOS/locus" | grep -q x86_64
+          codesign --verify --deep --strict "$app"
+          "$app/Contents/Resources/locus-cli" profiles > /dev/null
+          # Launch the GUI binary: it must still be running after a few seconds.
+          "$app/Contents/MacOS/locus" > "$RUNNER_TEMP/locus.log" 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then echo "launched ok"; kill "$pid"; else
+            echo "locus exited early:"; cat "$RUNNER_TEMP/locus.log"; exit 1; fi
+          hdiutil detach "$mnt" -quiet
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-macos
+          path: dist/*.dmg
+          retention-days: ${{ env.RETENTION_DAYS }}
+
   # Collects every installer artefact into SHA256SUMS. `needs` grows with each
   # packaging job (#245-#249).
   checksums:
     name: SHA-256 sums
-    needs: [version, build, windows]
+    needs: [version, build, windows, macos]
     if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
