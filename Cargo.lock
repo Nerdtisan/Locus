@@ -2123,6 +2123,7 @@ dependencies = [
  "locus-doc",
  "locus-export",
  "locus-geom",
+ "locus-import",
  "locus-mcp",
  "locus-plugin-host",
  "locus-region",
@@ -2192,6 +2193,7 @@ name = "locus-import"
 version = "0.0.0"
 dependencies = [
  "locus-doc",
+ "locus-export",
  "locus-geom",
  "proptest",
  "roxmltree",

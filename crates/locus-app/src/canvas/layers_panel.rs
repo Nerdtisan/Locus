@@ -410,9 +410,18 @@ fn layer_row(
                 want.lock = Some(id);
             }
         }
+        // Reference geometry is never exported (SPEC §7), whatever the flag says.
+        let reference = matches!(l.operation, Operation::Reference);
         if ui
-            .selectable_label(l.export_enabled, "Export")
-            .on_hover_text("Include in exported files")
+            .add_enabled(
+                !reference,
+                egui::Button::selectable(l.export_enabled && !reference, "Export"),
+            )
+            .on_hover_text(if reference {
+                "Reference layers are never exported"
+            } else {
+                "Include in exported files"
+            })
             .clicked()
         {
             want.commands.push(props(LayerProps {
