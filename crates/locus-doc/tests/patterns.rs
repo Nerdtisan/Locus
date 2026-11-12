@@ -209,7 +209,7 @@ fn circular_pattern_full_and_partial() {
 }
 
 #[test]
-fn instances_are_driven_and_never_constrained_or_dragged() {
+fn instances_are_driven_and_never_dragged() {
     let mut s = Sketcher::new(Document::new());
     let p = pt(&mut s, 0.0, 0.0);
     let r = add(
@@ -223,16 +223,17 @@ fn instances_are_driven_and_never_constrained_or_dragged() {
     .unwrap();
     let inst = s.document().recipe(r).unwrap().instances().next().unwrap();
     assert!(matches!(s.begin_drag(inst), Err(DocError::Driven { .. })));
-    assert!(
-        s.apply(&Command::AddConstraint {
-            constraint: Constraint::Fix { point: inst }
-        })
-        .is_err()
-    );
+    // Instances take constraints since ADR 0015 (second solve phase).
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Fix { point: inst },
+    })
+    .unwrap();
     assert!(matches!(
         s.apply(&Command::DeleteEntity { id: inst }),
         Err(DocError::RecipeInUse { .. })
     ));
+    // A constraint that refers to an instance keeps the recipe from being removed.
+    assert!(s.apply(&Command::RemoveRecipe { id: r }).is_err());
     // A parameter the pattern uses can't be deleted; renaming follows.
     set(&mut s, "k", "3").unwrap();
     let src2 = pt(&mut s, 100.0, 100.0);
@@ -325,4 +326,229 @@ fn patterns_round_trip_through_the_file() {
     let back = locus_doc::file::load(&text).unwrap();
     assert_eq!(&back, s.document());
     assert_eq!(locus_doc::file::save(&back).unwrap(), text);
+}
+
+// ── Constraints onto pattern instances: the second solve phase (ADR 0015) ──
+
+fn inst_pt(s: &Sketcher, r: RecipeId, k: usize) -> EntityId {
+    s.document().recipe(r).unwrap().instances().nth(k).unwrap()
+}
+
+fn row(s: &mut Sketcher) -> (EntityId, RecipeId) {
+    set(s, "pitch", "10").unwrap();
+    set(s, "n", "3").unwrap();
+    let p = pt(s, 0.0, 0.0);
+    let r = add(
+        s,
+        RecipeKind::Linear {
+            dir1: dir(Axis::X, "n", "pitch"),
+            dir2: None,
+        },
+        &[p],
+    )
+    .unwrap();
+    (p, r)
+}
+
+/// A free point tied to an instance follows it when the pattern changes.
+#[test]
+fn a_free_point_can_be_made_coincident_with_an_instance() {
+    let mut s = Sketcher::new(Document::new());
+    let (_, r) = row(&mut s);
+    let inst = inst_pt(&s, r, 1);
+    let at = s.document().point_pos(inst).unwrap();
+    let q = pt(&mut s, 3.0, 4.0);
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Coincident { a: q, b: inst },
+    })
+    .unwrap();
+    assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
+    // The pattern changes; the constraint holds again after the re-solve.
+    set(&mut s, "pitch", "15").unwrap();
+    let at = s.document().point_pos(inst).unwrap();
+    assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
+    // One undo step undoes the pitch and the follower together.
+    s.undo().unwrap();
+    let at = s.document().point_pos(inst).unwrap();
+    assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
+    assert!((at.x - 10.0).abs() < 1e-6 || (at.x - 20.0).abs() < 1e-6);
+}
+
+/// Driving and driven dimensions to an instance are exact, not stale.
+#[test]
+fn dimensions_to_an_instance_are_enforced_and_measured() {
+    let mut s = Sketcher::new(Document::new());
+    let (_, r) = row(&mut s);
+    let inst = inst_pt(&s, r, 1);
+    let q = pt(&mut s, 3.0, 4.0);
+    let driving = s
+        .apply(&Command::AddConstraint {
+            constraint: Constraint::Distance {
+                a: q,
+                b: inst,
+                dim: locus_doc::Dimension::driving(5.0),
+            },
+        })
+        .unwrap()
+        .constraints[0];
+    let d = |s: &Sketcher| {
+        (s.document().point_pos(q).unwrap() - s.document().point_pos(inst).unwrap()).length()
+    };
+    assert!((d(&s) - 5.0).abs() < 1e-6, "{}", d(&s));
+    // Changing the pitch keeps the distance.
+    set(&mut s, "pitch", "25").unwrap();
+    assert!((d(&s) - 5.0).abs() < 1e-6);
+    // Switch to a reference dimension: it reports the measured value, and
+    // re-measures when the pattern moves the instance.
+    s.apply(&Command::SetDriven {
+        id: driving,
+        driven: true,
+    })
+    .unwrap();
+    let shown = |s: &Sketcher| {
+        s.document()
+            .constraint(driving)
+            .unwrap()
+            .dimension()
+            .unwrap()
+            .value
+    };
+    assert!((shown(&s) - d(&s)).abs() < 1e-6);
+    let before = shown(&s);
+    set(&mut s, "pitch", "30").unwrap();
+    assert!((shown(&s) - d(&s)).abs() < 1e-6);
+    assert!(
+        (shown(&s) - before).abs() > 1.0,
+        "the measurement followed the pattern"
+    );
+}
+
+/// Phase 2 holds the pattern and its sources fixed: a constraint that would
+/// need them to move is refused with the document untouched.
+#[test]
+fn a_constraint_that_would_move_the_pattern_is_refused() {
+    let mut s = Sketcher::new(Document::new());
+    let (p, r) = row(&mut s);
+    let inst = inst_pt(&s, r, 1);
+    let f = pt(&mut s, 50.0, 50.0);
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Fix { point: f },
+    })
+    .unwrap();
+    let before = s.document().clone();
+    let depth = s.editor().can_undo();
+    let bad = s.apply(&Command::AddConstraint {
+        constraint: Constraint::Distance {
+            a: f,
+            b: inst,
+            dim: locus_doc::Dimension::driving(1.0),
+        },
+    });
+    match bad {
+        Err(DocError::PatternHeld {
+            instances, sources, ..
+        }) => {
+            assert_eq!(instances, vec![inst]);
+            assert_eq!(sources, vec![p]);
+        }
+        other => panic!("fixed point and fixed instance cannot satisfy 1 mm: {other:?}"),
+    }
+    // Nothing changed (a refused command still burns an ID, ADR 0003).
+    assert_eq!(s.document().entities(), before.entities());
+    assert_eq!(s.document().constraints(), before.constraints());
+    assert_eq!(s.editor().can_undo(), depth);
+    // The source never moved.
+    assert!(near(s.document().point_pos(p).unwrap(), 0.0, 0.0));
+}
+
+/// Constraints onto instances survive a save and load, and the instance can
+/// be removed only after the constraint is.
+#[test]
+fn instance_constraints_round_trip_and_guard_the_pattern() {
+    let mut s = Sketcher::new(Document::new());
+    let (_, r) = row(&mut s);
+    let inst = inst_pt(&s, r, 1);
+    let q = pt(&mut s, 1.0, 1.0);
+    let c = s
+        .apply(&Command::AddConstraint {
+            constraint: Constraint::Coincident { a: q, b: inst },
+        })
+        .unwrap()
+        .constraints[0];
+    let text = locus_doc::file::save(s.document()).unwrap();
+    let loaded = Sketcher::new(locus_doc::file::load(&text).unwrap());
+    let at = loaded.document().point_pos(inst).unwrap();
+    assert!(near(loaded.document().point_pos(q).unwrap(), at.x, at.y));
+    // Shrinking the pattern so the instance would go away is refused while
+    // the constraint refers to it (nothing is dropped silently).
+    assert!(matches!(
+        set(&mut s, "n", "2"),
+        Err(DocError::EntityInUse { .. })
+    ));
+    s.apply(&Command::RemoveConstraint { id: c }).unwrap();
+    set(&mut s, "n", "2").unwrap();
+}
+
+/// Dragging a source moves its copies; the follower catches up when the drag
+/// ends, in the same undo step (ADR 0015).
+#[test]
+fn a_follower_catches_up_after_a_source_drag() {
+    let mut s = Sketcher::new(Document::new());
+    let (p, r) = row(&mut s);
+    let inst = inst_pt(&s, r, 0);
+    let q = pt(&mut s, 3.0, 4.0);
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Coincident { a: q, b: inst },
+    })
+    .unwrap();
+    s.begin_drag(p).unwrap();
+    s.drag_to(Vec2::new(5.0, 7.0)).unwrap();
+    s.end_drag().unwrap();
+    let at = s.document().point_pos(inst).unwrap();
+    assert!(near(at, 15.0, 7.0), "{at:?}");
+    assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
+    s.undo().unwrap();
+    let at = s.document().point_pos(inst).unwrap();
+    assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
+    assert!(near(at, 10.0, 0.0), "{at:?}");
+}
+
+/// Circular patterns take constraints the same way.
+#[test]
+fn a_follower_tracks_a_circular_pattern_instance() {
+    let mut s = Sketcher::new(Document::new());
+    let c = pt(&mut s, 0.0, 0.0);
+    let p = pt(&mut s, 10.0, 0.0);
+    set(&mut s, "ang", "90").unwrap();
+    let r = add(
+        &mut s,
+        RecipeKind::Circular {
+            centre: c,
+            count: "4".to_owned(),
+            angle: "ang * 4".to_owned(),
+            symmetric: false,
+            rotate: true,
+        },
+        &[p],
+    )
+    .unwrap();
+    let inst = inst_pt(&s, r, 0);
+    let q = pt(&mut s, 1.0, 1.0);
+    s.apply(&Command::AddConstraint {
+        constraint: Constraint::Coincident { a: q, b: inst },
+    })
+    .unwrap();
+    let at = s.document().point_pos(inst).unwrap();
+    assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
+    // Move the pattern's centre point: the follower follows (the centre is
+    // held fixed during phase 2 but moves in phase 1 through its own constraints).
+    s.apply(&Command::ModifyEntity {
+        id: c,
+        geom: Geom::Point {
+            pos: Vec2::new(5.0, 5.0),
+        },
+    })
+    .unwrap();
+    let at = s.document().point_pos(inst).unwrap();
+    assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
 }
