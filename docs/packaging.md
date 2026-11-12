@@ -95,3 +95,24 @@ Recommends; install with `sudo apt install ./locus_*.deb`.
 CI smoke tests: the AppImage is extracted, its CLI run and the GUI started under Xvfb with
 software Vulkan; the `.deb` is installed in clean `debian:bookworm` and `ubuntu:24.04`
 containers, the desktop file validated, the GUI started under Xvfb, and the package removed.
+
+## Linux: Flatpak (#248)
+
+Artefact: `Locus-<version>-linux-x86_64.flatpak`, a single-file bundle (manifest
+`packaging/flatpak/io.github.nerdtisan.Locus.yml`, runtime `org.freedesktop.Platform` 26.08).
+It is private: there is no Flathub submission. The manifest repackages the release binaries CI
+already built (no Rust compile inside the sandbox).
+
+Install and run (the runtime comes from Flathub):
+
+```bash
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user Locus-*.flatpak
+flatpak run io.github.nerdtisan.Locus
+```
+
+Sandbox: Wayland/X11, GPU (`--device=dri`) and nothing else - **no filesystem and no network
+access**. Open/Save dialogs go through the file chooser portal, so Locus only sees files you pick.
+(`locus-cli` is available as `flatpak run --command=locus-cli io.github.nerdtisan.Locus`.)
+
+CI installs the bundle, runs the CLI and starts the GUI headless under Xvfb.
