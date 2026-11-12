@@ -14,10 +14,12 @@
 //! `wasm32-unknown-unknown`.
 
 mod affine;
+mod dxf;
 mod svg;
 
 use locus_doc::reference::ImportShape;
 
+pub use dxf::import_dxf;
 pub use svg::import_svg;
 
 /// Largest file the importers read.
@@ -87,6 +89,10 @@ pub enum ImportError {
     #[error("the file is not valid SVG")]
     BadSvg,
 
+    #[error("the file is not a readable ASCII DXF")]
+    BadDxf,
+    #[error("binary DXF files are not supported; save as ASCII DXF")]
+    BinaryDxf,
     #[error("the file has no drawable geometry")]
     Empty,
 }
