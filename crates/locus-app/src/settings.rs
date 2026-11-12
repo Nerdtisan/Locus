@@ -71,6 +71,8 @@ pub struct Settings {
     pub theme: Theme,
     /// Infer coincident / horizontal / vertical constraints while drawing (§5).
     pub auto_constrain: bool,
+    /// User machine profiles (SPEC §7, #236); presets are compiled in.
+    pub profiles: Vec<locus_export::MachineProfile>,
 }
 
 impl Default for Settings {
@@ -79,6 +81,7 @@ impl Default for Settings {
             units: Units::default(),
             theme: Theme::default(),
             auto_constrain: true,
+            profiles: Vec::new(),
         }
     }
 }
@@ -120,6 +123,10 @@ mod tests {
             units: Units::Inch,
             theme: Theme::Dark,
             auto_constrain: false,
+            profiles: locus_export::profile::presets()
+                .into_iter()
+                .take(1)
+                .collect(),
         };
         assert_eq!(Settings::from_json(&s.to_json().unwrap_or_default()), s);
     }

@@ -35,4 +35,4 @@ pub use pipeline::{ExportLayer, ExportModel, ExportPath, PathSeg, Shape, chain, 
 pub use prepare::{Prepared, prepare, prepare_for};
 pub use profile::{Bed, Defaults, MachineProfile, Origin, ProfileError, ProfileUnits};
 pub use svg::{to_svg, to_svg_model};
-pub use validate::{Issue, IssueKind, Report, Severity, validate};
+pub use validate::{Issue, IssueKind, Report, Severity, validate, validate_for};
