@@ -730,6 +730,15 @@ impl Canvas {
         {
             return;
         }
+        if !self.draft.is_drawing()
+            && ui.input(|i| {
+                !(i.modifiers.command || i.modifiers.alt)
+                    && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
+            })
+        {
+            self.delete_selection();
+            return;
+        }
         let pressed = |c: char| {
             ui.input(|i| {
                 !(i.modifiers.command || i.modifiers.alt)
@@ -751,6 +760,18 @@ impl Canvas {
             self.start_dimension(units);
         } else if let Some(k) = Kind::ALL.into_iter().find(|k| pressed(k.key())) {
             self.constrain(k);
+        }
+    }
+
+    /// Delete the selection with its dependents as one undo step (#223,
+    /// SPEC §11). Only reached from [`Self::hotkeys`], so never while a typed
+    /// value or a text field has the keyboard.
+    fn delete_selection(&mut self) {
+        let ids: Vec<EntityId> = self.selection.iter().collect();
+        if let Some(cmd) = locus_doc::delete::delete_entities(self.sketcher.document(), &ids)
+            && self.apply_reporting(&cmd)
+        {
+            self.selection.clear();
         }
     }
 
@@ -2196,6 +2217,80 @@ mod tests {
         assert!((v - 12.2).abs() < 1e-6);
     }
 
+    /// #292: confirming the delete dialog removes a layer that holds a
+    /// pattern (it used to be refused with `RecipeInUse`).
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn confirming_the_delete_dialog_removes_a_layer_with_a_pattern() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddLayer {
+            name: "Pattern".to_owned(),
+            colour: [1, 2, 3],
+            operation: locus_doc::OperationKind::Draw.default_operation(),
+        });
+        let l2 = *c.document().layers().keys().next_back().unwrap();
+        c.apply_reporting(&Command::AddEntity {
+            layer: l2,
+            construction: false,
+            geom: Geom::Point {
+                pos: Vec2::new(1.0, 1.0),
+            },
+        });
+        let src = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        assert!(c.apply_reporting(&Command::AddRecipe {
+            kind: locus_doc::RecipeKind::Linear {
+                dir1: locus_doc::LinearDir {
+                    axis: locus_doc::Axis::X,
+                    count: "3".to_owned(),
+                    spacing: "10".to_owned(),
+                    symmetric: false,
+                },
+                dir2: None,
+            },
+            sources: vec![src],
+        }));
+        let plan = c.document().layer_deletion(l2).unwrap();
+        c.layer_ui.dialog_for_test(l2, plan);
+        c.confirm_delete_for_test();
+        assert!(c.document().layer(l2).is_none());
+        assert!(
+            !c.layer_ui.has_dialog_for_test(),
+            "dialog closes on success"
+        );
+        assert_eq!(c.undo().as_deref(), Some("Delete layer"));
+        assert!(c.document().layer(l2).is_some());
+    }
+
+    /// #292: a refusal stays in the dialog with its reason instead of the
+    /// dialog closing as if the layer had been deleted.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_refused_layer_delete_keeps_the_dialog_and_shows_why() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddLayer {
+            name: "Locked".to_owned(),
+            colour: [1, 2, 3],
+            operation: locus_doc::OperationKind::Draw.default_operation(),
+        });
+        let l2 = *c.document().layers().keys().next_back().unwrap();
+        c.apply_reporting(&Command::SetLayerLocked {
+            id: l2,
+            locked: true,
+        });
+        let plan = c.document().layer_deletion(l2).unwrap();
+        c.layer_ui.dialog_for_test(l2, plan);
+        c.confirm_delete_for_test();
+        assert!(c.document().layer(l2).is_some());
+        let why = c.layer_ui.dialog_error_for_test().unwrap();
+        assert!(why.to_lowercase().contains("lock"), "{why}");
+    }
+
     #[test]
     #[allow(clippy::unwrap_used)]
     fn layers_panel_renders_and_every_layer_action_is_one_undo_step() {
@@ -2227,6 +2322,90 @@ mod tests {
         // The active layer survives its own deletion by falling back.
         c.active_layer = l2;
         assert_eq!(c.active_layer(), l1);
+    }
+
+    /// Runs one frame of `hotkeys` with `key` pressed.
+    fn press(c: &mut Canvas, key: egui::Key) {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| c.hotkeys(ui, Units::Mm));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn delete_and_backspace_delete_the_selection_as_one_undo_step() {
+        for key in [egui::Key::Delete, egui::Key::Backspace] {
+            let mut c = Canvas::default();
+            let layer = c.active_layer();
+            let add = |c: &mut Canvas, geom| {
+                c.apply_reporting(&Command::AddEntity {
+                    layer,
+                    construction: false,
+                    geom,
+                });
+                c.document()
+                    .entities()
+                    .iter()
+                    .map(|(i, _)| i)
+                    .last()
+                    .unwrap()
+            };
+            let a = add(&mut c, Geom::Point { pos: Vec2::ZERO });
+            let b = add(
+                &mut c,
+                Geom::Point {
+                    pos: Vec2::new(5.0, 0.0),
+                },
+            );
+            let l = add(&mut c, Geom::Line { start: a, end: b });
+            c.apply_reporting(&Command::AddConstraint {
+                constraint: locus_doc::Constraint::Horizontal { line: l },
+            });
+            let before = c.document().clone();
+            c.selection.set_all([l]);
+            press(&mut c, key);
+            assert!(c.document().entity(l).is_none(), "{key:?}");
+            assert_eq!(
+                c.document().constraints().len(),
+                before.constraints().len() - 1
+            );
+            assert!(c.selection.is_empty());
+            assert_eq!(c.undo().as_deref(), Some("Delete"));
+            assert_eq!(c.document().entities(), before.entities());
+            assert_eq!(c.document().constraints(), before.constraints());
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn delete_does_nothing_while_a_value_is_being_typed() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.selection.set_all([p]);
+        c.typed = "12".to_owned();
+        press(&mut c, egui::Key::Backspace);
+        press(&mut c, egui::Key::Delete);
+        assert!(c.document().entity(p).is_some());
     }
 
     #[test]
