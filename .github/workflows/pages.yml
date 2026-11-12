@@ -58,14 +58,16 @@ jobs:
       - name: Report bundle size
         run: |
           sudo chown -R "$(id -u):$(id -g)" crates/locus-app/dist .cargo-home
-          wasm=$(ls crates/locus-app/dist/*.wasm)
-          raw=$(stat -c %s "$wasm")
-          gz=$(gzip -9 -c "$wasm" | wc -c)
+          # One row per wasm: the app, and the plugin worker (ADR 0016).
           {
             echo "### Web bundle"
             echo "| File | Raw | gzip -9 |"
             echo "|---|---|---|"
-            echo "| \`$(basename "$wasm")\` | $((raw / 1024)) KiB | $((gz / 1024)) KiB |"
+            for wasm in crates/locus-app/dist/*.wasm; do
+              raw=$(stat -c %s "$wasm")
+              gz=$(gzip -9 -c "$wasm" | wc -c)
+              echo "| \`$(basename "$wasm")\` | $((raw / 1024)) KiB | $((gz / 1024)) KiB |"
+            done
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the site
