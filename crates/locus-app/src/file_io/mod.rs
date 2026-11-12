@@ -399,12 +399,10 @@ impl FileIo {
                 format: format.to_owned(),
                 fixed: false,
                 prepared,
-<<<<<<< HEAD
                 profile: None,
                 picker: false,
-=======
+                profile_changed: false,
                 extra,
->>>>>>> origin/dev
             });
         }
     }
@@ -418,6 +416,7 @@ impl FileIo {
             .and_then(|id| locus_export::profile::find(id, &settings.profiles))
             .or_else(|| locus_export::profile::find("generic-svg", &[]));
         let prepared = locus_export::prepare_for(canvas.document(), false, profile.as_ref());
+        let extra = self.extra(&prepared);
         self.export = Some(ExportPanel {
             format: profile
                 .as_ref()
@@ -426,6 +425,8 @@ impl FileIo {
             prepared,
             profile,
             picker: true,
+            profile_changed: false,
+            extra,
         });
     }
 
@@ -486,12 +487,8 @@ impl FileIo {
 
     /// The pre-export panel: fixes applied, errors (which block export) and
     /// warnings, each selectable to highlight its entities on the canvas.
-<<<<<<< HEAD
     fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
-=======
-    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
         let checks = self.checks.clone();
->>>>>>> origin/dev
         let Some(panel) = self.export.as_mut() else {
             return;
         };
@@ -531,6 +528,11 @@ impl FileIo {
                         &self.exporters,
                         &mut picked_error,
                     );
+                    // A new profile re-prepared the model: re-run the plugin checks.
+                    if panel.profile_changed {
+                        panel.profile_changed = false;
+                        panel.extra = extra_for(&panel.prepared);
+                    }
                 }
                 let counts = panel.prepared.report.counts();
                 let extra_errors = panel.extra.iter().filter(|f| f.error).count();
@@ -598,11 +600,7 @@ impl FileIo {
                     }
                     if ui
                         .add_enabled(
-<<<<<<< HEAD
-                            available && !panel.prepared.blocked(),
-=======
-                            !blocked(&panel.prepared, &panel.extra),
->>>>>>> origin/dev
+                            available && !blocked(&panel.prepared, &panel.extra),
                             egui::Button::new("Export…"),
                         )
                         .clicked()
@@ -619,27 +617,19 @@ impl FileIo {
         }
         match act {
             Some(Do::Fix) => {
-<<<<<<< HEAD
                 panel.prepared =
                     locus_export::prepare_for(canvas.document(), true, panel.profile.as_ref());
-=======
-                panel.prepared = locus_export::prepare(canvas.document(), true);
                 panel.extra = extra_for(&panel.prepared);
->>>>>>> origin/dev
                 panel.fixed = true;
             }
             Some(Do::Export) => {
                 // Re-prepare: the sketch may have changed while the panel was open.
-<<<<<<< HEAD
                 let prepared = locus_export::prepare_for(
                     canvas.document(),
                     panel.fixed,
                     panel.profile.as_ref(),
                 );
-=======
-                let prepared = locus_export::prepare(canvas.document(), panel.fixed);
                 let extra = extra_for(&prepared);
->>>>>>> origin/dev
                 let format = panel.format.clone();
                 if blocked(&prepared, &extra) {
                     panel.prepared = prepared;
@@ -764,11 +754,14 @@ struct ExportPanel {
     /// Auto-fixes have been applied to `prepared`.
     fixed: bool,
     prepared: Prepared,
-<<<<<<< HEAD
     /// The machine profile in force (colour mapping, bed), if any.
     profile: Option<MachineProfile>,
     /// Show the profile picker (the "For a machine…" entry).
     picker: bool,
+    /// The picker re-prepared `prepared`; the plugin checks must re-run.
+    profile_changed: bool,
+    /// Validator plugins' findings on `prepared` (#234).
+    extra: Vec<ExtraFinding>,
 }
 
 /// The profile combo, import / save buttons and a one-line summary. A change
@@ -848,6 +841,7 @@ fn profile_picker(
         panel.format.clone_from(&p.format);
         panel.prepared = locus_export::prepare_for(canvas.document(), panel.fixed, Some(&p));
         panel.profile = Some(p);
+        panel.profile_changed = true;
     }
 }
 
@@ -893,10 +887,6 @@ fn save_profile_dialog(p: &MachineProfile) -> Result<(), String> {
         "application/json",
     );
     Ok(())
-=======
-    /// Validator plugins' findings on `prepared` (#234).
-    extra: Vec<ExtraFinding>,
->>>>>>> origin/dev
 }
 
 fn open_shortcut() -> egui::KeyboardShortcut {

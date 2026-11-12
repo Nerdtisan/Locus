@@ -16,15 +16,10 @@ mod plugin;
 const USAGE: &str = "\
 usage:
   locus-cli info <file.locus>
-<<<<<<< HEAD
-  locus-cli validate <file.locus> [--fix]
+  locus-cli validate <file.locus> [--fix] [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli profiles
   locus-cli export <file.locus> (--format <id> | --profile <id> | --profile-file <profile.json>)
                    --out <file> [--fix] [--force]
-=======
-  locus-cli validate <file.locus> [--fix] [--plugin <file.locusplugin>]... [--plugins <dir>]
-  locus-cli export <file.locus> --format <id> --out <file> [--fix] [--force]
->>>>>>> origin/dev
                    [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli plugin pack --manifest <plugin.toml> --wasm <file.wasm> --out <file.locusplugin>
                         [--readme <README.md>] [--icon <icon.png>]
@@ -139,11 +134,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
                 )));
             }
             let doc = read_document(&opts.input)?;
-<<<<<<< HEAD
             let prepared = locus_export::prepare_for(&doc, opts.fix, profile.as_ref());
-            if prepared.blocked() && !opts.force {
-=======
-            let prepared = locus_export::prepare(&doc, opts.fix);
             let found = plugin::validator_findings(
                 &opts.plugin_files,
                 opts.plugins_dir.as_deref(),
@@ -151,7 +142,6 @@ fn run(args: &[String]) -> Result<(), CliError> {
             )?;
             let blocked = prepared.blocked() || locus_plugin_host::validators::has_errors(&found);
             if blocked && !opts.force {
->>>>>>> origin/dev
                 let mut err = std::io::stderr().lock();
                 let _ = write_report(&mut err, &prepared, &found);
                 return Err(CliError::Failed(anyhow::anyhow!(
@@ -275,7 +265,6 @@ impl ExportOpts {
     }
 }
 
-<<<<<<< HEAD
 impl ExportOpts {
     /// The machine profile asked for, if any. A custom profile file is
     /// untrusted: it is size-bounded and validated by the model.
@@ -315,11 +304,8 @@ fn write_profiles(out: &mut impl std::io::Write) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Fixes applied, then each issue, then a one-line summary.
-=======
 /// Fixes applied, then each built-in issue, then validator plugins' findings
 /// (#234), then a one-line summary of both.
->>>>>>> origin/dev
 pub(crate) fn write_report(
     out: &mut impl std::io::Write,
     p: &locus_export::Prepared,
