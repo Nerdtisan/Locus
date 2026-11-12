@@ -90,6 +90,14 @@ impl Canvas {
         })
     }
 
+    /// Explodes a plugin object, keeping the plugin's constraints that still
+    /// fit (#213). One undo step; returns how many were dropped.
+    pub fn explode_plugin_object(&mut self, rid: RecipeId) -> Result<usize, locus_doc::DocError> {
+        let out = self.sketcher.explode_plugin_object(rid)?;
+        self.rebuild();
+        Ok(out.dropped)
+    }
+
     /// The plugin, version and parameters of a plugin object, read-only.
     pub fn plugin_object_ui(&self, ui: &mut egui::Ui, plugin: &PluginRef) {
         egui::Grid::new("plugin-object")
