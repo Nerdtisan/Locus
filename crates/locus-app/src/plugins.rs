@@ -13,6 +13,12 @@
 //!   the chain changes ([`RegistryRunner`]).
 //! - **Exporters** (§15.2): listed in File ▸ Export beside the built-ins,
 //!   never replacing one.
+//! - **Importers** (§15.2, #233): Plugins ▸ Import with …; the app picks and
+//!   reads the file, and the geometry lands on a new locked Reference layer
+//!   as one undo step.
+//! - **Validators** (§15.2, §8, #234): their findings join the built-in
+//!   checks in the pre-export panel. One that fails adds a warning; it can't
+//!   hide or stop the built-in checks.
 //! - **Plugin objects**: edit their parameters, or update them to the
 //!   installed plugin version, explicitly; a generator never re-runs on its
 //!   own (§15.5). Without the plugin they keep working from their cached
@@ -32,16 +38,18 @@ use locus_doc::generated::{PluginRef, input_hash, modifier_input};
 use locus_doc::{Command, EntityId, RecipeId, RecipeKind};
 use locus_plugin_host::archive::MAX_ARCHIVE_BYTES;
 use locus_plugin_host::doc::{
-    from_stored, paths_to_cache, plugin_ref, resolve, to_cache, to_paths,
+    from_stored, import_command, paths_to_cache, plugin_ref, resolve, to_cache, to_paths,
 };
 use locus_plugin_host::export::PluginExporter;
 use locus_plugin_host::registry::{Installed, Registry};
 use locus_plugin_host::runner::RegistryRunner;
-use locus_plugin_host::types::{Kind, Param, ParamKind, ParamSpec, ParamValue};
+use locus_plugin_host::types::{Kind, Param, ParamKind, ParamSpec, ParamValue, Severity};
+use locus_plugin_host::validate::MAX_IMPORT_BYTES;
+use locus_plugin_host::validators;
 use locus_plugin_host::{Host, Plugin};
 
 use crate::canvas::Canvas;
-use crate::file_io::FileIo;
+use crate::file_io::{ExtraChecks, ExtraFinding, FileIo};
 
 /// The app's plugin folder, next to its settings.
 fn plugin_dir() -> Option<PathBuf> {
@@ -55,7 +63,7 @@ fn read_limited(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
         .and_then(|f| f.take(limit as u64 + 1).read_to_end(&mut data))
         .map_err(|e| format!("couldn't read the file ({})", e.kind()))?;
     if data.len() > limit {
-        return Err("the file is too large to be a plugin".into());
+        return Err("the file is too large".into());
     }
     Ok(data)
 }
@@ -102,8 +110,10 @@ pub struct Plugins {
     confirm: Option<String>,
     message: Option<String>,
     runner: Option<Arc<RegistryRunner>>,
-    /// The installed set changed: rebuild the export formats.
+    /// The installed set changed: rebuild the export formats and checks.
     exporters_dirty: bool,
+    /// Importer plugin id chosen in the menu, run on the next frame.
+    pending_import: Option<String>,
 }
 
 impl Plugins {
@@ -173,7 +183,55 @@ impl Plugins {
             ));
         }
         files.set_exporters(formats);
+        self.update_validators(files);
         self.exporters_dirty = false;
+    }
+
+    /// Every installed validator plugin that loads becomes an extra
+    /// pre-export check (#234).
+    fn update_validators(&mut self, files: &mut FileIo) {
+        let ids: Vec<String> = self
+            .installed
+            .iter()
+            .filter(|i| i.manifest.kinds.contains(&Kind::Validator))
+            .map(|i| i.manifest.id.clone())
+            .collect();
+        let mut plugins = Vec::new();
+        let mut skipped = Vec::new();
+        for id in ids {
+            let loaded = Self::registry().and_then(|reg| {
+                let host = self.host()?;
+                reg.load(host, &id)
+                    .map(|(_, p)| p)
+                    .map_err(|e| e.to_string())
+            });
+            match loaded {
+                Ok(p) => plugins.push(p),
+                Err(_) => skipped.push(id),
+            }
+        }
+        if !skipped.is_empty() {
+            self.message = Some(format!(
+                "Some validator plugins couldn't be loaded: {}",
+                skipped.join(", ")
+            ));
+        }
+        if plugins.is_empty() {
+            files.set_checks(None);
+            return;
+        }
+        let check = move |model: &locus_export::ExportModel| {
+            let refs: Vec<&Plugin> = plugins.iter().collect();
+            validators::run(&refs, model)
+                .into_iter()
+                .map(|f| ExtraFinding {
+                    error: f.severity == Severity::Error,
+                    message: format!("{}: {}", f.plugin, f.message),
+                    entities: f.entities,
+                })
+                .collect()
+        };
+        files.set_checks(Some(ExtraChecks(Arc::new(check))));
     }
 
     /// After an install or uninstall: reload plugins everywhere.
@@ -242,6 +300,25 @@ impl Plugins {
             .filter(|i| i.manifest.kinds.contains(&Kind::Modifier))
             .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
             .collect();
+        let importers: Vec<(String, String)> = self
+            .installed
+            .iter()
+            .filter(|i| i.manifest.kinds.contains(&Kind::Importer))
+            .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
+            .collect();
+        if !importers.is_empty() {
+            ui.separator();
+            for (id, name) in importers {
+                if ui
+                    .button(format!("Import with {name}…"))
+                    .on_hover_text("Adds the file as reference geometry on a new locked layer.")
+                    .clicked()
+                {
+                    ui.close();
+                    self.pending_import = Some(id);
+                }
+            }
+        }
         if !modifiers.is_empty() {
             ui.separator();
             let curves = canvas.selected_curves();
@@ -285,6 +362,40 @@ impl Plugins {
             Err(e) => format!("Couldn't install the plugin: {e}"),
         });
         self.changed();
+    }
+
+    /// Asks for a file the importer accepts, reads it (the plugin gets bytes,
+    /// never a path, §15.4) and adds its geometry as one undo step. Any
+    /// failure is shown and changes nothing.
+    fn import(&mut self, canvas: &mut Canvas, id: &str) {
+        let exts = match self.plugin(id).and_then(|p| {
+            let exts = p.import_extensions().map_err(|e| e.to_string())?;
+            Ok((p.info().name.clone(), exts))
+        }) {
+            Ok(x) => x,
+            Err(e) => {
+                self.message = Some(format!("Couldn't use the importer: {e}"));
+                return;
+            }
+        };
+        let (name, exts) = exts;
+        let Some(path) = rfd::FileDialog::new().add_filter(&name, &exts).pick_file() else {
+            return;
+        };
+        // The layer is named after the file (no directory), like a document title.
+        let layer: String = path
+            .file_name()
+            .map(|n| n.to_string_lossy().chars().take(128).collect())
+            .unwrap_or_else(|| "Imported".to_owned());
+        let result = read_limited(&path, MAX_IMPORT_BYTES)
+            .and_then(|bytes| self.plugin(id)?.import(&bytes).map_err(|e| e.to_string()))
+            .and_then(|paths| {
+                import_command(canvas.document(), &layer, &paths).map_err(|e| e.to_string())
+            })
+            .and_then(|cmd| canvas.apply(&cmd).map_err(|e| e.to_string()));
+        if let Err(e) = result {
+            self.message = Some(format!("Couldn't import the file: {e}"));
+        }
     }
 
     // ── Parameter panel ─────────────────────────────────────────────────────
@@ -388,6 +499,9 @@ impl Plugins {
     pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut Canvas, files: &mut FileIo) {
         if self.exporters_dirty {
             self.update_exporters(files);
+        }
+        if let Some(id) = self.pending_import.take() {
+            self.import(canvas, &id);
         }
         self.panel_window(ctx, canvas);
         self.manage_window(ctx);

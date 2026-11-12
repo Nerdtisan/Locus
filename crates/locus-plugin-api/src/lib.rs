@@ -61,6 +61,7 @@ pub mod prelude {
     pub use crate::generator::exports::locus::plugin::generator::{
         Constraint, Entity, Generated, Guest as GeneratorGuest,
     };
+    pub use crate::importer::exports::locus::plugin::importer::Guest as ImporterGuest;
     pub use crate::info::exports::locus::plugin::info::{Guest as InfoGuest, PluginInfo};
     pub use crate::modifier::exports::locus::plugin::modifier::Guest as ModifierGuest;
     pub use crate::shared::locus::plugin::params::{
@@ -69,6 +70,9 @@ pub mod prelude {
     pub use crate::shared::locus::plugin::types::{
         Arc, Circle, Compensation, CutParams, DragKnifeParams, DrawParams, EngraveParams,
         ExportModel, Layer, Line, Operation, Path, PluginError, Segment, Shape, Vec2,
+    };
+    pub use crate::validator::exports::locus::plugin::validator::{
+        Finding, Guest as ValidatorGuest, Severity,
     };
     pub use crate::{Params, Sketch, choice, flag, integer, number};
 }
@@ -86,4 +90,6 @@ macro_rules! export_plugin {
     (@kind $ty:ident generator) => { $crate::generator::export_generator!($ty); };
     (@kind $ty:ident modifier) => { $crate::modifier::export_modifier!($ty); };
     (@kind $ty:ident exporter) => { $crate::exporter::export_exporter!($ty); };
+    (@kind $ty:ident importer) => { $crate::importer::export_importer!($ty); };
+    (@kind $ty:ident validator) => { $crate::validator::export_validator!($ty); };
 }

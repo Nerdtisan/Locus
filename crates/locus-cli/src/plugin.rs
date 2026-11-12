@@ -19,14 +19,7 @@ use locus_plugin_host::types::{Kind, Param, ParamKind, ParamSpec, ParamValue};
 /// in `dir`. A plugin can't replace a built-in format.
 pub fn exporters(files: &[PathBuf], dir: Option<&Path>) -> Result<locus_export::Registry> {
     let mut reg = locus_export::Registry::builtin();
-    if files.is_empty() && dir.is_none() {
-        return Ok(reg);
-    }
-    let host = Host::new().map_err(|e| anyhow!("{e}"))?;
-    let mut add = |p: locus_plugin_host::Plugin| -> Result<()> {
-        if !p.kinds().contains(&Kind::Exporter) {
-            return Ok(());
-        }
+    for p in load(files, dir, Kind::Exporter)? {
         let e = PluginExporter::new(p).map_err(|e| anyhow!("exporter plugin: {e}"))?;
         let id = locus_export::Exporter::id(&e).to_owned();
         if !reg.add(Box::new(e)) {
@@ -34,25 +27,54 @@ pub fn exporters(files: &[PathBuf], dir: Option<&Path>) -> Result<locus_export::
                 "an exporter plugin uses the format id `{id}`, which is taken"
             ));
         }
-        Ok(())
-    };
+    }
+    Ok(reg)
+}
+
+/// The plugins of `kind` among the `.locusplugin` files given and the
+/// plugins installed in `dir`, each checked as at install.
+pub fn load(
+    files: &[PathBuf],
+    dir: Option<&Path>,
+    kind: Kind,
+) -> Result<Vec<locus_plugin_host::Plugin>> {
+    let mut out = Vec::new();
+    if files.is_empty() && dir.is_none() {
+        return Ok(out);
+    }
+    let host = Host::new().map_err(|e| anyhow!("{e}"))?;
     for f in files {
         let bytes = read_limited(f, MAX_ARCHIVE_BYTES, "plugin file")?;
         let archive = Archive::parse(&bytes).map_err(|e| anyhow!("plugin file: {e}"))?;
-        add(verify(&host, &archive).map_err(|e| anyhow!("plugin file: {e}"))?)?;
+        let p = verify(&host, &archive).map_err(|e| anyhow!("plugin file: {e}"))?;
+        if p.kinds().contains(&kind) {
+            out.push(p);
+        }
     }
     if let Some(dir) = dir {
         let installed = Registry::new(dir);
         for i in installed.list() {
-            if i.manifest.kinds.contains(&Kind::Exporter) {
+            if i.manifest.kinds.contains(&kind) {
                 let (_, p) = installed
                     .load(&host, &i.manifest.id)
                     .map_err(|e| anyhow!("installed plugin: {e}"))?;
-                add(p)?;
+                out.push(p);
             }
         }
     }
-    Ok(reg)
+    Ok(out)
+}
+
+/// Validator plugins' findings on the prepared model (#234). The built-in
+/// checks have already run; a failing validator only adds a warning.
+pub fn validator_findings(
+    files: &[PathBuf],
+    dir: Option<&Path>,
+    model: &locus_export::ExportModel,
+) -> Result<Vec<locus_plugin_host::validators::PluginFinding>> {
+    let plugins = load(files, dir, Kind::Validator)?;
+    let refs: Vec<&locus_plugin_host::Plugin> = plugins.iter().collect();
+    Ok(locus_plugin_host::validators::run(&refs, model))
 }
 
 /// Reads a file of at most `limit` bytes. Errors never name the file.
@@ -299,7 +321,7 @@ fn run_generator(args: &[String]) -> Result<(), CliError> {
     let prepared = locus_export::prepare(&doc, false);
     if prepared.blocked() && !o.force {
         let mut err = std::io::stderr().lock();
-        let _ = crate::write_report(&mut err, &prepared);
+        let _ = crate::write_report(&mut err, &prepared, &[]);
         return Err(
             anyhow!("export blocked by validation errors (use --force to export anyway)").into(),
         );
