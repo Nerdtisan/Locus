@@ -360,6 +360,7 @@ jobs:
     if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
+      - run: mkdir -p out # the download creates it only when something matches
       - uses: actions/download-artifact@v8
         with:
           pattern: installer-*
