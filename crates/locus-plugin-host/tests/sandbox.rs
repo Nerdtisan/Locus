@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use locus_plugin_host::types::{Constraint, Entity, Kind, Param, ParamValue, PluginFailure, Vec2};
-use locus_plugin_host::{CallError, Host, Limits, LoadError};
+use locus_plugin_host::{CallError, CancelToken, Host, Limits, LoadError};
 
 /// Small limits so the failure cases finish fast.
 fn host() -> Host {
@@ -138,6 +138,40 @@ fn infinite_loop_hits_the_timeout() {
     let err = plugin.generate(&params()).unwrap_err();
     assert!(matches!(err, CallError::Timeout(_)), "{err:?}");
     assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+/// #214: a call running on another thread stops soon after its token is
+/// cancelled, long before the timeout, and the plugin still works after.
+#[test]
+fn cancel_stops_a_running_call_from_another_thread() {
+    let host = Host::with_limits(Limits {
+        fuel: u64::MAX,
+        memory_bytes: 16 * 1024 * 1024,
+        timeout: Duration::from_secs(30),
+    })
+    .unwrap();
+    let spinner = host
+        .load(&Fixture::well_behaved().with_generate(SPIN).build())
+        .unwrap();
+    let token = CancelToken::new();
+    let call = spinner.with_cancel(token.clone());
+    let t = Instant::now();
+    let worker = std::thread::spawn(move || call.generate(&params()));
+    std::thread::sleep(Duration::from_millis(100));
+    token.cancel();
+    let err = worker.join().unwrap().unwrap_err();
+    assert!(matches!(err, CallError::Cancelled), "{err:?}");
+    assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+
+    // A cancelled token refuses new calls; the plugin without it still runs.
+    let good = host.load(&Fixture::well_behaved().build()).unwrap();
+    assert!(matches!(
+        good.with_cancel(token).generate(&params()),
+        Err(CallError::Cancelled)
+    ));
+    assert!(good.generate(&params()).is_ok());
+    let fresh = good.with_cancel(CancelToken::new());
+    assert!(fresh.generate(&params()).is_ok());
 }
 
 #[test]
