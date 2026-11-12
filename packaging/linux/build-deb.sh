@@ -23,8 +23,8 @@ Maintainer: Locus contributors <noreply@users.noreply.github.com>
 Section: graphics
 Priority: optional
 Homepage: https://github.com/Nerdtisan/Locus
-Depends: libc6 (>= 2.34)
-Recommends: libvulkan1, mesa-vulkan-drivers, libxkbcommon0, libwayland-client0, xdg-desktop-portal
+Depends: libc6 (>= 2.34), libxkbcommon0, libxkbcommon-x11-0, libxcursor1, libxi6, libxrandr2, libwayland-client0, libvulkan1 | libgl1
+Recommends: mesa-vulkan-drivers, xdg-desktop-portal
 Description: Constrained 2D vector editor for plotters and cutters
  Locus is a constraint-driven 2D vector editor for pen plotters, vinyl
  cutters and laser cutters. Layers map to machine operations and output is
