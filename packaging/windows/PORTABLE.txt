@@ -1,0 +1,12 @@
+Locus - portable build
+======================
+
+Unzip anywhere and run locus.exe. locus-cli.exe is the headless command-line tool.
+Nothing is installed or written to the registry; settings are stored in your user profile.
+
+This build is not code-signed. On first run Windows SmartScreen may show
+"Windows protected your PC": choose "More info", then "Run anyway".
+Files downloaded from a browser can also be unblocked once via
+right-click > Properties > Unblock on the zip before extracting.
+
+Licence: AGPL-3.0-or-later (LICENSE). Third-party notices: THIRD-PARTY-NOTICES.md.
