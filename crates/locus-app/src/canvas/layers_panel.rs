@@ -27,8 +27,16 @@ const PALETTE: [[u8; 3]; 6] = [
 /// A confirmation waiting for the user.
 #[derive(Debug)]
 pub(super) enum Dialog {
-    Lock { layer: LayerId, report: LockReport },
-    Delete { layer: LayerId, plan: LayerDeletion },
+    Lock {
+        layer: LayerId,
+        report: LockReport,
+    },
+    Delete {
+        layer: LayerId,
+        plan: LayerDeletion,
+        /// Why the last attempt was refused, shown in the dialog (#292).
+        error: Option<String>,
+    },
 }
 
 /// Transient panel state (never part of the document, SPEC §11).
@@ -52,6 +60,18 @@ struct Wants {
 }
 
 impl Canvas {
+    /// Confirm the open delete dialog, as its Delete button does.
+    #[cfg(test)]
+    pub(super) fn confirm_delete_for_test(&mut self) {
+        let Some(dialog) = self.layer_ui.dialog.take() else {
+            return;
+        };
+        if let Dialog::Delete { layer, .. } = &dialog {
+            let cmd = Command::DeleteLayer { id: *layer };
+            self.settle_dialog(dialog, Some(cmd), false);
+        }
+    }
+
     /// The layer new geometry goes on. Falls back to the first layer in
     /// export order when the remembered one is gone.
     pub(super) fn active_layer(&self) -> LayerId {
@@ -140,11 +160,33 @@ impl Canvas {
         }
         if let Some(id) = want.delete {
             match self.sketcher.document().layer_deletion(id) {
-                Ok(plan) => self.layer_ui.dialog = Some(Dialog::Delete { layer: id, plan }),
+                Ok(plan) => {
+                    self.layer_ui.dialog = Some(Dialog::Delete {
+                        layer: id,
+                        plan,
+                        error: None,
+                    });
+                }
                 Err(e) => self.notice = Some(e.to_string()),
             }
         }
         self.layer_dialog(ui.ctx(), settings);
+    }
+
+    /// Runs the confirmed command and decides whether the dialog stays. A
+    /// refusal stays on screen with its reason, never only in the status bar
+    /// (#292).
+    fn settle_dialog(&mut self, mut dialog: Dialog, run: Option<Command>, mut keep: bool) {
+        if let Some(cmd) = run
+            && !self.apply_reporting(&cmd)
+            && let Dialog::Delete { error, .. } = &mut dialog
+        {
+            *error = self.notice.clone();
+            keep = true;
+        }
+        if keep {
+            self.layer_ui.dialog = Some(dialog);
+        }
     }
 
     /// The lock / delete confirmation (SPEC §4 rules 3 and 4).
@@ -201,12 +243,18 @@ impl Canvas {
                         }
                     });
                 }
-                Dialog::Delete { plan, .. } => {
+                Dialog::Delete { plan, error, .. } => {
                     ui.label(format!(
                         "Delete “{name}” and its {} entit{}?",
                         plan.entities.len(),
                         if plan.entities.len() == 1 { "y" } else { "ies" }
                     ));
+                    if !plan.recipes.is_empty() {
+                        ui.label(format!(
+                            "{} pattern(s) / plugin object(s) built on it will be deleted too.",
+                            plan.recipes.len()
+                        ));
+                    }
                     if plan.constraints.is_empty() {
                         ui.label("No constraints are affected.");
                     } else {
@@ -238,6 +286,12 @@ impl Canvas {
                             ),
                         );
                     }
+                    if let Some(why) = error {
+                        ui.colored_label(
+                            ui.visuals().error_fg_color,
+                            format!("Could not delete the layer: {why}"),
+                        );
+                    }
                     ui.weak("Undo restores the layer, its geometry and every dropped constraint.");
                     ui.horizontal(|ui| {
                         let ok = plan.blocked_by.is_empty();
@@ -251,12 +305,7 @@ impl Canvas {
                     });
                 }
             });
-        if keep {
-            self.layer_ui.dialog = Some(dialog);
-        }
-        if let Some(cmd) = run {
-            self.apply_reporting(&cmd);
-        }
+        self.settle_dialog(dialog, run, keep);
     }
 }
 
@@ -630,7 +679,22 @@ impl LayerUi {
         self.expanded = Some(id);
     }
 
+    pub(super) fn dialog_error_for_test(&self) -> Option<&str> {
+        match &self.dialog {
+            Some(Dialog::Delete { error, .. }) => error.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn has_dialog_for_test(&self) -> bool {
+        self.dialog.is_some()
+    }
+
     pub(super) fn dialog_for_test(&mut self, layer: LayerId, plan: LayerDeletion) {
-        self.dialog = Some(Dialog::Delete { layer, plan });
+        self.dialog = Some(Dialog::Delete {
+            layer,
+            plan,
+            error: None,
+        });
     }
 }

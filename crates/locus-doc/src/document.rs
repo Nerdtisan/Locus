@@ -107,6 +107,9 @@ pub struct LayerDeletion {
     /// another layer ending at one of them). Deletion is refused while any
     /// exist: move them first, so no geometry is lost silently.
     pub blocked_by: Vec<EntityId>,
+    /// Patterns and plugin objects built on the layer's geometry. They go
+    /// with it, instances included (even ones on other layers).
+    pub recipes: Vec<RecipeId>,
 }
 
 /// Longest accepted machine-profile id.
@@ -516,19 +519,49 @@ impl Document {
         if !self.layers.contains_key(&layer) {
             return Err(DocError::UnknownLayer(layer));
         }
-        let doomed: BTreeSet<EntityId> = self
+        let mut doomed: BTreeSet<EntityId> = self
             .entities
             .iter()
             .filter(|(_, e)| e.layer == layer)
             .map(|(i, _)| i)
             .collect();
+        // A recipe on doomed geometry is removed whole, so its instances
+        // (and anything chained on them) are doomed too.
+        let mut recipes: BTreeSet<RecipeId> = BTreeSet::new();
+        loop {
+            let found: Vec<RecipeId> = self
+                .recipes
+                .iter()
+                .filter(|(rid, r)| {
+                    !recipes.contains(*rid)
+                        && (r.inputs(self).iter().any(|e| doomed.contains(e))
+                            || r.instances().any(|e| doomed.contains(&e)))
+                })
+                .map(|(rid, _)| *rid)
+                .collect();
+            if found.is_empty() {
+                break;
+            }
+            for rid in found {
+                if let Some(r) = self.recipes.get(&rid) {
+                    doomed.extend(r.instances());
+                }
+                recipes.insert(rid);
+            }
+        }
         let mut out = LayerDeletion {
             entities: doomed.iter().copied().collect(),
+            recipes: recipes.iter().copied().collect(),
             ..LayerDeletion::default()
         };
+        let owned: BTreeSet<ConstraintId> = recipes
+            .iter()
+            .filter_map(|rid| self.recipes.get(rid))
+            .flat_map(|r| r.constraints.iter().copied())
+            .collect();
         for (id, c) in &self.constraints {
             let refs = c.references();
-            if refs.iter().any(|r| doomed.contains(r)) {
+            if owned.contains(id) || refs.iter().any(|r| doomed.contains(r)) {
                 out.constraints.push(*id);
                 out.touched_elsewhere.extend(
                     refs.into_iter()
