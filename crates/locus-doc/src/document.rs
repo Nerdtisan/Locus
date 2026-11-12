@@ -109,6 +109,27 @@ pub struct LayerDeletion {
     pub blocked_by: Vec<EntityId>,
 }
 
+/// Longest accepted machine-profile id.
+pub const MAX_PROFILE_ID: usize = 64;
+
+/// A profile id is a short slug: `a-z 0-9 . _ -`, 1..=64 chars. Documents are
+/// untrusted input (SPEC §10), so the id is checked on load as well.
+///
+/// # Errors
+/// [`DocError::Invalid`] when the id is empty, too long or has other characters.
+pub fn check_profile_id(id: &str) -> Result<(), DocError> {
+    let ok = !id.is_empty()
+        && id.len() <= MAX_PROFILE_ID
+        && id.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        });
+    if ok {
+        Ok(())
+    } else {
+        Err(DocError::Invalid("invalid machine profile id".to_owned()))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
     pub(crate) units: Unit,
@@ -125,6 +146,9 @@ pub struct Document {
     /// is re-evaluated from these when a parameter changes.
     pub(crate) dim_exprs: BTreeMap<ConstraintId, String>,
     pub(crate) view: Option<View>,
+    /// Selected machine profile id (SPEC §7, #236). Only the id is stored;
+    /// the profile itself lives in the app (built-in or user settings).
+    pub(crate) profile: Option<String>,
 }
 
 impl Default for Document {
@@ -159,6 +183,7 @@ impl Document {
             recipes: BTreeMap::new(),
             dim_exprs: BTreeMap::new(),
             view: None,
+            profile: None,
         }
     }
 
@@ -169,6 +194,12 @@ impl Document {
     }
 
     // ── Read API ─────────────────────────────────────────────────────────
+
+    /// The selected machine profile id, if any (SPEC §7).
+    #[must_use]
+    pub fn profile(&self) -> Option<&str> {
+        self.profile.as_deref()
+    }
 
     #[must_use]
     pub fn units(&self) -> Unit {

@@ -19,6 +19,7 @@ pub mod overlap;
 pub mod pdf;
 pub mod pipeline;
 pub mod prepare;
+pub mod profile;
 pub mod svg;
 pub mod validate;
 
@@ -31,6 +32,7 @@ pub use ops::apply_operations;
 pub use order::{order, travel_length};
 pub use pdf::{to_pdf, to_pdf_model};
 pub use pipeline::{ExportLayer, ExportModel, ExportPath, PathSeg, Shape, chain, collect};
-pub use prepare::{Prepared, prepare};
+pub use prepare::{Prepared, prepare, prepare_for};
+pub use profile::{Bed, Defaults, MachineProfile, Origin, ProfileError, ProfileUnits};
 pub use svg::{to_svg, to_svg_model};
 pub use validate::{Issue, IssueKind, Report, Severity, validate};

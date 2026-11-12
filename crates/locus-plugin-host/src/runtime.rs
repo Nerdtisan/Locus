@@ -29,8 +29,9 @@ use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 
 use crate::api::{PACKAGE as API_PACKAGE, SUPPORTED_API_MAJORS};
 use crate::types::{
-    Compensation, Constraint, Entity, ExportModel, FormatInfo, Generated, Kind, Operation, Param,
-    ParamKind, ParamSpec, ParamValue, Path, PluginFailure, PluginInfo, Segment, Shape, Vec2,
+    Compensation, Constraint, Entity, ExportModel, Finding, FormatInfo, Generated, Kind, Operation,
+    Param, ParamKind, ParamSpec, ParamValue, Path, PluginFailure, PluginInfo, Segment, Severity,
+    Shape, Vec2,
 };
 use crate::validate::{self, Malformed};
 
@@ -62,6 +63,25 @@ mod bindings {
             },
         });
     }
+    pub mod importer {
+        wasmtime::component::bindgen!({
+            path: "../locus-plugin-api/wit",
+            world: "importer-plugin",
+            with: {
+                "locus:plugin/types": super::generator::locus::plugin::types,
+            },
+        });
+    }
+    pub mod validator {
+        wasmtime::component::bindgen!({
+            path: "../locus-plugin-api/wit",
+            world: "validator-plugin",
+            with: {
+                "locus:plugin/types": super::generator::locus::plugin::types,
+                "locus:plugin/params": super::generator::locus::plugin::params,
+            },
+        });
+    }
 }
 
 use bindings::exporter::exports::locus::plugin::exporter as wexp;
@@ -69,7 +89,9 @@ use bindings::generator::exports::locus::plugin::generator as wgen;
 use bindings::generator::exports::locus::plugin::info as winfo;
 use bindings::generator::locus::plugin::params as wparams;
 use bindings::generator::locus::plugin::types as wtypes;
+use bindings::importer::exports::locus::plugin::importer as wimp;
 use bindings::modifier::exports::locus::plugin::modifier as wmod;
+use bindings::validator::exports::locus::plugin::validator as wval;
 
 /// Largest component accepted, before compiling it.
 pub const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
@@ -248,6 +270,8 @@ impl Host {
             generator: wgen::GuestIndices::new(&pre).ok(),
             modifier: wmod::GuestIndices::new(&pre).ok(),
             exporter: wexp::GuestIndices::new(&pre).ok(),
+            importer: wimp::GuestIndices::new(&pre).ok(),
+            validator: wval::GuestIndices::new(&pre).ok(),
         };
         if kinds.provided().is_empty() {
             return Err(LoadError::NoSupportedKind);
@@ -340,6 +364,8 @@ struct Kinds {
     generator: Option<wgen::GuestIndices>,
     modifier: Option<wmod::GuestIndices>,
     exporter: Option<wexp::GuestIndices>,
+    importer: Option<wimp::GuestIndices>,
+    validator: Option<wval::GuestIndices>,
 }
 
 impl Kinds {
@@ -353,6 +379,12 @@ impl Kinds {
         }
         if self.exporter.is_some() {
             k.push(Kind::Exporter);
+        }
+        if self.importer.is_some() {
+            k.push(Kind::Importer);
+        }
+        if self.validator.is_some() {
+            k.push(Kind::Validator);
         }
         k
     }
@@ -598,6 +630,95 @@ impl Plugin {
         })?;
         validate::export_bytes(&bytes)?;
         Ok(bytes)
+    }
+
+    // ── Importers (M4, #233) ────────────────────────────────────────────────
+
+    /// The file extensions the importer accepts, lowercase, without dots.
+    pub fn import_extensions(&self) -> Result<Vec<String>, CallError> {
+        let idx = self
+            .kinds
+            .importer
+            .as_ref()
+            .ok_or(CallError::NotProvided("importer"))?;
+        let exts = self.call(|store, _, inst| {
+            Ok(Ok(idx
+                .load(&mut *store, inst)?
+                .call_extensions(&mut *store)?))
+        })?;
+        validate::extensions(&exts)?;
+        Ok(exts)
+    }
+
+    /// File bytes (read by the host, §15.4) → reference geometry.
+    pub fn import(&self, bytes: &[u8]) -> Result<Vec<Path>, CallError> {
+        let idx = self
+            .kinds
+            .importer
+            .as_ref()
+            .ok_or(CallError::NotProvided("importer"))?;
+        if bytes.len() > validate::MAX_IMPORT_BYTES {
+            return Err(CallError::Host(format!(
+                "the file is larger than {} MB",
+                validate::MAX_IMPORT_BYTES / (1024 * 1024)
+            )));
+        }
+        let out = self
+            .call(|store, _, inst| idx.load(&mut *store, inst)?.call_import(&mut *store, bytes))?;
+        let out: Vec<Path> = out.into_iter().map(from_path).collect();
+        validate::imported(&out)?;
+        Ok(out)
+    }
+
+    // ── Validators (M4, #234) ───────────────────────────────────────────────
+
+    pub fn validator_schema(&self) -> Result<Vec<ParamSpec>, CallError> {
+        let idx = self
+            .kinds
+            .validator
+            .as_ref()
+            .ok_or(CallError::NotProvided("validator"))?;
+        let specs = self.call(|store, _, inst| {
+            Ok(Ok(idx.load(&mut *store, inst)?.call_schema(&mut *store)?))
+        })?;
+        let specs: Vec<ParamSpec> = specs.into_iter().map(from_spec).collect();
+        validate::schema(&specs)?;
+        Ok(specs)
+    }
+
+    /// Runs the plugin's checks on the export model. Every layer and path
+    /// index in the findings is checked against `model`.
+    pub fn validate(
+        &self,
+        model: &ExportModel,
+        params: &[Param],
+    ) -> Result<Vec<Finding>, CallError> {
+        let idx = self
+            .kinds
+            .validator
+            .as_ref()
+            .ok_or(CallError::NotProvided("validator"))?;
+        validate::export_model(model).map_err(|m| CallError::Host(m.0))?;
+        let wmodel = to_model(model);
+        let params: Vec<wparams::Param> = params.iter().map(to_param).collect();
+        let found = self.call(|store, _, inst| {
+            idx.load(&mut *store, inst)?
+                .call_validate(&mut *store, &wmodel, &params)
+        })?;
+        let found: Vec<Finding> = found
+            .into_iter()
+            .map(|f| Finding {
+                severity: match f.severity {
+                    wval::Severity::Error => Severity::Error,
+                    wval::Severity::Warning => Severity::Warning,
+                },
+                message: f.message,
+                layer: f.layer,
+                path: f.path,
+            })
+            .collect();
+        validate::findings(&found, model)?;
+        Ok(found)
     }
 }
 

@@ -326,6 +326,10 @@ fn manifest_must_match_the_component() {
         manifest("com.example.fixture", "9.9.9", "1.0.0", ""),
         good_manifest().replace("[\"generator\"]", "[\"exporter\"]"),
         good_manifest().replace("[\"generator\"]", "[\"generator\", \"modifier\"]"),
+        // Importers and validators run since M4 (#233, #234), so declaring
+        // one the component doesn't provide is a mismatch like any other.
+        good_manifest().replace("[\"generator\"]", "[\"generator\", \"importer\"]"),
+        good_manifest().replace("[\"generator\"]", "[\"generator\", \"validator\"]"),
     ];
     for m in cases {
         let err = reg
@@ -336,15 +340,6 @@ fn manifest_must_match_the_component() {
             .unwrap_err();
         assert!(matches!(err, InstallError::Mismatch(_)), "{m}: {err:?}");
     }
-    // Declaring an M4 kind the host can't run yet, alongside a real one, is fine.
-    let m = good_manifest().replace("[\"generator\"]", "[\"generator\", \"importer\"]");
-    assert!(
-        reg.install(
-            &host,
-            &zip(&[("plugin.toml", m.as_bytes()), ("plugin.wasm", &wasm())])
-        )
-        .is_ok()
-    );
 }
 
 // ── Wrong version ───────────────────────────────────────────────────────────

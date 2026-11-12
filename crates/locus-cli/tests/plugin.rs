@@ -232,3 +232,86 @@ fn run_by_id_needs_a_plugins_folder() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--plugins"));
 }
+
+// ── Validator plugins (#234) ────────────────────────────────────────────────
+
+/// A Cut layer with a 0.4 mm kerf holding a 0.1 mm-radius hole (too small).
+fn kerf_doc() -> PathBuf {
+    use locus_doc::{Command as C, CutParams, Document, Editor, EntityId, Geom, Operation};
+    let mut ed = Editor::new(Document::new());
+    let layer = ed
+        .apply(&C::AddLayer {
+            name: "Cut".into(),
+            colour: [255, 0, 0],
+            operation: Operation::Cut(CutParams {
+                kerf_width: 0.4,
+                ..CutParams::default()
+            }),
+        })
+        .unwrap()
+        .layers[0];
+    let center: EntityId = ed
+        .apply(&C::AddEntity {
+            layer,
+            construction: false,
+            geom: Geom::Point {
+                pos: locus_geom::Vec2::new(5.0, 5.0),
+            },
+        })
+        .unwrap()
+        .entities[0];
+    ed.apply(&C::AddEntity {
+        layer,
+        construction: false,
+        geom: Geom::Circle {
+            center,
+            radius: 0.1,
+        },
+    })
+    .unwrap();
+    let file = scratch("kerf.locus");
+    std::fs::write(&file, locus_doc::file::save(ed.document()).unwrap()).unwrap();
+    file
+}
+
+#[test]
+fn validator_plugin_findings_join_validate_and_block_export() {
+    let Some(kerf) = packed("kerf-check") else {
+        return;
+    };
+    let doc = kerf_doc();
+    // Without the plugin, the built-in checks pass.
+    let out = cli(&["validate".as_ref(), doc.as_os_str()]);
+    assert_eq!(out.status.code(), Some(0));
+
+    let out = cli(&[
+        "validate".as_ref(),
+        doc.as_os_str(),
+        "--plugin".as_ref(),
+        kerf.as_os_str(),
+    ]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("error (Kerf check)"), "{text}");
+    assert!(text.contains("1 error(s)"), "{text}");
+
+    let svg = scratch("kerf.svg");
+    let export = |extra: &[&std::ffi::OsStr]| {
+        let mut args: Vec<&std::ffi::OsStr> = vec![
+            "export".as_ref(),
+            doc.as_os_str(),
+            "--format".as_ref(),
+            "svg".as_ref(),
+            "--out".as_ref(),
+            svg.as_os_str(),
+            "--plugin".as_ref(),
+            kerf.as_os_str(),
+        ];
+        args.extend_from_slice(extra);
+        cli(&args)
+    };
+    assert_eq!(export(&[]).status.code(), Some(1));
+    assert!(!svg.exists());
+    assert_eq!(export(&["--force".as_ref()]).status.code(), Some(0));
+    assert!(svg.exists());
+}
