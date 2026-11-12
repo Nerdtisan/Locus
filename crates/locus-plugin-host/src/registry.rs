@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use crate::archive::{self, Archive, ArchiveError, sha256_hex};
 use crate::manifest::{Manifest, api_major};
 use crate::runtime::{Host, LoadError, Plugin};
-use crate::types::Kind;
 use crate::validate::is_reverse_dns;
 
 #[derive(Debug, thiserror::Error)]
@@ -79,8 +78,7 @@ pub fn verify(host: &Host, archive: &Archive) -> Result<Plugin, InstallError> {
             "the plugin was built against a different API major".into(),
         ));
     }
-    let declared: Vec<Kind> = m.kinds.iter().copied().filter(|k| k.supported()).collect();
-    if declared != plugin.kinds() {
+    if m.kinds != plugin.kinds() {
         return Err(InstallError::Mismatch(
             "the kinds in plugin.toml aren't the ones the plugin provides".into(),
         ));

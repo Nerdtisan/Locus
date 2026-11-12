@@ -13,6 +13,10 @@ A WebAssembly component that implements one or more plugin kinds from the `locus
 | generator | `GeneratorGuest` | parameters | points, lines, arcs, circles, constraints |
 | modifier | `ModifierGuest` | paths + parameters | paths |
 | exporter | `ExporterGuest` | the validated export model | file bytes |
+| importer | `ImporterGuest` | file bytes (Locus reads the file) | paths, placed on a locked reference layer |
+| validator | `ValidatorGuest` | the validated export model + parameters | findings (error or warning, with layer and path) |
+
+Examples: `examples/finger-box` (generator), `examples/hpgl` (exporter and importer), `examples/kerf-check` (validator).
 
 Every plugin also implements `InfoGuest` (id, name, version). Then one line exports it:
 
