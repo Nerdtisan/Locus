@@ -742,7 +742,13 @@ mod tests {
     /// 60 × 40 plate with a Ø10 hole, a construction point, a parameter and a
     /// saved view: the v1 fixture.
     pub(crate) fn sample() -> Document {
-        let mut ed = Editor::new(Document::new());
+        // Cut, like the frozen v1 fixture: new documents default to Draw
+        // (#288), but files written earlier keep what they say.
+        let mut doc = Document::new();
+        if let Some(l) = doc.layers.get_mut(&L) {
+            l.operation = Operation::Cut(CutParams::default());
+        }
+        let mut ed = Editor::new(doc);
         let mut add = |construction, geom| {
             ed.apply(&Command::AddEntity {
                 layer: L,
