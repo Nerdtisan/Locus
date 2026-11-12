@@ -61,6 +61,24 @@ impl CancelToken {
     }
 }
 
+impl CallError {
+    /// The variant's name, for reports that compare hosts (#254).
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            CallError::CpuLimit => "CpuLimit",
+            CallError::Timeout(_) => "Timeout",
+            CallError::MemoryLimit(_) => "MemoryLimit",
+            CallError::Trap(_) => "Trap",
+            CallError::Malformed(_) => "Malformed",
+            CallError::Plugin(_) => "Plugin",
+            CallError::NotProvided(_) => "NotProvided",
+            CallError::Host(_) => "Host",
+            CallError::Cancelled => "Cancelled",
+        }
+    }
+}
+
 impl From<Malformed> for CallError {
     fn from(m: Malformed) -> Self {
         CallError::Malformed(m.0)

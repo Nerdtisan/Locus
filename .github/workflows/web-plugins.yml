@@ -1,0 +1,83 @@
+# .github/workflows/web-plugins.yml
+#
+# The §15.8 plugin fixture suite against the web plugin host, in headless
+# Chrome (#254, ADR 0016). The desktop host's answers are the reference:
+# tests/web_fixtures.rs writes each fixture and what desktop returned, and
+# the test page runs the same calls through the real plugin worker (built by
+# trunk, exactly as the app ships it) and must get the same answers.
+#
+# The Rust side runs in the dev container like the gate; Chrome and Python
+# are the runner's own (ubuntu-latest ships both). Same `--user root` and
+# chown pattern as ci.yml.
+
+name: web-plugins
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-plugins-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Web plugin host (headless Chrome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache the crate registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            .cargo-home/registry/index
+            .cargo-home/registry/cache
+            .cargo-home/git/db
+          key: cargo-webtests-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-webtests-${{ runner.os }}-
+
+      - name: Build dev container image
+        run: docker build -t locus-dev .devcontainer
+
+      - name: Define the container command
+        run: |
+          echo "D=docker run --rm --user root -e CARGO_HOME=/workspace/.cargo-home -e CARGO_INCREMENTAL=0 -v ${{ github.workspace }}:/workspace -w /workspace locus-dev" >> "$GITHUB_ENV"
+
+      - name: Build the test page and the worker (trunk)
+        run: >-
+          $D bash -c "cd crates/locus-plugin-worker/web-tests &&
+          trunk build --release --cargo-profile wasm-release --dist /workspace/web-tests-site"
+
+      - name: Write the fixtures and the desktop host's answers
+        run: >-
+          $D env LOCUS_WEB_FIXTURES=/workspace/web-tests-site/fixtures
+          cargo test -p locus-plugin-host --test web_fixtures
+
+      - name: Run the suite in headless Chrome
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" web-tests-site
+          python3 crates/locus-plugin-worker/web-tests/serve.py web-tests-site 8767 result.txt &
+          SERVER=$!
+          google-chrome --headless=new --disable-gpu --no-first-run \
+            --user-data-dir="$RUNNER_TEMP/chrome" http://127.0.0.1:8767/ &
+          timeout 300 bash -c 'until [ -s result.txt ]; do sleep 2; done' || true
+          pkill -f "user-data-dir=$RUNNER_TEMP/chrome" || true
+          kill "$SERVER" || true
+          if [ ! -s result.txt ]; then echo "::error::the test page sent no result"; exit 1; fi
+          cat result.txt
+          {
+            echo "### Web plugin host"
+            echo '```'
+            tail -n 1 result.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          tail -n 1 result.txt | grep -q '^ALL PASS'
+
+      - name: Reclaim cargo-home ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .cargo-home

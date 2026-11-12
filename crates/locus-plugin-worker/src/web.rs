@@ -5,7 +5,7 @@
 
 use js_sys::{Array, Function, Object, Reflect, Uint8Array, WebAssembly};
 use locus_plugin_host::CallError;
-use locus_plugin_host::core_host::wire::{Request, handle, reply_json};
+use locus_plugin_host::core_host::wire::{Request, WireError, handle, reply_json};
 use locus_plugin_host::core_host::{CoreModule, Engine, Instance, Val};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
@@ -127,7 +127,10 @@ fn on_message(data: &JsValue) -> String {
         .and_then(|r| serde_json::from_str::<Request>(&r).ok());
     let result = match (component, request) {
         (Some(c), Some(r)) => handle(JsEngine::new, &c, r),
-        _ => Err("the worker got a malformed request".to_owned()),
+        _ => Err(WireError::new(
+            "Worker",
+            "the worker got a malformed request",
+        )),
     };
     reply_json(&result)
 }

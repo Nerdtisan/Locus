@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!--
+  The §15.8 suite against the web plugin host, in a browser (#254).
+  Built with trunk, so the worker is exactly the one the app ships.
+  Needs fixtures/ next to it (tests/web_fixtures.rs writes them).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Locus web plugin host tests</title>
+  <link data-trunk rel="rust" href="../Cargo.toml" data-bin="locus-plugin-worker"
+    data-type="worker" data-loader-shim data-wasm-opt="z"
+    data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
+  <link data-trunk rel="copy-file" href="run.js" />
+</head>
+<body>
+  <pre id="out">running…</pre>
+  <script src="run.js"></script>
+</body>
+</html>

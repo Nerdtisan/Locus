@@ -1,0 +1,7 @@
+# The web plugin host test page (#254). Run from this folder:
+#   trunk build --release --cargo-profile wasm-release --dist <site>
+# then write the fixtures into <site>/fixtures (tests/web_fixtures.rs) and
+# serve <site> with serve.py.
+[build]
+target = "index.html"
+dist = "dist"

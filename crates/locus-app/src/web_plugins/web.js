@@ -15,13 +15,18 @@ const READY = "locus-plugin-worker:ready";
 // answers or when the timeout passes (SPEC §15.4). The answer is the
 // worker's JSON string; a timeout or a crashed worker gives a JSON error.
 
+// A failed call, in the worker's reply format (wire::WireError).
+function error(kind, message) {
+  return JSON.stringify({ Err: { kind, message } });
+}
+
 export function plugin_call(component, request, timeoutMs) {
   return new Promise((resolve) => {
     let worker;
     try {
       worker = new Worker("locus-plugin-worker_loader.js");
     } catch (_) {
-      resolve(JSON.stringify({ Err: "The plugin worker couldn't start." }));
+      resolve(error("Worker", "The plugin worker couldn't start."));
       return;
     }
     let done = false;
@@ -33,7 +38,7 @@ export function plugin_call(component, request, timeoutMs) {
       resolve(json);
     };
     const timer = setTimeout(
-      () => finish(JSON.stringify({ Err: `the plugin took longer than ${timeoutMs / 1000} s` })),
+      () => finish(error("Timeout", `the plugin took longer than ${timeoutMs / 1000} s`)),
       timeoutMs,
     );
     let sent = false;
@@ -44,9 +49,9 @@ export function plugin_call(component, request, timeoutMs) {
         worker.postMessage({ component, request });
         return;
       }
-      finish(typeof e.data === "string" ? e.data : JSON.stringify({ Err: "the plugin worker sent garbage" }));
+      finish(typeof e.data === "string" ? e.data : error("Worker", "the plugin worker sent garbage"));
     };
-    worker.onerror = () => finish(JSON.stringify({ Err: "the plugin worker crashed" }));
+    worker.onerror = () => finish(error("Worker", "the plugin worker crashed"));
   });
 }
 
