@@ -14,11 +14,14 @@ use crate::tools::{Draft, Outcome, Pick, Tool};
 use crate::view::View;
 use crate::{demo, grid};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
-use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, LayerId, Sketcher};
+use locus_doc::{
+    Command, ConstraintId, DocError, Document, Edge, EntityId, Geom, LayerId, Sketcher,
+};
 use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
 use text_ui::{FontCatalog, TextSettings};
 
+mod bed;
 mod layers_panel;
 mod machine;
 mod offsets;
@@ -121,6 +124,8 @@ pub struct Canvas {
     region_ui: regions::RegionUi,
     /// Machine preview on, and its polylines (#176).
     machine_on: bool,
+    /// Draw pen width / kerf at true scale under the sketch (#240).
+    stroke_on: bool,
     machine: Vec<machine::MachinePath>,
     /// The active modify tool, if any (SPEC §6.2): clicks go to it.
     modify: Option<Modify>,
@@ -170,6 +175,7 @@ impl Default for Canvas {
             pattern_ui: patterns_panel::PatternUi::default(),
             region_ui: regions::RegionUi::default(),
             machine_on: false,
+            stroke_on: false,
             machine: Vec::new(),
             modify: None,
             offset_pick: None,
@@ -538,6 +544,24 @@ impl Canvas {
                         select = Some(c.references());
                     }
                     if let Some(d) = c.dimension() {
+                        if c.has_stroke_edge(doc) {
+                            let mut edge = d.edge;
+                            egui::ComboBox::from_id_salt(("dim-edge", id))
+                                .selected_text(edge.name())
+                                .width(96.0)
+                                .show_ui(ui, |ui| {
+                                    for e in Edge::ALL {
+                                        ui.selectable_value(&mut edge, e, e.name());
+                                    }
+                                })
+                                .response
+                                .on_hover_text(
+                                    "Measure to the centreline or to the edge of the pen line / cut",
+                                );
+                            if edge != d.edge {
+                                action = Some(Command::SetDimensionEdge { id, edge });
+                            }
+                        }
                         let mut driven = d.driven;
                         if ui
                             .checkbox(&mut driven, "driven")
@@ -1027,7 +1051,9 @@ impl Canvas {
         let (selection, hovered) = (&self.selection, self.hover);
         let (flag_constraints, flag_entities) = self.flagged();
         self.draw_regions(&painter, rect, dark);
+        self.draw_bed(&painter, rect, dark, settings);
         self.draw_machine(&painter, rect, dark);
+        self.draw_stroke_preview(&frame, dark);
         self.drawn = frame.draw_items(&self.scene, |item| {
             if flag_entities.contains(&item.id) {
                 Emphasis::Conflict

@@ -48,8 +48,7 @@ pub enum ProfileUnits {
     Inch,
 }
 
-/// The machine's origin corner, as seen looking at the bed. The document
-/// origin sits at this corner, so the bed extends from it (SPEC §7, #237).
+/// The machine's origin corner, as seen looking at the bed (SPEC §7, #237).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Origin {
     #[default]
@@ -87,20 +86,27 @@ pub struct Bed {
 }
 
 impl Bed {
-    /// The bed in document coordinates (Y up). The document origin is the
-    /// machine origin: a top-left bed reaches right and *down* (negative Y).
+    /// The bed in document coordinates (Y up): `0..width` by `0..height`,
+    /// where people draw. The origin corner says where the *machine's* zero
+    /// is on this rectangle ([`Bed::origin_point`]); it does not move the bed.
     #[must_use]
     pub fn rect(&self) -> Aabb {
-        let (w, h) = (self.width_mm, self.height_mm);
-        let (x0, x1) = match self.origin {
-            Origin::TopLeft | Origin::BottomLeft => (0.0, w),
-            Origin::TopRight | Origin::BottomRight => (-w, 0.0),
+        Aabb::from_points(Vec2::ZERO, Vec2::new(self.width_mm, self.height_mm))
+    }
+
+    /// The machine origin on the bed, in document coordinates.
+    #[must_use]
+    pub fn origin_point(&self) -> Vec2 {
+        let r = self.rect();
+        let x = match self.origin {
+            Origin::TopLeft | Origin::BottomLeft => r.min.x,
+            Origin::TopRight | Origin::BottomRight => r.max.x,
         };
-        let (y0, y1) = match self.origin {
-            Origin::BottomLeft | Origin::BottomRight => (0.0, h),
-            Origin::TopLeft | Origin::TopRight => (-h, 0.0),
+        let y = match self.origin {
+            Origin::BottomLeft | Origin::BottomRight => r.min.y,
+            Origin::TopLeft | Origin::TopRight => r.max.y,
         };
-        Aabb::from_points(Vec2::new(x0, y0), Vec2::new(x1, y1))
+        Vec2::new(x, y)
     }
 
     fn validate(&self) -> Result<(), ProfileError> {
@@ -444,21 +450,21 @@ mod tests {
     }
 
     #[test]
-    fn bed_rect_follows_the_origin_corner() {
-        let mk = |origin| {
-            Bed {
-                width_mm: 10.0,
-                height_mm: 4.0,
-                origin,
-            }
-            .rect()
+    fn bed_sits_in_the_drawing_quadrant_and_the_origin_marks_a_corner() {
+        let mk = |origin| Bed {
+            width_mm: 10.0,
+            height_mm: 4.0,
+            origin,
         };
-        let r = mk(Origin::TopLeft);
-        assert_eq!((r.min, r.max), (Vec2::new(0.0, -4.0), Vec2::new(10.0, 0.0)));
-        let r = mk(Origin::BottomRight);
-        assert_eq!((r.min, r.max), (Vec2::new(-10.0, 0.0), Vec2::new(0.0, 4.0)));
-        let r = mk(Origin::BottomLeft);
-        assert_eq!((r.min, r.max), (Vec2::new(0.0, 0.0), Vec2::new(10.0, 4.0)));
+        for o in Origin::ALL {
+            let r = mk(o).rect();
+            assert_eq!((r.min, r.max), (Vec2::ZERO, Vec2::new(10.0, 4.0)));
+        }
+        // Y is up: the top of the bed is y = height.
+        assert_eq!(mk(Origin::TopLeft).origin_point(), Vec2::new(0.0, 4.0));
+        assert_eq!(mk(Origin::TopRight).origin_point(), Vec2::new(10.0, 4.0));
+        assert_eq!(mk(Origin::BottomLeft).origin_point(), Vec2::ZERO);
+        assert_eq!(mk(Origin::BottomRight).origin_point(), Vec2::new(10.0, 0.0));
     }
 
     #[test]

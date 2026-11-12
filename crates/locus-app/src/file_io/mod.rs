@@ -8,11 +8,14 @@
 //! contain file names or document contents, and nothing here logs either
 //! (CLAUDE.md, Secure Coding).
 
+mod profiles;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
 use crate::canvas::Canvas;
-use locus_doc::{Document, EntityId};
+use crate::settings::Settings;
+use locus_doc::{Command, Document, EntityId};
+use locus_export::MachineProfile;
 use locus_export::{Prepared, Severity};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -144,7 +147,7 @@ impl FileIo {
     }
 
     /// Per-frame work: shortcuts, the close guard, window title and dialogs.
-    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         if !self.started {
             self.started = true;
@@ -181,7 +184,7 @@ impl FileIo {
         self.web_update(ctx, canvas);
 
         self.sync_title(ctx, canvas);
-        self.dialogs(ctx, canvas);
+        self.dialogs(ctx, canvas, settings);
     }
 
     fn sync_title(&mut self, ctx: &egui::Context, canvas: &Canvas) {
@@ -197,7 +200,7 @@ impl FileIo {
     }
 
     /// The File menu entries up to (not including) Samples / Quit.
-    pub fn file_menu(&mut self, ui: &mut egui::Ui, canvas: &mut Canvas) {
+    pub fn file_menu(&mut self, ui: &mut egui::Ui, canvas: &mut Canvas, settings: &Settings) {
         let ctx = ui.ctx().clone();
         if ui.button("New").clicked() {
             self.request(&ctx, canvas, Action::New);
@@ -238,6 +241,17 @@ impl FileIo {
             ui.close();
         }
         ui.menu_button("Export", |ui| {
+            if ui
+                .button("For a machine…")
+                .on_hover_text(
+                    "Pick a machine profile (LightBurn, Cricut, Silhouette, …) and export with its settings",
+                )
+                .clicked()
+            {
+                self.begin_profile_export(canvas, settings);
+                ui.close();
+            }
+            ui.separator();
             let formats: Vec<(String, String)> = self
                 .exporters
                 .iter()
@@ -385,9 +399,35 @@ impl FileIo {
                 format: format.to_owned(),
                 fixed: false,
                 prepared,
+                profile: None,
+                picker: false,
+                profile_changed: false,
                 extra,
             });
         }
+    }
+
+    /// Open the export panel with the machine-profile picker (SPEC §7, #238).
+    /// The document's remembered profile is preselected; otherwise generic SVG.
+    fn begin_profile_export(&mut self, canvas: &Canvas, settings: &Settings) {
+        let profile = canvas
+            .document()
+            .profile()
+            .and_then(|id| locus_export::profile::find(id, &settings.profiles))
+            .or_else(|| locus_export::profile::find("generic-svg", &[]));
+        let prepared = locus_export::prepare_for(canvas.document(), false, profile.as_ref());
+        let extra = self.extra(&prepared);
+        self.export = Some(ExportPanel {
+            format: profile
+                .as_ref()
+                .map_or_else(|| "svg".to_owned(), |p| p.format.clone()),
+            fixed: false,
+            prepared,
+            profile,
+            picker: true,
+            profile_changed: false,
+            extra,
+        });
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -447,7 +487,7 @@ impl FileIo {
 
     /// The pre-export panel: fixes applied, errors (which block export) and
     /// warnings, each selectable to highlight its entities on the canvas.
-    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
         let checks = self.checks.clone();
         let Some(panel) = self.export.as_mut() else {
             return;
@@ -461,7 +501,9 @@ impl FileIo {
             Cancel,
         }
         let mut act = None;
+        let mut picked_error: Option<String> = None;
         let mut select: Option<Vec<EntityId>> = None;
+        let available = self.exporters.get(&panel.format).is_some();
         let fixable = panel.prepared.report.issues.iter().any(|i| {
             matches!(
                 i.kind,
@@ -477,6 +519,21 @@ impl FileIo {
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
+                if panel.picker {
+                    profile_picker(
+                        ui,
+                        panel,
+                        canvas,
+                        settings,
+                        &self.exporters,
+                        &mut picked_error,
+                    );
+                    // A new profile re-prepared the model: re-run the plugin checks.
+                    if panel.profile_changed {
+                        panel.profile_changed = false;
+                        panel.extra = extra_for(&panel.prepared);
+                    }
+                }
                 let counts = panel.prepared.report.counts();
                 let extra_errors = panel.extra.iter().filter(|f| f.error).count();
                 ui.label(format!(
@@ -543,7 +600,7 @@ impl FileIo {
                     }
                     if ui
                         .add_enabled(
-                            !blocked(&panel.prepared, &panel.extra),
+                            available && !blocked(&panel.prepared, &panel.extra),
                             egui::Button::new("Export…"),
                         )
                         .clicked()
@@ -560,13 +617,18 @@ impl FileIo {
         }
         match act {
             Some(Do::Fix) => {
-                panel.prepared = locus_export::prepare(canvas.document(), true);
+                panel.prepared =
+                    locus_export::prepare_for(canvas.document(), true, panel.profile.as_ref());
                 panel.extra = extra_for(&panel.prepared);
                 panel.fixed = true;
             }
             Some(Do::Export) => {
                 // Re-prepare: the sketch may have changed while the panel was open.
-                let prepared = locus_export::prepare(canvas.document(), panel.fixed);
+                let prepared = locus_export::prepare_for(
+                    canvas.document(),
+                    panel.fixed,
+                    panel.profile.as_ref(),
+                );
                 let extra = extra_for(&prepared);
                 let format = panel.format.clone();
                 if blocked(&prepared, &extra) {
@@ -579,6 +641,9 @@ impl FileIo {
             }
             Some(Do::Cancel) => self.export = None,
             None => {}
+        }
+        if picked_error.is_some() {
+            self.error = picked_error;
         }
     }
 
@@ -623,8 +688,8 @@ impl FileIo {
         self.web.tick_autosave(now, canvas.document());
     }
 
-    fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
-        self.export_panel(ctx, canvas);
+    fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
+        self.export_panel(ctx, canvas, settings);
         if self.pending.is_some() {
             let mut choice = None;
             egui::Window::new("Unsaved changes")
@@ -689,8 +754,139 @@ struct ExportPanel {
     /// Auto-fixes have been applied to `prepared`.
     fixed: bool,
     prepared: Prepared,
+    /// The machine profile in force (colour mapping, bed), if any.
+    profile: Option<MachineProfile>,
+    /// Show the profile picker (the "For a machine…" entry).
+    picker: bool,
+    /// The picker re-prepared `prepared`; the plugin checks must re-run.
+    profile_changed: bool,
     /// Validator plugins' findings on `prepared` (#234).
     extra: Vec<ExtraFinding>,
+}
+
+/// The profile combo, import / save buttons and a one-line summary. A change
+/// is remembered in the document (one undoable `SetProfile`, SPEC §7, #238).
+fn profile_picker(
+    ui: &mut egui::Ui,
+    panel: &mut ExportPanel,
+    canvas: &mut Canvas,
+    settings: &mut Settings,
+    exporters: &locus_export::Registry,
+    error: &mut Option<String>,
+) {
+    let all = profiles::all(settings);
+    let mut chosen: Option<String> = None;
+    ui.horizontal(|ui| {
+        ui.label("Machine");
+        let current = panel.profile.as_ref().map_or("None", |p| p.name.as_str());
+        egui::ComboBox::from_id_salt("export-profile")
+            .selected_text(current.to_owned())
+            .width(320.0)
+            .show_ui(ui, |ui| {
+                for p in &all {
+                    let on = panel.profile.as_ref().is_some_and(|q| q.id == p.id);
+                    if ui.selectable_label(on, &p.name).clicked() {
+                        chosen = Some(p.id.clone());
+                    }
+                }
+            });
+    });
+    if let Some(p) = &panel.profile {
+        let bed = p.bed.map_or_else(
+            || "no bed size".to_owned(),
+            |b| {
+                format!(
+                    "bed {} × {} mm, origin {}",
+                    b.width_mm,
+                    b.height_mm,
+                    b.origin.name().to_lowercase()
+                )
+            },
+        );
+        ui.weak(format!("{} — {bed}", p.format.to_uppercase()));
+        if exporters.get(&p.format).is_none() {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                format!(
+                    "The `{}` exporter is not installed; install its plugin to export.",
+                    p.format
+                ),
+            );
+        }
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Import profile…").clicked() {
+            match import_profile_dialog(settings) {
+                Ok(Some(id)) => chosen = Some(id),
+                Ok(None) => {}
+                Err(msg) => *error = Some(msg),
+            }
+        }
+        if ui
+            .add_enabled(panel.profile.is_some(), egui::Button::new("Save profile…"))
+            .clicked()
+            && let Some(p) = &panel.profile
+            && let Err(msg) = save_profile_dialog(p)
+        {
+            *error = Some(msg);
+        }
+    });
+    ui.separator();
+    if let Some(id) = chosen
+        && let Some(p) = locus_export::profile::find(&id, &settings.profiles)
+    {
+        if let Err(e) = canvas.apply(&Command::SetProfile { id: Some(id) }) {
+            *error = Some(format!("Could not select the profile: {e}."));
+        }
+        panel.format.clone_from(&p.format);
+        panel.prepared = locus_export::prepare_for(canvas.document(), panel.fixed, Some(&p));
+        panel.profile = Some(p);
+        panel.profile_changed = true;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn import_profile_dialog(settings: &mut Settings) -> Result<Option<String>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("Machine profile", &["json"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+    let io = |e: std::io::Error| format!("Could not read the file ({}).", e.kind());
+    let len = std::fs::metadata(&path).map_err(io)?.len();
+    if len > locus_export::profile::MAX_PROFILE_JSON_BYTES as u64 {
+        return Err("The profile file is too large.".to_owned());
+    }
+    let text = std::fs::read_to_string(&path).map_err(io)?;
+    profiles::import(&text, settings).map(Some)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_profile_dialog(p: &MachineProfile) -> Result<(), String> {
+    let text = p.to_json().ok_or("Could not save the profile.")?;
+    let Some(path) = pick_save(&format!("{}.json", p.id), "json", "Machine profile") else {
+        return Ok(());
+    };
+    write_atomic(&path, text.as_bytes())
+}
+
+// The browser has no synchronous file picker; profile import there is not
+// available yet (a profile can still be saved as a download).
+#[cfg(target_arch = "wasm32")]
+fn import_profile_dialog(_: &mut Settings) -> Result<Option<String>, String> {
+    Err("Importing a profile file is not available in the browser yet.".to_owned())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_profile_dialog(p: &MachineProfile) -> Result<(), String> {
+    let text = p.to_json().ok_or("Could not save the profile.")?;
+    web::Web::download(
+        &format!("{}.json", p.id),
+        text.as_bytes(),
+        "application/json",
+    );
+    Ok(())
 }
 
 fn open_shortcut() -> egui::KeyboardShortcut {
