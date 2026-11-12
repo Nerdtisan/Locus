@@ -28,8 +28,17 @@
 //!   geometry, with a "plugin missing" badge (modifiers: "out of date" once
 //!   their source changes).
 //!
-//! Desktop-only (SPEC §0). Calls run on the UI thread under the host's
-//! limits (a CPU budget, 256 MB, 5 s).
+//! Desktop-only (SPEC §0). Every call runs under the host's limits (a CPU
+//! budget, 256 MB, 5 s). **Insert / Apply / Update** run on a background
+//! thread (#214): the panel shows "Running…" with a Cancel button, and the
+//! result is applied as one command when it arrives. Cancel stops the call
+//! at the host's next epoch tick and drops the result, so nothing changes.
+//!
+//! A modifier that re-runs because its source was edited stays on the UI
+//! thread, inside that edit's command ([`RegistryRunner`]): the re-run output
+//! is part of the same undo step as the edit (§11), and running it later
+//! would split one user action into two steps or apply output computed from
+//! a source that has since changed again.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -37,8 +46,9 @@ use std::path::{Path, PathBuf};
 use egui::{RichText, Ui};
 use std::sync::Arc;
 
-use locus_doc::generated::{PluginRef, input_hash, modifier_input};
-use locus_doc::{Command, EntityId, RecipeId, RecipeKind};
+use locus_doc::generated::{GenPath, GeneratedGeometry, PluginRef, input_hash, modifier_input};
+use locus_doc::{Command, EntityId, LayerId, RecipeId, RecipeKind};
+use locus_geom::Vec2;
 use locus_plugin_host::archive::MAX_ARCHIVE_BYTES;
 use locus_plugin_host::doc::{
     from_stored, import_command, paths_to_cache, plugin_ref, resolve, to_cache, to_paths,
@@ -53,6 +63,7 @@ use locus_plugin_host::{Host, Plugin};
 
 use crate::canvas::Canvas;
 use crate::file_io::{ExtraChecks, ExtraFinding, FileIo};
+use crate::plugin_job::{Job, Poll};
 
 /// The app's plugin folder, next to its settings.
 pub(crate) fn plugin_dir() -> Option<PathBuf> {
@@ -122,6 +133,57 @@ pub struct Plugins {
     /// "Install plugin…" was clicked in the manager; opens the file dialog
     /// after the frame.
     pending_install: bool,
+    /// The plugin call running in the background, if any (#214).
+    running: Option<Running>,
+}
+
+/// A plugin call in flight and what's needed to turn its result into a
+/// command when it arrives.
+#[derive(Debug)]
+struct Running {
+    id: String,
+    target: Target,
+    /// A new modifier object's source curves.
+    sources: Vec<EntityId>,
+    /// Where a new generator object goes, as it was when the call started.
+    layer: LayerId,
+    origin: Vec2,
+    job: Job<Result<Done, String>>,
+}
+
+/// A finished call's output, ready to become a command.
+#[derive(Debug)]
+enum Done {
+    Generated(PluginRef, GeneratedGeometry),
+    Modified(RecipeKind),
+}
+
+/// The plugin call itself, on the background thread. Everything it needs is
+/// owned, so it never touches the document (§15.3).
+fn call(plugin: &Plugin, values: &[Param], input: Option<Vec<GenPath>>) -> Result<Done, String> {
+    let info = plugin.info();
+    let err = |e: locus_plugin_host::CallError| e.to_string();
+    match input {
+        Some(input) => {
+            let schema = plugin.modifier_schema().map_err(err)?;
+            let params = resolve(&schema, values).map_err(|e| e.to_string())?;
+            let out = plugin.modify(&to_paths(&input), &params).map_err(err)?;
+            Ok(Done::Modified(RecipeKind::Modified {
+                plugin: plugin_ref(&info.id, &info.version, &params),
+                input_hash: input_hash(&input),
+                output: paths_to_cache(&out),
+            }))
+        }
+        None => {
+            let schema = plugin.generator_schema().map_err(err)?;
+            let params = resolve(&schema, values).map_err(|e| e.to_string())?;
+            let generated = plugin.generate(&params).map_err(err)?;
+            Ok(Done::Generated(
+                plugin_ref(&info.id, &info.version, &params),
+                to_cache(&generated),
+            ))
+        }
+    }
 }
 
 impl Plugins {
@@ -443,20 +505,23 @@ impl Plugins {
         }
     }
 
-    /// Runs the plugin and applies one command; `Err` changes nothing.
-    fn run(
+    /// Starts the plugin call on a background thread (#214). What the call
+    /// needs from the document (a modifier's input, where to insert) is read
+    /// now; the result becomes one command in [`Self::finish`]. `Err` means
+    /// nothing started and nothing changed.
+    fn start(
         &mut self,
-        canvas: &mut Canvas,
+        canvas: &Canvas,
         id: &str,
         values: Vec<Param>,
         target: Target,
     ) -> Result<(), String> {
-        let plugin = self.plugin(id)?;
-        let info = plugin.info().clone();
-        if target.modifier() {
-            let schema = plugin.modifier_schema().map_err(|e| e.to_string())?;
-            let params = resolve(&schema, &values).map_err(|e| e.to_string())?;
-            let doc = canvas.document();
+        if self.running.is_some() {
+            return Err("another plugin call is still running".into());
+        }
+        let plugin = self.plugin(id)?.clone();
+        let doc = canvas.document();
+        let (sources, input) = if target.modifier() {
             let sources = match &target {
                 Target::Modify(curves) => curves.clone(),
                 Target::EditModifier(rid) => doc
@@ -466,42 +531,86 @@ impl Plugins {
                 _ => Vec::new(),
             };
             let input = modifier_input(doc, &sources).map_err(|e| e.to_string())?;
-            let out = plugin
-                .modify(&to_paths(&input), &params)
-                .map_err(|e| e.to_string())?;
-            let kind = RecipeKind::Modified {
-                plugin: plugin_ref(&info.id, &info.version, &params),
-                input_hash: input_hash(&input),
-                output: paths_to_cache(&out),
-            };
-            let cmd = match target {
-                Target::EditModifier(rid) => Command::EditRecipe { id: rid, kind },
-                _ => Command::AddRecipe { kind, sources },
-            };
-            return canvas.apply(&cmd).map_err(|e| e.to_string());
-        }
-        let schema = plugin.generator_schema().map_err(|e| e.to_string())?;
-        let params = resolve(&schema, &values).map_err(|e| e.to_string())?;
-        let generated = plugin.generate(&params).map_err(|e| e.to_string())?;
-        let pref = plugin_ref(&info.id, &info.version, &params);
-        let output = to_cache(&generated);
-        let cmd = match target {
-            Target::Insert => Command::AddGenerated {
-                layer: canvas.current_layer(),
-                origin: canvas.insert_point(),
-                plugin: pref,
+            (sources, Some(input))
+        } else {
+            (Vec::new(), None)
+        };
+        let (layer, origin) = (canvas.current_layer(), canvas.insert_point());
+        let job = Job::spawn(move |token| call(&plugin.with_cancel(token), &values, input))?;
+        self.running = Some(Running {
+            id: id.to_owned(),
+            target,
+            sources,
+            layer,
+            origin,
+            job,
+        });
+        Ok(())
+    }
+
+    /// Applies a finished call as one command (one undo step); `Err` changes
+    /// nothing. The document may have changed while the call ran: an object
+    /// that's gone makes the command fail cleanly.
+    fn finish(canvas: &mut Canvas, r: Running, done: Done) -> Result<(), String> {
+        let cmd = match (done, r.target) {
+            (Done::Modified(kind), Target::EditModifier(rid)) => {
+                Command::EditRecipe { id: rid, kind }
+            }
+            (Done::Modified(kind), _) => Command::AddRecipe {
+                kind,
+                sources: r.sources,
+            },
+            (Done::Generated(plugin, output), Target::Insert) => Command::AddGenerated {
+                layer: r.layer,
+                origin: r.origin,
+                plugin,
                 output,
             },
-            Target::Edit(rid) | Target::EditModifier(rid) => Command::EditRecipe {
-                id: rid,
-                kind: RecipeKind::Generated {
-                    plugin: pref,
-                    output,
-                },
-            },
-            Target::Modify(_) => return Err("not a generator".into()),
+            (Done::Generated(plugin, output), Target::Edit(rid) | Target::EditModifier(rid)) => {
+                Command::EditRecipe {
+                    id: rid,
+                    kind: RecipeKind::Generated { plugin, output },
+                }
+            }
+            (Done::Generated(..), Target::Modify(_)) => return Err("not a generator".into()),
         };
         canvas.apply(&cmd).map_err(|e| e.to_string())
+    }
+
+    /// Checks the running call once a frame and applies its result.
+    fn poll_running(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+        let Some(r) = &self.running else {
+            return;
+        };
+        let outcome = match r.job.poll() {
+            Poll::Running => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                return;
+            }
+            Poll::Done(result) => result,
+            Poll::Lost => Err("the plugin call stopped unexpectedly".into()),
+        };
+        let Some(r) = self.running.take() else {
+            return;
+        };
+        let from_panel = self.panel.as_ref().is_some_and(|p| p.id == r.id);
+        match outcome.and_then(|done| Self::finish(canvas, r, done)) {
+            Ok(()) if from_panel => self.panel = None,
+            Ok(()) => {}
+            Err(e) if from_panel => {
+                if let Some(p) = self.panel.as_mut() {
+                    p.error = Some(e);
+                }
+            }
+            Err(e) => self.message = Some(format!("The plugin call failed: {e}")),
+        }
+    }
+
+    /// Stops the running call; its result is dropped, so nothing changes.
+    fn cancel_running(&mut self) {
+        if let Some(r) = self.running.take() {
+            r.job.cancel();
+        }
     }
 
     pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut Canvas, files: &mut FileIo) {
@@ -514,6 +623,7 @@ impl Plugins {
         if std::mem::take(&mut self.pending_install) {
             self.install();
         }
+        self.poll_running(ctx, canvas);
         self.readme_window(ctx);
         self.panel_window(ctx, canvas);
         self.manage_window(ctx);
@@ -541,7 +651,8 @@ impl Plugins {
             .iter()
             .map(|(n, p)| (n.clone(), p.value))
             .collect();
-        let (mut apply, mut cancel) = (false, false);
+        let (mut apply, mut cancel, mut stop) = (false, false, false);
+        let running = self.running.as_ref().map(|r| r.job.elapsed());
         let verb = match panel.target {
             Target::Insert | Target::Modify(_) => "Insert",
             Target::Edit(_) | Target::EditModifier(_) => "Apply",
@@ -565,12 +676,27 @@ impl Plugins {
                 if let Some(e) = &panel.error {
                     ui.colored_label(ui.visuals().error_fg_color, e);
                 }
-                ui.horizontal(|ui| {
-                    apply = ui.button(verb).clicked();
-                    cancel = ui.button("Cancel").clicked();
+                ui.horizontal(|ui| match running {
+                    Some(t) => {
+                        ui.spinner();
+                        ui.label(format!("Running… {:.1} s", t.as_secs_f32()));
+                        stop = ui
+                            .button("Cancel")
+                            .on_hover_text("Stop the plugin. Nothing is changed.")
+                            .clicked();
+                    }
+                    None => {
+                        apply = ui.button(verb).clicked();
+                        cancel = ui.button("Close").clicked();
+                    }
                 });
             });
-        if cancel {
+        if stop {
+            self.cancel_running();
+            if let Some(p) = self.panel.as_mut() {
+                p.error = Some("Cancelled. Nothing was changed.".into());
+            }
+        } else if cancel {
             self.panel = None;
         } else if apply {
             let (id, target) = (panel.id.clone(), panel.target.clone());
@@ -583,13 +709,13 @@ impl Plugins {
                     value: v.clone(),
                 })
                 .collect();
-            match self.run(canvas, &id, values, target) {
-                Ok(()) => self.panel = None,
-                Err(e) => {
-                    if let Some(p) = self.panel.as_mut() {
-                        p.error = Some(e);
-                    }
-                }
+            if let Some(p) = self.panel.as_mut() {
+                p.error = None;
+            }
+            if let Err(e) = self.start(canvas, &id, values, target)
+                && let Some(p) = self.panel.as_mut()
+            {
+                p.error = Some(e);
             }
         }
     }
@@ -823,7 +949,7 @@ impl Plugins {
                                 .map_err(|e| e.to_string())
                             })
                             .map(|schema| from_stored(&schema, &pref.params));
-                        let result = values.and_then(|v| self.run(canvas, &pref.id, v, update));
+                        let result = values.and_then(|v| self.start(canvas, &pref.id, v, update));
                         if let Err(e) = result {
                             self.message = Some(format!("Couldn't update the object: {e}"));
                         }

@@ -16,6 +16,8 @@ mod infer;
 mod mcp;
 mod modify_tool;
 #[cfg(not(target_arch = "wasm32"))]
+mod plugin_job;
+#[cfg(not(target_arch = "wasm32"))]
 mod plugins;
 mod render;
 mod scene;
