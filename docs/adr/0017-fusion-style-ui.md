@@ -42,6 +42,7 @@ SolidCraft (§18) is the closest Rust reference.
 - Fusion's sketch keys.
 - One four-step tool model: pick → drag or type with a live preview → Enter / Esc → values stay as dimensions.
 - Per-object style. Re-editable text.
+- A customisable toolbar (pin, reorder, remove; saved per user), on-canvas handles for patterns and offset kept in sync with their dialogs, and a dockable / undockable shortcuts pane (owner's first review).
 - Underneath: one action registry feeding every menu, key and search, a `Tool` trait for every tool family, `Canvas` split into state plus views, and the saved layout migrated from v1 to v2.
 
 ## Measurements
@@ -70,4 +71,5 @@ No runtime performance changes are expected: the registry and trait are dispatch
 - **The saved layout** moves to `locus.layout.v2`, migrated from v1. v1 is kept so older builds still open.
 - **Parallel work.** After #294, feature tickets add a view or a tool plus registry entries, so sessions don't collide in one file.
 - **Core crates are untouched** by the UI work; it all lives in `locus-app`. The command API (§11) stays the only way to mutate the document, and views are kept to it by structure.
+- **Defaults** for the five points the owner hasn't ruled on (constraint keys, combined H, profile colour on machine layers, fixed marking ring, current style) are recorded in the design doc §9 and can change without revisiting this ADR.
 - **Revisit** if the owner's hands-on check of the M5 build finds the marking menu or the key map worse than today's, or if egui_dock's multi-viewport support (#285) can't restore windows reliably across platforms.

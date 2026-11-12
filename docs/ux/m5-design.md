@@ -4,7 +4,7 @@
 - **Decision record:** [ADR 0017](../adr/0017-fusion-style-ui.md)
 - **Mockup:** the clickable prototype is [`m5-mockup.html`](m5-mockup.html), which is also published as a private Artifact for the owner. It is a static design, not an editor.
 - **Spec:** §4, §6, §7, §8, §9, §11, §12.1, ADR 0001
-- **Status:** draft for owner sign-off (2026-11-13)
+- **Status:** revision 2 for owner sign-off (2026-11-13). Revision 1 was reviewed as "much better"; this revision adds the owner's five requests (§2.3, §6.5, §6.6, §6.8, §5.1) and records the defaults in §9.
 
 Owner testing in M4 found Locus hard to use and not CAD-like enough. This document fixes how M5 should look and behave before anything is built. Where Fusion 360 and SolidCraft differ, it follows Fusion (owner decision, 2026-11-13). Fusion is a behaviour reference only (§18); no assets or code are copied.
 
@@ -75,6 +75,18 @@ As in Fusion, Mirror, the patterns and Offset sit in Create, because they create
 
 Every pane header has ⧉. On the desktop, dragging a tab out of the window (or ⧉) opens it in its own OS window through eframe's multi-viewport support, so it can sit on a second monitor; dragging it back re-docks it. On the web the pane floats inside the browser window. Window placement is saved with the layout (§7.4).
 
+### 2.3 Customisable toolbar (owner request, revision 2)
+
+Most-used tools should take one click, not two (open the group, pick the tool).
+
+- **Pin**: drag any tool from a group's ▾ menu up onto the toolbar and drop it where it should go, or click the pin icon beside the tool in the menu.
+- **Reorder**: drag a toolbar button sideways, within its group or into another group.
+- **Remove**: drag a button off the toolbar, or right-click it ▸ Unpin. The tool stays in its group's menu, which always lists every tool.
+- **Reset**: each menu ends with "Reset ‹group› toolbar".
+- Pins are per user, saved in app settings as `locus.toolbar.v1` (an ordered list of action ids per group), never in documents. Unknown ids (a removed plugin, a renamed action) are dropped when loading. A corrupt value falls back to the defaults.
+- Pinned actions are listed first in tool search before anything is typed.
+- Keyboard and touch: the pin icon is a normal button, so pinning doesn't need dragging.
+
 ## 3. Interaction model
 
 Every tool, whether it draws, modifies, constrains, places text or uses the pen, follows the same four steps:
@@ -117,7 +129,7 @@ Right-click opens a ring of 8 actions around the cursor, with a list underneath.
 
 ## 5. Shortcut map
 
-These follow Fusion's sketch keys. Constraints have no letters in Fusion, so the constraint keys below are Locus extras. Keys that clashed with Fusion's move to Shift (owner decision pending; the alternative is no letters at all).
+These follow Fusion's sketch keys. Constraints have no letters in Fusion, so the constraint keys below are Locus extras. Keys that clashed with Fusion's move to Shift (default, §9 #1; the alternative is no letters at all).
 
 | Key | Action | Today |
 |---|---|---|
@@ -148,7 +160,16 @@ These follow Fusion's sketch keys. Constraints have no letters in Fusion, so the
 | Alt (hold) | Suppress auto-constraints | unchanged |
 | Space (hold) | Pan with the left button | — |
 
-Every key is a property of an action in the registry (§7.1), so the ribbon tooltips, menus, marking menu, tool search and this map can't disagree. Users can rebind keys in Settings ▸ Keyboard; a rebinding that clashes is refused with the conflicting action named. Keys go to the focused text field first, as they do today (`egui_wants_keyboard_input`).
+### 5.1 Shortcuts pane (owner request, revision 2)
+
+The map is a **pane, not a dialog**, so it can stay open while working:
+
+- **?** toggles it (as does Help ▸ Keyboard shortcuts). It reopens where it was last, docked or floating.
+- It docks like any pane (by default under the Inspector). **⧉** undocks it into its own OS window, for example on a second screen (#285); **⇲ Dock** brings it back. On the web it floats inside the window.
+- A filter box matches key or action name. Rows show where a key changed from today's Locus.
+- It is `Tab::Shortcuts` in the dock layout, so its place is saved with the layout (§7.4).
+
+Every key is a property of an action in the registry (§7.1), so the ribbon tooltips, menus, marking menu, tool search and this pane can't disagree. Users can rebind keys in Settings ▸ Keyboard; a rebinding that clashes is refused with the conflicting action named. Keys go to the focused text field first, as they do today (`egui_wants_keyboard_input`).
 
 ## 6. Flows
 
@@ -160,9 +181,9 @@ S opens a search box at the cursor (Fusion's shortcut box). It shows recent and 
 
 - The Inspector's Style section edits the selection: stroke colour, stroke width, pen number, fill (none or a colour), opacity, and a dash pattern where the export formats support one. Fill applies to closed shapes; on Engrave layers it still means hatch (§7).
 - **Eyedropper** (in the Style header): click it, then click any object. Its style is copied to the selection in one command. With nothing selected, it sets the current style.
-- New geometry takes the **current style**, shown in the Inspector when nothing is selected (owner decision pending).
+- New geometry takes the **current style**, shown in the Inspector when nothing is selected (default, §9 #5).
 - Pen width now comes from each object for the stroke-width preview, hatch spacing on Draw layers and stroke-edge dimensions (ADR 0014).
-- **Cut, Score and Drag-knife export** in the profile's colour and hairline, because LightBurn and Cricut read colour as the operation. The Style section says so on those layers. Draw and Engrave export each object's own style (#284) (owner decision pending).
+- **Cut, Score and Drag-knife export** in the profile's colour and hairline, because LightBurn and Cricut read colour as the operation. The Style section says so on those layers. Draw and Engrave export each object's own style (#284) (default, §9 #3).
 
 ### 6.3 Export dialog (#291, #284)
 
@@ -177,11 +198,25 @@ A two-pane dialog. On the left are user profiles, then built-in presets marked w
 
 ### 6.5 Text (#222)
 
-Click to place the anchor, then type on the canvas. The Text dialog holds the content, a **searchable font list** that previews each font in its own face and marks single-line (Hershey/EMS) fonts, height, alignment, letter spacing and placement (free, fit to box, on a path). The preview is live. **Double-clicking placed text reopens the dialog**, as does Edit text in the marking menu. Explode turns text into curves.
+Click to place the anchor, then type on the canvas. The Text dialog has a live preview and holds:
+
+- **Content**, typed in place.
+- **Font list**: a search box plus an **All / System / Custom** filter. Each font previews in its own face and is tagged Bundled, System, Custom or Single-line (Hershey/EMS, for plotters).
+- The list is **resizable**: drag its corner or click ⤢ Taller. The size is remembered per user, for people with hundreds of fonts.
+- **Add font…** loads a `.ttf`, `.otf` or `.ttc` file. On the desktop it is copied into the app's font folder; on the web it is kept in OPFS. Font files are untrusted input: size-bounded, parsed with `skrifa` without panicking, and refused with a message if unreadable. Documents keep the font reference, not the file (ADR 0012); a document using a missing custom font still opens and exports from its cached geometry. Added fonts appear under Custom, where they can also be removed.
+- **Letter spacing** (tracking) in mm, typed or on a slider, with a live preview.
+- Height, alignment, and placement: free, fit to box, or on a path.
+
+**Double-clicking placed text reopens the dialog**, as does Edit text in the marking menu. Explode turns text into curves.
 
 ### 6.6 Offset (#218)
 
-Pick one curve and its connected chain is selected (the Chain selection box is ticked by default). Drag the arrow or type the distance; Flip swaps sides; Corners are Round or Sharp. Enter commits. The offset stays a live recipe (ADR 0010, 0011) with its distance shown as an editable dimension.
+Pick one curve and its connected chain is selected (the Chain selection box is ticked by default). Then either:
+
+- **drag on the canvas**: an arrow handle on the curve sets the distance with a live preview and a heads-up value. Dragging across the curve switches sides, as in Fusion; or
+- **type** the distance (number or expression) in the dialog.
+
+The canvas **⇅** control and the dialog's Flip button reverse the side without changing the distance. Corners are Round or Sharp. The handle and the field are one value, so changing either updates the other. Enter commits. The offset stays a live recipe (ADR 0010, 0011) with its distance shown as an editable dimension.
 
 ### 6.7 Move, Rotate and Scale (#219)
 
@@ -189,7 +224,19 @@ There are three tools, Move/Copy (M), Rotate and Sketch Scale, sharing one dialo
 
 ### 6.8 Patterns (#221)
 
-There is one Pattern dialog with Rectangular and Circular tabs. Rectangular: objects, one or two directions (a line, or the X/Y axis), Extent or Spacing, quantity and distance per direction (expressions allowed), One or Symmetric. Circular: objects, centre point, quantity, total angle or spacing, and rotate-instances. The canvas shows direction arrows to drag and a dot on each instance; clicking a dot suppresses that instance. After commit, the parameters are dimensions on the canvas (§6.2.1). The bug where an offset profile couldn't be patterned is fixed and tested in #221.
+There is one Pattern dialog with Rectangular and Circular tabs. Rectangular: objects, one or two directions (a line, or the X/Y axis), Extent or Spacing, quantity and distance per direction (expressions allowed), direction angle, One or Symmetric. Circular: objects, centre point, quantity, total angle or spacing, and rotate-instances.
+
+**Everything can be set on the canvas without typing**, as in Fusion (owner request, revision 2):
+
+| Handle | Sets |
+|---|---|
+| Arrowhead on each direction | That direction's spacing (or extent), dragged along the direction |
+| Knob on a ring around the source | Direction 1's angle; direction 2 stays perpendicular unless it was picked from a line |
+| − / + beside each count | Quantity per direction |
+| Knob at the end of the circular arc | Total angle (snaps to 360° near a full turn) |
+| Dot on each instance | Suppress / restore that instance |
+
+The dialog and the handles are two views of the same values: dragging updates the fields live and typing moves the handles. After commit, the parameters are dimensions on the canvas (§6.2.1). The bug where an offset profile couldn't be patterned is fixed and tested in #221.
 
 ### 6.9 Mirror (#215)
 
@@ -248,7 +295,8 @@ pub struct Registry { actions: Vec<Action>, keys: KeyMap }
 ```
 
 - **One static table** (`actions::BUILTIN`) holds every built-in action. Plugin commands (§15) are appended at load time with ids under `plugin.<id>.<command>`.
-- **Layout is data too.** `RIBBON: &[(Group, &[ActionId])]` lists each group's primary tools; `MARKING_RING: [ActionId; 8]`; `fn marking_list(&AppState) -> Vec<ActionId>`. Menus, the ribbon, the marking menu, tool search, the shortcut map and touch long-press all read from the registry; none keep their own list.
+- **Layout is data too.** `DEFAULT_RIBBON: &[(Group, &[ActionId])]` lists each group's default pinned tools; `MARKING_RING: [ActionId; 8]`; `fn marking_list(&AppState) -> Vec<ActionId>`. Menus, the ribbon, the marking menu, tool search, the shortcuts pane and touch long-press all read from the registry; none keep their own list.
+- **Pinned actions** (§2.3). The registry owns a `Toolbar { groups: BTreeMap<Group, Vec<ActionId>> }`, starting from `DEFAULT_RIBBON` and overridden by the user's `locus.toolbar.v1`. It has `pin(id, group, index)`, `unpin(id)`, `move_to(id, group, index)` and `reset(group)`. The ribbon draws `Toolbar`, and each group's ▾ menu draws every action in that group with an `is_pinned` flag for the pin icon. Loading drops unknown ids and duplicates, so a plugin that is removed can't leave a dead button. Pins are UI settings and never touch the document.
 - **Keys.** `KeyMap` is built from `default_key` plus user overrides saved in settings (`locus.keys.v1`). It is checked when it loads: two actions on one key is an error in a test for the defaults, and a refused rebinding for user overrides. Hotkey dispatch is one loop over `KeyMap`, keeping today's guard that a focused text field or the dimension editor gets keys first.
 - **`enabled` gives a reason**, so menus and tool search can say why an action is unavailable instead of hiding it.
 - **Every action that changes the document** ends in `Sketcher::apply(Command)`, so it is one undoable command (§11). The registry is UI; it adds no new way to mutate the document.
@@ -306,7 +354,7 @@ After #294, each Phase C feature is a new view or a new tool plus registry entri
 
 ### 7.4 Saved dock layout: `locus.layout.v1` → `v2`
 
-Today `app.rs` stores `DockState<Tab>` as JSON under `locus.layout.v1`, and falls back to the default if it doesn't parse or has lost the canvas (`parse_layout`). M5 changes the tab set: Layers, Regions and Patterns merge into Browser, Properties becomes Inspector, and Palette is new.
+Today `app.rs` stores `DockState<Tab>` as JSON under `locus.layout.v1`, and falls back to the default if it doesn't parse or has lost the canvas (`parse_layout`). M5 changes the tab set: Layers, Regions and Patterns merge into Browser, Properties becomes Inspector, and Palette and Shortcuts are new. Shortcuts is not in the default layout; ? adds it.
 
 - **New key `locus.layout.v2`** holding `{ "version": 2, "dock": DockState<Tab>, "windows": [ { "tab", "pos", "size", "monitor" } ] }`. `windows` records undocked OS windows (#285).
 - **Loading:**
@@ -329,12 +377,18 @@ Today `app.rs` stores `DockState<Tab>` as JSON under `locus.layout.v1`, and fall
 | #287 per-object style, #284 export stroke width | §6.2 | inspector; `locus-doc` style field and migration |
 | #286 profiles, #291 per-layer export | §6.3, §6.4 | views |
 | #285 undock | §2.2, §7.4 | layout v2 |
+| Customisable toolbar (new, revision 2) | §2.3 | registry `Toolbar` |
+| Shortcuts pane (new, revision 2) | §5.1 | registry + views + layout v2 |
 | Ribbon, browser, palette, inspector, status | §2 | registry + views |
 
-## 9. Open points for the owner
+## 9. Defaults (owner may still change them)
 
-1. **Constraint keys:** keep the non-clashing Locus letters and use Shift for the clashing ones (as designed), or no letters, as in Fusion?
-2. **Horizontal/Vertical:** merge them into one H tool, as in Fusion (as designed)?
-3. **Cut/Score/Drag-knife export colour:** take it from the profile, not the object's style (as designed)?
-4. **Marking-menu ring:** keep it fixed in every context (as designed), or make the ring itself change with context?
-5. **Style for new geometry:** use a "current style" set in the Inspector and by the eyedropper (as designed)?
+The owner reviewed revision 1 without ruling on these five points, so the design goes ahead with the recommended option for each (2026-11-13). Each one is a small, contained change if the owner later wants the alternative.
+
+| # | Default | Alternative |
+|---|---|---|
+| 1 | **Constraint keys:** keep the Locus letters that don't clash with Fusion (H, K, E, F, Q, W, Y); the clashing ones move to Shift (⇧T tangent, ⇧O concentric, ⇧M midpoint, ⇧X collinear) | No constraint letters, as in Fusion |
+| 2 | **Horizontal/Vertical** combined on H, as in Fusion | Separate H and V |
+| 3 | **Cut, Score and Drag-knife** export in the profile's colour and hairline; Draw and Engrave export each object's style | Object style everywhere |
+| 4 | **Marking menu:** a fixed ring of 8 with a contextual list beneath | A ring that changes with context |
+| 5 | **Current style** for new geometry, set in the Inspector or with the eyedropper | New geometry takes a fixed default style |

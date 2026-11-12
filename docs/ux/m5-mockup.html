@@ -73,6 +73,25 @@ header.top p{margin:4px 0 0;color:var(--page-muted);max-width:70ch;line-height:1
 .menu .mi .k{margin-left:auto;font-family:var(--f-mono);font-size:11px;color:var(--muted)}
 .menu .sep{height:1px;background:var(--line);margin:4px 2px}
 .menu .mh{font:600 10px var(--f-ui);letter-spacing:.08em;color:var(--muted);padding:6px 8px 2px}
+.menu .mi[draggable="true"]{cursor:grab}
+.menu .hintline{font-size:10.5px;color:var(--muted);padding:4px 8px;line-height:1.4;max-width:250px}
+.pinb{border:0;background:transparent;color:var(--muted);padding:1px 3px;border-radius:4px;cursor:pointer;opacity:0;display:inline-flex}
+.menu .mi:hover .pinb,.pinb.on{opacity:1}
+.pinb.on{color:var(--accent)}
+.pinb:hover{background:var(--panel-2)}
+.pinb .ico{width:14px!important;height:14px!important}
+.grp .btns{min-width:34px;min-height:32px;border-radius:6px}
+.grp .btns.drop{outline:2px dashed var(--accent);outline-offset:1px;background:var(--accent-soft)}
+.grp .btns .empty{font-size:10px;color:var(--muted);align-self:center;padding:0 6px}
+.tb.ins::before{content:"";position:absolute;left:-2px;top:3px;bottom:3px;width:3px;border-radius:2px;background:var(--accent)}
+.tb[draggable="true"]{cursor:grab}
+#keysFloat{position:absolute;inset:0;pointer-events:none;z-index:44}
+#keysFloat>*{pointer-events:auto}
+.keyspane .r{display:flex;justify-content:space-between;gap:6px;padding:2px 0;border-bottom:1px dotted var(--line);font-size:11px}
+.keyspane h5{margin:8px 0 2px;font:600 10px var(--f-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.keyspane .was{color:var(--warn);font-size:10px;margin-left:4px}
+.cv [data-h],.cv [data-sup],.cv [data-q],.cv [data-flip]{cursor:pointer}
+.cv [data-h]{cursor:grab}
 .main{display:grid;grid-template-columns:238px 1fr 276px;min-height:0}
 .pane{background:var(--panel);display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
 .pane.right{border-right:0;border-left:1px solid var(--line)}
@@ -133,7 +152,7 @@ input.fld{font-family:var(--f-mono)}
 .btn:hover{filter:brightness(1.05)}
 .btn.on{outline:2px solid var(--accent)}
 /* Command dialog (Fusion-style, docked top-right of canvas) */
-.dlg{position:absolute;top:12px;right:12px;width:268px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);z-index:20}
+.dlg{position:absolute;top:12px;right:12px;width:268px;max-height:calc(100% - 64px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);z-index:20}
 .dlg .dh{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font:600 12px var(--f-ui);text-transform:uppercase;letter-spacing:.06em}
 .dlg .dh .sp{flex:1}
 .dlg .db{padding:8px 10px;display:flex;flex-direction:column;gap:4px}
@@ -202,7 +221,9 @@ table.t td.mono{font-family:var(--f-mono)}
 .corner span{border-radius:2px;background:var(--panel-2);cursor:pointer}
 .corner span.on{background:var(--accent)}
 .banner{background:var(--accent-soft);color:var(--ink);border-radius:6px;padding:7px 10px;font-size:11.5px;display:flex;gap:8px;align-items:center}
-.fonts{border:1px solid var(--line);border-radius:5px;max-height:132px;overflow:auto;background:var(--canvas)}
+.fonts{border:1px solid var(--line);border-radius:5px;height:132px;min-height:80px;max-height:420px;overflow:auto;resize:vertical;background:var(--canvas)}
+.fonts .tag{font-size:9.5px;padding:0 4px;border-radius:3px;border:1px solid var(--line);color:var(--muted)}
+.fonts .empty{padding:10px;font-size:11px;color:var(--muted)}
 .fonts div{display:flex;align-items:baseline;gap:8px;padding:4px 8px;cursor:pointer}
 .fonts div:hover{background:var(--panel-2)}
 .fonts div.on{background:var(--accent-soft)}
@@ -280,23 +301,28 @@ table.t td.mono{font-family:var(--f-mono)}
         <div class="pb" id="palette" style="flex:none"></div>
         <div class="ph">Inspector<span class="sp"></span><button class="ib" title="Undock pane" data-undock="inspector">⧉</button></div>
         <div class="pb" id="inspector" style="flex:1"></div>
+        <div id="keysDock" style="display:flex;flex-direction:column;min-height:0"></div>
       </aside>
     </div>
     <div class="status" id="status"></div>
+    <div id="keysFloat"></div>
     <div id="overlay"></div>
   </div>
   </div></div>
   <div class="notes">
     <div class="card" id="notesFlow"></div>
     <div class="card">
-      <h2>For the owner to decide</h2>
+      <h2>Defaults chosen</h2>
+      <p>The owner hasn't ruled on these, so the design uses the recommended option for each. The owner can still change any of them.</p>
       <ol>
-        <li><b>Constraint keys.</b> Fusion gives constraints no letters. The design keeps Locus's letters where they don't clash (H, K, E, F, Q, W, Y) and moves the clashing ones to Shift (Shift+T tangent, Shift+O concentric, Shift+M midpoint, Shift+X collinear). Alternative: no letters, like Fusion.</li>
-        <li><b>Horizontal/Vertical.</b> Fusion has one combined tool that picks by the line's angle. The design follows Fusion (H); V goes away.</li>
-        <li><b>Style on Cut and Score layers.</b> Objects carry their own style, but LightBurn and Cricut read colour as the operation. The design exports Cut/Score/Drag-knife strokes in the profile's colour and hairline, and shows that in the Style section. Draw and Engrave export the object's own style.</li>
-        <li><b>Marking-menu ring.</b> The 8 ring slots stay the same everywhere so flicks become muscle memory; only the list beneath changes with context.</li>
-        <li><b>Style for new geometry.</b> New geometry takes the "current style" shown in the Inspector when nothing is selected. Picking with the eyedropper with nothing selected sets the current style.</li>
+        <li><b>Constraint keys.</b> Locus's letters stay where they don't clash with Fusion (H, K, E, F, Q, W, Y). The clashing ones move to Shift: Shift+T tangent, Shift+O concentric, Shift+M midpoint, Shift+X collinear.</li>
+        <li><b>Horizontal/Vertical.</b> One combined tool on H, as in Fusion; it picks by the line's angle.</li>
+        <li><b>Machine layers export in the profile's colour and hairline.</b> Cut, Score and Drag-knife use them because LightBurn and Cricut read colour as the operation. Draw and Engrave export each object's own style.</li>
+        <li><b>Marking menu: fixed ring, contextual list.</b> The 8 ring slots never move, so flicks become muscle memory; the list beneath changes with context.</li>
+        <li><b>Current style.</b> New geometry takes the current style, set in the Inspector or with the eyedropper when nothing is selected.</li>
       </ol>
+      <h3>Revised from the owner's first review</h3>
+      <p>Customisable toolbar · pattern handles on the canvas · offset drag and flip on the canvas · text: resizable font list, All/System/Custom filter, Add font, letter spacing · shortcuts as a dockable pane.</p>
       <h3>Not in this mockup</h3>
       <p>Machine preview, validation, plugins, MCP and touch keep their current behaviour and move into the new chrome unchanged. Touch long-press opens the same marking menu.</p>
     </div>
@@ -364,6 +390,8 @@ grid:'<path d="M4 4h16v16H4zM4 10h16M4 15h16M10 4v16M15 4v16"/>',
 snap:'<path d="M6 4v8a6 6 0 0 0 12 0V4"/><path d="M6 8h4M14 8h4"/>',
 stroke:'<path d="M4 17C8 7 16 7 20 17" stroke-width="3.5"/>',
 eyedrop:'<path d="m14 4 6 6-3 3-6-6z"/><path d="m11 7-7 7v6h6l7-7"/>',
+pin:'<path d="M9 3h6l-1 6 3 3H7l3-3z"/><path d="M12 12v9"/>',
+font:'<path d="M4 20 10 4h1l6 16M6.5 14h8"/><path d="M17 8h4M19 6v4"/>',
 param:'<path d="M5 7h14M5 12h9M5 17h11"/><text x="17" y="18" font-size="7" stroke="none" fill="currentColor">ƒ</text>'
 };
 const ic=(n,c='ico')=>`<svg class="${c}" viewBox="0 0 24 24">${I[n]||''}</svg>`;
@@ -443,13 +471,21 @@ const OUT=[
 ];
 const groups=['Create','Modify','Constrain','Inspect','Insert','Select'];
 let tab='sketch';
+const ALLACT=()=>A.concat(OUT).filter(a=>a[0]!=='sep');
+const findA=id=>ALLACT().find(a=>a[0]===id);
+/* Toolbar pins: per group, ordered, saved per user (locus.toolbar.v1 in the app; localStorage here). */
+const DEFAULT_PINS={};
+for(const g of groups.concat(['Preview','Export'])) DEFAULT_PINS[g]=ALLACT().filter(a=>a[4]===g&&a[5]).map(a=>a[0]);
+let pins=JSON.parse(JSON.stringify(DEFAULT_PINS));
+try{const v=JSON.parse(localStorage.getItem('locus-m5-pins')||'null'); if(v&&typeof v==='object') for(const g in DEFAULT_PINS) if(Array.isArray(v[g])) pins[g]=v[g].filter(id=>findA(id));}catch(e){}
+function savePins(){try{localStorage.setItem('locus-m5-pins',JSON.stringify(pins));}catch(e){}}
+const groupOf=id=>Object.keys(pins).find(g=>pins[g].includes(id));
 function ribbon(){
-  const list=tab==='sketch'?A:OUT;
   const gs=tab==='sketch'?groups:['Preview','Export'];
   let h='';
   for(const g of gs){
-    const items=list.filter(a=>a[4]===g&&a[5]);
-    h+=`<div class="grp"><div class="btns">${items.map(a=>`<button class="tb" data-act="${a[0]}" title="${a[1]}${a[3]?' ('+a[3]+')':''}">${ic(a[2])}</button>`).join('')}</div><button class="glabel" data-grp="${g}">${g.toUpperCase()} ▾</button></div>`;
+    const items=pins[g].map(findA).filter(Boolean);
+    h+=`<div class="grp"><div class="btns" data-dropg="${g}">${items.map(a=>`<button class="tb" draggable="true" data-drag="${a[0]}" data-from="ribbon" data-act="${a[0]}" title="${a[1]}${a[3]?' ('+a[3]+')':''} · drag to reorder, drag off to remove">${ic(a[2])}</button>`).join('')||'<span class="empty">drop here</span>'}</div><button class="glabel" data-grp="${g}">${g.toUpperCase()} ▾</button></div>`;
   }
   if(tab==='sketch')h+=`<div class="grp finish"><div class="btns"><button class="tb" data-go="export" title="Export (Ctrl+E)">${ic('export')}</button></div><button class="glabel" data-go="export">EXPORT</button></div>`;
   $('#ribbon').innerHTML=h;
@@ -457,15 +493,59 @@ function ribbon(){
 }
 function groupMenu(g,anchor){
   const list=(tab==='sketch'?A:OUT);
-  let h='',inG=false,last=null;
+  let h='',last=null;
   for(const a of list){
     if(a[0]==='sep'){ if(last===g) h+='<div class="sep"></div>'; continue;}
     last=a[4]; if(a[4]!==g) continue;
-    h+=`<button class="mi" data-act="${a[0]}">${ic(a[2])}${a[1]}<span class="k">${a[3]||''}</span></button>`;
+    const on=!!groupOf(a[0]);
+    h+=`<div class="mi" role="menuitem" tabindex="0" draggable="true" data-drag="${a[0]}" data-from="menu" data-act="${a[0]}">${ic(a[2])}${a[1]}<span class="k">${a[3]||''}</span><button class="pinb ${on?'on':''}" data-pin="${a[0]}" data-g="${g}" title="${on?'Unpin from toolbar':'Pin to toolbar'}">${ic('pin')}</button></div>`;
   }
+  h+=`<div class="sep"></div><div class="hintline">Drag a tool onto the toolbar, or click its pin. Drag a toolbar button sideways to reorder it, or off the toolbar to remove it.</div><div class="mi" role="menuitem" tabindex="0" data-resetpins="${g}">Reset ${g} toolbar</div>`;
   closeMenus();
   const m=document.createElement('div'); m.className='menu'; m.innerHTML=h; anchor.parentElement.appendChild(m);
 }
+function togglePin(id,g){
+  const cur=groupOf(id);
+  if(cur){ pins[cur]=pins[cur].filter(x=>x!==id); toast(`Unpinned ${findA(id)[1]} · still in ${findA(id)[4].toUpperCase()} ▾`); }
+  else { pins[g].push(id); toast(`Pinned ${findA(id)[1]} to the toolbar · one click from now on`); }
+  savePins(); ribbon();
+}
+/* drag-to-pin, reorder, drag-off-to-remove */
+let drag=null;
+function clearDrop(){document.querySelectorAll('.drop').forEach(x=>x.classList.remove('drop'));document.querySelectorAll('.tb.ins').forEach(x=>x.classList.remove('ins'));}
+function dropIndex(box,x,id){
+  const bs=[...box.querySelectorAll('.tb')].filter(b=>b.dataset.drag!==id);
+  let i=0; for(const b of bs){const r=b.getBoundingClientRect(); if(x>r.left+r.width/2) i++;}
+  return [i,bs];
+}
+frame.addEventListener('dragstart',e=>{
+  const d=e.target.closest&&e.target.closest('[data-drag]'); if(!d) return;
+  drag={id:d.dataset.drag,from:d.dataset.from};
+  try{e.dataTransfer.setData('text/plain',drag.id);e.dataTransfer.effectAllowed='move';}catch(_){}
+});
+frame.addEventListener('dragover',e=>{
+  if(!drag) return;
+  const box=e.target.closest('[data-dropg]');
+  clearDrop();
+  if(box){ e.preventDefault(); box.classList.add('drop'); const [i,bs]=dropIndex(box,e.clientX,drag.id); if(bs[i]) bs[i].classList.add('ins'); return; }
+  if(drag.from==='ribbon' && e.target.closest('#cw,.main')) e.preventDefault();
+});
+frame.addEventListener('drop',e=>{
+  if(!drag) return; e.preventDefault();
+  const box=e.target.closest('[data-dropg]'); const id=drag.id, a=findA(id);
+  if(box){
+    const g=box.dataset.dropg; const [i]=dropIndex(box,e.clientX,id);
+    const was=groupOf(id);
+    for(const k in pins) pins[k]=pins[k].filter(x=>x!==id);
+    pins[g].splice(i,0,id); savePins(); closeMenus(); ribbon();
+    toast(was?`Moved ${a[1]}`:`Pinned ${a[1]} to ${g.toUpperCase()} · one click from now on`);
+  } else if(drag.from==='ribbon'){
+    for(const k in pins) pins[k]=pins[k].filter(x=>x!==id); savePins(); ribbon();
+    toast(`Removed ${a[1]} from the toolbar · still in ${a[4].toUpperCase()} ▾`);
+  }
+  clearDrop(); drag=null;
+});
+frame.addEventListener('dragend',()=>{clearDrop();drag=null;});
 function closeMenus(){document.querySelectorAll('.menu').forEach(m=>m.remove());}
 
 /* ---------- canvas drawing ---------- */
@@ -495,8 +575,7 @@ function drawCanvas(){
   g+=`<path id="s1" class="pick g-free${sel('s1')}"${hide('s1')} d="${SLOT(220,300,380,8)}"/>`;
   g+=`<path id="s2" class="pick g-free${sel('s2')}"${hide('s2')} d="${SLOT(500,580,380,8)}"/>`;
   // text
-  g+=`<text id="tx" class="pick geo g-free${sel('tx')}"${hide('tx')} x="400" y="282" text-anchor="middle" style="font:700 96px var(--f-head);letter-spacing:6px;stroke-width:1.4">LOCUS</text>`;
-  if(s.extra) g+=s.extra;
+  g+=`<text id="tx" class="pick geo g-free${sel('tx')}"${hide('tx')} x="400" y="282" text-anchor="middle" style="font:700 96px ${state.font||'var(--f-head)'};letter-spacing:${6+(state.track||0)*4}px;stroke-width:1.4">LOCUS</text>`;
   // dimensions + glyphs
   if(s.dims){
     g+=dimH(80,720,36,70,'160.00')+dimV(70,470,44,80,'100.00');
@@ -505,6 +584,7 @@ function drawCanvas(){
     g+=`<g><line class="dimln" x1="260" y1="372" x2="260" y2="350"/><rect class="dimbg" x="238" y="336" width="46" height="17"/><text class="dimtx" x="261" y="349" text-anchor="middle">20.00</text></g>`;
     g+=glyph(240,52,'—')+glyph(726,260,'|')+glyph(392,500,'⋮')+glyph(304,388,'=')+glyph(584,388,'=');
   }
+  if(s.extra) g+=s.extra; // tool previews and handles draw on top
   $('#cv').innerHTML=g;
 }
 
@@ -610,6 +690,14 @@ const F={
   <li><b>Status bar</b>: what the next click does, sketch DOF, selection count, cursor, snap and units.</li>
   <li><b>Navigation bar</b> on the canvas: pan, zoom, fit and the display toggles. Pan is middle-drag or Space+drag; right-click is the marking menu.</li>
   <li>Every pane header has ⧉ to undock it (see <i>Undocked panes</i>).</li></ul>`},
+ toolbar:{name:'Customise toolbar',prompt:'Drag a tool from the open menu onto the toolbar, or click its pin. Drag a toolbar button off to remove it.',insp:'doc',openMenu:'Modify',
+  notes:`<h2>Customisable toolbar</h2><p>Owner feedback: the tools you use most should be one click, not two.</p><ul>
+  <li><b>Pin</b>: drag any tool from a group's ▾ menu up onto the toolbar and drop it where you want it, or click the pin beside it in the menu.</li>
+  <li><b>Reorder</b>: drag a toolbar button sideways, within its group or into another.</li>
+  <li><b>Remove</b>: drag a button off the toolbar, or right-click it ▸ Unpin. The tool stays in its group's menu.</li>
+  <li><b>Reset</b>: "Reset … toolbar" at the bottom of each menu.</li>
+  <li>Pins are saved per user in app settings (<code>locus.toolbar.v1</code>), not in documents. Pinned tools show first in tool search before you type.</li>
+  <li>Group labels stay fixed, so the ▾ menus always hold every tool.</li></ul><p>This mockup remembers your pins in this browser.</p>`},
  line:{name:'Tool model: Line',prompt:'Line: type a length, Tab for the angle, Enter to place. Esc ends the line; Esc again returns to Select.',insp:'doc',tool:'sketch.line',
   toolOpt:`<div class="row"><span class="lb">Line</span><span class="note" style="margin:0">Click-drag from an end for a tangent arc</span></div>`,
   extra:`<line class="pv" x1="482" y1="150" x2="612" y2="110" stroke="var(--preview)"/><circle cx="482" cy="150" r="3" fill="var(--geom-free)" stroke="none"/>
@@ -632,8 +720,13 @@ const F={
   <li><b>List</b> depends on context. Selection: Constrain ▸, Select chain, Copy / Paste / Duplicate, Style…, Properties. Empty canvas: Paste, Select all, Fit to content. Layers in the browser get the same menu with layer items.</li>
   <li>Touch long-press (#251) opens the same menu.</li>
   <li>Pan moved from right-drag to <b>middle-drag</b> and <b>Space+drag</b>; wheel zooms about the cursor.</li></ul>`},
- shortcuts:{name:'Shortcut map',prompt:'Shortcut map (?)',insp:'doc',modal:'shortcuts',
-  notes:`<h2>Shortcut map</h2><p>Follows Fusion's sketch letters. Amber notes show where a key changes from today's Locus. Every shortcut comes from the action registry, so the map, the menus and the tool search can't disagree, and users can rebind keys in Settings.</p>`},
+ shortcuts:{name:'Shortcuts pane',prompt:'Shortcuts pane: ? toggles it. ⧉ undocks it into its own window, for example on a second screen.',insp:'doc',keys:true,
+  notes:`<h2>Shortcuts pane</h2><p>The shortcut map is a pane, not a dialog (owner feedback), so it can stay open while you work.</p><ul>
+  <li><b>?</b> toggles it, and so does Help ▸ Keyboard shortcuts. It opens where it was last: docked or floating.</li>
+  <li>It docks like any pane (here under the Inspector). <b>⧉</b> undocks it into its own OS window, so it can live on a second screen; <b>⇲ Dock</b> brings it back.</li>
+  <li>The filter box searches by key or by action name.</li>
+  <li>It follows Fusion's sketch letters. Amber notes show keys that change from today's Locus.</li>
+  <li>Every row comes from the action registry, so the pane, menus and tool search can't disagree. Rebound keys show here too.</li></ul><p>Try it: press ?, click ⧉, then ⇲ Dock.</p>`},
  search:{name:'Tool search (S)',prompt:'Tool search: type to filter, Enter runs the top match.',insp:'doc',search:true,
   notes:`<h2>Tool search</h2><p><b>S</b> opens a search box at the cursor (Fusion's shortcut box). It searches every action in the registry by name and keywords, shows its key, and shows why a disabled action can't run ("select two lines"). Recent and pinned actions show before you type.</p><p>This replaces <b>S = Select</b>. Select is now Esc, as in Fusion.</p>`},
  style:{name:'Style + eyedropper',prompt:'Eyedropper: click the object to copy its style from. Esc cancels.',insp:'text',sel:['tx'],
@@ -655,28 +748,32 @@ const F={
   <li>The editor covers format (exporter), units, bed size and origin corner, offsets, colour per operation, the hairline width for Cut/Score (#284), and default operation parameters.</li></ul><p>Click the profiles on the left.</p>`},
  text:{name:'Text',prompt:'Text: type in place. Ctrl+Enter or OK commits; Esc cancels. Double-click placed text to edit it again.',insp:'text',sel:['tx'],dlg:'text',
   notes:`<h2>Text</h2><p>Fusion-style text (#222). Click to place, then type on the canvas; the dialog sets the rest with a live preview.</p><ul>
-  <li><b>Font list</b> is searchable and previews each font in its own face; single-line (Hershey/EMS) fonts are marked for plotters.</li>
-  <li>Height, alignment, letter spacing, and placement: free, fit to box, or on a path.</li>
-  <li><b>Re-editable</b>: double-click placed text, or "Edit text" in the marking menu, reopens this dialog (owner decision). Explode turns it into curves.</li></ul><p>Type in the font search to filter.</p>`},
- offset:{name:'Offset',prompt:'Offset: drag the arrow or type a distance. Enter commits.',insp:'slot',sel:['s1'],dlg:'offset',
-  extra:`<path class="pv" d="${SLOT(220,300,380,16)}"/><line x1="260" y1="372" x2="260" y2="358" stroke="var(--preview)" stroke-width="2" marker-end="url(#arp)"/>
-  <g class="hud"><rect x="268" y="344" width="58" height="20" rx="4" stroke-width="2"/><text x="274" y="358">2.00</text><text class="u" x="306" y="358">mm</text></g>`,
-  notes:`<h2>Offset</h2><p>Like Fusion's sketch Offset (#218): one pick, one value, Enter.</p><ul>
+  <li><b>Font list</b>: search it by name, and filter by <b>All / System / Custom</b>. Each font previews in its own face; single-line (Hershey/EMS) fonts are tagged for plotters.</li>
+  <li>The list <b>resizes</b>: drag its corner or click ⤢ Taller, for users with hundreds of fonts. The size is remembered.</li>
+  <li><b>Add font…</b> loads a .ttf, .otf or .ttc file. On the desktop it is copied into the app's font folder; on the web it is kept in browser storage (OPFS). Files are untrusted: size-bounded and parsed safely. Documents store the font reference, not the file (ADR 0012). Added fonts list under Custom.</li>
+  <li><b>Letter spacing</b> (tracking) in mm, typed or with the slider, with a live preview on the canvas.</li>
+  <li>Height, alignment, and placement: free, fit to box, or on a path.</li>
+  <li><b>Re-editable</b>: double-click placed text, or "Edit text" in the marking menu, reopens this dialog (owner decision). Explode turns it into curves.</li></ul><p>Try: filter by System, Add font, drag the letter spacing slider.</p>`},
+ offset:{name:'Offset',prompt:'Offset: drag the arrow on the canvas or type a distance. ⇅ flips the side. Enter commits.',insp:'slot',sel:['s1'],dlg:'offset',
+  notes:`<h2>Offset</h2><p>Like Fusion's sketch Offset (#218): one pick, then drag or type, then Enter.</p><ul>
   <li>Picking a curve selects its whole connected chain (Chain selection on by default).</li>
-  <li>Drag the arrow or type the distance; the flip button reverses the side. The preview is live.</li>
-  <li>After Enter the distance stays on the canvas as an editable dimension; the offset stays a live recipe (ADR 0010/0011) until exploded.</li></ul>`},
+  <li><b>Drag the arrow on the canvas</b> to set the distance with a live preview. Dragging across the curve switches sides, as in Fusion.</li>
+  <li><b>⇅ on the canvas</b> (or Flip in the dialog) flips the side without changing the distance.</li>
+  <li>The distance box and the canvas handle are the same value: drag one and the other follows. Type a number or an expression.</li>
+  <li>After Enter the distance stays on the canvas as an editable dimension; the offset stays a live recipe (ADR 0010/0011) until exploded.</li></ul><p>Try it: drag the purple arrow above the left slot, click ⇅, or type in the dialog.</p>`},
  move:{name:'Move / Rotate / Scale',prompt:'Move: drag an arrow or the centre, or type X and Y. Enter commits.',insp:'move',sel:['s2'],dlg:'move',
   notes:`<h2>Move, Rotate and Scale</h2><p>Three tools sharing one dialog (#219), so switching keeps the selection.</p><ul>
   <li><b>Move</b> (M): a manipulator with X/Y arrows and a free-drag centre; typed X and Y distances.</li>
   <li><b>Rotate</b>: pick a pivot (defaults to the selection centre), then drag the ring or type the angle.</li>
   <li><b>Scale</b>: pick a base point, then drag or type a factor.</li>
   <li><b>Create copy</b> on any of them. Each commit is one undo step through the command API and respects constraints (§6.2).</li></ul><p>Switch the tabs in the dialog.</p>`},
- pattern:{name:'Patterns',prompt:'Rectangular pattern: set quantity and distance; click an instance to suppress it.',insp:'hole',sel:['h1'],dlg:'pattern',
-  notes:`<h2>Patterns</h2><p>Fusion-style Rectangular and Circular Pattern dialogs (#221, §6.2.1).</p><ul>
-  <li>Pick objects, then directions (a line, or the X/Y axis) or the centre point.</li>
-  <li>Quantity and distance (spacing or extent) per direction, accepting expressions; One / Symmetric direction.</li>
-  <li>Drag the arrow handles on the canvas; click an instance's dot to suppress it.</li>
-  <li>Patterns stay recipes; their parameters show as editable dimensions after commit.</li></ul>`},
+ pattern:{name:'Patterns',prompt:'Pattern: drag the arrows for spacing, the ring knob for direction, − / + for count. Click a dot to suppress. Enter commits.',insp:'hole',sel:['h1'],dlg:'pattern',hidden:['h2','h3','h4'],
+  notes:`<h2>Patterns</h2><p>Fusion-style Rectangular and Circular Pattern (#221, §6.2.1). Everything can be set on the canvas without typing; the dialog shows the same values.</p><ul>
+  <li><b>Rectangular:</b> drag an arrowhead to set that direction's spacing; drag the knob on the ring around the source to turn the direction; click − / + beside a count to change it.</li>
+  <li><b>Circular:</b> drag the knob at the end of the arc to set the total angle; − / + set the count.</li>
+  <li><b>Suppress:</b> click an instance's dot to skip it (e.g. a hole on a fold line).</li>
+  <li>Dialog fields and handles stay in sync both ways; fields also take expressions (<code>pitch/2</code>).</li>
+  <li>Patterns stay recipes; after Enter their parameters show as editable dimensions on the canvas.</li></ul><p>Try it: drag the arrows and the ring knob, switch to Circular in the dialog.</p>`},
  mirror:{name:'Mirror',prompt:'Mirror: select objects, then the mirror line. Enter commits.',insp:'slot',sel:['s1','cl'],dlg:'mirror',hidden:['s2'],
   extra:`<path class="pv" d="${SLOT(500,580,380,8)}"/>${''}`,
   notes:`<h2>Mirror</h2><p>Mirror gets a tool (#215). The recipe already exists (ADR 0011).</p><ul>
@@ -701,7 +798,7 @@ const F={
   <li>Web: the same pane floats inside the browser window.</li>
   <li>The saved layout becomes <code>locus.layout.v2</code>; v1 layouts migrate (see the design doc).</li></ul>`}
 };
-const ORDER=['layout','line','marking','search','shortcuts','style','text','offset','move','pattern','mirror','construction','chain','export','profiles','undock'];
+const ORDER=['layout','toolbar','line','marking','search','shortcuts','style','text','offset','move','pattern','mirror','construction','chain','export','profiles','undock'];
 const state={flow:'layout',sel:new Set(),hidden:new Set(),dims:true,insp:'doc',layer:-1,prompt:'',pal:{grid:1,snap:1,auto:1,prof:0,pts:1,dims:1,cons:1,stroke:0},extra:'',eyedrop:false,moveTab:'Move'};
 
 function dialog(){
@@ -709,20 +806,30 @@ function dialog(){
   const sb=(t,empty)=>`<span class="selbox ${empty?'empty':''}">${t}${empty?'':' <b>✕</b>'}</span>`;
   const r=(l,c)=>`<div class="row"><span class="lb">${l}</span><span class="grow">${c}</span></div>`;
   const foot=`<div class="df"><span class="lft"><span class="kbd">Enter</span> OK · <span class="kbd">Esc</span> cancel</span><button class="btn" data-go="layout">Cancel</button><button class="btn pri" data-ok="1">OK</button></div>`;
+  const num=(k,w,u)=>`<span class="fld" style="width:${w}px;padding-right:4px"><input data-pf="${k}" style="width:100%;border:0;background:transparent;color:inherit;font:inherit;outline:none;min-width:0"><span class="u">${u||''}</span></span>`;
   if(f.dlg==='offset') h=`<div class="dlg"><div class="dh">${ic('offset')}Offset<span class="sp"></span></div><div class="db">
    ${r('Curves',sb('1 chain · 4 curves'))}${r('',`<div class="ck on"><i></i>Chain selection</div>`)}
-   ${r('Distance',`<span class="fld focus w">2.00<span class="u">mm</span></span>`)}
-   ${r('Direction',`<button class="btn">⇄ Flip</button>`)}${r('Corners',`<span class="seg"><button class="on">Round</button><button>Sharp</button></span>`)}
+   ${r('Distance',num('od',110,'mm'))}
+   ${r('Direction',`<button class="btn" data-oflip="1">⇅ Flip</button> <span class="note" style="margin:0">${os.flip?'inside':'outside'}</span>`)}${r('Corners',`<span class="seg"><button class="${os.sharp?'':'on'}" data-osharp="0">Round</button><button class="${os.sharp?'on':''}" data-osharp="1">Sharp</button></span>`)}
    <div class="note">The offset stays live: it follows the source until you explode it.</div></div>${foot}</div>`;
   if(f.dlg==='mirror') h=`<div class="dlg"><div class="dh">${ic('mirror')}Mirror</div><div class="db">
    ${r('Objects',sb('4 curves'))}${r('Mirror line',sb('1 line'))}${r('',`<div class="ck on"><i></i>Merge on mirror line</div>`)}</div>${foot}</div>`;
-  if(f.dlg==='pattern') h=`<div class="dlg"><div class="dh">${ic('rpattern')}Pattern<span class="sp"></span><span class="seg"><button class="on">Rectangular</button><button>Circular</button></span></div><div class="db">
-   ${r('Objects',sb('1 circle'))}${r('Directions',sb('X axis')+' '+sb('Y axis'))}
+  if(f.dlg==='pattern'){
+   const rect=ps.mode==='rect';
+   h=`<div class="dlg"><div class="dh">${ic(rect?'rpattern':'cpattern')}Pattern<span class="sp"></span><span class="seg"><button class="${rect?'on':''}" data-pmode="rect">Rectangular</button><button class="${rect?'':'on'}" data-pmode="circ">Circular</button></span></div><div class="db">
+   ${r('Objects',sb('1 circle'))}`+(rect?`${r('Directions',sb('X axis')+' '+sb('Y axis'))}
    ${r('Distribution',`<span class="seg"><button>Extent</button><button class="on">Spacing</button></span>`)}
-   <div class="row"><span class="lb">Quantity</span><span class="fld focus" style="width:50px">3</span><span class="fld" style="width:50px">2</span></div>
-   <div class="row"><span class="lb">Distance</span><span class="fld expr" style="width:80px">pitch/2</span><span class="fld" style="width:70px">75.00</span></div>
-   ${r('Direction type',`<span class="seg"><button class="on">One</button><button>Symmetric</button></span>`)}
-   ${r('Suppressed',`<span class="fld">1 instance</span>`)}</div>${foot}</div>`;
+   <div class="row"><span class="lb">Quantity</span>${num('qx',56)}${num('qy',56)}</div>
+   <div class="row"><span class="lb">Distance</span>${num('dx',80,'mm')}${num('dy',80,'mm')}</div>
+   <div class="row"><span class="lb">Direction</span>${num('ang',80,'°')}</div>
+   ${r('Direction type',`<span class="seg"><button class="on">One</button><button>Symmetric</button></span>`)}`:
+   `${r('Centre',sb('Point 3'))}
+   <div class="row"><span class="lb">Quantity</span>${num('cq',56)}</div>
+   <div class="row"><span class="lb">Total angle</span>${num('tot',80,'°')}</div>
+   ${r('',`<div class="ck on"><i></i>Rotate instances</div>`)}${r('',`<div class="ck"><i></i>Symmetric</div>`)}`)+
+   `${r('Suppressed',`<span class="fld" id="supn">1 instance</span>`)}
+   <div class="note">Fields take numbers or expressions (<code>pitch/2</code>). Dragging on the canvas updates them.</div></div>${foot}</div>`;
+  }
   if(f.dlg==='move'){
    const t=state.moveTab;
    const flds=t==='Move'?`<div class="row"><span class="lb">X distance</span><span class="fld" style="width:90px">0.00<span class="u">mm</span></span></div><div class="row"><span class="lb">Y distance</span><span class="fld focus" style="width:90px">-10.00<span class="u">mm</span></span></div>`:
@@ -733,28 +840,110 @@ function dialog(){
    ${r('Objects',sb('4 curves'))}${flds}${r('',`<div class="ck"><i></i>Create copy</div>`)}</div>${foot}</div>`;
   }
   if(f.dlg==='text'){
-   const fonts=[['Space Grotesk','var(--f-head)','Outline'],['Inter','var(--f-ui)','Outline'],['IBM Plex Mono','var(--f-mono)','Outline'],['Hershey Simplex','var(--f-ui)','Single-line'],['Hershey Script','cursive','Single-line'],['EMS Allure','cursive','Single-line'],['Relief SingleLine','var(--f-ui)','Single-line'],['Georgia','Georgia,serif','System'],['Courier New','\'Courier New\',monospace','System']];
-   h=`<div class="dlg" style="width:300px"><div class="dh">${ic('text')}Text</div><div class="db">
+   const ff=state.ffilter||'All';
+   const fonts=FONTS.concat(state.customFonts||[]).filter(x=>(ff==='All'||x[2]===ff)&&(!state.fontq||x[0].toLowerCase().includes(state.fontq.toLowerCase())));
+   const cur=state.fontName||'Space Grotesk';
+   const empty=ff==='Custom'&&!(state.customFonts||[]).length?'<div class="empty">No custom fonts yet. Use <b>Add font…</b> to load a .ttf, .otf or .ttc file.</div>':'<div class="empty">No fonts match</div>';
+   h=`<div class="dlg" style="width:320px"><div class="dh">${ic('text')}Text</div><div class="db">
    ${r('Text',`<span class="fld w focus">LOCUS|</span>`)}
-   <div class="row"><span class="lb">Font</span><input id="fontq" class="fld w" placeholder="Search fonts" value="${state.fontq||''}" style="font-family:var(--f-ui)"></div>
-   <div class="fonts" id="fontlist">${fonts.filter(x=>!state.fontq||x[0].toLowerCase().includes(state.fontq.toLowerCase())).map((x,i)=>`<div class="${x[0]==='Space Grotesk'?'on':''}"><span class="pv" style="font-family:${x[1]}">LOCUS Aa</span><span class="nm">${x[0]} · ${x[2]}</span></div>`).join('')||'<div class="nm" style="padding:8px">No fonts match</div>'}</div>
+   <div class="row"><span class="lb">Font</span><input id="fontq" class="fld w" placeholder="Search ${FONTS.length+(state.customFonts||[]).length} fonts" value="${state.fontq||''}" style="font-family:var(--f-ui)"></div>
+   <div class="row"><span class="seg">${['All','System','Custom'].map(x=>`<button class="${x===ff?'on':''}" data-ff="${x}">${x}</button>`).join('')}</span><span class="sp" style="flex:1"></span><button class="btn" data-addfont="1" title="Load a font file">${'+ Add font…'}</button></div>
+   <div class="fonts" id="fontlist" style="height:${state.fontH||150}px">${fonts.map(x=>`<div class="${x[0]===cur?'on':''}" data-font="${x[0]}" data-css="${x[1]}"><span class="pv" style="font-family:${x[1]}">LOCUS Aa</span><span class="nm">${x[0]}</span><span class="tag">${x[3]}</span></div>`).join('')||empty}</div>
+   <div class="row"><span class="note" style="margin:0;flex:1">Drag the list's corner to make it taller.</span><button class="ib" data-fonth="1" title="Expand the font list">${(state.fontH||150)>200?'⤡ Smaller':'⤢ Taller'}</button></div>
    <div class="row"><span class="lb">Height</span><span class="fld" style="width:80px">17.5<span class="u">mm</span></span></div>
+   <div class="row"><span class="lb">Letter spacing</span><span class="fld" style="width:80px;padding-right:4px"><input id="track" type="number" step="0.1" value="${state.track||0}" style="width:100%;border:0;background:transparent;color:inherit;font:inherit;outline:none;min-width:0"><span class="u">mm</span></span><input id="trackr" type="range" min="-2" max="6" step="0.1" value="${state.track||0}" style="flex:1;min-width:0;accent-color:var(--accent)"></div>
    ${r('Align',`<span class="seg"><button>Left</button><button class="on">Centre</button><button>Right</button></span>`)}
    ${r('Placement',`<span class="seg"><button class="on">Free</button><button>Fit box</button><button>On path</button></span>`)}
    </div>${foot}</div>`;
   }
   $('#dlg').innerHTML=h;
   const q=$('#fontq'); if(q){q.addEventListener('input',e=>{state.fontq=e.target.value;dialog();const n=$('#fontq');n.focus();n.setSelectionRange(n.value.length,n.value.length);});}
+  const fl=$('#fontlist'); if(fl&&window.ResizeObserver){ new ResizeObserver(()=>{ if(fl.isConnected) state.fontH=fl.offsetHeight; }).observe(fl); }
+  const tr=$('#track'), trr=$('#trackr');
+  const setT=v=>{ state.track=Math.max(-5,Math.min(20,+v||0)); drawCanvas(); };
+  if(tr){ tr.addEventListener('input',e=>{setT(e.target.value); trr.value=state.track;}); trr.addEventListener('input',e=>{setT(e.target.value); tr.value=state.track;}); }
+  document.querySelectorAll('[data-pf]').forEach(inp=>inp.addEventListener('input',e=>{
+    const k=inp.dataset.pf, v=parseFloat(inp.value); if(!isFinite(v)) return;
+    if(k==='od'){ os.d=Math.max(0.05,Math.min(os.flip?1.9:40,v)); }
+    else if(k==='qx'||k==='qy') ps[k]=Math.max(1,Math.min(20,Math.round(v)));
+    else if(k==='cq') ps.cq=Math.max(2,Math.min(36,Math.round(v)));
+    else if(k==='tot') ps.tot=Math.max(1,Math.min(360,v));
+    else if(k==='ang') ps.ang=v;
+    else ps[k]=Math.max(1,Math.min(200,v));
+    render(true);
+  }));
+  syncFields();
 }
+const FONTS=[['Space Grotesk','var(--f-head)','Bundled','Bundled'],['Inter','var(--f-ui)','Bundled','Bundled'],['IBM Plex Mono','var(--f-mono)','Bundled','Bundled'],['Hershey Simplex','var(--f-ui)','Bundled','Single-line'],['Hershey Script','cursive','Bundled','Single-line'],['EMS Allure','cursive','Bundled','Single-line'],['Relief SingleLine','var(--f-ui)','Bundled','Single-line'],['Arial','Arial,sans-serif','System','System'],['Bahnschrift','Bahnschrift,sans-serif','System','System'],['Calibri','Calibri,sans-serif','System','System'],['Cambria','Cambria,serif','System','System'],['Consolas','Consolas,monospace','System','System'],['Courier New','\'Courier New\',monospace','System','System'],['Georgia','Georgia,serif','System','System'],['Impact','Impact,sans-serif','System','System'],['Segoe UI','\'Segoe UI\',sans-serif','System','System'],['Times New Roman','\'Times New Roman\',serif','System','System'],['Trebuchet MS','\'Trebuchet MS\',sans-serif','System','System'],['Verdana','Verdana,sans-serif','System','System']];
 
+/* ---------- pattern + offset manipulators (canvas handles and dialog fields stay in sync) ---------- */
+const PX=4; // px per mm in this mock
+const ps={mode:'rect',qx:3,qy:2,dx:67.5,dy:75,ang:0,cq:6,tot:360,sup:new Set(['1,1'])};
+const os={d:2,flip:false,sharp:false};
+const SRC=[130,120], CEN=[250,250];
+const fmt=v=>(Math.round(v*100)/100).toFixed(2);
+function patternInstances(){
+  const out=[];
+  if(ps.mode==='rect'){
+    const a=ps.ang*Math.PI/180, u=[Math.cos(a),-Math.sin(a)], v=[Math.sin(a),Math.cos(a)];
+    for(let j=0;j<ps.qy;j++)for(let i=0;i<ps.qx;i++){ if(!i&&!j) continue;
+      out.push({k:i+','+j,x:SRC[0]+i*ps.dx*PX*u[0]+j*ps.dy*PX*v[0],y:SRC[1]+i*ps.dx*PX*u[1]+j*ps.dy*PX*v[1]}); }
+  } else {
+    const r=Math.hypot(SRC[0]-CEN[0],SRC[1]-CEN[1]), a0=Math.atan2(SRC[1]-CEN[1],SRC[0]-CEN[0]);
+    const step=(ps.tot>=360?360/ps.cq:ps.tot/Math.max(1,ps.cq-1))*Math.PI/180;
+    for(let k=1;k<ps.cq;k++) out.push({k:'c'+k,x:CEN[0]+r*Math.cos(a0-k*step),y:CEN[1]+r*Math.sin(a0-k*step)});
+  }
+  return out;
+}
+function chip(x,y,label,key){return `<g data-q="${key}"><rect x="${x}" y="${y}" width="18" height="18" rx="4" fill="var(--panel)" stroke="var(--preview)"/><text x="${x+9}" y="${y+13}" text-anchor="middle" style="font:600 12px var(--f-ui);fill:var(--preview)">${label}</text></g>`;}
+function hudBox(x,y,txt,unit){const w=14+txt.length*7.4+(unit?unit.length*7+4:0);return `<g class="hud"><rect x="${x}" y="${y}" width="${w}" height="20" rx="4" stroke-width="2"/><text x="${x+6}" y="${y+14}">${txt}</text>${unit?`<text class="u" x="${x+10+txt.length*7.4}" y="${y+14}">${unit}</text>`:''}</g>`;}
 function patternExtra(){
   let g='';
-  // new instances at middle column, one suppressed
-  [[400,120,0],[400,420,1]].forEach(([x,y,sup])=>g+=`<circle cx="${x}" cy="${y}" r="14" class="pv" ${sup?'opacity=".35"':''}/>`);
-  [[130,120],[400,120],[670,120],[130,420],[400,420],[670,420]].forEach(([x,y],i)=>{const sup=(x===400&&y===420);g+=`<g style="cursor:pointer"><circle cx="${x+17}" cy="${y-17}" r="6" fill="${sup?'var(--panel)':'var(--preview)'}" stroke="var(--preview)" stroke-width="1.4"/>${sup?`<path d="M${x+14} ${y-20}l6 6m0-6-6 6" stroke="var(--preview)" stroke-width="1.4"/>`:''}</g>`});
-  g+=`<line x1="130" y1="120" x2="380" y2="120" stroke="var(--preview)" stroke-width="2" marker-end="url(#arp)"/><line x1="130" y1="120" x2="130" y2="400" stroke="var(--preview)" stroke-width="2" marker-end="url(#arp)"/>`;
-  g+=`<g class="hud"><rect x="230" y="96" width="62" height="20" rx="4" stroke-width="2"/><text x="236" y="110">3 ×</text><text class="u" x="262" y="110">qty</text></g>`;
+  for(const p of patternInstances()){ const sup=ps.sup.has(p.k);
+    g+=`<circle cx="${p.x}" cy="${p.y}" r="14" class="pv" ${sup?'opacity=".3"':''}/>`;
+    g+=`<g data-sup="${p.k}"><circle cx="${p.x+17}" cy="${p.y-17}" r="6" fill="${sup?'var(--panel)':'var(--preview)'}" stroke="var(--preview)" stroke-width="1.4"/>${sup?`<path d="M${p.x+14} ${p.y-20}l6 6m0-6-6 6" stroke="var(--preview)" stroke-width="1.4"/>`:''}</g>`;
+  }
+  if(ps.mode==='rect'){
+    const a=ps.ang*Math.PI/180, u=[Math.cos(a),-Math.sin(a)], v=[Math.sin(a),Math.cos(a)];
+    const e1=[SRC[0]+ps.dx*PX*u[0],SRC[1]+ps.dx*PX*u[1]], e2=[SRC[0]+ps.dy*PX*v[0],SRC[1]+ps.dy*PX*v[1]];
+    // angle ring + knob
+    const kn=[SRC[0]+40*u[0],SRC[1]+40*u[1]];
+    g+=`<circle cx="${SRC[0]}" cy="${SRC[1]}" r="40" stroke="var(--preview)" stroke-dasharray="2 4" stroke-width="1"/>`;
+    g+=`<line x1="${SRC[0]}" y1="${SRC[1]}" x2="${e1[0]}" y2="${e1[1]}" stroke="var(--preview)" stroke-width="2"/><line x1="${SRC[0]}" y1="${SRC[1]}" x2="${e2[0]}" y2="${e2[1]}" stroke="var(--preview)" stroke-width="2"/>`;
+    g+=`<g data-h="d1"><circle cx="${e1[0]}" cy="${e1[1]}" r="11" fill="transparent" stroke="none"/><path d="M${e1[0]} ${e1[1]} l-10 -6 v12z" transform="rotate(${-ps.ang} ${e1[0]} ${e1[1]})" fill="var(--preview)" stroke="none"/></g>`;
+    g+=`<g data-h="d2"><circle cx="${e2[0]}" cy="${e2[1]}" r="11" fill="transparent" stroke="none"/><path d="M${e2[0]} ${e2[1]} l-10 -6 v12z" transform="rotate(${90-ps.ang} ${e2[0]} ${e2[1]})" fill="var(--preview)" stroke="none"/></g>`;
+    g+=`<g data-h="ang"><circle cx="${kn[0]}" cy="${kn[1]}" r="7" fill="var(--panel)" stroke="var(--preview)" stroke-width="2"/><path d="M${kn[0]-3} ${kn[1]}a3 3 0 1 1 3 3" stroke="var(--preview)" stroke-width="1.2"/></g>`;
+    const m1=[(SRC[0]+e1[0])/2,(SRC[1]+e1[1])/2];
+    g+=hudBox(m1[0]-30,m1[1]-34,fmt(ps.dx),'mm');
+    g+=chip(m1[0]+42,m1[1]-34,'−','x-')+hudBox(m1[0]+62,m1[1]-34,ps.qx+'×','')+chip(m1[0]+62+14+ps.qx.toString().length*7.4+8,m1[1]-34,'+','x+');
+    const m2=[(SRC[0]+e2[0])/2,(SRC[1]+e2[1])/2];
+    g+=hudBox(m2[0]+20,m2[1]-10,fmt(ps.dy),'mm')+chip(m2[0]+20,m2[1]+14,'−','y-')+hudBox(m2[0]+40,m2[1]+13,ps.qy+'×','')+chip(m2[0]+40+14+ps.qy.toString().length*7.4+6,m2[1]+14,'+','y+');
+    if(ps.ang) g+=hudBox(SRC[0]-20,SRC[1]+46,fmt(ps.ang),'°');
+  } else {
+    const r=Math.hypot(SRC[0]-CEN[0],SRC[1]-CEN[1]), a0=Math.atan2(SRC[1]-CEN[1],SRC[0]-CEN[0]);
+    const t=ps.tot*Math.PI/180, end=[CEN[0]+(r+26)*Math.cos(a0-t),CEN[1]+(r+26)*Math.sin(a0-t)], st=[CEN[0]+(r+26)*Math.cos(a0),CEN[1]+(r+26)*Math.sin(a0)];
+    const large=ps.tot>180?1:0;
+    g+=`<circle cx="${CEN[0]}" cy="${CEN[1]}" r="4" fill="var(--preview)" stroke="none"/><line x1="${CEN[0]}" y1="${CEN[1]}" x2="${SRC[0]}" y2="${SRC[1]}" stroke="var(--preview)" stroke-dasharray="3 3" stroke-width="1"/>`;
+    g+= ps.tot>=360?`<circle cx="${CEN[0]}" cy="${CEN[1]}" r="${r+26}" stroke="var(--preview)" stroke-width="2"/>`:`<path d="M${st[0]} ${st[1]} A${r+26} ${r+26} 0 ${large} 0 ${end[0]} ${end[1]}" stroke="var(--preview)" stroke-width="2"/>`;
+    g+=`<g data-h="tot"><circle cx="${end[0]}" cy="${end[1]}" r="8" fill="var(--panel)" stroke="var(--preview)" stroke-width="2.4"/></g>`;
+    g+=hudBox(end[0]+12,end[1]-10,fmt(ps.tot),'°')+chip(CEN[0]-40,CEN[1]+14,'−','c-')+hudBox(CEN[0]-18,CEN[1]+13,ps.cq+'×','')+chip(CEN[0]+18,CEN[1]+14,'+','c+');
+  }
   return g;
+}
+function offsetExtra(){
+  const r=os.flip?Math.max(0.5,8-os.d*PX):8+os.d*PX;
+  const path=os.sharp?`M${220-r} ${380-r} H${300+r} V${380+r} H${220-r} Z`:SLOT(220,300,380,r);
+  const hy=380-r;
+  return `<path class="pv" d="${path}"/>
+  <line x1="260" y1="372" x2="260" y2="${hy}" stroke="var(--preview)" stroke-width="1.4" stroke-dasharray="2 2"/>
+  <g data-h="ofs"><circle cx="260" cy="${hy}" r="12" fill="transparent" stroke="none"/><path d="M260 ${hy} l-6 ${os.flip?-10:10} h12z" fill="var(--preview)" stroke="none"/></g>
+  ${hudBox(272,hy-26,fmt(os.d),'mm')}
+  <g data-flip="1"><rect x="232" y="${hy-30}" width="22" height="20" rx="4" fill="var(--panel)" stroke="var(--preview)"/><text x="243" y="${hy-15}" text-anchor="middle" style="font:600 12px var(--f-ui);fill:var(--preview)">⇅</text></g>`;
+}
+function syncFields(){
+  document.querySelectorAll('[data-pf]').forEach(inp=>{ if(document.activeElement===inp) return; const k=inp.dataset.pf;
+    const v=k==='od'?os.d:ps[k]; inp.value=(k==='qx'||k==='qy'||k==='cq')?v:fmt(v); });
+  const s=$('#supn'); if(s) s.textContent=ps.sup.size+(ps.sup.size===1?' instance':' instances');
 }
 function moveExtra(){
   const t=state.moveTab, cx=540, cy=380;
@@ -815,15 +1004,31 @@ function modal(kind){
      </div></div>
      <div class="mf"><span class="lft">Profiles are saved in app settings, not in documents.</span><button class="btn" data-close="1">Close</button></div></div>`;
   }
-  if(kind==='shortcuts'){
-    const S=[['Fusion sketch keys',[['S','Tool search','was Select'],['L','Line',''],['R','2-Point Rectangle','was Center Arc'],['C','Center Circle',''],['A','3-Point Arc',''],['D','Sketch Dimension',''],['T','Trim','was Tangent'],['O','Offset','was Concentric'],['M','Move/Copy','was Midpoint'],['X','Normal/Construction','was Collinear'],['I','Measure','was Tangent Arc']]],
-     ['Other Locus tools',[['P','Point',''],['G','Polygon',''],['U','Slot',''],['N','Bézier pen',''],['F','Fix/Unfix',''],['H','Horizontal/Vertical','V merged in'],['K','Coincident',''],['Q','Parallel',''],['W','Perpendicular',''],['Y','Symmetric',''],['E','Equal',''],['⇧T ⇧O ⇧M ⇧X','Tangent · Concentric · Midpoint · Collinear','']]],
-     ['Edit, view and mouse',[['Del / ⌫','Delete selection','now deletes (#223)'],['Esc','Cancel step · back to Select',''],['Enter','Commit',''],['Tab','Next typed field',''],['Ctrl+Z / Ctrl+Y','Undo / redo',''],['Ctrl+C / V / D','Copy · paste · duplicate',''],['Ctrl+A','Select all',''],['Ctrl+E','Export…',''],['Right-click','Marking menu','was pan'],['Middle-drag / Space+drag','Pan',''],['Wheel · double middle-click','Zoom · fit',''],['Alt (hold)','Suppress auto-constraints',''],['?','This map','']]]];
-    h=`<div class="modal"><div class="mh2">Keyboard and mouse<span class="sp"></span><button class="ib" data-close="1">✕</button></div><div class="mb"><div class="sheet">
-    ${S.map(([t,rows])=>`<div><h5>${t}</h5>${rows.map(r=>`<div class="r"><span><span class="kbd">${r[0]}</span></span><span style="text-align:right">${r[1]}${r[2]?`<span class="was">${r[2]}</span>`:''}</span></div>`).join('')}</div>`).join('')}
-    </div><p class="note" style="margin-top:10px">B (was 2-Point Rectangle) and V (was Vertical) are freed. Fusion gives constraints no letters; the ones kept here are Locus extras. Rebind any key in Settings ▸ Keyboard.</p></div></div>`;
-  }
   $('#overlay').innerHTML=`<div class="scrim" data-scrim="1">${h}</div>`;
+}
+
+/* ---------- shortcuts pane (dockable / undockable) ---------- */
+const KEYS=[['Fusion sketch keys',[['S','Tool search','was Select'],['L','Line',''],['R','2-Point Rectangle','was Center Arc'],['C','Center Circle',''],['A','3-Point Arc',''],['D','Sketch Dimension',''],['T','Trim','was Tangent'],['O','Offset','was Concentric'],['M','Move/Copy','was Midpoint'],['X','Normal/Construction','was Collinear'],['I','Measure','was Tangent Arc']]],
+ ['Other Locus tools',[['P','Point',''],['G','Polygon',''],['U','Slot',''],['N','Bézier pen',''],['F','Fix/Unfix',''],['H','Horizontal/Vertical','V merged in'],['K','Coincident',''],['Q','Parallel',''],['W','Perpendicular',''],['Y','Symmetric',''],['E','Equal',''],['⇧T','Tangent','was T'],['⇧O','Concentric','was O'],['⇧M','Midpoint','was M'],['⇧X','Collinear','was X']]],
+ ['Edit, view and mouse',[['Del / ⌫','Delete selection','now deletes'],['Esc','Cancel step · Select',''],['Enter','Commit',''],['Tab','Next typed field',''],['Ctrl+Z / Y','Undo / redo',''],['Ctrl+C / V / D','Copy · paste · duplicate',''],['Ctrl+A','Select all',''],['Ctrl+E','Export…',''],['Right-click','Marking menu','was pan'],['Middle / Space+drag','Pan',''],['Wheel','Zoom',''],['Dbl middle-click','Fit',''],['Alt (hold)','No auto-constraints',''],['?','Toggle this pane','']]]];
+state.keys='off';
+function keysBody(){
+  return `<div style="padding:6px 8px 0"><input id="keysq" class="fld w" placeholder="Filter keys or actions" value="${state.keysq||''}" style="font-family:var(--f-ui)"></div><div class="pb keyspane" id="keysList">${keysRows((state.keysq||'').toLowerCase())}</div>`;
+}
+function keysRows(q){
+  return KEYS.map(([t,rows])=>{const rr=rows.filter(r=>!q||(r[0]+' '+r[1]).toLowerCase().includes(q)); return rr.length?`<h5>${t}</h5>${rr.map(r=>`<div class="r"><span class="kbd">${r[0]}</span><span style="text-align:right">${r[1]}${r[2]?`<span class="was">${r[2]}</span>`:''}</span></div>`).join('')}`:'';}).join('')||'<div class="note">No match</div>';
+}
+function keysPane(){
+  const dock=$('#keysDock'), fl=$('#keysFloat');
+  dock.innerHTML=''; fl.innerHTML=''; dock.style.flex='0 0 0px';
+  if(state.keys==='dock'){
+    dock.style.flex='0 0 290px';
+    dock.innerHTML=`<div class="ph">Shortcuts<span class="sp"></span><button class="ib" data-keys="float" title="Undock into its own window">⧉</button><button class="ib" data-keys="off" title="Close (?)">✕</button></div>${keysBody()}`;
+  } else if(state.keys==='float'){
+    fl.innerHTML=`<div class="floatwin" style="left:940px;top:120px;width:310px;height:430px;display:flex;flex-direction:column"><div class="osbar"><b>Shortcuts — Locus</b><span class="sp"></span><button class="ib" data-keys="dock" title="Dock back">⇲ Dock</button><i></i><i></i><i></i></div>${keysBody()}<div class="note" style="padding:0 8px 6px">Its own OS window on the desktop, so it can sit on another screen. A floating panel on the web.</div></div>`;
+  }
+  const kl=$('#keysList'); if(kl){kl.style.flex='1';kl.style.minHeight='0';kl.style.overflow='auto';}
+  const qi=$('#keysq'); if(qi) qi.addEventListener('input',e=>{state.keysq=e.target.value;$('#keysList').innerHTML=keysRows(state.keysq.toLowerCase());});
 }
 
 /* ---------- marking menu ---------- */
@@ -875,13 +1080,16 @@ function setFlow(id){
   if(f.mm) markingMenu(f.mm.x+238,f.mm.y+118);
   if(f.search) toolSearch('');
   if(f.float) floatPane();
+  if(f.keys){ state.keys=state.lastKeys||'dock'; keysPane(); }
+  if(f.openMenu){ const gl=document.querySelector(`[data-grp="${f.openMenu}"]`); if(gl) groupMenu(f.openMenu,gl); }
   document.querySelectorAll('#flows button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.flow===id));
   $('#notesFlow').innerHTML=f.notes;
   try{localStorage.setItem('locus-m5-flow',id);}catch(e){}
 }
-function render(){
+function render(keepDlg){
   const f=F[state.flow];
-  state.extra=(f.extra||'')+(state.flow==='pattern'?patternExtra():'')+(state.flow==='move'?moveExtra():'');
+  state.extra=(f.extra||'')+(state.flow==='pattern'?patternExtra():'')+(state.flow==='move'?moveExtra():'')+(state.flow==='offset'?offsetExtra():'');
+  if(keepDlg){ drawCanvas(); syncFields(); return; }
   ribbon();drawCanvas();browser();palette();inspector();status();dialog();
 }
 function floatPane(){
@@ -912,6 +1120,10 @@ $('#searchBtn').onclick=()=>setFlow('search');
 frame.addEventListener('click',e=>{
   const t=e.target;
   const g=t.closest('[data-grp]'); if(g){ if(g.parentElement.querySelector('.menu')){closeMenus();} else groupMenu(g.dataset.grp,g); return; }
+  const pn=t.closest('[data-pin]'); if(pn){ e.stopPropagation(); togglePin(pn.dataset.pin,pn.dataset.g); const gl=document.querySelector(`[data-grp="${pn.dataset.g}"]`); if(gl) groupMenu(pn.dataset.g,gl); return; }
+  const rp=t.closest('[data-resetpins]'); if(rp){ const g=rp.dataset.resetpins; pins[g]=DEFAULT_PINS[g].slice(); savePins(); closeMenus(); ribbon(); toast(`${g} toolbar reset`); return; }
+  const up=t.closest('[data-unpin]'); if(up){ togglePin(up.dataset.unpin); closeMenus(); return; }
+  const ks=t.closest('[data-keys]'); if(ks){ state.keys=ks.dataset.keys; if(state.keys!=='off') state.lastKeys=state.keys; keysPane(); return; }
   const go=t.closest('[data-go]'); if(go){ setFlow(go.dataset.go); return; }
   const act=t.closest('[data-act]'); if(act){ runAction(act.dataset.act); return; }
   if(!t.closest('.menu')) closeMenus();
@@ -929,9 +1141,62 @@ frame.addEventListener('click',e=>{
   if(t.closest('#eyedrop')){ state.eyedrop=!state.eyedrop; state.prompt=state.eyedrop?'Eyedropper: click the object to copy its style from. Esc cancels.':F[state.flow].prompt; inspector(); status(); $('#cv').style.cursor=state.eyedrop?'crosshair':''; return; }
   const ly=t.closest('[data-layer]'); if(ly){ state.layer=+ly.dataset.layer; state.insp='layer'; state.sel.clear(); browser(); inspector(); drawCanvas(); status(); return; }
   const xx=t.closest('[data-x]'); if(xx){ setFlow('construction'); return; }
+  const pm=t.closest('[data-pmode]'); if(pm){ ps.mode=pm.dataset.pmode; render(); return; }
+  if(t.closest('[data-oflip]')){ os.flip=!os.flip; if(os.flip) os.d=Math.min(os.d,1.9); render(); return; }
+  const osh=t.closest('[data-osharp]'); if(osh){ os.sharp=osh.dataset.osharp==='1'; render(); return; }
+  const ff=t.closest('[data-ff]'); if(ff){ state.ffilter=ff.dataset.ff; dialog(); return; }
+  if(t.closest('[data-addfont]')){ addFont(); return; }
+  const fo=t.closest('[data-font]'); if(fo){ state.fontName=fo.dataset.font; state.font=fo.dataset.css; dialog(); drawCanvas(); return; }
+  if(t.closest('[data-fonth]')){ state.fontH=(state.fontH||150)>200?150:340; dialog(); return; }
 });
-// canvas picking: single click = one curve, double click = chain
+const SAMPLE_FONTS=[['My Stencil','Impact,sans-serif','Custom','Custom'],['Workshop Sign','Georgia,serif','Custom','Custom'],['Plotter Hand','cursive','Custom','Custom · single-line']];
+function addFont(){
+  state.customFonts=state.customFonts||[];
+  const n=state.customFonts.length, b=SAMPLE_FONTS[n%3];
+  const f=[b[0]+(n>=3?' '+(n+1):''),b[1],b[2],b[3]];
+  state.customFonts.push(f); state.ffilter='Custom'; state.fontName=f[0]; state.font=f[1];
+  dialog(); drawCanvas(); toast(`Added ${f[0]} · in the app this opens a file picker for .ttf / .otf / .ttc`);
+}
+/* ribbon button right-click: unpin */
+$('#ribbon').addEventListener('contextmenu',e=>{
+  const b=e.target.closest('.tb[data-drag]'); if(!b) return; e.preventDefault(); closeMenus();
+  const a=findA(b.dataset.drag); const m=document.createElement('div'); m.className='menu';
+  m.style.left=b.offsetLeft+'px';
+  m.innerHTML=`<div class="mi" data-unpin="${a[0]}">${ic('pin')}Unpin ${a[1]} from toolbar</div>`;
+  b.closest('.grp').appendChild(m);
+});
+/* canvas handles: pattern arrows, ring knob, total-angle knob, offset arrow; chips and suppress dots */
 const cv=$('#cv');
+let hdrag=null;
+function svgPt(e){const pt=cv.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY; return pt.matrixTransform(cv.getScreenCTM().inverse());}
+cv.addEventListener('pointerdown',e=>{
+  const h=e.target.closest('[data-h]'); if(!h) return;
+  e.preventDefault(); hdrag=h.dataset.h; cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove',e=>{
+  if(!hdrag) return; const p=svgPt(e);
+  if(hdrag==='ofs'){
+    const dy=380-p.y;
+    if(dy>=8){ os.flip=false; os.d=Math.max(0.05,(dy-8)/PX); } else { os.flip=true; os.d=Math.max(0.05,Math.min(1.9,(8-Math.max(0,dy))/PX)); }
+    os.d=Math.round(os.d*20)/20; render(true);
+    const fl=document.querySelector('[data-oflip]'); if(fl&&fl.nextElementSibling) fl.nextElementSibling.textContent=os.flip?'inside':'outside';
+    return;
+  }
+  const a=ps.ang*Math.PI/180, u=[Math.cos(a),-Math.sin(a)], v=[Math.sin(a),Math.cos(a)], w=[p.x-SRC[0],p.y-SRC[1]];
+  if(hdrag==='d1') ps.dx=Math.max(5,Math.round((w[0]*u[0]+w[1]*u[1])/PX*2)/2);
+  if(hdrag==='d2') ps.dy=Math.max(5,Math.round((w[0]*v[0]+w[1]*v[1])/PX*2)/2);
+  if(hdrag==='ang'){ let d=Math.round(-Math.atan2(w[1],w[0])*180/Math.PI); if(Math.abs(d)<3) d=0; ps.ang=d; }
+  if(hdrag==='tot'){ const a0=Math.atan2(SRC[1]-CEN[1],SRC[0]-CEN[0]), ap=Math.atan2(p.y-CEN[1],p.x-CEN[0]); let d=Math.round(((a0-ap)*180/Math.PI+720)%360); if(d<5||d>355) d=360; ps.tot=d; }
+  render(true);
+});
+cv.addEventListener('pointerup',e=>{ if(hdrag){ hdrag=null; try{cv.releasePointerCapture(e.pointerId);}catch(_){} }});
+cv.addEventListener('click',e=>{
+  const sp=e.target.closest('[data-sup]'); if(sp){ e.stopImmediatePropagation(); const k=sp.dataset.sup; if(ps.sup.has(k)) ps.sup.delete(k); else ps.sup.add(k); render(true); toast(ps.sup.has(k)?'Instance suppressed':'Instance restored'); return; }
+  const q=e.target.closest('[data-q]'); if(q){ e.stopImmediatePropagation(); const ax=q.dataset.q[0], op=q.dataset.q[1]; const key=ax==='x'?'qx':ax==='y'?'qy':'cq'; const lo=key==='cq'?2:1; ps[key]=Math.max(lo,Math.min(20,ps[key]+(op==='+'?1:-1))); render(true); return; }
+  if(e.target.closest('[data-flip]')){ e.stopImmediatePropagation(); os.flip=!os.flip; if(os.flip) os.d=Math.min(os.d,1.9); render(); return; }
+  if(e.target.closest('[data-h]')) e.stopImmediatePropagation();
+},true);
+// canvas picking: single click = one curve, double click = chain
 function pickKind(id){ if(id==='tx') return 'text'; if(/^h[234]$/.test(id)) return 'hole'; if(id==='cl'||id==='cc') return 'cons'; return 'slot'; }
 let clickT=null;
 cv.addEventListener('click',e=>{
@@ -967,7 +1232,7 @@ document.addEventListener('keydown',e=>{
   if(k==='Escape'){ if($('#overlay').innerHTML||document.querySelector('.menu')){closeOverlay();closeMenus();return;} if(state.eyedrop){state.eyedrop=false;inspector();return;} setFlow('layout'); return; }
   if(e.ctrlKey||e.metaKey){ if(k.toLowerCase()==='e'){e.preventDefault();setFlow('export');} if(k.toLowerCase()==='a'){e.preventDefault();state.sel=new Set(['o1','o2','o3','o4','o5','o6','o7','o8','ofs','h1','h2','h3','h4','s1','s2','tx']);state.insp='chain';drawCanvas();inspector();status();} return; }
   if(k==='Delete'||k==='Backspace'){ e.preventDefault(); deleteSel(); return; }
-  if(k==='?'){ setFlow('shortcuts'); return; }
+  if(k==='?'){ if(state.keys!=='off'){ state.keys='off'; keysPane(); } else setFlow('shortcuts'); return; }
   if(k===' '){ e.preventDefault(); state.prompt='Space held: drag to pan'; status(); return; }
   const m={l:'sketch.line',o:'sketch.offset',m:'modify.move',x:'modify.construction',t:'modify.trim',d:'constrain.dimension',c:'sketch.circle',r:'sketch.rect2',a:'sketch.arc3',h:'constrain.hv',i:'inspect.measure',e:'constrain.equal',p:'sketch.point',g:'sketch.polygon',u:'sketch.slot',n:'sketch.bezier',k:'constrain.coincident',f:'constrain.fix',q:'constrain.parallel',w:'constrain.perp',y:'constrain.symmetric'};
   if(e.shiftKey){ const sm={T:'constrain.tangent',O:'constrain.concentric',M:'constrain.midpoint',X:'constrain.collinear'}; if(sm[k]){runAction(sm[k]);} return; }
