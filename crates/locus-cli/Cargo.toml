@@ -25,3 +25,9 @@ ron.workspace = true
 
 # The plugin host is desktop-only (SPEC §0); so is this CLI.
 locus-plugin-host.workspace = true
+# MCP over stdio (SPEC §16.2, #228); desktop-only like the rest of this CLI.
+locus-mcp = { path = "../locus-mcp" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[dev-dependencies]
+serde_json.workspace = true
