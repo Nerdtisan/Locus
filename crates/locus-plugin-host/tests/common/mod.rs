@@ -80,9 +80,50 @@ pub struct Fixture {
     pub memory_pages: u32,
     /// Import a clock function, which the sandbox must refuse.
     pub import_clock: bool,
-    /// A modifier (`modify` returns its input unchanged) instead of a generator.
-    pub modifier: bool,
+    /// Which world the fixture targets. `generate` is the body of its main
+    /// call: `generate`, `import` or `validate` (modifiers echo their input).
+    pub world: World,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum World {
+    Generator,
+    Modifier,
+    Importer,
+    Validator,
+}
+
+/// `result<list<T>, _>::ok((ptr, len))`.
+pub fn ok_list(ptr: u32, len: u32) -> Vec<u8> {
+    u32s(&[0, ptr, len])
+}
+
+/// A `segment` holding a circle (64 bytes: shape variant, then `reversed`).
+pub fn circle_segment(x: f64, y: f64, r: f64) -> Vec<u8> {
+    let mut s = vec![2, 0, 0, 0, 0, 0, 0, 0];
+    s.extend(f64s(&[x, y, r]));
+    s.resize(64, 0);
+    s
+}
+
+/// A `path` record: segments (ptr, len), closed.
+pub fn path(segs: (u32, u32), closed: bool) -> Vec<u8> {
+    let mut p = u32s(&[segs.0, segs.1]);
+    p.extend([u8::from(closed), 0, 0, 0]);
+    p
+}
+
+/// A validator `finding` (28 bytes). Severity: 0 warning, 1 error.
+pub fn finding(severity: u8, msg: (u32, u32), layer: Option<u32>, path: Option<u32>) -> Vec<u8> {
+    let mut f = vec![severity, 0, 0, 0];
+    f.extend(u32s(&[msg.0, msg.1]));
+    for o in [layer, path] {
+        f.extend(u32s(&[u32::from(o.is_some()), o.unwrap_or(0)]));
+    }
+    f
+}
+
+pub const FINDING_MSG: &[u8] = b"fixture finding";
 
 impl Fixture {
     pub fn well_behaved() -> Fixture {
@@ -107,7 +148,46 @@ impl Fixture {
             ],
             memory_pages: 2,
             import_clock: false,
-            modifier: false,
+            world: World::Generator,
+        }
+    }
+
+    /// An importer claiming `.plt` that returns one closed path: a circle
+    /// of radius 5 at (10, 10).
+    pub fn importer() -> Fixture {
+        Fixture {
+            id: b"com.example.importer".to_vec(),
+            name: b"Importer".to_vec(),
+            world: World::Importer,
+            data: vec![
+                (POINTS, circle_segment(10.0, 10.0, 5.0)),
+                (ENTITIES, path((POINTS, 1), true)),
+                (RESULT, ok_list(ENTITIES, 1)),
+                // extensions: list<string> at 1184 → one string "plt".
+                (CONSTRAINTS, u32s(&[1192, 1, 1200, 3])),
+                (1200, b"plt".to_vec()),
+            ],
+            generate: format!("i32.const {RESULT}"),
+            ..Fixture::well_behaved()
+        }
+    }
+
+    /// A validator returning one warning on layer 0.
+    pub fn validator() -> Fixture {
+        Fixture {
+            id: b"com.example.validator".to_vec(),
+            name: b"Validator".to_vec(),
+            world: World::Validator,
+            data: vec![
+                (ERROR_MSG, FINDING_MSG.to_vec()),
+                (
+                    POINTS,
+                    finding(0, (ERROR_MSG, FINDING_MSG.len() as u32), Some(0), None),
+                ),
+                (RESULT, ok_list(POINTS, 1)),
+            ],
+            generate: format!("i32.const {RESULT}"),
+            ..Fixture::well_behaved()
         }
     }
 
@@ -116,7 +196,7 @@ impl Fixture {
         Fixture {
             id: b"com.example.identity".to_vec(),
             name: b"Identity".to_vec(),
-            modifier: true,
+            world: World::Modifier,
             ..Fixture::well_behaved()
         }
     }
@@ -176,7 +256,27 @@ impl Fixture {
             w,
             "  (func (export \"locus:plugin/info@{v}#describe\") (result i32) i32.const {INFO})"
         );
-        if self.modifier {
+        if self.world == World::Importer {
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/importer@{v}#extensions\") (result i32) i32.const {CONSTRAINTS})"
+            );
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/importer@{v}#import\") (param i32 i32) (result i32)\n    {})",
+                self.generate
+            );
+        } else if self.world == World::Validator {
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/validator@{v}#schema\") (result i32) i32.const {SCHEMA})"
+            );
+            let _ = writeln!(
+                w,
+                "  (func (export \"locus:plugin/validator@{v}#validate\") (param i32 i32 i32 i32) (result i32)\n    {})",
+                self.generate
+            );
+        } else if self.world == World::Modifier {
             let _ = writeln!(
                 w,
                 "  (func (export \"locus:plugin/modifier@{v}#schema\") (result i32) i32.const {SCHEMA})"
@@ -227,10 +327,11 @@ impl Fixture {
         }
         let mut resolve = Resolve::new();
         let pkg = resolve.push_str("plugin.wit", &wit).unwrap();
-        let world_name = if self.modifier {
-            "modifier-plugin"
-        } else {
-            "generator-plugin"
+        let world_name = match self.world {
+            World::Generator => "generator-plugin",
+            World::Modifier => "modifier-plugin",
+            World::Importer => "importer-plugin",
+            World::Validator => "validator-plugin",
         };
         let world = resolve.select_world(&[pkg], Some(world_name)).unwrap();
 

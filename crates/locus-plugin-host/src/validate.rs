@@ -6,8 +6,8 @@
 //! indices must point at something. Nothing here panics.
 
 use crate::types::{
-    Constraint, Entity, ExportModel, FormatInfo, Generated, ParamKind, ParamSpec, Path, PluginInfo,
-    Shape, Vec2,
+    Constraint, Entity, ExportModel, Finding, FormatInfo, Generated, ParamKind, ParamSpec, Path,
+    PluginInfo, Shape, Vec2,
 };
 
 /// Most points, entities, constraints, paths or segments one call may return.
@@ -312,6 +312,66 @@ pub fn export_model(m: &ExportModel) -> Result {
     count("layers", m.layers.len(), MAX_ITEMS)?;
     let all: Vec<&Path> = m.layers.iter().flat_map(|l| &l.paths).collect();
     count("paths", all.len(), MAX_ITEMS)
+}
+
+/// Largest file an importer is given (§15.4: the host reads it, the plugin
+/// only sees bytes).
+pub const MAX_IMPORT_BYTES: usize = 64 * 1024 * 1024;
+/// Most extensions one importer may claim.
+pub const MAX_EXTENSIONS: usize = 32;
+/// Most findings one validator call may return.
+pub const MAX_FINDINGS: usize = 10_000;
+
+/// An importer's extensions: 1–16 lowercase ASCII letters or digits, no dot.
+pub fn extensions(exts: &[String]) -> Result {
+    if exts.is_empty() {
+        return Err(bad("the importer lists no file extensions"));
+    }
+    count("extensions", exts.len(), MAX_EXTENSIONS)?;
+    for e in exts {
+        if e.is_empty()
+            || e.len() > 16
+            || !e
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        {
+            return Err(bad("an extension is not 1–16 lowercase letters or digits"));
+        }
+    }
+    Ok(())
+}
+
+/// Importer output: non-empty, then the same bounds as any paths.
+pub fn imported(out: &[Path]) -> Result {
+    if out.is_empty() {
+        return Err(bad("the importer returned no geometry"));
+    }
+    paths(out)
+}
+
+/// Validator findings, checked against the model the plugin was given:
+/// indices must exist there, and messages must be non-empty, bounded text.
+pub fn findings(found: &[Finding], model: &ExportModel) -> Result {
+    count("findings", found.len(), MAX_FINDINGS)?;
+    for (i, f) in found.iter().enumerate() {
+        text(&format!("finding {i} message"), &f.message)?;
+        if f.message.trim().is_empty() {
+            return Err(bad(format!("finding {i} has no message")));
+        }
+        match (f.layer, f.path) {
+            (None, None) => {}
+            (None, Some(_)) => return Err(bad(format!("finding {i} names a path but no layer"))),
+            (Some(l), path) => {
+                let Some(layer) = model.layers.get(l as usize) else {
+                    return Err(bad(format!("finding {i} names a layer that doesn't exist")));
+                };
+                if path.is_some_and(|p| p as usize >= layer.paths.len()) {
+                    return Err(bad(format!("finding {i} names a path that doesn't exist")));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Plugin-reported messages are shown to the user: cap their length and strip

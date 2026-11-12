@@ -1,0 +1,2 @@
+Warning layer=Some(0) path=Some(1): on layer Cut: a 0.400 mm feature is under 3 times the 0.200 mm kerf and may burn away
+Error layer=Some(0) path=Some(2): on layer Cut: a radius of 0.050 mm is under half the 0.200 mm kerf, so the cut removes it

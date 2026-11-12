@@ -9,8 +9,8 @@
 //! document is unchanged.
 
 use locus_doc::generated::{
-    GenConstraint, GenEntity, GenPath, GenShape, GeneratedGeometry, PluginParam, PluginRef,
-    PluginValue,
+    GenConstraint, GenEntity, GenPath, GenSegment, GenShape, GeneratedGeometry, PluginParam,
+    PluginRef, PluginValue,
 };
 use locus_geom::Vec2 as DocVec2;
 
@@ -240,6 +240,47 @@ pub fn to_paths(input: &[GenPath]) -> Vec<Path> {
             closed: p.closed,
         })
         .collect()
+}
+
+/// Plugin paths in document terms (the inverse of [`to_paths`]).
+#[must_use]
+pub fn from_paths(paths: &[Path]) -> Vec<GenPath> {
+    let dv = |p: crate::types::Vec2| DocVec2::new(p.x, p.y);
+    paths
+        .iter()
+        .map(|p| GenPath {
+            segments: p
+                .segments
+                .iter()
+                .map(|s| GenSegment {
+                    shape: match s.shape {
+                        Shape::Line { a, b } => GenShape::Line { a: dv(a), b: dv(b) },
+                        Shape::Arc { center, start, end } => GenShape::Arc {
+                            center: dv(center),
+                            start: dv(start),
+                            end: dv(end),
+                        },
+                        Shape::Circle { center, radius } => GenShape::Circle {
+                            center: dv(center),
+                            radius,
+                        },
+                    },
+                    reversed: s.reversed,
+                })
+                .collect(),
+            closed: p.closed,
+        })
+        .collect()
+}
+
+/// Validated importer output (#233) as the command that adds it on a new
+/// locked Reference layer named `name`: one undo step (§15.3).
+pub fn import_command(
+    doc: &locus_doc::Document,
+    name: &str,
+    paths: &[Path],
+) -> Result<locus_doc::Command, locus_doc::DocError> {
+    locus_doc::reference::import_command(doc, name, &from_paths(paths))
 }
 
 /// Validated modifier output as a document cache: shared end points become
