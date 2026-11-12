@@ -1,0 +1,9 @@
+id = "io.locus.kerf-check"
+name = "Kerf check"
+version = "1.0.0"
+author = "The Locus project"
+licence = "MIT OR Apache-2.0"
+kinds = ["validator"]
+api = "1.0.0"
+capabilities = []
+description = "Flags holes the kerf would remove and parts too small for the kerf on Cut layers."

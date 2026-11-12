@@ -1,7 +1,7 @@
 [package]
 name = "locus-hpgl"
-description = "HPGL exporter: a first-party example Locus plugin"
-version = "1.0.0"
+description = "HPGL exporter and importer: a first-party example Locus plugin"
+version = "1.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false

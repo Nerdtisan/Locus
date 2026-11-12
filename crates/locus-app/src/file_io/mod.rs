@@ -21,6 +21,29 @@ use locus_export::{Prepared, Severity};
 use std::path::Path;
 use std::path::PathBuf;
 
+/// One finding from an extra pre-export check: a validator plugin (#234).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtraFinding {
+    pub error: bool,
+    pub message: String,
+    pub entities: Vec<EntityId>,
+}
+
+/// Extra pre-export checks, run after the built-in §8 ones and shown next to
+/// them. They can't hide the built-in findings: those are computed first and
+/// separately.
+#[derive(Clone)]
+pub struct ExtraChecks(pub std::sync::Arc<CheckFn>);
+
+/// One extra check: export model in, findings out.
+pub type CheckFn = dyn Fn(&locus_export::ExportModel) -> Vec<ExtraFinding> + Send + Sync;
+
+impl std::fmt::Debug for ExtraChecks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExtraChecks")
+    }
+}
+
 const RECENT_KEY: &str = "recent_files";
 const MAX_RECENT: usize = 10;
 
@@ -56,6 +79,7 @@ pub struct FileIo {
     /// The open pre-export panel (SPEC §8 Validation, #128).
     export: Option<ExportPanel>,
     exporters: locus_export::Registry,
+    checks: Option<ExtraChecks>,
     allow_close: bool,
     last_title: String,
     #[cfg(target_arch = "wasm32")]
@@ -80,6 +104,7 @@ impl FileIo {
             pending: None,
             export: None,
             exporters: locus_export::Registry::builtin(),
+            checks: None,
             allow_close: false,
             last_title: String::new(),
             #[cfg(target_arch = "wasm32")]
@@ -92,6 +117,18 @@ impl FileIo {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_exporters(&mut self, exporters: locus_export::Registry) {
         self.exporters = exporters;
+    }
+
+    /// Replace the extra pre-export checks (validator plugins, #234).
+    pub fn set_checks(&mut self, checks: Option<ExtraChecks>) {
+        self.checks = checks;
+    }
+
+    fn extra(&self, prepared: &Prepared) -> Vec<ExtraFinding> {
+        self.checks
+            .as_ref()
+            .map(|c| (c.0)(&prepared.model))
+            .unwrap_or_default()
     }
 
     pub fn save_state(&self, storage: &mut dyn eframe::Storage) {
@@ -354,15 +391,20 @@ impl FileIo {
     /// the pre-export panel. Export always goes through validation (#128, #133).
     fn begin_export(&mut self, format: &str, canvas: &Canvas) {
         let prepared = locus_export::prepare(canvas.document(), false);
-        if prepared.report.issues.is_empty() {
+        let extra = self.extra(&prepared);
+        if prepared.report.issues.is_empty() && extra.is_empty() {
             self.write_export(format, &prepared);
         } else {
             self.export = Some(ExportPanel {
                 format: format.to_owned(),
                 fixed: false,
                 prepared,
+<<<<<<< HEAD
                 profile: None,
                 picker: false,
+=======
+                extra,
+>>>>>>> origin/dev
             });
         }
     }
@@ -444,10 +486,18 @@ impl FileIo {
 
     /// The pre-export panel: fixes applied, errors (which block export) and
     /// warnings, each selectable to highlight its entities on the canvas.
+<<<<<<< HEAD
     fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
+=======
+    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+        let checks = self.checks.clone();
+>>>>>>> origin/dev
         let Some(panel) = self.export.as_mut() else {
             return;
         };
+        let extra_for = |p: &Prepared| checks.as_ref().map(|c| (c.0)(&p.model)).unwrap_or_default();
+        let blocked =
+            |p: &Prepared, extra: &[ExtraFinding]| p.blocked() || extra.iter().any(|f| f.error);
         enum Do {
             Fix,
             Export,
@@ -483,9 +533,11 @@ impl FileIo {
                     );
                 }
                 let counts = panel.prepared.report.counts();
+                let extra_errors = panel.extra.iter().filter(|f| f.error).count();
                 ui.label(format!(
                     "{} error(s), {} warning(s)",
-                    counts.errors, counts.warnings
+                    counts.errors + extra_errors,
+                    counts.warnings + panel.extra.len() - extra_errors
                 ));
                 for f in &panel.prepared.fixes {
                     ui.weak(format!("Fixed: {}", f.message));
@@ -507,8 +559,25 @@ impl FileIo {
                                 select = Some(issue.entities.clone());
                             }
                         }
+                        for f in &panel.extra {
+                            let colour = if f.error {
+                                ui.visuals().error_fg_color
+                            } else {
+                                ui.visuals().warn_fg_color
+                            };
+                            let text = egui::RichText::new(&f.message).color(colour);
+                            if ui
+                                .selectable_label(false, text)
+                                .on_hover_text(
+                                    "From a validator plugin. Click to highlight on the canvas",
+                                )
+                                .clicked()
+                            {
+                                select = Some(f.entities.clone());
+                            }
+                        }
                     });
-                if panel.prepared.blocked() {
+                if blocked(&panel.prepared, &panel.extra) {
                     ui.label(
                         "Errors block export. Fix them in the sketch or apply the auto-fixes.",
                     );
@@ -529,7 +598,11 @@ impl FileIo {
                     }
                     if ui
                         .add_enabled(
+<<<<<<< HEAD
                             available && !panel.prepared.blocked(),
+=======
+                            !blocked(&panel.prepared, &panel.extra),
+>>>>>>> origin/dev
                             egui::Button::new("Export…"),
                         )
                         .clicked()
@@ -546,20 +619,31 @@ impl FileIo {
         }
         match act {
             Some(Do::Fix) => {
+<<<<<<< HEAD
                 panel.prepared =
                     locus_export::prepare_for(canvas.document(), true, panel.profile.as_ref());
+=======
+                panel.prepared = locus_export::prepare(canvas.document(), true);
+                panel.extra = extra_for(&panel.prepared);
+>>>>>>> origin/dev
                 panel.fixed = true;
             }
             Some(Do::Export) => {
                 // Re-prepare: the sketch may have changed while the panel was open.
+<<<<<<< HEAD
                 let prepared = locus_export::prepare_for(
                     canvas.document(),
                     panel.fixed,
                     panel.profile.as_ref(),
                 );
+=======
+                let prepared = locus_export::prepare(canvas.document(), panel.fixed);
+                let extra = extra_for(&prepared);
+>>>>>>> origin/dev
                 let format = panel.format.clone();
-                if prepared.blocked() {
+                if blocked(&prepared, &extra) {
                     panel.prepared = prepared;
+                    panel.extra = extra;
                 } else {
                     self.export = None;
                     self.write_export(&format, &prepared);
@@ -680,6 +764,7 @@ struct ExportPanel {
     /// Auto-fixes have been applied to `prepared`.
     fixed: bool,
     prepared: Prepared,
+<<<<<<< HEAD
     /// The machine profile in force (colour mapping, bed), if any.
     profile: Option<MachineProfile>,
     /// Show the profile picker (the "For a machine…" entry).
@@ -808,6 +893,10 @@ fn save_profile_dialog(p: &MachineProfile) -> Result<(), String> {
         "application/json",
     );
     Ok(())
+=======
+    /// Validator plugins' findings on `prepared` (#234).
+    extra: Vec<ExtraFinding>,
+>>>>>>> origin/dev
 }
 
 fn open_shortcut() -> egui::KeyboardShortcut {
