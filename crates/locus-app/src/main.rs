@@ -25,6 +25,7 @@ mod scene;
 mod settings;
 mod shapes;
 mod tools;
+mod touch;
 mod view;
 #[cfg(target_arch = "wasm32")]
 mod web_plugins;

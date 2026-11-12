@@ -96,6 +96,8 @@ pub struct Canvas {
     hover: Option<EntityId>,
     /// Screen position where a rubber-band box started.
     rubber: Option<Pos2>,
+    /// Live touch/pen contacts (#250).
+    touches: crate::touch::Touches,
     /// Béziers whose handles are shown: selected, or with a selected point (#160).
     handles: BTreeSet<EntityId>,
     /// Pen tool: where the button went down and where the pointer is now
@@ -161,6 +163,7 @@ impl Default for Canvas {
             selection: Selection::default(),
             hover: None,
             rubber: None,
+            touches: crate::touch::Touches::default(),
             handles: BTreeSet::new(),
             pen: None,
             draft: Draft::new(Tool::Select),
@@ -1010,9 +1013,23 @@ impl Canvas {
         }
         self.fit_size = rect.size();
 
+        // Touch: a second finger turns the sequence into a pinch/pan gesture
+        // and keeps every tool out of it (#250, epic #30).
+        let suppress = ui.input(|i| self.touches.frame(i.events.iter()));
+        let gesture = if self.touches.gesture_allowed() {
+            ui.input(|i| i.multi_touch())
+        } else {
+            None
+        };
+        if let Some(g) = gesture {
+            self.view
+                .gesture(g.center_pos, g.zoom_delta as f64, g.translation_delta, rect);
+            self.auto_fit = false;
+        }
+
         // Zoom about the cursor; middle/right-drag pans.
         let hover = resp.hover_pos();
-        if let Some(hp) = hover {
+        if let Some(hp) = hover.filter(|_| !suppress) {
             let (scroll, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
             let factor = zoom as f64 * (scroll as f64 * 0.0025).exp();
             if factor != 1.0 {
@@ -1025,6 +1042,9 @@ impl Canvas {
             self.auto_fit = false;
         }
 
+        if suppress {
+            self.abandon_pointer_action();
+        }
         if resp.hovered() {
             self.hotkeys(ui, settings.units);
         }
@@ -1033,7 +1053,9 @@ impl Canvas {
             self.handles = wanted;
             self.rebuild();
         }
-        if let Some(m) = self.modify.filter(|m| *m != Modify::Transform) {
+        if suppress {
+            // Gesture in progress: no tool sees the pointer.
+        } else if let Some(m) = self.modify.filter(|m| *m != Modify::Transform) {
             self.modify_input(ui, &resp, rect, m, settings.units);
         } else if self.draft.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect, settings.units);
@@ -1089,6 +1111,19 @@ impl Canvas {
         status.cursor = hover.map(|p| self.view.to_world(p, rect));
         status.extent_mm = self.view.extent_mm(rect);
         status.grid = grid::label(grid::minor_step(self.view.pt_per_mm).0);
+    }
+
+    /// A second finger landed: put back whatever the first one had started
+    /// (a drag, a box, a pen handle) so the gesture can't edit anything.
+    fn abandon_pointer_action(&mut self) {
+        if self.dragging {
+            self.sketcher.cancel_drag();
+            self.dragging = false;
+            self.rebuild();
+        }
+        self.rubber = None;
+        self.pen = None;
+        self.hover = None;
     }
 
     /// What the cursor designates for the active tool: snapped onto a point,

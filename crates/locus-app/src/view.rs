@@ -72,6 +72,21 @@ impl View {
         self.center += before - after;
     }
 
+    /// One frame of a two-finger gesture (#250): the world point that was
+    /// under the previous gesture centre ends up under the current one, so
+    /// pinch zooms about the fingers and dragging both pans.
+    pub fn gesture(
+        &mut self,
+        center: egui::Pos2,
+        zoom: f64,
+        translation: egui::Vec2,
+        rect: egui::Rect,
+    ) {
+        let prev = center - translation;
+        self.zoom_about(prev, zoom, rect);
+        self.pan_points(translation);
+    }
+
     pub fn pan_points(&mut self, delta: egui::Vec2) {
         self.center += Vec2::new(
             -delta.x as f64 / self.pt_per_mm,
@@ -134,6 +149,19 @@ mod tests {
         let back = v.to_world(s, r);
         // One screen point at this zoom is 1/600 µm; allow a tenth of that.
         assert!((back - p).length() < 0.1 / v.pt_per_mm);
+    }
+
+    #[test]
+    fn gesture_keeps_the_world_under_the_fingers() {
+        let r = rect();
+        let prev = egui::pos2(300.0, 250.0);
+        let tr = egui::vec2(25.0, -10.0);
+        for zoom in [1.7, 1.0, 0.4] {
+            let mut v = View::default();
+            let w = v.to_world(prev, r);
+            v.gesture(prev + tr, zoom, tr, r);
+            assert!((v.to_world(prev + tr, r) - w).length() < 1e-9);
+        }
     }
 
     #[test]
