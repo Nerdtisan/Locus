@@ -25,3 +25,9 @@ rustc-ice-*.txt
 
 # Dev-container cargo registry cache (CLAUDE.md, Environment Setup)
 .cargo-home/
+
+# Flatpak build products (packaging #248)
+packaging/flatpak/stage/
+packaging/flatpak/build/
+packaging/flatpak/repo/
+packaging/flatpak/.flatpak-builder/

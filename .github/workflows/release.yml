@@ -352,11 +352,61 @@ jobs:
           path: dist/*.deb
           retention-days: ${{ env.RETENTION_DAYS }}
 
+  # -- Linux: Flatpak bundle (#248) ---------------------------------------------
+  flatpak:
+    name: Linux Flatpak bundle
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # Pinned tool version (asserted below); the runtime 26.08 is pinned in the manifest.
+      FLATPAK_BUILDER_VERSION: "1.4.4"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-linux
+          path: bin
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-bin xvfb xauth dbus-x11 mesa-vulkan-drivers libgl1-mesa-dri
+          flatpak-builder --version | grep -qx "flatpak-builder-${FLATPAK_BUILDER_VERSION}" || { echo "unexpected flatpak-builder: $(flatpak-builder --version)"; exit 1; }
+          flatpak --version
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Build the bundle
+        run: |
+          chmod +x bin/*
+          bash packaging/linux/stage.sh bin packaging/flatpak/stage
+          cd packaging/flatpak
+          flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo build io.github.nerdtisan.Locus.yml
+          mkdir -p ../../dist
+          flatpak build-bundle repo "../../dist/Locus-${VERSION}-linux-x86_64.flatpak" io.github.nerdtisan.Locus
+      - name: Smoke test - install the bundle and run it
+        run: |
+          # Ubuntu 24.04 blocks unprivileged user namespaces by default; bwrap needs them.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak --user install --noninteractive -y dist/*.flatpak
+          flatpak --user run --command=locus-cli io.github.nerdtisan.Locus profiles > /dev/null
+          flatpak --user info --show-permissions io.github.nerdtisan.Locus
+          export WGPU_BACKEND=vulkan,gl
+          set +e
+          dbus-run-session -- xvfb-run -a timeout 20 flatpak --user run io.github.nerdtisan.Locus > "$RUNNER_TEMP/fp.log" 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 124 ]; then echo "GUI exited early ($code):"; cat "$RUNNER_TEMP/fp.log"; exit 1; fi
+          echo "GUI stayed up: ok"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-flatpak
+          path: dist/*.flatpak
+          retention-days: ${{ env.RETENTION_DAYS }}
+
   # Collects every installer artefact into SHA256SUMS. `needs` grows with each
   # packaging job (#245-#249).
   checksums:
     name: SHA-256 sums
-    needs: [version, build, windows, macos, appimage, deb]
+    needs: [version, build, windows, macos, appimage, deb, flatpak]
     if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
