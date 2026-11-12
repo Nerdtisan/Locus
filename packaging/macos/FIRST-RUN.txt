@@ -1,0 +1,12 @@
+Locus - first run on macOS
+==========================
+
+This build is not signed or notarised, so Gatekeeper blocks it the first time:
+"Locus can't be opened because Apple cannot check it for malicious software".
+
+1. Drag Locus into Applications.
+2. Control-click (right-click) Locus > Open, then click Open in the dialog.
+   Or: System Settings > Privacy & Security > scroll down > "Open Anyway".
+3. From a terminal you can also run:  xattr -dr com.apple.quarantine /Applications/Locus.app
+
+You only need to do this once.

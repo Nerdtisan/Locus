@@ -54,3 +54,26 @@ Until the binaries are signed, Windows shows **"Windows protected your PC"** the
 the installer or `locus.exe`: click **More info**, then **Run anyway**. A browser-downloaded file
 can be unblocked beforehand with right-click > Properties > **Unblock**. The warning fades as the
 file gains reputation, and disappears with an Authenticode certificate (see Signing).
+
+## macOS (#246)
+
+Artefact: `Locus-<version>-macos-universal.dmg` containing `Locus.app` (arm64 + x86_64, built
+natively on a macOS runner and joined with `lipo`), an `Applications` shortcut and a short
+"READ ME FIRST". The bundle has an icon, an `Info.plist` declaring the `.locus` document type
+(UTI `io.github.nerdtisan.locus.document`) and `.locusplugin`, and carries `locus-cli` in
+`Contents/Resources`. It is ad-hoc signed (required for arm64 to run) but **not** Developer-ID
+signed or notarised; both steps are stubbed in the workflow for a future Apple account
+(`SIGN_IDENTITY` is honoured by `packaging/macos/build-dmg.sh`).
+
+CI mounts the dmg, checks both architectures and the signature, runs `locus-cli`, and launches the
+GUI binary for 10 seconds.
+
+Known limitation: Finder delivers a double-clicked document as an Apple Event, not a command-line
+argument, and the GUI toolkit does not forward that yet. So double-clicking a `.locus` launches
+Locus but does not open the file; use File > Open. (The command line `locus file.locus` works.)
+
+### Gatekeeper warning (unsigned)
+
+macOS says Locus "cannot be opened because Apple cannot check it for malicious software". Once:
+drag Locus to Applications, Control-click it > **Open** > **Open**; or System Settings >
+Privacy & Security > **Open Anyway**; or `xattr -dr com.apple.quarantine /Applications/Locus.app`.
