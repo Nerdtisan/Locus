@@ -35,6 +35,8 @@ base64 = "0.23"
 # in front of rmcp (ADR 0005 decision 3).
 bytes = "1"
 getrandom = "0.4"
+# The PC's private addresses, for the opt-in LAN bind (#272).
+if-addrs = "0.15"
 http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "http1"] }
