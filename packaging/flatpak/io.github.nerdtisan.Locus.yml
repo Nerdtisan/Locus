@@ -9,6 +9,9 @@ runtime: org.freedesktop.Platform
 runtime-version: "26.08"
 sdk: org.freedesktop.Sdk
 command: locus
+# AppStream catalogue compose is only for software centres (Flathub); a private bundle
+# does not need it, and it fails with file-read-error on flatpak-builder 1.4.2.
+appstream-compose: false
 
 finish-args:
   # Display: Wayland first, X11 fallback; GPU for wgpu (Vulkan/GL).
