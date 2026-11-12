@@ -1,0 +1,133 @@
+# .github/workflows/release.yml
+#
+# Private build artefacts for every installer (SPEC §0 Packaging, §13 M4; epic #29, #244).
+#
+# Owner decision: PRIVATE builds only. Nothing here creates a GitHub Release or
+# publishes anywhere; every installer is uploaded as a workflow artefact (14-day
+# retention) from a manual dispatch or a `v*` tag. There is no Flathub submission.
+#
+# Unsigned for now. Each platform has a clearly marked signing step that does
+# nothing until its secret exists, so certificates can be added later as GitHub
+# secrets (Settings > Secrets > Actions) without editing the packaging steps.
+# NEVER put a certificate, key or password in the repo, the Dockerfile or this file.
+#
+# Pull requests that touch packaging run this workflow too, so packaging changes are
+# proven before they merge (workflow_dispatch only works once the file is on the
+# default branch).
+
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "packaging/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  # How long installer artefacts are kept (private builds, no Release).
+  RETENTION_DAYS: 14
+
+jobs:
+  version:
+    name: Stamp version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        # Tag `v1.2.3` -> 1.2.3. Otherwise the Cargo.toml workspace version plus
+        # the short commit, so dispatch builds are traceable and sort below tags.
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            v="${GITHUB_REF_NAME#v}"
+          else
+            base=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -n1)
+            v="${base}-dev.${GITHUB_SHA::7}"
+          fi
+          [[ "$v" =~ ^[0-9A-Za-z.+-]+$ ]] || { echo "bad version: $v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  # One container build of the release binaries for Linux and Windows; the
+  # package jobs below only wrap them. macOS builds its own (native only).
+  build:
+    name: Release binaries (dev container)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache the crate registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            .cargo-home/registry/index
+            .cargo-home/registry/cache
+            .cargo-home/git/db
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Build dev container image
+        run: docker build -t locus-dev .devcontainer
+
+      - name: Build Linux and Windows release binaries
+        # `--user root` and the final chown: same reasoning as ci.yml.
+        run: |
+          D="docker run --rm --user root -e CARGO_HOME=/workspace/.cargo-home -e CARGO_INCREMENTAL -v ${{ github.workspace }}:/workspace -w /workspace locus-dev"
+          $D cargo build --release --locked -p locus-app -p locus-cli
+          $D cargo build --release --locked --target x86_64-pc-windows-gnu -p locus-app -p locus-cli
+          mkdir -p bin/linux bin/windows
+          cp target/release/locus target/release/locus-cli bin/linux/
+          cp target/x86_64-pc-windows-gnu/release/locus.exe target/x86_64-pc-windows-gnu/release/locus-cli.exe bin/windows/
+          sudo chown -R "$(id -u):$(id -g)" .cargo-home target
+
+      - name: Smoke-test the Linux CLI
+        run: bin/linux/locus-cli profiles
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bin-linux
+          path: bin/linux
+          retention-days: 1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bin-windows
+          path: bin/windows
+          retention-days: 1
+
+  # Collects every installer artefact into SHA256SUMS. `needs` grows with each
+  # packaging job (#245-#249).
+  checksums:
+    name: SHA-256 sums
+    needs: [version, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installer-*
+          path: out
+          merge-multiple: true
+      - name: Write SHA256SUMS
+        working-directory: out
+        run: |
+          shopt -s nullglob
+          files=(*)
+          if [ ${#files[@]} -eq 0 ]; then echo "::notice::no installer artefacts yet"; echo "empty=1" >> "$GITHUB_ENV"; exit 0; fi
+          sha256sum -- "${files[@]}" | tee SHA256SUMS
+      - if: env.empty != '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: SHA256SUMS-${{ needs.version.outputs.version }}
+          path: out/SHA256SUMS
+          retention-days: ${{ env.RETENTION_DAYS }}

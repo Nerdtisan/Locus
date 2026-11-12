@@ -41,6 +41,7 @@ fn main() -> eframe::Result {
             if std::env::args().any(|a| a == "--stress") {
                 app.load_stress();
             }
+            app.open_startup_file(std::env::args());
             Ok(Box::new(app))
         }),
     )

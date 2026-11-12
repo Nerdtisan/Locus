@@ -141,6 +141,14 @@ impl FileIo {
         canvas.document() != &self.baseline
     }
 
+    /// Opens a `.locus` file named on the command line (a file-association
+    /// double-click, packaging #245). Nothing is open yet, so no guard is
+    /// needed; a bad file shows the usual error dialog.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_startup_path(&mut self, canvas: &mut Canvas, path: PathBuf) {
+        self.open_path(canvas, path);
+    }
+
     /// Replace the open document with a built-in sample (guarded).
     pub fn open_sample(&mut self, ctx: &egui::Context, canvas: &mut Canvas, doc: Document) {
         self.request(ctx, canvas, Action::Replace(Box::new(doc)));
