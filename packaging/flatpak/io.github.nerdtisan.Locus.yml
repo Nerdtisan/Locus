@@ -10,7 +10,7 @@ runtime-version: "26.08"
 sdk: org.freedesktop.Sdk
 command: locus
 # AppStream catalogue compose is only for software centres (Flathub); a private bundle
-# does not need it, and it fails with file-read-error on flatpak-builder 1.4.2.
+# does not need it (it also failed on the CI host before its SVG loader was installed).
 appstream-compose: false
 
 finish-args:

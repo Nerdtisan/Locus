@@ -371,7 +371,7 @@ jobs:
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-bin xvfb xauth dbus-x11 mesa-vulkan-drivers libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-bin librsvg2-common xvfb xauth dbus-x11 mesa-vulkan-drivers libgl1-mesa-dri
           flatpak-builder --version | grep -qx "flatpak-builder-${FLATPAK_BUILDER_VERSION}" || { echo "unexpected flatpak-builder: $(flatpak-builder --version)"; exit 1; }
           flatpak --version
           flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
