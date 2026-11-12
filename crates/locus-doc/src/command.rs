@@ -62,6 +62,12 @@ pub enum Command {
         id: ConstraintId,
         value: f64,
     },
+    /// Measure a dimension to the centreline or a stroke edge (SPEC §5, #239).
+    /// The value is kept; the geometry re-solves to honour it at the new edge.
+    SetDimensionEdge {
+        id: ConstraintId,
+        edge: crate::constraint::Edge,
+    },
     /// Switch a dimensional constraint between driving and driven (reference).
     SetDriven {
         id: ConstraintId,
@@ -121,6 +127,10 @@ pub enum Command {
     SetParameter {
         name: String,
         expr: String,
+    },
+    /// Select (or clear) the document's machine profile by id (SPEC §7).
+    SetProfile {
+        id: Option<String>,
     },
     /// Delete a parameter. Refused with [`DocError::ParameterInUse`] (listing
     /// the users) while an expression refers to it.
@@ -213,6 +223,7 @@ impl Command {
             }
             Command::RemoveConstraint { .. } => "Remove constraint".to_owned(),
             Command::SetDimension { .. } => "Set dimension".to_owned(),
+            Command::SetDimensionEdge { .. } => "Set dimension edge".to_owned(),
             Command::SetDriven { .. } => "Set driven".to_owned(),
             Command::AddLayer { .. } => "Add layer".to_owned(),
             Command::SetLayerProps { .. } => "Change layer".to_owned(),
@@ -224,6 +235,7 @@ impl Command {
             Command::EditBoolean { .. } => "Edit boolean".to_owned(),
             Command::RemoveBoolean { .. } => "Remove boolean".to_owned(),
             Command::SetParameter { name, .. } => format!("Set parameter {name}"),
+            Command::SetProfile { .. } => "Set machine profile".to_owned(),
             Command::RemoveParameter { name } => format!("Remove parameter {name}"),
             Command::RenameParameter { from, .. } => format!("Rename parameter {from}"),
             Command::SetDimensionExpr { .. } => "Set dimension expression".to_owned(),
@@ -308,6 +320,10 @@ pub(crate) enum Patch {
         before: Option<String>,
         after: Option<String>,
     },
+    Profile {
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 impl Patch {
@@ -352,6 +368,9 @@ impl Patch {
                     Some(e) => doc.dim_exprs.insert(*id, e),
                     None => doc.dim_exprs.remove(id),
                 };
+            }
+            Patch::Profile { before, after } => {
+                doc.profile = if forward { after } else { before }.clone();
             }
             Patch::Recipe { id, before, after } => {
                 match if forward { after } else { before }.clone() {
@@ -528,11 +547,24 @@ fn exec(
             edit_dimension(doc, *id, patches, |d| d.value = *value)?;
             set_dim_expr(doc, *id, None, patches);
         }
+        Command::SetDimensionEdge { id, edge } => {
+            edit_dimension(doc, *id, patches, |d| d.edge = *edge)?;
+        }
         Command::SetDriven { id, driven } => {
             edit_dimension(doc, *id, patches, |d| d.driven = *driven)?;
             if *driven {
                 set_dim_expr(doc, *id, None, patches);
             }
+        }
+        Command::SetProfile { id } => {
+            if let Some(id) = id {
+                crate::document::check_profile_id(id)?;
+            }
+            let p = Patch::Profile {
+                before: doc.profile.clone(),
+                after: id.clone(),
+            };
+            record(doc, patches, p);
         }
         Command::SetParameter { name, expr } => {
             params::check_name(name)?;

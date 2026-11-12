@@ -34,6 +34,8 @@ pub mod registry;
 pub mod runner;
 #[cfg(not(target_arch = "wasm32"))]
 mod runtime;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod validators;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{CallError, Host, Limits, LoadError, MAX_COMPONENT_BYTES, Plugin};

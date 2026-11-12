@@ -13,7 +13,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Topic | Decision |
 |---|---|
 | GUI | **Decided** ([ADR 0001](adr/0001-gui-framework.md)): `eframe` 0.35 + `egui_dock` + `wgpu` (as in Parchment); canvas drawn with the egui painter first, the wgpu paint-callback renderer kept as the measured upgrade path. Bevy spiked and not chosen (decided 2026-11-04). |
-| Platforms | Windows, macOS, Linux and web. Web = full editor; the MCP server is desktop-only at first. Plugins run on desktop (`wasmtime`) and, from M4, in the browser: the owner moved the browser plugin runtime from "after M4" into M4 on 2026-11-11; it runs the component's core module in a Web Worker with the same limits except fuel ([ADR 0014](adr/0014-web-plugin-runtime.md), 2026-11-12). |
+| Platforms | Windows, macOS, Linux and web. Web = full editor; the MCP server is desktop-only at first. Plugins run on desktop (`wasmtime`) and, from M4, in the browser: the owner moved the browser plugin runtime from "after M4" into M4 on 2026-11-11; it runs the component's core module in a Web Worker with the same limits except fuel ([ADR 0015](adr/0015-web-plugin-runtime.md), 2026-11-12). |
 | Solver | Pure Rust only (SolidCraft extract, another Rust GCS, or our own). libslvs/PlaneGCS spikes dropped because they block wasm. Backend chosen 2026-11-04 by [ADR 0002](adr/0002-solver-backend.md) (`ezpz`), then superseded the same day by [ADR 0007](adr/0007-solver-backend-without-paste.md): the owner declined ezpz's `paste` advisory (RUSTSEC-2024-0436), so `locus-solver` owns the whole solver (sparse Levenberg–Marquardt, own sparse LDLᵀ, own Jacobian-rank DOF/redundancy analysis), with no third-party dependencies. |
 | Toolchain | Both: Parchment-style Docker dev container (Linux build/test, Windows cross-compile, `wasm32` + `trunk`), plus a native macOS runner in CI. No host Rust toolchain. |
 | Rust version | Always the latest stable Rust (1.99 today) and the newest edition (2024). `rust-version`, the dev container and the macOS CI job move together; no separate MSRV (decided 2026-11-04). |
@@ -165,6 +165,7 @@ Distance (point–point, point–line, line–line parallel), horizontal distanc
 
 ### Stroke-edge constraint reference (v2, differentiator)
 - Dimensional constraints may optionally reference a **stroke edge** (offset by pen width / kerf) rather than the zero-width centreline. Primarily relevant to plotter pen width and laser kerf compensation previews.
+- **Decided ([ADR 0014](adr/0014-stroke-edge-dimensions.md), #239):** a dimension carries `edge` = centreline / inside / outside; its value is measured to that edge and the solver is given the centreline value (±half the pen width or kerf of each stroked operand). Distances with a line, radii and diameters support it; point-to-point, horizontal / vertical distances and angles do not. Changing the pen width or kerf re-solves; a change that would make a centreline value negative is refused whole. `.locus` format v12.
 
 ### Solver UX
 - Sketch status: under-constrained (show remaining DOF count), fully constrained (geometry turns distinct colour, as in Fusion), over-constrained (highlight conflicting set, refuse to apply new conflicting constraint, offer to make it a driven/reference dimension).
@@ -237,7 +238,7 @@ Layer `operation` enum:
 | Drag-knife (vinyl) | blade offset (swivel arcs at turns over 10°) |
 | Reference | never exported |
 
-Machine profiles (v2): presets bundling export format, colour mapping, units, and offsets for e.g. "LightBurn", "Cricut Design Space", "Generic HPGL plotter".
+Machine profiles (M4, #236): a profile bundles an export format (an exporter id), a colour per operation, display units, the bed (size and origin corner) and default operation parameters. Built-in presets are compiled in: LightBurn (SVG, DXF), Cricut Design Space (SVG, per-shape styles), Silhouette Studio Basic (DXF R12; Cameo 12" and 24" mats), Silhouette Designer+ (SVG), generic HPGL (via the HPGL exporter plugin) and generic SVG / DXF. The laser bed defaults to a generic 400 × 400 mm and is editable. User profiles are JSON in app settings; one profile can be exported or imported as a standalone `.json` file (imports are untrusted: size-bounded and validated). A document stores only the selected profile id (§10, format v11).
 
 ---
 
@@ -318,7 +319,7 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 11. **Packaging formats** — **Decided:** see §0 and M4 (§13).
 12. **Booleans that keep arcs** (§6.3, M2) — **Decided** ([ADR 0008](adr/0008-booleans-and-arcs.md)): Locus-owned exact line/arc arrangement in `locus-region`; `i_overlay` + refit and `cavalier_contours` measured and not chosen.
 13. **Offsets that keep arcs** (§6.2, §7, M3) — **Decided** ([ADR 0010](adr/0010-offsets.md)): Locus-owned offsets on the ADR 0008 arrangement (bands + corner discs/kites, one boolean); 6,000/6,000 random cases exact vs `cavalier_contours` 5,995 (wrong by up to 1.5 mm where offsets touch exactly); no new dependencies.
-14. **Browser plugin runtime** (§15, M4) — **Decided** ([ADR 0014](adr/0014-web-plugin-runtime.md)): run the component's core module in a dedicated Web Worker (empty imports, memory maximum ≤ 256 MB, terminated on timeout), with the canonical ABI of `locus:plugin@1.x` in Rust in `locus-plugin-host`. wasmtime + Pulley compiled to wasm was measured and doesn't run (Cranelift needs `std::time`; +4.3 MB); jco not chosen (generated JS, same limits). The web host has no fuel budget; the timeout bounds every call.
+14. **Browser plugin runtime** (§15, M4) — **Decided** ([ADR 0015](adr/0015-web-plugin-runtime.md)): run the component's core module in a dedicated Web Worker (empty imports, memory maximum ≤ 256 MB, terminated on timeout), with the canonical ABI of `locus:plugin@1.x` in Rust in `locus-plugin-host`. wasmtime + Pulley compiled to wasm was measured and doesn't run (Cranelift needs `std::time`; +4.3 MB); jco not chosen (generated JS, same limits). The web host has no fuel budget; the timeout bounds every call.
 
 ---
 
@@ -353,7 +354,7 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 **M4 — Polish**
 - **MCP server** (§16): stdio + localhost HTTP, read/write scopes, approval UI, preview rendering.
 - Plugin importers + validators; plugin manager UI (install from file, enable/disable, view granted capabilities).
-- **Browser plugin runtime** epic (run `.locusplugin` components in the web build, with the desktop's limits; [ADR 0014](adr/0014-web-plugin-runtime.md)). Moved here from "after M4" by the owner, 2026-11-11.
+- **Browser plugin runtime** epic (run `.locusplugin` components in the web build, with the desktop's limits; [ADR 0015](adr/0015-web-plugin-runtime.md)). Moved here from "after M4" by the owner, 2026-11-11.
 - Machine profiles, stroke-edge constraints, bed bounds, import reference geometry (SVG/DXF as locked reference layer).
 - Packaging/installers: Windows Inno Setup installer + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`.
 - **Touch/pen input** epic (tablet and stylus interaction on the canvas).

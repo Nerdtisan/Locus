@@ -639,6 +639,7 @@ fn issue_kind(k: locus_export::IssueKind) -> &'static str {
         K::SelfIntersection => "self_intersection",
         K::DuplicateSegment => "duplicate_segment",
         K::Degenerate => "degenerate",
+        K::OutsideBed => "outside_bed",
     }
 }
 
@@ -836,10 +837,11 @@ impl Plan {
                 }
             };
             Ok((
-                Dimension {
-                    value: if angle { value.to_radians() } else { value },
-                    driven: d.driven,
-                },
+                Dimension::new(
+                    if angle { value.to_radians() } else { value },
+                    d.driven,
+                    locus_doc::Edge::Centre,
+                ),
                 d.expr.clone(),
             ))
         };

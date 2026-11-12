@@ -1,0 +1,12 @@
+path 0 closed=true
+  line (0.0000, 0.0000) (20.0000, 0.0000) reversed=false
+  line (20.0000, 0.0000) (20.0000, 20.0000) reversed=false
+  line (20.0000, 20.0000) (0.0000, 20.0000) reversed=false
+  line (0.0000, 20.0000) (0.0000, 0.0000) reversed=false
+path 1 closed=true
+  circle (40.0000, 10.0000) 7.5000 reversed=false
+path 2 closed=true
+  arc (10.0000, 10.0000) (15.0000, 10.0000) (10.0000, 15.0000) reversed=false
+  line (10.0000, 15.0000) (10.0000, 13.0000) reversed=false
+  arc (10.0000, 10.0000) (13.0000, 10.0000) (10.0000, 13.0000) reversed=true
+  line (13.0000, 10.0000) (15.0000, 10.0000) reversed=false

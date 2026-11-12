@@ -39,12 +39,6 @@ impl Kind {
     pub fn from_name(name: &str) -> Option<Kind> {
         Kind::ALL.into_iter().find(|k| k.name() == name)
     }
-
-    /// Whether this host can call the kind yet. Importers and validators are
-    /// M4 (§15.2): they may be declared, but are not run.
-    pub const fn supported(self) -> bool {
-        matches!(self, Kind::Generator | Kind::Modifier | Kind::Exporter)
-    }
 }
 
 /// A point or vector in millimetres.
@@ -252,4 +246,22 @@ pub struct FormatInfo {
     pub name: String,
     pub extension: String,
     pub mime: String,
+}
+
+// ── Validators (M4, #234) ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+/// One problem a validator plugin found. `layer` and `path` index the export
+/// model the plugin received (checked by the host against that model).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finding {
+    pub severity: Severity,
+    pub message: String,
+    pub layer: Option<u32>,
+    pub path: Option<u32>,
 }

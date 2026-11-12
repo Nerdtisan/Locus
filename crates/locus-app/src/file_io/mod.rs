@@ -8,15 +8,41 @@
 //! contain file names or document contents, and nothing here logs either
 //! (CLAUDE.md, Secure Coding).
 
+mod profiles;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
 use crate::canvas::Canvas;
-use locus_doc::{Document, EntityId};
+use crate::settings::Settings;
+use locus_doc::{Command, Document, EntityId};
+use locus_export::MachineProfile;
 use locus_export::{Prepared, Severity};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::path::PathBuf;
+
+/// One finding from an extra pre-export check: a validator plugin (#234).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtraFinding {
+    pub error: bool,
+    pub message: String,
+    pub entities: Vec<EntityId>,
+}
+
+/// Extra pre-export checks, run after the built-in §8 ones and shown next to
+/// them. They can't hide the built-in findings: those are computed first and
+/// separately.
+#[derive(Clone)]
+pub struct ExtraChecks(pub std::sync::Arc<CheckFn>);
+
+/// One extra check: export model in, findings out.
+pub type CheckFn = dyn Fn(&locus_export::ExportModel) -> Vec<ExtraFinding> + Send + Sync;
+
+impl std::fmt::Debug for ExtraChecks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExtraChecks")
+    }
+}
 
 const RECENT_KEY: &str = "recent_files";
 const MAX_RECENT: usize = 10;
@@ -53,6 +79,7 @@ pub struct FileIo {
     /// The open pre-export panel (SPEC §8 Validation, #128).
     export: Option<ExportPanel>,
     exporters: locus_export::Registry,
+    checks: Option<ExtraChecks>,
     allow_close: bool,
     last_title: String,
     #[cfg(target_arch = "wasm32")]
@@ -77,6 +104,7 @@ impl FileIo {
             pending: None,
             export: None,
             exporters: locus_export::Registry::builtin(),
+            checks: None,
             allow_close: false,
             last_title: String::new(),
             #[cfg(target_arch = "wasm32")]
@@ -89,6 +117,18 @@ impl FileIo {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_exporters(&mut self, exporters: locus_export::Registry) {
         self.exporters = exporters;
+    }
+
+    /// Replace the extra pre-export checks (validator plugins, #234).
+    pub fn set_checks(&mut self, checks: Option<ExtraChecks>) {
+        self.checks = checks;
+    }
+
+    fn extra(&self, prepared: &Prepared) -> Vec<ExtraFinding> {
+        self.checks
+            .as_ref()
+            .map(|c| (c.0)(&prepared.model))
+            .unwrap_or_default()
     }
 
     pub fn save_state(&self, storage: &mut dyn eframe::Storage) {
@@ -107,7 +147,7 @@ impl FileIo {
     }
 
     /// Per-frame work: shortcuts, the close guard, window title and dialogs.
-    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         if !self.started {
             self.started = true;
@@ -144,7 +184,7 @@ impl FileIo {
         self.web_update(ctx, canvas);
 
         self.sync_title(ctx, canvas);
-        self.dialogs(ctx, canvas);
+        self.dialogs(ctx, canvas, settings);
     }
 
     fn sync_title(&mut self, ctx: &egui::Context, canvas: &Canvas) {
@@ -160,7 +200,7 @@ impl FileIo {
     }
 
     /// The File menu entries up to (not including) Samples / Quit.
-    pub fn file_menu(&mut self, ui: &mut egui::Ui, canvas: &mut Canvas) {
+    pub fn file_menu(&mut self, ui: &mut egui::Ui, canvas: &mut Canvas, settings: &Settings) {
         let ctx = ui.ctx().clone();
         if ui.button("New").clicked() {
             self.request(&ctx, canvas, Action::New);
@@ -201,6 +241,17 @@ impl FileIo {
             ui.close();
         }
         ui.menu_button("Export", |ui| {
+            if ui
+                .button("For a machine…")
+                .on_hover_text(
+                    "Pick a machine profile (LightBurn, Cricut, Silhouette, …) and export with its settings",
+                )
+                .clicked()
+            {
+                self.begin_profile_export(canvas, settings);
+                ui.close();
+            }
+            ui.separator();
             let formats: Vec<(String, String)> = self
                 .exporters
                 .iter()
@@ -340,15 +391,43 @@ impl FileIo {
     /// the pre-export panel. Export always goes through validation (#128, #133).
     fn begin_export(&mut self, format: &str, canvas: &Canvas) {
         let prepared = locus_export::prepare(canvas.document(), false);
-        if prepared.report.issues.is_empty() {
+        let extra = self.extra(&prepared);
+        if prepared.report.issues.is_empty() && extra.is_empty() {
             self.write_export(format, &prepared);
         } else {
             self.export = Some(ExportPanel {
                 format: format.to_owned(),
                 fixed: false,
                 prepared,
+                profile: None,
+                picker: false,
+                profile_changed: false,
+                extra,
             });
         }
+    }
+
+    /// Open the export panel with the machine-profile picker (SPEC §7, #238).
+    /// The document's remembered profile is preselected; otherwise generic SVG.
+    fn begin_profile_export(&mut self, canvas: &Canvas, settings: &Settings) {
+        let profile = canvas
+            .document()
+            .profile()
+            .and_then(|id| locus_export::profile::find(id, &settings.profiles))
+            .or_else(|| locus_export::profile::find("generic-svg", &[]));
+        let prepared = locus_export::prepare_for(canvas.document(), false, profile.as_ref());
+        let extra = self.extra(&prepared);
+        self.export = Some(ExportPanel {
+            format: profile
+                .as_ref()
+                .map_or_else(|| "svg".to_owned(), |p| p.format.clone()),
+            fixed: false,
+            prepared,
+            profile,
+            picker: true,
+            profile_changed: false,
+            extra,
+        });
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -408,17 +487,23 @@ impl FileIo {
 
     /// The pre-export panel: fixes applied, errors (which block export) and
     /// warnings, each selectable to highlight its entities on the canvas.
-    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
+        let checks = self.checks.clone();
         let Some(panel) = self.export.as_mut() else {
             return;
         };
+        let extra_for = |p: &Prepared| checks.as_ref().map(|c| (c.0)(&p.model)).unwrap_or_default();
+        let blocked =
+            |p: &Prepared, extra: &[ExtraFinding]| p.blocked() || extra.iter().any(|f| f.error);
         enum Do {
             Fix,
             Export,
             Cancel,
         }
         let mut act = None;
+        let mut picked_error: Option<String> = None;
         let mut select: Option<Vec<EntityId>> = None;
+        let available = self.exporters.get(&panel.format).is_some();
         let fixable = panel.prepared.report.issues.iter().any(|i| {
             matches!(
                 i.kind,
@@ -434,10 +519,27 @@ impl FileIo {
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
+                if panel.picker {
+                    profile_picker(
+                        ui,
+                        panel,
+                        canvas,
+                        settings,
+                        &self.exporters,
+                        &mut picked_error,
+                    );
+                    // A new profile re-prepared the model: re-run the plugin checks.
+                    if panel.profile_changed {
+                        panel.profile_changed = false;
+                        panel.extra = extra_for(&panel.prepared);
+                    }
+                }
                 let counts = panel.prepared.report.counts();
+                let extra_errors = panel.extra.iter().filter(|f| f.error).count();
                 ui.label(format!(
                     "{} error(s), {} warning(s)",
-                    counts.errors, counts.warnings
+                    counts.errors + extra_errors,
+                    counts.warnings + panel.extra.len() - extra_errors
                 ));
                 for f in &panel.prepared.fixes {
                     ui.weak(format!("Fixed: {}", f.message));
@@ -459,8 +561,25 @@ impl FileIo {
                                 select = Some(issue.entities.clone());
                             }
                         }
+                        for f in &panel.extra {
+                            let colour = if f.error {
+                                ui.visuals().error_fg_color
+                            } else {
+                                ui.visuals().warn_fg_color
+                            };
+                            let text = egui::RichText::new(&f.message).color(colour);
+                            if ui
+                                .selectable_label(false, text)
+                                .on_hover_text(
+                                    "From a validator plugin. Click to highlight on the canvas",
+                                )
+                                .clicked()
+                            {
+                                select = Some(f.entities.clone());
+                            }
+                        }
                     });
-                if panel.prepared.blocked() {
+                if blocked(&panel.prepared, &panel.extra) {
                     ui.label(
                         "Errors block export. Fix them in the sketch or apply the auto-fixes.",
                     );
@@ -480,7 +599,10 @@ impl FileIo {
                         act = Some(Do::Fix);
                     }
                     if ui
-                        .add_enabled(!panel.prepared.blocked(), egui::Button::new("Export…"))
+                        .add_enabled(
+                            available && !blocked(&panel.prepared, &panel.extra),
+                            egui::Button::new("Export…"),
+                        )
                         .clicked()
                     {
                         act = Some(Do::Export);
@@ -495,15 +617,23 @@ impl FileIo {
         }
         match act {
             Some(Do::Fix) => {
-                panel.prepared = locus_export::prepare(canvas.document(), true);
+                panel.prepared =
+                    locus_export::prepare_for(canvas.document(), true, panel.profile.as_ref());
+                panel.extra = extra_for(&panel.prepared);
                 panel.fixed = true;
             }
             Some(Do::Export) => {
                 // Re-prepare: the sketch may have changed while the panel was open.
-                let prepared = locus_export::prepare(canvas.document(), panel.fixed);
+                let prepared = locus_export::prepare_for(
+                    canvas.document(),
+                    panel.fixed,
+                    panel.profile.as_ref(),
+                );
+                let extra = extra_for(&prepared);
                 let format = panel.format.clone();
-                if prepared.blocked() {
+                if blocked(&prepared, &extra) {
                     panel.prepared = prepared;
+                    panel.extra = extra;
                 } else {
                     self.export = None;
                     self.write_export(&format, &prepared);
@@ -511,6 +641,9 @@ impl FileIo {
             }
             Some(Do::Cancel) => self.export = None,
             None => {}
+        }
+        if picked_error.is_some() {
+            self.error = picked_error;
         }
     }
 
@@ -555,8 +688,8 @@ impl FileIo {
         self.web.tick_autosave(now, canvas.document());
     }
 
-    fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
-        self.export_panel(ctx, canvas);
+    fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
+        self.export_panel(ctx, canvas, settings);
         if self.pending.is_some() {
             let mut choice = None;
             egui::Window::new("Unsaved changes")
@@ -621,6 +754,139 @@ struct ExportPanel {
     /// Auto-fixes have been applied to `prepared`.
     fixed: bool,
     prepared: Prepared,
+    /// The machine profile in force (colour mapping, bed), if any.
+    profile: Option<MachineProfile>,
+    /// Show the profile picker (the "For a machine…" entry).
+    picker: bool,
+    /// The picker re-prepared `prepared`; the plugin checks must re-run.
+    profile_changed: bool,
+    /// Validator plugins' findings on `prepared` (#234).
+    extra: Vec<ExtraFinding>,
+}
+
+/// The profile combo, import / save buttons and a one-line summary. A change
+/// is remembered in the document (one undoable `SetProfile`, SPEC §7, #238).
+fn profile_picker(
+    ui: &mut egui::Ui,
+    panel: &mut ExportPanel,
+    canvas: &mut Canvas,
+    settings: &mut Settings,
+    exporters: &locus_export::Registry,
+    error: &mut Option<String>,
+) {
+    let all = profiles::all(settings);
+    let mut chosen: Option<String> = None;
+    ui.horizontal(|ui| {
+        ui.label("Machine");
+        let current = panel.profile.as_ref().map_or("None", |p| p.name.as_str());
+        egui::ComboBox::from_id_salt("export-profile")
+            .selected_text(current.to_owned())
+            .width(320.0)
+            .show_ui(ui, |ui| {
+                for p in &all {
+                    let on = panel.profile.as_ref().is_some_and(|q| q.id == p.id);
+                    if ui.selectable_label(on, &p.name).clicked() {
+                        chosen = Some(p.id.clone());
+                    }
+                }
+            });
+    });
+    if let Some(p) = &panel.profile {
+        let bed = p.bed.map_or_else(
+            || "no bed size".to_owned(),
+            |b| {
+                format!(
+                    "bed {} × {} mm, origin {}",
+                    b.width_mm,
+                    b.height_mm,
+                    b.origin.name().to_lowercase()
+                )
+            },
+        );
+        ui.weak(format!("{} — {bed}", p.format.to_uppercase()));
+        if exporters.get(&p.format).is_none() {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                format!(
+                    "The `{}` exporter is not installed; install its plugin to export.",
+                    p.format
+                ),
+            );
+        }
+    }
+    ui.horizontal(|ui| {
+        if ui.button("Import profile…").clicked() {
+            match import_profile_dialog(settings) {
+                Ok(Some(id)) => chosen = Some(id),
+                Ok(None) => {}
+                Err(msg) => *error = Some(msg),
+            }
+        }
+        if ui
+            .add_enabled(panel.profile.is_some(), egui::Button::new("Save profile…"))
+            .clicked()
+            && let Some(p) = &panel.profile
+            && let Err(msg) = save_profile_dialog(p)
+        {
+            *error = Some(msg);
+        }
+    });
+    ui.separator();
+    if let Some(id) = chosen
+        && let Some(p) = locus_export::profile::find(&id, &settings.profiles)
+    {
+        if let Err(e) = canvas.apply(&Command::SetProfile { id: Some(id) }) {
+            *error = Some(format!("Could not select the profile: {e}."));
+        }
+        panel.format.clone_from(&p.format);
+        panel.prepared = locus_export::prepare_for(canvas.document(), panel.fixed, Some(&p));
+        panel.profile = Some(p);
+        panel.profile_changed = true;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn import_profile_dialog(settings: &mut Settings) -> Result<Option<String>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("Machine profile", &["json"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+    let io = |e: std::io::Error| format!("Could not read the file ({}).", e.kind());
+    let len = std::fs::metadata(&path).map_err(io)?.len();
+    if len > locus_export::profile::MAX_PROFILE_JSON_BYTES as u64 {
+        return Err("The profile file is too large.".to_owned());
+    }
+    let text = std::fs::read_to_string(&path).map_err(io)?;
+    profiles::import(&text, settings).map(Some)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_profile_dialog(p: &MachineProfile) -> Result<(), String> {
+    let text = p.to_json().ok_or("Could not save the profile.")?;
+    let Some(path) = pick_save(&format!("{}.json", p.id), "json", "Machine profile") else {
+        return Ok(());
+    };
+    write_atomic(&path, text.as_bytes())
+}
+
+// The browser has no synchronous file picker; profile import there is not
+// available yet (a profile can still be saved as a download).
+#[cfg(target_arch = "wasm32")]
+fn import_profile_dialog(_: &mut Settings) -> Result<Option<String>, String> {
+    Err("Importing a profile file is not available in the browser yet.".to_owned())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_profile_dialog(p: &MachineProfile) -> Result<(), String> {
+    let text = p.to_json().ok_or("Could not save the profile.")?;
+    web::Web::download(
+        &format!("{}.json", p.id),
+        text.as_bytes(),
+        "application/json",
+    );
+    Ok(())
 }
 
 fn open_shortcut() -> egui::KeyboardShortcut {

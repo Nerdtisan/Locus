@@ -25,6 +25,7 @@ pub mod operation;
 pub mod params;
 pub mod pattern;
 pub mod recipe;
+pub mod reference;
 pub mod regions;
 pub mod solve;
 pub mod text;
@@ -35,8 +36,10 @@ mod testutil;
 
 pub use boolean::{Boolean, BooleanError};
 pub use command::{Applied, Command, Editor, LayerProps};
-pub use constraint::{Constraint, Dimension};
-pub use document::{Document, EntityStore, Layer, LayerDeletion, Parameter, View};
+pub use constraint::{Constraint, Dimension, Edge};
+pub use document::{
+    Document, EntityStore, Layer, LayerDeletion, Parameter, View, check_profile_id,
+};
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
 pub use file::FileError;

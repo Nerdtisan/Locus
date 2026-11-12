@@ -301,11 +301,7 @@ impl Sketcher {
                 .map(|(id, p)| (*id, p.at))
                 .collect(),
             radii: radii(&drag.low),
-            driven: report
-                .driven
-                .iter()
-                .map(|(k, v)| (ConstraintId::new(k.0), *v))
-                .collect(),
+            driven: edge_driven(self.editor.document(), &report.driven),
         };
         self.editor.apply_solution_unrecorded(&sol)?;
         Ok(frame)
@@ -677,7 +673,27 @@ impl Lowered {
                 .map(|e| e.geom.kind())
                 .ok_or(DocError::UnknownEntity(id))
         };
-        let value = |c: &Constraint| c.dimension().map_or(0.0, |d| d.value);
+        // The centreline value: the dimension plus its stroke-edge offset.
+        let centre = doc.edge_offset(c);
+        let value = |c: &Constraint| c.dimension().map_or(0.0, |d| d.value + centre);
+        if let Some(d) = c.dimension()
+            && !d.driven
+            && centre != 0.0
+        {
+            let v = d.value + centre;
+            let bad = match c {
+                Constraint::Distance { .. } => v < 0.0,
+                _ => v <= 0.0,
+            };
+            if bad {
+                return Err(DocError::Invalid(format!(
+                    "a {} dimension of {} mm needs a negative centreline value; \
+                     adjust the dimension or the layer's pen width / kerf",
+                    d.edge.name(),
+                    d.value
+                )));
+            }
+        }
         Ok(match c {
             Constraint::Coincident { a, b } => K::Coincident(self.point(*a)?, self.point(*b)?),
             Constraint::PointOnCurve { point, curve } => {
@@ -789,6 +805,19 @@ impl Lowered {
     }
 }
 
+/// Measured values of driven dimensions, from the solver's centreline
+/// measurement to the dimension's own edge (SPEC §5, ADR 0014).
+fn edge_driven(doc: &Document, driven: &[(ls::Key, f64)]) -> Vec<(ConstraintId, f64)> {
+    driven
+        .iter()
+        .map(|(k, v)| {
+            let id = ConstraintId::new(k.0);
+            let off = doc.constraint(id).map_or(0.0, |c| doc.edge_offset(c));
+            (id, v - off)
+        })
+        .collect()
+}
+
 /// Circle radii from the solver's sketch.
 fn radii(low: &Lowered) -> Vec<(EntityId, f64)> {
     low.curves
@@ -821,11 +850,7 @@ fn solve(solver: &mut ls::LmSolver, doc: &Document) -> Result<Solution, DocError
         .map(|(id, p)| (*id, p.at))
         .collect();
     let radii = radii(&low);
-    let driven = report
-        .driven
-        .iter()
-        .map(|(k, v)| (ConstraintId::new(k.0), *v))
-        .collect();
+    let driven = edge_driven(doc, &report.driven);
     Ok(Solution {
         points,
         radii,
