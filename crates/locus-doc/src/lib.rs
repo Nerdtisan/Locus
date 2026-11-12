@@ -26,6 +26,7 @@ pub mod operation;
 pub mod params;
 pub mod pattern;
 pub mod recipe;
+pub mod reference;
 pub mod regions;
 pub mod solve;
 pub mod text;

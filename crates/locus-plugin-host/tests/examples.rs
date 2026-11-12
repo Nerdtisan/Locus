@@ -235,7 +235,7 @@ fn hpgl_golden() {
     let host = Host::new().unwrap();
     let bytes = pack(&host, &example_manifest("hpgl"), &core, None, None).unwrap();
     let plugin = host.load(&Archive::parse(&bytes).unwrap().wasm).unwrap();
-    assert_eq!(plugin.kinds(), vec![Kind::Exporter]);
+    assert_eq!(plugin.kinds(), vec![Kind::Exporter, Kind::Importer]);
     let format = plugin.export_format().unwrap();
     assert_eq!(
         (format.id.as_str(), format.extension.as_str()),
@@ -248,6 +248,134 @@ fn hpgl_golden() {
         plugin.export(&ExportModel::default()).unwrap(),
         b"IN;\nSP0;\n"
     );
+}
+
+fn dump_paths(paths: &[Path]) -> String {
+    let mut s = String::new();
+    let p = |v: &Vec2| format!("({:.4}, {:.4})", v.x, v.y);
+    for (i, path) in paths.iter().enumerate() {
+        let _ = writeln!(s, "path {i} closed={}", path.closed);
+        for seg in &path.segments {
+            let shape = match &seg.shape {
+                Shape::Line { a, b } => format!("line {} {}", p(a), p(b)),
+                Shape::Arc { center, start, end } => {
+                    format!("arc {} {} {}", p(center), p(start), p(end))
+                }
+                Shape::Circle { center, radius } => format!("circle {} {radius:.4}", p(center)),
+            };
+            let _ = writeln!(s, "  {shape} reversed={}", seg.reversed);
+        }
+    }
+    s
+}
+
+/// #233: the HPGL importer reads back what the exporter wrote, as reference
+/// geometry, and lands it as one undo step on a locked layer.
+#[test]
+fn hpgl_import_golden() {
+    let Some(core) = build_example("hpgl") else {
+        return;
+    };
+    let host = Host::new().unwrap();
+    let bytes = pack(&host, &example_manifest("hpgl"), &core, None, None).unwrap();
+    let plugin = host.load(&Archive::parse(&bytes).unwrap().wasm).unwrap();
+    assert_eq!(
+        plugin.import_extensions().unwrap(),
+        vec!["plt", "hpgl", "hgl"]
+    );
+    let plt = plugin.export(&hpgl_model()).unwrap();
+    let paths = plugin.import(&plt).unwrap();
+    golden(
+        &golden_dir(),
+        "hpgl-import.txt",
+        dump_paths(&paths).as_bytes(),
+    );
+    // Same number of shapes as were exported.
+    let exported: usize = hpgl_model()
+        .layers
+        .iter()
+        .flat_map(|l| &l.paths)
+        .map(|p| p.segments.len())
+        .sum();
+    let imported: usize = paths.iter().map(|p| p.segments.len()).sum();
+    assert_eq!(imported, exported);
+
+    let mut ed = locus_doc::Editor::new(locus_doc::Document::new());
+    let cmd = locus_plugin_host::doc::import_command(ed.document(), "example.plt", &paths).unwrap();
+    ed.apply(&cmd).unwrap();
+    assert_eq!(ed.undo_label(), Some("Import example.plt"));
+
+    // Not HP-GL: a structured error, not a crash.
+    assert!(matches!(
+        plugin.import(&[0xff, 0xfe, 0x00]),
+        Err(locus_plugin_host::CallError::Plugin(
+            PluginFailure::Unsupported(_)
+        ))
+    ));
+    assert!(plugin.import(b"IN;SP1;PU10,10;SP0;").is_err());
+}
+
+/// #234: the kerf-check validator, on a Cut layer with a 0.2 mm kerf.
+#[test]
+fn kerf_check_golden() {
+    let Some(core) = build_example("kerf-check") else {
+        return;
+    };
+    let host = Host::new().unwrap();
+    let bytes = pack(&host, &example_manifest("kerf-check"), &core, None, None).unwrap();
+    let plugin = host.load(&Archive::parse(&bytes).unwrap().wasm).unwrap();
+    assert_eq!(plugin.kinds(), vec![Kind::Validator]);
+    let square = |x: f64, s: f64| Path {
+        segments: vec![
+            line(x, 0.0, x + s, 0.0),
+            line(x + s, 0.0, x + s, s),
+            line(x + s, s, x, s),
+            line(x, s, x, 0.0),
+        ],
+        closed: true,
+    };
+    let circle = |r: f64| Path {
+        segments: vec![Segment {
+            shape: Shape::Circle {
+                center: Vec2 { x: 50.0, y: 50.0 },
+                radius: r,
+            },
+            reversed: false,
+        }],
+        closed: true,
+    };
+    let model = ExportModel {
+        layers: vec![
+            Layer {
+                name: "Cut".into(),
+                colour: 0xff0000,
+                operation: Operation::Cut {
+                    kerf_width: 0.2,
+                    compensation: Compensation::None,
+                    passes: 1,
+                },
+                paths: vec![square(0.0, 20.0), square(30.0, 0.4), circle(0.05)],
+            },
+            Layer {
+                name: "Score".into(),
+                colour: 0x0000ff,
+                operation: Operation::Score,
+                paths: vec![square(0.0, 0.1)],
+            },
+        ],
+    };
+    let schema = plugin.validator_schema().unwrap();
+    let found = plugin.validate(&model, &defaults(&schema)).unwrap();
+    let mut s = String::new();
+    for f in &found {
+        let _ = writeln!(
+            s,
+            "{:?} layer={:?} path={:?}: {}",
+            f.severity, f.layer, f.path, f.message
+        );
+    }
+    golden(&golden_dir(), "kerf-check.txt", s.as_bytes());
+    assert_eq!(found.len(), 2);
 }
 
 #[test]
