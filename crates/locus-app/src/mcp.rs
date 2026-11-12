@@ -14,6 +14,11 @@
 //!   `host.docker.internal` host name, so clients in Docker Desktop
 //!   containers (e.g. Open WebUI) can connect. The bind stays 127.0.0.1;
 //!   the token, `Origin` refusal and everything else still apply.
+//! - **Allow network clients** (off by default, #272): also listen on one
+//!   private address of this PC for clients in an allowlist (empty by
+//!   default). Plain HTTP on a network can be sniffed, so the dialog says so
+//!   and recommends an SSH tunnel or a VPN (e.g. Tailscale) instead. A token
+//!   can be kept across restarts so the other machine's config stays valid.
 //! - The AI's tool calls run here, in the frame loop, through the canvas:
 //!   each is one labelled undo step and the user watches it happen.
 //!
@@ -23,7 +28,7 @@ use std::sync::Arc;
 
 use locus_doc::{Applied, Command, DocError, LayerId, Sketcher};
 use locus_mcp::attach::{self, Jobs, Prompts};
-use locus_mcp::http::{Access, Attached, DOCKER_HOST};
+use locus_mcp::http::{Access, Attached, Cidr, DOCKER_HOST, Network};
 use locus_mcp::plugins::RegistryPlugins;
 use locus_mcp::{ApprovalMode, Grants, LocusServer, Options, Plugins, Scope, Workspace};
 use serde::{Deserialize, Serialize};
@@ -43,6 +48,16 @@ struct Saved {
     grants: Grants,
     /// Accept `Host: host.docker.internal` (#270). Off by default.
     allow_docker: bool,
+    /// Also listen on `network_bind` for allowlisted clients (#272). Off.
+    allow_network: bool,
+    /// The private address to listen on for network clients.
+    network_bind: Option<std::net::Ipv4Addr>,
+    /// Client IPs or CIDR ranges (private only). Empty by default.
+    allowlist: Vec<String>,
+    /// Reuse the token across restarts (stored with these settings).
+    keep_token: bool,
+    /// The kept token, only while `keep_token` is on.
+    token: Option<String>,
 }
 
 impl Default for Saved {
@@ -52,12 +67,35 @@ impl Default for Saved {
             port: DEFAULT_PORT,
             grants: Grants::default(),
             allow_docker: false,
+            allow_network: false,
+            network_bind: None,
+            allowlist: Vec::new(),
+            keep_token: false,
+            token: None,
         }
     }
 }
 
+impl Saved {
+    /// The network part of the access rules, or why it can't be used.
+    fn network(&self) -> Result<Option<Network>, String> {
+        if !self.allow_network {
+            return Ok(None);
+        }
+        let bind = self
+            .network_bind
+            .ok_or("choose which network address to listen on")?;
+        let allow = self
+            .allowlist
+            .iter()
+            .map(|s| s.parse::<Cidr>())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(Network { bind, allow }))
+    }
+}
+
 struct Live {
-    _http: Attached,
+    http: Attached,
     url: String,
     token: String,
     server: LocusServer,
@@ -73,6 +111,9 @@ pub struct Mcp {
     confirm_enable: bool,
     show_token: bool,
     error: Option<String>,
+    /// The allowlist entry being typed, and why it was refused.
+    new_client: String,
+    client_error: Option<String>,
     plugins: Option<RegistryPlugins>,
     exporters: Option<locus_export::Registry>,
 }
@@ -146,13 +187,23 @@ impl Mcp {
 
     fn start(&mut self, ctx: &egui::Context) {
         self.error = None;
-        let token = match locus_mcp::http::new_token() {
+        let network = match self.saved.network() {
+            Ok(n) => n,
+            Err(e) => {
+                self.error = Some(format!("Network clients: {e}."));
+                self.saved.enabled = false;
+                return;
+            }
+        };
+        let kept = self.saved.token.clone().filter(|_| self.saved.keep_token);
+        let token = match kept.map_or_else(locus_mcp::http::new_token, Ok) {
             Ok(t) => t,
             Err(e) => {
                 self.error = Some(e.to_string());
                 return;
             }
         };
+        self.saved.token = self.saved.keep_token.then(|| token.clone());
         let wake = {
             let ctx = ctx.clone();
             move || ctx.request_repaint()
@@ -167,12 +218,13 @@ impl Mcp {
         );
         let access = Access {
             allow_docker: self.saved.allow_docker,
+            network,
         };
         match Attached::start(self.saved.port, server.clone(), token.clone(), access) {
             Ok(http) => {
                 self.live = Some(Live {
                     url: http.url(),
-                    _http: http,
+                    http,
                     token,
                     server,
                     jobs,
@@ -202,6 +254,93 @@ impl Mcp {
         self.saved.enabled = false;
     }
 
+    /// A new token; restarts a running server so the old one stops working.
+    fn regenerate_token(&mut self, ctx: &egui::Context) {
+        self.saved.token = None;
+        if self.live.is_some() {
+            self.stop();
+            self.start(ctx);
+        }
+    }
+
+    /// The network-clients controls, shown while the server is off (#272).
+    fn network_settings(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(
+            &mut self.saved.allow_network,
+            "Allow network clients (other computers on this network)",
+        )
+        .on_hover_text(
+            "For AI clients on other computers on your local network. Plain HTTP: not encrypted. \
+             An SSH tunnel or a VPN such as Tailscale is safer and needs no setting.",
+        );
+        if !self.saved.allow_network {
+            return;
+        }
+        ui.indent("mcp-network", |ui| {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "Unencrypted: anyone watching your network can read the drawing and the token.",
+            );
+            let addrs = locus_mcp::http::private_addresses();
+            ui.horizontal(|ui| {
+                ui.label("Listen on");
+                let shown = self
+                    .saved
+                    .network_bind
+                    .map_or_else(|| "choose…".to_owned(), |a| a.to_string());
+                egui::ComboBox::from_id_salt("mcp-bind")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        for a in &addrs {
+                            ui.selectable_value(
+                                &mut self.saved.network_bind,
+                                Some(*a),
+                                a.to_string(),
+                            );
+                        }
+                    });
+            });
+            if addrs.is_empty() {
+                ui.weak("This computer has no private network address.");
+            }
+            ui.label("Allowed clients (IP or range, e.g. 192.168.1.20 or 192.168.1.0/24):");
+            if self.saved.allowlist.is_empty() {
+                ui.weak("None yet: no other computer can connect.");
+            }
+            let mut remove = None;
+            for (i, c) in self.saved.allowlist.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.monospace(c);
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                self.saved.allowlist.remove(i);
+            }
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.new_client);
+                if ui.button("Add").clicked() {
+                    match self.new_client.parse::<Cidr>() {
+                        Ok(c) => {
+                            let c = c.to_string();
+                            if !self.saved.allowlist.contains(&c) {
+                                self.saved.allowlist.push(c);
+                            }
+                            self.new_client.clear();
+                            self.client_error = None;
+                        }
+                        Err(e) => self.client_error = Some(e),
+                    }
+                }
+            });
+            if let Some(e) = &self.client_error {
+                ui.colored_label(ui.visuals().error_fg_color, e);
+            }
+        });
+    }
+
     fn set_grants(&mut self, g: Grants) {
         self.saved.grants = g;
         if let Some(live) = &self.live {
@@ -221,10 +360,15 @@ impl Mcp {
             return;
         };
         let waiting = live.prompts.current().is_some();
+        let network = live
+            .http
+            .network_url()
+            .map(|_| format!(" · network: {} connected", live.http.network_clients()))
+            .unwrap_or_default();
         let text = if waiting {
             "● MCP: approval needed".to_owned()
         } else {
-            format!("● MCP on ({})", scopes_label(self.saved.grants))
+            format!("● MCP on ({}){network}", scopes_label(self.saved.grants))
         };
         let colour = if waiting {
             ui.visuals().warn_fg_color
@@ -333,6 +477,21 @@ impl Mcp {
                         "Docker clients are allowed: programs running in Docker containers on this computer                          can also try to connect (through host.docker.internal). They still need the access token.",
                     );
                 }
+                if self.saved.allow_network {
+                    ui.add_space(4.0);
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "Network clients are allowed: Locus will also listen on your local network, \
+                         for the computers in your list. The connection is plain HTTP, NOT encrypted: \
+                         anyone who can watch your network traffic can read your drawing and copy the \
+                         access token.",
+                    );
+                    ui.label(
+                        "Safer: leave this off and reach Locus through an SSH tunnel \
+                         (ssh -L 47811:127.0.0.1:47811 you@this-pc) or a VPN such as Tailscale. \
+                         Those work without this setting.",
+                    );
+                }
                 ui.add_space(4.0);
                 ui.weak("You can turn it off at any time. It starts with read access only.");
                 ui.horizontal(|ui| {
@@ -355,6 +514,8 @@ impl Mcp {
         let mut open = true;
         let mut toggle = None;
         let mut grants = self.saved.grants;
+        let mut keep = self.saved.keep_token;
+        let mut regen = false;
         egui::Window::new("MCP server")
             .open(&mut open)
             .resizable(true)
@@ -374,6 +535,7 @@ impl Mcp {
                         .on_hover_text(
                             "For AI clients running in Docker Desktop on this computer, such as Open WebUI.                              Any program in a container here can then try to connect; it still needs the token.",
                         );
+                        self.network_settings(ui);
                         if ui.button("Turn on…").clicked() {
                             toggle = Some(true);
                         }
@@ -392,7 +554,25 @@ impl Mcp {
                                 ui.monospace(docker_url(&live.url));
                             });
                         }
-                        ui.weak("Turn the server off to change the port or Docker access.");
+                        if let Some(u) = live.http.network_url() {
+                            ui.horizontal(|ui| {
+                                ui.label("Network clients:");
+                                ui.monospace(&u);
+                            });
+                            ui.colored_label(
+                                ui.visuals().warn_fg_color,
+                                format!(
+                                    "Unencrypted HTTP · allowed: {} · {} connected",
+                                    if self.saved.allowlist.is_empty() {
+                                        "nobody yet".to_owned()
+                                    } else {
+                                        self.saved.allowlist.join(", ")
+                                    },
+                                    live.http.network_clients()
+                                ),
+                            );
+                        }
+                        ui.weak("Turn the server off to change the port, Docker or network access.");
                     }
                 }
                 if let Some(e) = &self.error {
@@ -431,7 +611,20 @@ impl Mcp {
                             ui.ctx().copy_text(live.token.clone());
                         }
                     });
-                    ui.weak("A new token is made each time the server starts; update your client then.");
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Regenerate token")
+                            .on_hover_text("Clients using the old token stop working.")
+                            .clicked()
+                        {
+                            regen = true;
+                        }
+                        ui.checkbox(&mut keep, "Keep this token after restarts")
+                            .on_hover_text("Stored with Locus's settings on this computer.");
+                    });
+                    if !keep {
+                        ui.weak("A new token is made each time the server starts; update your client then.");
+                    }
                     let json = client_json(&live.url, &live.token);
                     let cli = claude_code_command(&live.url, &live.token);
                     ui.horizontal(|ui| {
@@ -456,6 +649,17 @@ impl Mcp {
                     }
                 }
             });
+        if keep != self.saved.keep_token {
+            self.saved.keep_token = keep;
+            self.saved.token = if keep {
+                self.live.as_ref().map(|l| l.token.clone())
+            } else {
+                None
+            };
+        }
+        if regen {
+            self.regenerate_token(ctx);
+        }
         if grants != self.saved.grants {
             self.set_grants(grants);
         }
@@ -506,6 +710,10 @@ mod tests {
         assert!(!s.enabled);
         assert_eq!(s.grants, Grants::default());
         assert!(!s.allow_docker, "Docker clients are opt-in (#270)");
+        assert!(!s.allow_network, "network clients are opt-in (#272)");
+        assert!(s.allowlist.is_empty() && s.network_bind.is_none());
+        assert!(!s.keep_token && s.token.is_none());
+        assert_eq!(s.network(), Ok(None));
         assert!(s.grants.read && !s.grants.write && !s.grants.export);
     }
 
@@ -516,6 +724,7 @@ mod tests {
             port: 50000,
             grants: Grants::headless(true, true, false),
             allow_docker: true,
+            ..Saved::default()
         };
         let j = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<Saved>(&j).unwrap(), s);
@@ -580,5 +789,23 @@ mod tests {
         assert_eq!(canvas.undo_label(), Some("AI: add 1 entity"));
         canvas.undo();
         assert_eq!(canvas.document().entities().len(), before);
+    }
+
+    #[test]
+    fn network_settings_persist_and_validate() {
+        let mut s = Saved {
+            allow_network: true,
+            ..Saved::default()
+        };
+        assert!(s.network().is_err(), "an address must be chosen");
+        s.network_bind = Some(std::net::Ipv4Addr::new(192, 168, 1, 10));
+        let n = s.network().unwrap().unwrap();
+        assert!(n.allow.is_empty(), "empty allowlist admits nobody");
+        s.allowlist = vec!["192.168.1.20".into(), "192.168.1.0/24".into()];
+        assert_eq!(s.network().unwrap().unwrap().allow.len(), 2);
+        let j = serde_json::to_string(&s).unwrap();
+        assert_eq!(serde_json::from_str::<Saved>(&j).unwrap(), s);
+        s.allowlist.push("8.8.8.8".into());
+        assert!(s.network().is_err(), "public client refused");
     }
 }
