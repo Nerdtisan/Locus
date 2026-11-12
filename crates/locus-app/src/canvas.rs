@@ -730,6 +730,15 @@ impl Canvas {
         {
             return;
         }
+        if !self.draft.is_drawing()
+            && ui.input(|i| {
+                !(i.modifiers.command || i.modifiers.alt)
+                    && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
+            })
+        {
+            self.delete_selection();
+            return;
+        }
         let pressed = |c: char| {
             ui.input(|i| {
                 !(i.modifiers.command || i.modifiers.alt)
@@ -751,6 +760,18 @@ impl Canvas {
             self.start_dimension(units);
         } else if let Some(k) = Kind::ALL.into_iter().find(|k| pressed(k.key())) {
             self.constrain(k);
+        }
+    }
+
+    /// Delete the selection with its dependents as one undo step (#223,
+    /// SPEC §11). Only reached from [`Self::hotkeys`], so never while a typed
+    /// value or a text field has the keyboard.
+    fn delete_selection(&mut self) {
+        let ids: Vec<EntityId> = self.selection.iter().collect();
+        if let Some(cmd) = locus_doc::delete::delete_entities(self.sketcher.document(), &ids)
+            && self.apply_reporting(&cmd)
+        {
+            self.selection.clear();
         }
     }
 
@@ -2301,6 +2322,90 @@ mod tests {
         // The active layer survives its own deletion by falling back.
         c.active_layer = l2;
         assert_eq!(c.active_layer(), l1);
+    }
+
+    /// Runs one frame of `hotkeys` with `key` pressed.
+    fn press(c: &mut Canvas, key: egui::Key) {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| c.hotkeys(ui, Units::Mm));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn delete_and_backspace_delete_the_selection_as_one_undo_step() {
+        for key in [egui::Key::Delete, egui::Key::Backspace] {
+            let mut c = Canvas::default();
+            let layer = c.active_layer();
+            let add = |c: &mut Canvas, geom| {
+                c.apply_reporting(&Command::AddEntity {
+                    layer,
+                    construction: false,
+                    geom,
+                });
+                c.document()
+                    .entities()
+                    .iter()
+                    .map(|(i, _)| i)
+                    .last()
+                    .unwrap()
+            };
+            let a = add(&mut c, Geom::Point { pos: Vec2::ZERO });
+            let b = add(
+                &mut c,
+                Geom::Point {
+                    pos: Vec2::new(5.0, 0.0),
+                },
+            );
+            let l = add(&mut c, Geom::Line { start: a, end: b });
+            c.apply_reporting(&Command::AddConstraint {
+                constraint: locus_doc::Constraint::Horizontal { line: l },
+            });
+            let before = c.document().clone();
+            c.selection.set_all([l]);
+            press(&mut c, key);
+            assert!(c.document().entity(l).is_none(), "{key:?}");
+            assert_eq!(
+                c.document().constraints().len(),
+                before.constraints().len() - 1
+            );
+            assert!(c.selection.is_empty());
+            assert_eq!(c.undo().as_deref(), Some("Delete"));
+            assert_eq!(c.document().entities(), before.entities());
+            assert_eq!(c.document().constraints(), before.constraints());
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn delete_does_nothing_while_a_value_is_being_typed() {
+        let mut c = Canvas::default();
+        c.apply_reporting(&Command::AddEntity {
+            layer: c.active_layer(),
+            construction: false,
+            geom: Geom::Point { pos: Vec2::ZERO },
+        });
+        let p = c
+            .document()
+            .entities()
+            .iter()
+            .map(|(i, _)| i)
+            .last()
+            .unwrap();
+        c.selection.set_all([p]);
+        c.typed = "12".to_owned();
+        press(&mut c, egui::Key::Backspace);
+        press(&mut c, egui::Key::Delete);
+        assert!(c.document().entity(p).is_some());
     }
 
     #[test]
