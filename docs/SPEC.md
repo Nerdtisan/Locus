@@ -212,7 +212,7 @@ All are **associative**: stored as a recipe (source entity IDs + parameters), re
 - Source geometry is fully editable and constrainable. Instances are **driven**: they can be referenced by other constraints (e.g. dimension to an instance) but not directly dragged.
 - Pattern parameters appear as editable dimensions on canvas, like Fusion.
 - Instance count limit with warning (default 10 000 instances) to protect solver/render performance.
-- **Known limitation (v1, [ADR-0011](adr/0011-associative-recipes.md)):** pattern instances accept only driven (reference) dimensions; geometric and driving constraints onto them are refused until a two-phase solve with the instances fixed lands (M4). Mirror instances are solved and accept any satisfiable constraint.
+- **Decided ([ADR 0015](adr/0015-two-phase-solve-for-pattern-instances.md), #194):** constraints onto pattern instances (geometric, driving and driven) are solved in a second phase with the pattern, its sources and what it reads held fixed, so they move only other geometry; one that would need the pattern to move is refused. Offset and plugin-object instances still take no constraints. Mirror instances are solved and accept any satisfiable constraint.
 
 **Export interaction**
 - Overlapping instances are flagged by the §8 duplicate/overlap validation.
