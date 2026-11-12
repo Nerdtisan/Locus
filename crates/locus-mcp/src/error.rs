@@ -146,6 +146,17 @@ fn doc_error(e: &DocError) -> Value {
         E::IdSpaceExhausted => json!({ "kind": "id_space_exhausted" }),
         E::NothingToDo(_) => json!({ "kind": "nothing_to_do" }),
         E::Invalid(_) => json!({ "kind": "invalid" }),
+        E::PatternHeld {
+            constraints,
+            instances,
+            sources,
+        } => json!({
+            "kind": "pattern_held",
+            "constraints": constraints,
+            "instances": instances,
+            "sources": sources,
+            "hint": "pattern instances and their sources stay fixed; constrain the source or a pattern parameter instead",
+        }),
         E::Conflict {
             constraints,
             entities,

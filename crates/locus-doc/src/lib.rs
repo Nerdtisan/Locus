@@ -15,6 +15,7 @@ pub mod corner;
 pub mod document;
 pub mod entity;
 pub mod error;
+pub mod explode;
 pub mod expr;
 pub mod file;
 pub mod generated;
@@ -42,6 +43,7 @@ pub use document::{
 };
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;
+pub use explode::Exploded;
 pub use file::FileError;
 pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 pub use operation::{

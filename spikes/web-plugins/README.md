@@ -1,8 +1,8 @@
-# Web plugin runtime spike (#252, ADR 0015)
+# Web plugin runtime spike (#252, ADR 0016)
 
 How to run `.locusplugin` components in the browser with the desktop sandbox's
 limits. Two of the three options were built and measured; the decision and
-the numbers are in [ADR 0015](../../docs/adr/0015-web-plugin-runtime.md).
+the numbers are in [ADR 0016](../../docs/adr/0016-web-plugin-runtime.md).
 
 | Folder / file | What |
 |---|---|

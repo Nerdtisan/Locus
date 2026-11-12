@@ -1,4 +1,4 @@
-# ADR-0015: Web plugin runtime: the component's core module in a Web Worker, canonical ABI in Rust
+# ADR-0016: Web plugin runtime: the component's core module in a Web Worker, canonical ABI in Rust
 
 - **Status:** Accepted
 - **Date:** 2026-11-12

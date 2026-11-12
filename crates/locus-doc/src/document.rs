@@ -340,6 +340,57 @@ impl Document {
             .collect()
     }
 
+    /// Instances of pattern recipes (linear, circular): written after each
+    /// solve like any unsolved instance, but they take constraints through
+    /// the second solve phase (SPEC §6.2.1, ADR 0015).
+    #[must_use]
+    pub fn pattern_instances(&self) -> BTreeSet<EntityId> {
+        self.recipes
+            .values()
+            .filter(|r| r.kind.is_pattern())
+            .flat_map(Recipe::instances)
+            .collect()
+    }
+
+    /// Unsolved instances that still take **no** constraint: offsets and
+    /// plugin objects.
+    #[must_use]
+    pub fn constraint_free_instances(&self) -> BTreeSet<EntityId> {
+        self.recipes
+            .values()
+            .filter(|r| !r.kind.solved() && !r.kind.is_pattern())
+            .flat_map(Recipe::instances)
+            .collect()
+    }
+
+    /// Constraints that touch a pattern instance: solved in the second phase,
+    /// with the pattern held fixed (ADR 0015).
+    #[must_use]
+    pub fn late_constraints(&self) -> Vec<ConstraintId> {
+        let inst = self.pattern_instances();
+        if inst.is_empty() {
+            return Vec::new();
+        }
+        self.constraints
+            .iter()
+            .filter(|(_, c)| c.references().iter().any(|e| inst.contains(e)))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// What the second phase holds fixed: every pattern instance, its
+    /// sources and whatever else the pattern reads (centre, direction lines),
+    /// with the points they are built on.
+    pub(crate) fn late_pins(&self) -> BTreeSet<EntityId> {
+        let mut pins = BTreeSet::new();
+        for r in self.recipes.values().filter(|r| r.kind.is_pattern()) {
+            pins.extend(r.instances());
+            pins.extend(crate::recipe::closure(self, &r.sources));
+            pins.extend(crate::recipe::closure(self, &r.kind.references()));
+        }
+        pins
+    }
+
     /// The recipe that generated `id`, if any.
     #[must_use]
     pub fn driven_by(&self, id: EntityId) -> Option<RecipeId> {

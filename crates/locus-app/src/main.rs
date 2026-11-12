@@ -12,6 +12,8 @@ mod fonts;
 mod grid;
 mod hit;
 mod infer;
+#[cfg(not(target_arch = "wasm32"))]
+mod mcp;
 mod modify_tool;
 #[cfg(not(target_arch = "wasm32"))]
 mod plugins;

@@ -94,6 +94,8 @@ pub struct App {
     files: FileIo,
     #[cfg(not(target_arch = "wasm32"))]
     plugins: crate::plugins::Plugins,
+    #[cfg(not(target_arch = "wasm32"))]
+    mcp: crate::mcp::Mcp,
 }
 
 impl App {
@@ -118,6 +120,8 @@ impl App {
             files: FileIo::new(&cc.egui_ctx, cc.storage),
             #[cfg(not(target_arch = "wasm32"))]
             plugins: crate::plugins::Plugins::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            mcp: crate::mcp::Mcp::load(&cc.egui_ctx, cc.storage),
         };
         #[cfg(not(target_arch = "wasm32"))]
         app.plugins.attach(&mut app.canvas, &mut app.files);
@@ -251,6 +255,8 @@ impl App {
                         }
                     }
                 });
+                #[cfg(not(target_arch = "wasm32"))]
+                self.mcp.menu(ui);
                 ui.menu_button("Units", |ui| {
                     for u in Units::ALL {
                         ui.selectable_value(&mut self.settings.units, u, u.label());
@@ -524,7 +530,7 @@ impl App {
         }
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let u = self.settings.units;
             match self.status.cursor {
@@ -550,6 +556,9 @@ impl App {
             ui.separator();
             ui.label(self.canvas.solve_summary());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Always visible while the MCP server runs (SPEC §16.4).
+                #[cfg(not(target_arch = "wasm32"))]
+                self.mcp.status(ui);
                 ui.label(if self.settings.auto_constrain {
                     "Auto-constrain on"
                 } else {
@@ -646,6 +655,8 @@ impl eframe::App for App {
         #[cfg(not(target_arch = "wasm32"))]
         self.plugins
             .windows(ui.ctx(), &mut self.canvas, &mut self.files);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp.update(ui.ctx(), &mut self.canvas);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::top("constraints").show(ui, |ui| self.constraint_bar(ui));
@@ -665,6 +676,8 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.save(storage);
         self.files.save_state(storage);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp.save(storage);
         if let Ok(json) = serde_json::to_string(&self.dock) {
             storage.set_string(LAYOUT_KEY, json);
         }

@@ -382,6 +382,15 @@ impl Patch {
     }
 }
 
+/// Which solve a callback is asked for (ADR 0015).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SolvePhase {
+    /// Everything except constraints that touch pattern instances.
+    Main,
+    /// Those constraints, with the pattern and its sources held fixed.
+    Late,
+}
+
 #[derive(Debug, Clone)]
 struct Transaction {
     label: String,
@@ -1542,14 +1551,24 @@ impl Editor {
     pub(crate) fn apply_solved(
         &mut self,
         cmd: &Command,
-        solve: impl FnOnce(&Document) -> Result<Solution, DocError>,
+        mut solve: impl FnMut(&Document, SolvePhase) -> Result<Option<Solution>, DocError>,
     ) -> Result<Applied, DocError> {
         let mut patches = Vec::new();
         let mut out = Applied::default();
         let result = exec(&mut self.doc, cmd, &mut patches, &mut out)
-            .and_then(|()| solve(&self.doc))
-            .and_then(|sol| solution_patches(&mut self.doc, &sol, &mut patches))
-            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()));
+            .and_then(|()| solve(&self.doc, SolvePhase::Main))
+            .and_then(|sol| match sol {
+                Some(sol) => solution_patches(&mut self.doc, &sol, &mut patches),
+                None => Ok(()),
+            })
+            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()))
+            // Phase 2 (ADR 0015): constraints that touch pattern instances,
+            // solved with the freshly regenerated pattern held fixed.
+            .and_then(|()| solve(&self.doc, SolvePhase::Late))
+            .and_then(|sol| match sol {
+                Some(sol) => solution_patches(&mut self.doc, &sol, &mut patches),
+                None => Ok(()),
+            });
         if let Err(e) = result {
             for p in patches.iter().rev() {
                 p.set(&mut self.doc, false);
@@ -1584,6 +1603,28 @@ impl Editor {
                 patches,
             });
             self.redo.clear();
+        }
+        Ok(())
+    }
+
+    /// Run the second solve phase and add its changes to the last undo step
+    /// (the one a drag just recorded; ADR 0015).
+    pub(crate) fn late_into_last(
+        &mut self,
+        solve: impl FnOnce(&Document) -> Result<Option<Solution>, DocError>,
+    ) -> Result<(), DocError> {
+        let Some(sol) = solve(&self.doc)? else {
+            return Ok(());
+        };
+        let mut patches = Vec::new();
+        if let Err(e) = solution_patches(&mut self.doc, &sol, &mut patches) {
+            for p in patches.iter().rev() {
+                p.set(&mut self.doc, false);
+            }
+            return Err(e);
+        }
+        if let Some(t) = self.undo.last_mut() {
+            t.patches.extend(patches);
         }
         Ok(())
     }

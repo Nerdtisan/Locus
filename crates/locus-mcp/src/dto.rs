@@ -275,6 +275,21 @@ pub struct ValidateArgs {
     pub fix: bool,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewArgs {
+    /// Image width in pixels (16–2048, default 800).
+    #[serde(default)]
+    pub width: Option<u32>,
+    /// Image height in pixels (16–2048, default 600).
+    #[serde(default)]
+    pub height: Option<u32>,
+    /// The area to show, `[min_x, min_y, max_x, max_y]` in mm (default:
+    /// everything, with a margin).
+    #[serde(default)]
+    pub region: Option<[f64; 4]>,
+}
+
 // ── Write tools ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

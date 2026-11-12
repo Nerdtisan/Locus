@@ -21,6 +21,8 @@ use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
 use text_ui::{FontCatalog, TextSettings};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod ai;
 mod bed;
 mod layers_panel;
 mod machine;
