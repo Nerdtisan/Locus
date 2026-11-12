@@ -65,13 +65,45 @@ pub const WORKER_READY: &str = "locus-plugin-worker:ready";
 /// Largest reply accepted from a worker: the export cap, as JSON numbers.
 pub const MAX_REPLY_BYTES: usize = 4 * crate::validate::MAX_EXPORT_BYTES;
 
+/// Why a call failed, as it crosses to the app: the `CallError` variant (or
+/// `Refused` for a component that didn't pass the checks, `Timeout` when the
+/// app ended the worker, `Worker` when the worker itself failed) and the
+/// message for the user. The kind lets #254 compare failures across hosts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireError {
+    pub kind: String,
+    pub message: String,
+}
+
+impl WireError {
+    pub fn new(kind: &str, message: &str) -> WireError {
+        WireError {
+            kind: kind.to_owned(),
+            message: crate::validate::sanitise_message(message),
+        }
+    }
+}
+
+impl std::fmt::Display for WireError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<CallError> for WireError {
+    fn from(e: CallError) -> WireError {
+        WireError::new(e.kind(), &e.to_string())
+    }
+}
+
 /// The worker's side: check the component, run one call, report.
 pub fn handle<E: Engine>(
     engine: impl FnOnce(&CoreModule) -> Result<E, CallError>,
     component: &[u8],
     request: Request,
-) -> Result<Reply, String> {
-    let module = CoreModule::from_component(component).map_err(|e| e.to_string())?;
+) -> Result<Reply, WireError> {
+    let module = CoreModule::from_component(component)
+        .map_err(|e| WireError::new("Refused", &e.to_string()))?;
     let plugin = CorePlugin::new(engine(&module)?, &module)?;
     let reply = match request {
         Request::Describe => Reply::Described {
@@ -82,7 +114,12 @@ pub fn handle<E: Engine>(
         Request::Schema(Kind::Generator) => Reply::Schema(plugin.generator_schema()?),
         Request::Schema(Kind::Modifier) => Reply::Schema(plugin.modifier_schema()?),
         Request::Schema(Kind::Validator) => Reply::Schema(plugin.validator_schema()?),
-        Request::Schema(k) => return Err(format!("a {} has no parameters", k.name())),
+        Request::Schema(k) => {
+            return Err(WireError::new(
+                "NotProvided",
+                &format!("a {} has no parameters", k.name()),
+            ));
+        }
         Request::Generate(params) => Reply::Generated(plugin.generate(&params)?),
         Request::Modify { input, params } => Reply::Paths(plugin.modify(&input, &params)?),
         Request::Format => Reply::Format(plugin.export_format()?),
@@ -94,25 +131,20 @@ pub fn handle<E: Engine>(
     Ok(reply)
 }
 
-impl From<CallError> for String {
-    fn from(e: CallError) -> String {
-        e.to_string()
-    }
-}
-
 /// The worker's answer as JSON.
 #[must_use]
-pub fn reply_json(r: &Result<Reply, String>) -> String {
-    serde_json::to_string(r)
-        .unwrap_or_else(|_| r#"{"Err":"the plugin's reply couldn't be encoded"}"#.to_owned())
+pub fn reply_json(r: &Result<Reply, WireError>) -> String {
+    serde_json::to_string(r).unwrap_or_else(|_| {
+        r#"{"Err":{"kind":"Worker","message":"the plugin's reply couldn't be encoded"}}"#.to_owned()
+    })
 }
 
 /// Reads a worker's answer, bounded; anything unreadable is an error.
-pub fn parse_reply(json: &str) -> Result<Reply, String> {
+pub fn parse_reply(json: &str) -> Result<Reply, WireError> {
     if json.len() > MAX_REPLY_BYTES {
-        return Err("the plugin's reply is too large".into());
+        return Err(WireError::new("Worker", "the plugin's reply is too large"));
     }
-    serde_json::from_str::<Result<Reply, String>>(json)
-        .map_err(|_| "the plugin's reply is unreadable".to_owned())?
-        .map_err(|e| crate::validate::sanitise_message(&e))
+    serde_json::from_str::<Result<Reply, WireError>>(json)
+        .map_err(|_| WireError::new("Worker", "the plugin's reply is unreadable"))?
+        .map_err(|e| WireError::new(&e.kind, &e.message))
 }

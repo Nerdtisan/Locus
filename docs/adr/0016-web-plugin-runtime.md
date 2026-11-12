@@ -93,3 +93,7 @@ Measured on the shipped web host, same browser:
 | One call, including starting a fresh worker, compiling the plugin and the call itself | about 23 ms (finger-box `describe`, `generate`; HPGL `format`) |
 
 The worker sends a ready message before it takes a call: a call posted while the worker was still loading would otherwise be dropped. Importer and validator plugins stay desktop-only in the web build for now; the core-module host already supports them.
+
+## Follow-up (2026-11-12, #254)
+
+The §15.8 fixture suite runs against the web host in headless Chrome in CI (`.github/workflows/web-plugins.yml`): `tests/web_fixtures.rs` writes each fixture and the desktop host's answers, and `crates/locus-plugin-worker/web-tests` makes the same 66 calls through the real worker. Successes must match exactly; failures by class, since the hosts stop runaway plugins differently by design (desktop: fuel and a memory limiter; web: the worker timeout, and a trap once the capped memory can't grow). All 66 pass.

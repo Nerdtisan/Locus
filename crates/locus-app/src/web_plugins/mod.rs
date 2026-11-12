@@ -204,7 +204,7 @@ impl WebPlugins {
                 Ok(v) => v
                     .as_string()
                     .ok_or_else(|| "the plugin worker sent garbage".to_owned())
-                    .and_then(|j| parse_reply(&j)),
+                    .and_then(|j| parse_reply(&j).map_err(|e| e.message)),
                 Err(_) => Err("the plugin worker failed".to_owned()),
             };
             Msg::Reply(n, reply)
