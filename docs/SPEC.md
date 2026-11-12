@@ -33,6 +33,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Plugin API | WIT package `locus:plugin@1.0.0` (draft until the M3 host): one world per plugin kind, none importing anything (deny by default), exporters get the same validated export model as built-in writers ([ADR-0009](adr/0009-plugin-api.md), 2026-11-05). Text ships in core, not as a plugin (§9). |
 | Recipes | Mirror/patterns/offset are recipes in the document; instances are real driven entities, mirror solved by `Symmetric` constraints, patterns regenerated after the solve; instance IDs stay with the recipe ([ADR-0011](adr/0011-associative-recipes.md), 2026-11-10). |
 | Offsets | Exact line/arc offsets (areas and open chains, round or miter joins) owned by `locus-region` as a Minkowski sum/difference through the ADR 0008 booleans; `cavalier_contours` measured and not chosen (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)). |
+| UI (M5) | Fusion-style sketch UI: ribbon grouped Create / Modify / Constrain / Inspect / Insert / Select, browser, sketch palette, context inspector, right-click marking menu (pan on middle-drag / Space+drag), Fusion's sketch keys, one pick → drag/type → Enter/Esc → editable-dimension tool model; built on an action registry and a tool trait. Style (stroke colour, width, pen number, fill, opacity) belongs to each object, not the layer; placed text stays re-editable. Owner decisions 2026-11-13, #293, [ADR 0017](adr/0017-fusion-style-ui.md). |
 
 ---
 
@@ -139,6 +140,7 @@ crates/
 Each entity carries:
 - `layer: LayerId`
 - `construction: bool` — never exported, rendered dashed. Independent of layer.
+- `style` (M5, #287): stroke colour, stroke width, pen number, fill and opacity. Per object, not per layer ([ADR 0017](adr/0017-fusion-style-ui.md)).
 
 ### Layers
 - Layers are **properties on geometry**, not separate sketches. One shared solver space for the whole document.
@@ -236,7 +238,7 @@ Layer `operation` enum:
 | Cut | kerf width, inside/outside/none compensation, pass count (metadata) |
 | Score | — |
 | Engrave (fill) | hatch spacing, hatch angle, crosshatch (holes respected; outlines kept) |
-| Draw (plotter) | pen number, pen width (drives hatch spacing + stroke-edge preview) |
+| Draw (plotter) | pen number, pen width (drives hatch spacing + stroke-edge preview). **M5:** these move to each object's style (owner decision 2026-11-13, #287, [ADR 0017](adr/0017-fusion-style-ui.md)); the layer keeps only the operation. |
 | Drag-knife (vinyl) | blade offset (swivel arcs at turns over 10°) |
 | Reference | never exported |
 
@@ -322,6 +324,7 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 12. **Booleans that keep arcs** (§6.3, M2) — **Decided** ([ADR 0008](adr/0008-booleans-and-arcs.md)): Locus-owned exact line/arc arrangement in `locus-region`; `i_overlay` + refit and `cavalier_contours` measured and not chosen.
 13. **Offsets that keep arcs** (§6.2, §7, M3) — **Decided** ([ADR 0010](adr/0010-offsets.md)): Locus-owned offsets on the ADR 0008 arrangement (bands + corner discs/kites, one boolean); 6,000/6,000 random cases exact vs `cavalier_contours` 5,995 (wrong by up to 1.5 mm where offsets touch exactly); no new dependencies.
 14. **Browser plugin runtime** (§15, M4) — **Decided** ([ADR 0016](adr/0016-web-plugin-runtime.md)): run the component's core module in a dedicated Web Worker (empty imports, memory maximum ≤ 256 MB, terminated on timeout), with the canonical ABI of `locus:plugin@1.x` in Rust in `locus-plugin-host`. wasmtime + Pulley compiled to wasm was measured and doesn't run (Cranelift needs `std::time`; +4.3 MB); jco not chosen (generated JS, same limits). The web host has no fuel budget; the timeout bounds every call.
+15. **Fusion-style UI** (§6, §11, M5) — **Proposed** ([ADR 0017](adr/0017-fusion-style-ui.md), #293): the layout, marking menu, shortcut map and tool model in [`docs/ux/m5-design.md`](ux/m5-design.md), on an action registry, a tool trait and `Canvas` split into state plus views (#294). Accepted on owner sign-off.
 
 ---
 

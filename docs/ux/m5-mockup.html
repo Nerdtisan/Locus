@@ -1,0 +1,990 @@
+<title>Locus M5 Sketch UI</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout concept: a design-review page wrapped around a scaled, clickable app frame.
+   The frame is Locus with a Fusion-style sketch ribbon; the page around it holds the flows and the notes. */
+:root{
+  --bg:#e9ecf1; --page-ink:#1a2030; --page-muted:#566074;
+  --chrome:#dfe3e9; --panel:#f6f7f9; --panel-2:#eceff3; --line:#c9cfd8; --ink:#1b2130; --muted:#5f6878;
+  --accent:#1f6fd1; --accent-ink:#ffffff; --accent-soft:#d8e6fa;
+  --canvas:#fbfcfd; --grid:#e6eaf0; --grid-major:#d4dae3;
+  --geom-free:#1f6fd1; --geom-fixed:#1b2130; --construct:#d27a1c; --sel:#0ea5b7; --preview:#7b4ddb; --driven:#8a93a3;
+  --dim:#3b4456; --ok:#2f8a4c; --warn:#b7791f; --err:#c23b3b;
+  --shadow:0 8px 28px rgba(20,30,50,.18);
+  --f-ui:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --f-head:"Space Grotesk","Inter",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#14171d; --page-ink:#e6e9ef; --page-muted:#9aa3b3;
+  --chrome:#23272f; --panel:#2a2f38; --panel-2:#323844; --line:#3e4552; --ink:#e3e7ee; --muted:#9aa3b3;
+  --accent:#4c93ec; --accent-ink:#0d1420; --accent-soft:#233a5a;
+  --canvas:#1c2027; --grid:#252a33; --grid-major:#2f3540;
+  --geom-free:#5aa2f5; --geom-fixed:#e3e7ee; --construct:#e8953a; --sel:#33c6d6; --preview:#a585f2; --driven:#7d8697;
+  --dim:#c4cad6; --ok:#4fb26c; --warn:#d9a03b; --err:#e06464; --shadow:0 8px 28px rgba(0,0,0,.5); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#14171d; --page-ink:#e6e9ef; --page-muted:#9aa3b3;
+  --chrome:#23272f; --panel:#2a2f38; --panel-2:#323844; --line:#3e4552; --ink:#e3e7ee; --muted:#9aa3b3;
+  --accent:#4c93ec; --accent-ink:#0d1420; --accent-soft:#233a5a;
+  --canvas:#1c2027; --grid:#252a33; --grid-major:#2f3540;
+  --geom-free:#5aa2f5; --geom-fixed:#e3e7ee; --construct:#e8953a; --sel:#33c6d6; --preview:#a585f2; --driven:#7d8697;
+  --dim:#c4cad6; --ok:#4fb26c; --warn:#d9a03b; --err:#e06464; --shadow:0 8px 28px rgba(0,0,0,.5); color-scheme:dark}
+html,body{height:auto}
+body{background:var(--bg);color:var(--page-ink);font-family:var(--f-ui);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.page{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+header.top h1{font-family:var(--f-head);font-size:26px;margin:0;letter-spacing:-.01em;text-wrap:balance}
+header.top p{margin:4px 0 0;color:var(--page-muted);max-width:70ch;line-height:1.45}
+.ticket{font-family:var(--f-mono);font-size:12px;color:var(--page-muted)}
+.flows{display:flex;flex-wrap:wrap;gap:6px}
+.flows button{font:500 12.5px var(--f-ui);border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 10px;border-radius:999px;cursor:pointer}
+.flows button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.flows button:focus-visible,.frame button:focus-visible,.frame input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hint{font-size:12px;color:var(--page-muted)}
+.hint kbd,.kbd{font-family:var(--f-mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--panel);color:var(--ink)}
+.stage{overflow-x:auto;overflow-y:hidden;border-radius:10px}
+.scaler{position:relative}
+/* ---------- App frame ---------- */
+.frame{position:absolute;left:0;top:0;width:1280px;height:780px;transform-origin:0 0;background:var(--chrome);color:var(--ink);font:12px var(--f-ui);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:grid;grid-template-rows:32px 24px 62px 1fr 24px;box-shadow:var(--shadow);user-select:none}
+.appbar{display:flex;align-items:center;gap:10px;padding:0 10px;background:var(--panel-2);border-bottom:1px solid var(--line)}
+.appbar .logo{font:700 13px var(--f-head);letter-spacing:.02em}
+.appbar .doc{font-weight:500}.appbar .doc small{color:var(--muted);font-weight:400}
+.appbar .sp{flex:1}
+.ib{display:inline-flex;align-items:center;justify-content:center;gap:4px;border:0;background:transparent;color:var(--ink);border-radius:5px;padding:3px 6px;cursor:pointer;font:inherit}
+.ib:hover{background:var(--accent-soft)}
+.tabs{display:flex;gap:2px;padding:0 8px;background:var(--chrome);align-items:flex-end;border-bottom:1px solid var(--line)}
+.tabs button{border:1px solid transparent;border-bottom:0;background:transparent;color:var(--muted);font:600 11px var(--f-ui);letter-spacing:.08em;padding:4px 14px;border-radius:6px 6px 0 0;cursor:pointer}
+.tabs button.on{background:var(--panel);color:var(--accent);border-color:var(--line)}
+.ribbon{display:flex;align-items:stretch;background:var(--panel);border-bottom:1px solid var(--line);padding:0 6px;gap:0}
+.grp{position:relative;display:flex;flex-direction:column;align-items:center;padding:4px 8px 2px;border-right:1px solid var(--line)}
+.grp .btns{display:flex;gap:1px}
+.tb{width:34px;height:32px;display:flex;align-items:center;justify-content:center;border:0;border-radius:5px;background:transparent;color:var(--ink);cursor:pointer;position:relative}
+.tb:hover,.tb.on{background:var(--accent-soft)}
+.tb.on{box-shadow:inset 0 -2px 0 var(--accent)}
+.tb svg,.ico{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.grp .glabel{border:0;background:transparent;color:var(--muted);font:600 10px var(--f-ui);letter-spacing:.09em;cursor:pointer;padding:2px 6px;border-radius:4px}
+.grp .glabel:hover{color:var(--accent);background:var(--accent-soft)}
+.grp.finish{margin-left:auto;border-right:0}
+.menu{position:absolute;top:100%;left:0;z-index:40;min-width:250px;background:var(--panel);border:1px solid var(--line);border-radius:7px;box-shadow:var(--shadow);padding:4px}
+.menu .mi{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--ink);font:12px var(--f-ui);padding:5px 8px;border-radius:5px;cursor:pointer;text-align:left}
+.menu .mi:hover{background:var(--accent-soft)}
+.menu .mi .ico{width:16px;height:16px}
+.menu .mi .k{margin-left:auto;font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+.menu .sep{height:1px;background:var(--line);margin:4px 2px}
+.menu .mh{font:600 10px var(--f-ui);letter-spacing:.08em;color:var(--muted);padding:6px 8px 2px}
+.main{display:grid;grid-template-columns:238px 1fr 276px;min-height:0}
+.pane{background:var(--panel);display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
+.pane.right{border-right:0;border-left:1px solid var(--line)}
+.ph{display:flex;align-items:center;gap:6px;height:26px;padding:0 6px 0 10px;background:var(--panel-2);border-bottom:1px solid var(--line);font:600 10.5px var(--f-ui);letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.ph .sp{flex:1}
+.ph .ib{padding:1px 4px;color:var(--muted)}
+.pb{padding:6px 8px;overflow:auto;min-height:0}
+.tree{list-style:none;margin:0;padding:0}
+.tree li{padding:3px 4px;border-radius:4px;display:flex;align-items:center;gap:6px;cursor:default;white-space:nowrap}
+.tree li:hover{background:var(--panel-2)}
+.tree li.on{background:var(--accent-soft)}
+.tree .tw{color:var(--muted);width:10px;font-size:9px}
+.tree .sub{padding-left:16px}
+.tree .cnt{margin-left:auto;color:var(--muted);font-family:var(--f-mono);font-size:10.5px}
+.sw{width:10px;height:10px;border-radius:2px;flex:none;border:1px solid rgba(0,0,0,.15)}
+.chip{font:600 9.5px var(--f-ui);letter-spacing:.05em;padding:1px 5px;border-radius:3px;background:var(--panel-2);color:var(--muted);border:1px solid var(--line)}
+.eye{margin-left:auto;color:var(--muted);display:flex;gap:4px}
+.eye svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.6}
+.canvaswrap{position:relative;background:var(--canvas);min-width:0;overflow:hidden}
+.canvaswrap svg.cv{position:absolute;inset:0;width:100%;height:100%}
+.navbar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+.navbar .tb{width:28px;height:26px}.navbar .tb svg{width:16px;height:16px}
+.navbar .div{width:1px;background:var(--line);margin:3px 2px}
+.status{display:flex;align-items:center;gap:14px;padding:0 10px;background:var(--panel-2);border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden}
+.status .prompt{color:var(--ink);font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.status .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-weight:600;font-size:11px}
+.pill.free{background:var(--accent-soft);color:var(--accent)}
+.status .mono{font-family:var(--f-mono);font-size:11px}
+/* palette + inspector */
+.sec{border-bottom:1px solid var(--line);padding:6px 2px 8px}
+.sec h4{margin:2px 0 6px;font:600 10.5px var(--f-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px}
+.sec h4 .sp{flex:1}
+.row{display:flex;align-items:center;gap:6px;min-height:24px}
+.row label,.row .lb{flex:0 0 92px;color:var(--muted)}
+.row .grow{flex:1;min-width:0}
+.fld{display:inline-flex;align-items:center;height:22px;border:1px solid var(--line);border-radius:4px;background:var(--canvas);padding:0 6px;font-family:var(--f-mono);font-size:11.5px;color:var(--ink);min-width:0}
+.fld.w{width:100%}
+.fld.focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.fld .u{color:var(--muted);margin-left:auto;padding-left:6px}
+.fld.expr{color:var(--accent)}
+input.fld{font-family:var(--f-mono)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.seg button{border:0;background:var(--canvas);color:var(--ink);font:500 11px var(--f-ui);padding:3px 8px;cursor:pointer;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
+.ck{display:flex;align-items:center;gap:6px;min-height:22px;cursor:pointer}
+.ck i{width:13px;height:13px;border:1px solid var(--line);border-radius:3px;background:var(--canvas);display:inline-flex;align-items:center;justify-content:center;font-style:normal;font-size:10px;color:var(--accent-ink)}
+.ck.on i{background:var(--accent);border-color:var(--accent)}
+.ck.on i::after{content:"✓"}
+.note{font-size:11px;color:var(--muted);line-height:1.4;margin-top:4px}
+.badge{font:600 10px var(--f-ui);padding:1px 6px;border-radius:3px;background:var(--accent-soft);color:var(--accent)}
+.badge.c{background:color-mix(in srgb,var(--construct) 20%,transparent);color:var(--construct)}
+.badge.d{background:var(--panel-2);color:var(--driven)}
+.swbtn{width:22px;height:22px;border-radius:4px;border:1px solid var(--line);cursor:pointer;padding:0}
+.btn{border:1px solid var(--line);background:var(--canvas);color:var(--ink);font:500 11.5px var(--f-ui);padding:4px 10px;border-radius:5px;cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:hover{filter:brightness(1.05)}
+.btn.on{outline:2px solid var(--accent)}
+/* Command dialog (Fusion-style, docked top-right of canvas) */
+.dlg{position:absolute;top:12px;right:12px;width:268px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);z-index:20}
+.dlg .dh{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font:600 12px var(--f-ui);text-transform:uppercase;letter-spacing:.06em}
+.dlg .dh .sp{flex:1}
+.dlg .db{padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.dlg .df{display:flex;gap:6px;justify-content:flex-end;padding:8px 10px;border-top:1px solid var(--line);align-items:center}
+.dlg .df .lft{margin-right:auto;font-size:10.5px;color:var(--muted)}
+.selbox{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:4px;background:var(--accent);color:var(--accent-ink);font-size:11px;font-weight:500}
+.selbox.empty{background:var(--canvas);color:var(--muted);border:1px dashed var(--line)}
+.selbox b{font-weight:700;opacity:.8}
+/* overlays in svg */
+.cv .g-free{stroke:var(--geom-free)}.cv .g-fixed{stroke:var(--geom-fixed)}
+.cv path,.cv circle,.cv line,.cv text.geo{fill:none;stroke-width:1.6;vector-effect:non-scaling-stroke}
+.cv .pick{cursor:pointer}
+.cv .pick:hover{stroke:var(--sel);stroke-width:2.6}
+.cv .sel{stroke:var(--sel)!important;stroke-width:2.8!important}
+.cv .cons{stroke:var(--construct);stroke-dasharray:8 5}
+.cv .drv{stroke:var(--driven)}
+.cv .pv{stroke:var(--preview);stroke-dasharray:5 4;stroke-width:1.8}
+.cv .dimln{stroke:var(--dim);stroke-width:1}
+.cv .dimtx{fill:var(--dim);font:500 12px var(--f-mono)}
+.cv .dimbg{fill:var(--canvas)}
+.cv .glyph rect{fill:var(--panel);stroke:var(--line)}
+.cv .glyph text{fill:var(--muted);font:600 9px var(--f-ui)}
+.cv .gridm{stroke:var(--grid)}.cv .gridM{stroke:var(--grid-major)}
+.cv .hud rect{fill:var(--panel);stroke:var(--accent)}
+.cv .hud text{fill:var(--ink);font:500 12px var(--f-mono)}
+.cv .hud text.u{fill:var(--muted)}
+.cv .lbl{fill:var(--muted);font:500 11px var(--f-ui)}
+[data-show]{display:none}
+#overlay{position:absolute;inset:0;pointer-events:none;z-index:45}
+#overlay>*{pointer-events:auto}
+.toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:var(--ink);color:var(--canvas);padding:6px 12px;border-radius:6px;font-size:12px;z-index:60;box-shadow:var(--shadow);white-space:nowrap}
+/* marking menu */
+.mm{position:absolute;z-index:50;width:0;height:0}
+.mm .hub{position:absolute;left:-7px;top:-7px;width:14px;height:14px;border-radius:50%;border:2px solid var(--accent);background:var(--panel)}
+.mm .ring{position:absolute;left:-96px;top:-96px;width:192px;height:192px;border-radius:50%;border:16px solid color-mix(in srgb,var(--panel) 70%,transparent);box-sizing:border-box;pointer-events:none}
+.mm .slot{position:absolute;transform:translate(-50%,-50%);display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 10px 4px 6px;font:500 11.5px var(--f-ui);color:var(--ink);white-space:nowrap;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.mm .slot:hover,.mm .slot.hot{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.mm .slot.off{opacity:.45;pointer-events:none}
+.mm .slot .ico{width:15px;height:15px}
+.mm .slot .k{font-family:var(--f-mono);font-size:10px;opacity:.7}
+.mm .list{position:absolute;left:-110px;top:118px;width:220px;background:var(--panel);border:1px solid var(--line);border-radius:7px;box-shadow:var(--shadow);padding:4px}
+.mm .list .mi{display:flex;width:100%;border:0;background:transparent;color:var(--ink);font:12px var(--f-ui);padding:4px 8px;border-radius:4px;cursor:pointer;text-align:left}
+.mm .list .mi:hover{background:var(--accent-soft)}
+.mm .list .mi .k{margin-left:auto;font-family:var(--f-mono);font-size:10.5px;color:var(--muted)}
+/* modal */
+.scrim{position:absolute;inset:0;background:rgba(10,15,25,.35);z-index:70;display:flex;align-items:center;justify-content:center}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);display:flex;flex-direction:column;max-height:700px}
+.modal .mh2{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);font:600 14px var(--f-head)}
+.modal .mh2 .sp{flex:1}
+.modal .mb{padding:12px 14px;overflow:auto}
+.modal .mf{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--line);align-items:center}
+.modal .mf .lft{margin-right:auto;color:var(--muted);font-size:11.5px}
+table.t{border-collapse:collapse;width:100%;font-size:11.5px}
+table.t th{text-align:left;font:600 10px var(--f-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding:4px 6px;border-bottom:1px solid var(--line)}
+table.t td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.t td.mono{font-family:var(--f-mono)}
+.v-err{color:var(--err)}.v-warn{color:var(--warn)}.v-ok{color:var(--ok)}
+.files{font-family:var(--f-mono);font-size:11px;background:var(--canvas);border:1px solid var(--line);border-radius:5px;padding:6px 8px;line-height:1.6}
+.plist{list-style:none;margin:0;padding:0}
+.plist li{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer}
+.plist li:hover{background:var(--panel-2)}
+.plist li.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.plist .mh{font:600 10px var(--f-ui);letter-spacing:.08em;color:var(--muted);padding:8px 8px 2px;cursor:default}
+.plist .mh:hover{background:none}
+.corner{display:grid;grid-template-columns:repeat(2,26px);grid-template-rows:repeat(2,18px);gap:3px;border:1px solid var(--line);padding:3px;border-radius:4px;background:var(--canvas)}
+.corner span{border-radius:2px;background:var(--panel-2);cursor:pointer}
+.corner span.on{background:var(--accent)}
+.banner{background:var(--accent-soft);color:var(--ink);border-radius:6px;padding:7px 10px;font-size:11.5px;display:flex;gap:8px;align-items:center}
+.fonts{border:1px solid var(--line);border-radius:5px;max-height:132px;overflow:auto;background:var(--canvas)}
+.fonts div{display:flex;align-items:baseline;gap:8px;padding:4px 8px;cursor:pointer}
+.fonts div:hover{background:var(--panel-2)}
+.fonts div.on{background:var(--accent-soft)}
+.fonts .pv{font-size:16px;color:var(--ink);flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.fonts .nm{font-size:10.5px;color:var(--muted)}
+.search{position:absolute;z-index:55;width:330px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);overflow:hidden}
+.search input{width:100%;border:0;border-bottom:1px solid var(--line);background:var(--canvas);color:var(--ink);padding:9px 12px;font:13px var(--f-ui);outline:none;box-sizing:border-box}
+.search .res{max-height:280px;overflow:auto;padding:4px}
+.search .mi{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--ink);font:12px var(--f-ui);padding:5px 8px;border-radius:5px;cursor:pointer;text-align:left}
+.search .mi.hot,.search .mi:hover{background:var(--accent-soft)}
+.search .mi .grp2{color:var(--muted);font-size:10.5px}
+.search .mi .k{margin-left:auto;font-family:var(--f-mono);font-size:11px;color:var(--muted)}
+.search .mi.dis{opacity:.5}
+.search .mi .why{font-size:10px;color:var(--muted);margin-left:6px}
+.search .hdr{display:flex;gap:6px;flex-wrap:wrap;padding:6px 8px;border-bottom:1px solid var(--line)}
+.floatwin{position:absolute;z-index:45;width:300px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);overflow:hidden}
+.floatwin .osbar{display:flex;align-items:center;gap:8px;height:26px;padding:0 8px;background:var(--panel-2);border-bottom:1px solid var(--line);font-size:11.5px}
+.floatwin .osbar .sp{flex:1}
+.floatwin .osbar i{width:10px;height:10px;border-radius:50%;display:inline-block;background:var(--line)}
+.sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 22px;width:940px}
+.sheet h5{margin:0 0 4px;font:600 10.5px var(--f-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.sheet .r{display:flex;justify-content:space-between;gap:8px;padding:2px 0;border-bottom:1px dotted var(--line);font-size:11.5px}
+.sheet .r .was{color:var(--warn);font-size:10px;margin-left:6px}
+/* notes */
+.notes{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px}
+@media (max-width:900px){.notes{grid-template-columns:1fr}}
+.card{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:14px 18px;min-width:0}
+.card h2{font:700 15px var(--f-head);margin:0 0 8px}
+.card h3{font:600 12px var(--f-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
+.card ul,.card ol{margin:0;padding-left:18px;line-height:1.5;font-size:13.5px}
+.card li{margin:3px 0}
+.card p{font-size:13.5px;line-height:1.5;margin:6px 0;max-width:72ch}
+.card code{font-family:var(--f-mono);font-size:12px;background:var(--panel-2);padding:0 4px;border-radius:3px}
+@media (prefers-reduced-motion:no-preference){.mm .slot{transition:background .08s}.toast{animation:tin .15s ease-out}@keyframes tin{from{opacity:0;transform:translate(-50%,6px)}}}
+</style>
+
+<div class="page">
+  <header class="top">
+    <div>
+      <h1>Locus M5 sketch UI</h1>
+      <p>A clickable design prototype for the Fusion-style overhaul. It is static: nothing here edits geometry. Pick a flow, or use the frame directly: right-click the canvas, press shortcut keys, open the ribbon groups, click and double-click shapes.</p>
+    </div>
+    <div class="ticket">Nerdtisan/Locus #293 · epic #283 · design for sign-off · 2026-11-13</div>
+  </header>
+  <nav class="flows" id="flows" aria-label="Flows"></nav>
+  <div class="hint">Try: <kbd>S</kbd> tool search · <kbd>L</kbd> line · <kbd>O</kbd> offset · <kbd>M</kbd> move · <kbd>X</kbd> construction · <kbd>Del</kbd> · <kbd>Esc</kbd> · <kbd>?</kbd> shortcut map · right-click the canvas · double-click the outer edge</div>
+  <div class="stage" id="stage"><div class="scaler" id="scaler">
+  <div class="frame" id="frame" role="application" aria-label="Locus mockup">
+    <div class="appbar">
+      <span class="logo">LOCUS</span>
+      <button class="ib" data-menu="file">File ▾</button>
+      <button class="ib" title="Save (Ctrl+S)"><svg class="ico" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></svg></button>
+      <button class="ib" title="Undo (Ctrl+Z)"><svg class="ico" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h10a5 5 0 0 1 0 10h-2"/></svg></button>
+      <button class="ib" title="Redo (Ctrl+Y)"><svg class="ico" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M20 12H10a5 5 0 0 0 0 10h2"/></svg></button>
+      <span class="sp"></span>
+      <span class="doc">coaster-tray.locus <small>· LightBurn (SVG) · mm</small></span>
+      <span class="sp"></span>
+      <button class="ib" id="searchBtn" title="Tool search (S)"><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></svg> Search <span class="kbd">S</span></button>
+      <button class="ib" data-go="shortcuts" title="Shortcut map (?)">?</button>
+    </div>
+    <div class="tabs"><button class="on" id="tabSketch">SKETCH</button><button id="tabOutput">OUTPUT</button></div>
+    <div class="ribbon" id="ribbon"></div>
+    <div class="main">
+      <aside class="pane" id="browserPane">
+        <div class="ph">Browser<span class="sp"></span><button class="ib" title="Undock pane" data-undock="browser">⧉</button></div>
+        <div class="pb" id="browser"></div>
+      </aside>
+      <section class="canvaswrap" id="cw">
+        <svg class="cv" id="cv" viewBox="0 0 800 560" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="dlg"></div>
+        <div class="navbar" id="navbar"></div>
+      </section>
+      <aside class="pane right">
+        <div class="ph">Sketch palette<span class="sp"></span><button class="ib" title="Undock pane">⧉</button></div>
+        <div class="pb" id="palette" style="flex:none"></div>
+        <div class="ph">Inspector<span class="sp"></span><button class="ib" title="Undock pane" data-undock="inspector">⧉</button></div>
+        <div class="pb" id="inspector" style="flex:1"></div>
+      </aside>
+    </div>
+    <div class="status" id="status"></div>
+    <div id="overlay"></div>
+  </div>
+  </div></div>
+  <div class="notes">
+    <div class="card" id="notesFlow"></div>
+    <div class="card">
+      <h2>For the owner to decide</h2>
+      <ol>
+        <li><b>Constraint keys.</b> Fusion gives constraints no letters. The design keeps Locus's letters where they don't clash (H, K, E, F, Q, W, Y) and moves the clashing ones to Shift (Shift+T tangent, Shift+O concentric, Shift+M midpoint, Shift+X collinear). Alternative: no letters, like Fusion.</li>
+        <li><b>Horizontal/Vertical.</b> Fusion has one combined tool that picks by the line's angle. The design follows Fusion (H); V goes away.</li>
+        <li><b>Style on Cut and Score layers.</b> Objects carry their own style, but LightBurn and Cricut read colour as the operation. The design exports Cut/Score/Drag-knife strokes in the profile's colour and hairline, and shows that in the Style section. Draw and Engrave export the object's own style.</li>
+        <li><b>Marking-menu ring.</b> The 8 ring slots stay the same everywhere so flicks become muscle memory; only the list beneath changes with context.</li>
+        <li><b>Style for new geometry.</b> New geometry takes the "current style" shown in the Inspector when nothing is selected. Picking with the eyedropper with nothing selected sets the current style.</li>
+      </ol>
+      <h3>Not in this mockup</h3>
+      <p>Machine preview, validation, plugins, MCP and touch keep their current behaviour and move into the new chrome unchanged. Touch long-press opens the same marking menu.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+const frame=$('#frame');
+/* ---------- icons ---------- */
+const I={
+line:'<path d="M5 19 19 5"/><circle cx="5" cy="19" r="1.6"/><circle cx="19" cy="5" r="1.6"/>',
+rect:'<rect x="4" y="6" width="16" height="12" rx="1"/>',
+circle:'<circle cx="12" cy="12" r="7"/><path d="M12 12h7"/>',
+arc:'<path d="M5 17a8 8 0 0 1 14 0"/>',
+polygon:'<path d="m12 4 7 5-2.6 9H7.6L5 9z"/>',
+slot:'<rect x="3" y="9" width="18" height="6" rx="3"/>',
+spline:'<path d="M4 17c4-12 8 4 16-10"/><circle cx="4" cy="17" r="1.4"/><circle cx="20" cy="7" r="1.4"/>',
+point:'<path d="M12 8v8M8 12h8"/>',
+text:'<path d="M6 6h12M12 6v13M9 19h6"/>',
+mirror:'<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7 4 17h5zM15 7l5 10h-5z"/>',
+rpattern:'<rect x="4" y="4" width="5" height="5"/><rect x="15" y="4" width="5" height="5"/><rect x="4" y="15" width="5" height="5"/><rect x="15" y="15" width="5" height="5"/>',
+cpattern:'<circle cx="12" cy="12" r="7" stroke-dasharray="2 2"/><circle cx="12" cy="5" r="1.8"/><circle cx="18.5" cy="15" r="1.8"/><circle cx="5.5" cy="15" r="1.8"/>',
+offset:'<rect x="7" y="7" width="10" height="10" rx="2"/><rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke-dasharray="2.5 2"/>',
+fillet:'<path d="M5 19V11a6 6 0 0 1 6-6h8"/>',
+chamfer:'<path d="M5 19v-9l5-5h9"/>',
+trim:'<path d="M4 12h6M14 12h6" /><path d="m9 7 6 10M15 7 9 17" stroke-width="1.2"/>',
+extend:'<path d="M4 12h9"/><path d="M13 12h4" stroke-dasharray="2 2"/><path d="M20 5v14"/>',
+break:'<path d="M4 12h7M13 12h7"/><path d="M12 6v12" stroke-dasharray="2 2"/>',
+move:'<path d="M12 3v18M3 12h18"/><path d="m9 6 3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+rotate:'<path d="M19 12a7 7 0 1 1-2-5"/><path d="M19 4v4h-4"/>',
+scale:'<rect x="4" y="12" width="8" height="8"/><path d="M12 12V4h8v8h-8"/><path d="m14 10 4-4"/>',
+construction:'<path d="M5 19 19 5" stroke-dasharray="3 2.5"/>',
+delete:'<path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/>',
+dimension:'<path d="M4 8v10M20 8v10M4 13h16"/><path d="m7 11-3 2 3 2M17 11l3 2-3 2"/>',
+coincident:'<circle cx="12" cy="12" r="3"/><path d="M4 12h5M15 12h5"/>',
+hv:'<path d="M4 18h16M18 4v14"/>',
+parallel:'<path d="M5 19 15 5M10 19 20 5"/>',
+perp:'<path d="M5 19h14M12 19V5"/>',
+tangent:'<circle cx="11" cy="13" r="6"/><path d="M3 7h18"/>',
+equal:'<path d="M5 9h14M5 15h14"/>',
+symmetric:'<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M4 9l4 3-4 3M20 9l-4 3 4 3"/>',
+fix:'<rect x="6" y="11" width="12" height="9" rx="1"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+collinear:'<path d="M3 12h7M14 12h7"/><circle cx="12" cy="12" r="1"/>',
+concentric:'<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/>',
+midpoint:'<path d="M4 16h16"/><path d="M12 16V8m-3 3 3-3 3 3"/>',
+measure:'<path d="M3 16 16 3l5 5L8 21z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>',
+preview:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+validate:'<path d="M12 3 4 7v5c0 5 3.5 8 8 9 4.5-1 8-4 8-9V7z"/><path d="m9 12 2 2 4-4"/>',
+import:'<path d="M12 4v11m-4-4 4 4 4-4"/><path d="M4 17v3h16v-3"/>',
+plugin:'<path d="M9 3v4M15 3v4"/><rect x="6" y="7" width="12" height="7" rx="1"/><path d="M12 14v7"/>',
+select:'<path d="m5 3 14 8-6 2-2 6z"/>',
+window:'<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="m11 10 7 4-3 1-1 3z"/>',
+chain:'<rect x="3" y="9" width="9" height="6" rx="3"/><rect x="12" y="9" width="9" height="6" rx="3"/>',
+filter:'<path d="M4 5h16l-6 8v6l-4-2v-4z"/>',
+export:'<path d="M12 15V4m-4 4 4-4 4 4"/><path d="M4 14v6h16v-6"/>',
+profile:'<rect x="3" y="5" width="18" height="12" rx="1"/><path d="M8 21h8M12 17v4"/>',
+repeat:'<path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/>',
+undo:'<path d="M9 7 4 12l5 5"/><path d="M4 12h10a5 5 0 0 1 0 10h-2"/>',
+pan:'<path d="M8 13V5a1.5 1.5 0 0 1 3 0v6V4a1.5 1.5 0 0 1 3 0v7V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6 6 6 0 0 1-5-3l-3-5a1.5 1.5 0 0 1 2.5-1.5L8 13"/>',
+zoom:'<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5M8 11h6M11 8v6"/>',
+fit:'<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+grid:'<path d="M4 4h16v16H4zM4 10h16M4 15h16M10 4v16M15 4v16"/>',
+snap:'<path d="M6 4v8a6 6 0 0 0 12 0V4"/><path d="M6 8h4M14 8h4"/>',
+stroke:'<path d="M4 17C8 7 16 7 20 17" stroke-width="3.5"/>',
+eyedrop:'<path d="m14 4 6 6-3 3-6-6z"/><path d="m11 7-7 7v6h6l7-7"/>',
+param:'<path d="M5 7h14M5 12h9M5 17h11"/><text x="17" y="18" font-size="7" stroke="none" fill="currentColor">ƒ</text>'
+};
+const ic=(n,c='ico')=>`<svg class="${c}" viewBox="0 0 24 24">${I[n]||''}</svg>`;
+
+/* ---------- action registry (the same list feeds ribbon, menus, keys, marking menu and search) ---------- */
+const A=[
+ // id, label, icon, key, group, primary-in-ribbon, flow
+ ['sketch.line','Line','line','L','Create',1,'line'],
+ ['sketch.rect2','2-Point Rectangle','rect','R','Create',1],
+ ['sketch.rectc','Center Rectangle','rect','','Create'],
+ ['sketch.rect3','3-Point Rectangle','rect','','Create'],
+ ['sketch.circle','Center Diameter Circle','circle','C','Create',1],
+ ['sketch.circle2','2-Point Circle','circle','','Create'],
+ ['sketch.circle3','3-Point Circle','circle','','Create'],
+ ['sketch.arc3','3-Point Arc','arc','A','Create',1],
+ ['sketch.arcc','Center Point Arc','arc','','Create'],
+ ['sketch.arct','Tangent Arc','arc','','Create'],
+ ['sketch.polygon','Polygon','polygon','G','Create'],
+ ['sketch.slot','Slot','slot','U','Create'],
+ ['sketch.bezier','Bézier Pen','spline','N','Create'],
+ ['sketch.point','Point','point','P','Create'],
+ ['sketch.text','Text','text','','Create',1,'text'],
+ ['sep'],
+ ['sketch.mirror','Mirror','mirror','','Create',0,'mirror'],
+ ['sketch.cpattern','Circular Pattern','cpattern','','Create',0,'pattern'],
+ ['sketch.rpattern','Rectangular Pattern','rpattern','','Create',0,'pattern'],
+ ['sketch.offset','Offset','offset','O','Create',1,'offset'],
+ ['modify.fillet','Fillet','fillet','','Modify',1],
+ ['modify.chamfer','Chamfer','chamfer','','Modify'],
+ ['modify.trim','Trim','trim','T','Modify',1],
+ ['modify.extend','Extend','extend','','Modify'],
+ ['modify.break','Break','break','','Modify'],
+ ['sep'],
+ ['modify.move','Move/Copy','move','M','Modify',1,'move'],
+ ['modify.rotate','Rotate','rotate','','Modify',0,'move'],
+ ['modify.scale','Sketch Scale','scale','','Modify',0,'move'],
+ ['sep'],
+ ['modify.construction','Normal/Construction','construction','X','Modify',1,'construction'],
+ ['modify.explode','Explode recipe','break','','Modify'],
+ ['modify.style','Style…','eyedrop','','Modify',0,'style'],
+ ['edit.delete','Delete','delete','Del','Modify'],
+ ['constrain.dimension','Sketch Dimension','dimension','D','Constrain',1],
+ ['sep'],
+ ['constrain.coincident','Coincident','coincident','K','Constrain',1],
+ ['constrain.collinear','Collinear','collinear','⇧X','Constrain'],
+ ['constrain.concentric','Concentric','concentric','⇧O','Constrain'],
+ ['constrain.midpoint','Midpoint','midpoint','⇧M','Constrain'],
+ ['constrain.fix','Fix/Unfix','fix','F','Constrain'],
+ ['constrain.parallel','Parallel','parallel','Q','Constrain'],
+ ['constrain.perp','Perpendicular','perp','W','Constrain'],
+ ['constrain.hv','Horizontal/Vertical','hv','H','Constrain',1],
+ ['constrain.tangent','Tangent','tangent','⇧T','Constrain',1],
+ ['constrain.equal','Equal','equal','E','Constrain'],
+ ['constrain.symmetric','Symmetric','symmetric','Y','Constrain'],
+ ['sep'],
+ ['constrain.auto','Auto-constrain while drawing','snap','','Constrain'],
+ ['inspect.measure','Measure','measure','I','Inspect',1],
+ ['inspect.preview','Machine preview','preview','','Inspect',1],
+ ['inspect.stroke','Show stroke width','stroke','','Inspect'],
+ ['inspect.validate','Validate for export','validate','','Inspect',1],
+ ['insert.svg','Insert SVG…','import','','Insert',1],
+ ['insert.dxf','Insert DXF…','import','','Insert'],
+ ['insert.plugin','Plugin object…','plugin','','Insert',1],
+ ['select.select','Select','select','Esc','Select',1],
+ ['select.window','Window select','window','','Select'],
+ ['select.chain','Select chain','chain','dbl-click','Select',1,'chain'],
+ ['select.layer','Select layer','rpattern','','Select'],
+ ['select.all','Select all','select','Ctrl+A','Select'],
+ ['select.filter','Selection filters','filter','','Select',1],
+];
+const OUT=[
+ ['output.preview','Machine preview','preview','','Preview',1],
+ ['output.validate','Validate','validate','','Preview',1],
+ ['output.export','Export…','export','Ctrl+E','Export',1,'export'],
+ ['output.profiles','Machine profiles…','profile','','Export',1,'profiles'],
+ ['output.plugins','Exporter plugins…','plugin','','Export',1],
+];
+const groups=['Create','Modify','Constrain','Inspect','Insert','Select'];
+let tab='sketch';
+function ribbon(){
+  const list=tab==='sketch'?A:OUT;
+  const gs=tab==='sketch'?groups:['Preview','Export'];
+  let h='';
+  for(const g of gs){
+    const items=list.filter(a=>a[4]===g&&a[5]);
+    h+=`<div class="grp"><div class="btns">${items.map(a=>`<button class="tb" data-act="${a[0]}" title="${a[1]}${a[3]?' ('+a[3]+')':''}">${ic(a[2])}</button>`).join('')}</div><button class="glabel" data-grp="${g}">${g.toUpperCase()} ▾</button></div>`;
+  }
+  if(tab==='sketch')h+=`<div class="grp finish"><div class="btns"><button class="tb" data-go="export" title="Export (Ctrl+E)">${ic('export')}</button></div><button class="glabel" data-go="export">EXPORT</button></div>`;
+  $('#ribbon').innerHTML=h;
+  markActive();
+}
+function groupMenu(g,anchor){
+  const list=(tab==='sketch'?A:OUT);
+  let h='',inG=false,last=null;
+  for(const a of list){
+    if(a[0]==='sep'){ if(last===g) h+='<div class="sep"></div>'; continue;}
+    last=a[4]; if(a[4]!==g) continue;
+    h+=`<button class="mi" data-act="${a[0]}">${ic(a[2])}${a[1]}<span class="k">${a[3]||''}</span></button>`;
+  }
+  closeMenus();
+  const m=document.createElement('div'); m.className='menu'; m.innerHTML=h; anchor.parentElement.appendChild(m);
+}
+function closeMenus(){document.querySelectorAll('.menu').forEach(m=>m.remove());}
+
+/* ---------- canvas drawing ---------- */
+const OUTER=[['o1','M104 70 H696'],['o2','M696 70 A24 24 0 0 1 720 94'],['o3','M720 94 V446'],['o4','M720 446 A24 24 0 0 1 696 470'],['o5','M696 470 H104'],['o6','M104 470 A24 24 0 0 1 80 446'],['o7','M80 446 V94'],['o8','M80 94 A24 24 0 0 1 104 70']];
+const SLOT=(x1,x2,y,r)=>`M${x1} ${y-r} H${x2} A${r} ${r} 0 0 1 ${x2} ${y+r} H${x1} A${r} ${r} 0 0 1 ${x1} ${y-r} Z`;
+function grid(){let g='';for(let x=0;x<=800;x+=20)g+=`<line x1="${x}" y1="0" x2="${x}" y2="560" class="${x%100?'gridm':'gridM'}" stroke-width="1"/>`;for(let y=0;y<=560;y+=20)g+=`<line x1="0" y1="${y}" x2="800" y2="${y}" class="${y%100?'gridm':'gridM'}" stroke-width="1"/>`;return g;}
+const glyph=(x,y,t)=>`<g class="glyph"><rect x="${x}" y="${y}" width="14" height="13" rx="2"/><text x="${x+7}" y="${y+9.5}" text-anchor="middle">${t}</text></g>`;
+function dimH(x1,x2,y,yFrom,val){return `<g><line class="dimln" x1="${x1}" y1="${yFrom-4}" x2="${x1}" y2="${y-6}"/><line class="dimln" x1="${x2}" y1="${yFrom-4}" x2="${x2}" y2="${y-6}"/><line class="dimln" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" marker-start="url(#ar)" marker-end="url(#ar)"/><rect class="dimbg" x="${(x1+x2)/2-26}" y="${y-9}" width="52" height="17"/><text class="dimtx" x="${(x1+x2)/2}" y="${y+4}" text-anchor="middle">${val}</text></g>`}
+function dimV(y1,y2,x,xFrom,val){return `<g><line class="dimln" x1="${xFrom-4}" y1="${y1}" x2="${x-6}" y2="${y1}"/><line class="dimln" x1="${xFrom-4}" y1="${y2}" x2="${x-6}" y2="${y2}"/><line class="dimln" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" marker-start="url(#ar)" marker-end="url(#ar)"/><rect class="dimbg" x="${x-26}" y="${(y1+y2)/2-9}" width="52" height="17"/><text class="dimtx" x="${x}" y="${(y1+y2)/2+4}" text-anchor="middle">${val}</text></g>`}
+function drawCanvas(){
+  const s=state;
+  const sel=id=>s.sel.has(id)?' sel':'';
+  const hide=id=>s.hidden.has(id)?' style="display:none"':'';
+  let g=`<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1 9 5 0 9z" fill="var(--dim)" stroke="none"/></marker>
+  <marker id="arp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 1 9 5 0 9z" fill="var(--preview)" stroke="none"/></marker></defs>`;
+  g+=grid();
+  // construction centre line (mirror axis)
+  g+=`<line id="cl" class="pick cons${sel('cl')}"${hide('cl')} x1="400" y1="48" x2="400" y2="496"/>`;
+  // outer (Cut, fully constrained)
+  for(const [id,d] of OUTER) g+=`<path id="${id}" class="pick g-fixed${sel(id)}"${hide(id)} d="${d}"/>`;
+  // score border (offset recipe)
+  g+=`<path id="ofs" class="pick g-fixed${sel('ofs')}"${hide('ofs')} d="M104 82 H696 A12 12 0 0 1 708 94 V446 A12 12 0 0 1 696 458 H104 A12 12 0 0 1 92 446 V94 A12 12 0 0 1 104 82Z" stroke-dasharray="1 0" opacity=".75"/>`;
+  // holes: source + pattern instances (driven)
+  g+=`<circle id="h1" class="pick g-fixed${sel('h1')}"${hide('h1')} cx="130" cy="120" r="14"/>`;
+  [['h2',670,120],['h3',130,420],['h4',670,420]].forEach(([id,x,y])=>g+=`<circle id="${id}" class="pick drv${sel(id)}"${hide(id)} cx="${x}" cy="${y}" r="14"/>`);
+  // slots (free) + mirrored
+  g+=`<path id="s1" class="pick g-free${sel('s1')}"${hide('s1')} d="${SLOT(220,300,380,8)}"/>`;
+  g+=`<path id="s2" class="pick g-free${sel('s2')}"${hide('s2')} d="${SLOT(500,580,380,8)}"/>`;
+  // text
+  g+=`<text id="tx" class="pick geo g-free${sel('tx')}"${hide('tx')} x="400" y="282" text-anchor="middle" style="font:700 96px var(--f-head);letter-spacing:6px;stroke-width:1.4">LOCUS</text>`;
+  if(s.extra) g+=s.extra;
+  // dimensions + glyphs
+  if(s.dims){
+    g+=dimH(80,720,36,70,'160.00')+dimV(70,470,44,80,'100.00');
+    g+=`<g><line class="dimln" x1="87" y1="77" x2="66" y2="58"/><rect class="dimbg" x="40" y="48" width="44" height="17"/><text class="dimtx" x="62" y="61" text-anchor="middle">R6.00</text></g>`;
+    g+=`<g><line class="dimln" x1="140" y1="130" x2="168" y2="156"/><rect class="dimbg" x="160" y="150" width="46" height="17"/><text class="dimtx" x="183" y="163" text-anchor="middle">⌀7.00</text></g>`;
+    g+=`<g><line class="dimln" x1="260" y1="372" x2="260" y2="350"/><rect class="dimbg" x="238" y="336" width="46" height="17"/><text class="dimtx" x="261" y="349" text-anchor="middle">20.00</text></g>`;
+    g+=glyph(240,52,'—')+glyph(726,260,'|')+glyph(392,500,'⋮')+glyph(304,388,'=')+glyph(584,388,'=');
+  }
+  $('#cv').innerHTML=g;
+}
+
+/* ---------- side panes ---------- */
+function browser(){
+  const L=[['#d33','Cut — outer','CUT','kerf 0.15'],['#2a6fd6','Score — border','SCORE',''],['#222','Engrave — logo','ENGRAVE','hatch 0.10'],['#2f8a4c','Draw — notes','DRAW',''],['#999','Reference','REF','']];
+  $('#browser').innerHTML=`<ul class="tree">
+  <li><span class="tw">▾</span><b>coaster-tray</b><span class="cnt">v12</span></li>
+  <li class="sub"><span class="tw">▾</span>Layers<span class="cnt">+</span></li>
+  ${L.map((l,i)=>`<li class="sub ${state.layer===i?'on':''}" style="padding-left:26px" data-layer="${i}"><span class="sw" style="background:${l[0]}"></span>${l[1]}<span class="eye"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><svg viewBox="0 0 24 24"><rect x="6" y="11" width="12" height="9" rx="1"/><path d="M8 11V8a4 4 0 0 1 8 0"/></svg></span></li>`).join('')}
+  <li class="sub"><span class="tw">▾</span>Parameters<span class="cnt">3</span></li>
+  <li class="sub" style="padding-left:26px"><span class="mono" style="font-family:var(--f-mono);font-size:11px">kerf = 0.15 mm</span></li>
+  <li class="sub" style="padding-left:26px"><span style="font-family:var(--f-mono);font-size:11px">hole = 7 mm</span></li>
+  <li class="sub" style="padding-left:26px"><span style="font-family:var(--f-mono);font-size:11px">pitch = 135 mm</span></li>
+  <li class="sub"><span class="tw">▾</span>Recipes<span class="cnt">4</span></li>
+  <li class="sub" style="padding-left:26px">${ic('rpattern')}Rect pattern 1 <span class="cnt">2×2</span></li>
+  <li class="sub" style="padding-left:26px">${ic('mirror')}Mirror 1 <span class="cnt">slot</span></li>
+  <li class="sub" style="padding-left:26px">${ic('offset')}Offset 1 <span class="cnt">−3 mm</span></li>
+  <li class="sub" style="padding-left:26px">${ic('text')}Text “LOCUS” <span class="cnt">edit</span></li>
+  <li class="sub"><span class="tw">▸</span>Regions<span class="cnt">7</span></li>
+  <li class="sub"><span class="tw">▸</span>Constraints<span class="cnt">38</span></li>
+  </ul><div class="note" style="margin-top:8px">Layers hold operation settings only. Style (colour, pen, fill) lives on each object.</div>`;
+  document.querySelectorAll('#browser .tree svg').forEach(s=>{s.style.width='13px';s.style.height='13px'});
+}
+function palette(){
+  const p=state.pal;
+  const ck=(k,l)=>`<div class="ck ${p[k]?'on':''}" data-pal="${k}"><i></i>${l}</div>`;
+  $('#palette').innerHTML=`<div class="sec" style="padding-top:2px">
+   <div class="row"><span class="lb">Linetype</span><span class="seg"><button class="${p.cons?'':'on'}" data-lt="0" title="Normal">Normal</button><button class="${p.cons?'on':''}" data-lt="1" title="Construction (X)">Construction</button></span></div>
+   ${state.toolOpt||''}
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 6px;margin-top:4px">
+   ${ck('grid','Sketch grid')}${ck('snap','Snap')}${ck('auto','Auto-constrain')}${ck('prof','Show profiles')}${ck('pts','Show points')}${ck('dims','Show dimensions')}${ck('cons','Show constraints')}${ck('stroke','Stroke width')}
+   </div></div>`;
+}
+const STYLEBLOCK=(o)=>`<div class="sec"><h4>Style<span class="sp"></span><button class="ib ${state.eyedrop?'on':''}" id="eyedrop" title="Eyedropper: copy style from another object">${ic('eyedrop')}</button></h4>
+  <div class="row"><span class="lb">Stroke</span><button class="swbtn" style="background:${o.c}"></button><span class="fld" style="width:74px">${o.c}</span></div>
+  <div class="row"><span class="lb">Width</span><span class="fld" style="width:74px">${o.w}<span class="u">mm</span></span><span class="lb" style="flex:0 0 auto">Pen</span><span class="fld" style="width:34px">${o.pen}</span></div>
+  <div class="row"><span class="lb">Fill</span><button class="swbtn" style="background:${o.fill==='None'?'repeating-linear-gradient(45deg,transparent 0 4px,var(--line) 4px 5px)':o.fill}"></button><span class="fld" style="width:74px">${o.fill}</span></div>
+  <div class="row"><span class="lb">Opacity</span><span class="fld" style="width:74px">${o.op}<span class="u">%</span></span><span class="lb" style="flex:0 0 auto">Dash</span><span class="fld" style="width:46px">—</span></div>
+  ${o.note?`<div class="note">${o.note}</div>`:''}</div>`;
+function inspector(){
+  const k=state.insp; let h='';
+  if(k==='doc'){
+    h=`<div class="sec"><h4>Document</h4>
+    <div class="row"><span class="lb">Sketch</span><span class="pill free">Under-constrained · 3 DOF</span></div>
+    <div class="row"><span class="lb">Profile</span><span class="fld w">LightBurn (SVG)</span></div>
+    <div class="row"><span class="lb">Active layer</span><span class="fld w"><span class="sw" style="background:#d33;margin-right:6px"></span>Cut — outer</span></div>
+    <div class="row"><span class="lb">Units</span><span class="seg"><button class="on">mm</button><button>cm</button><button>in</button></span></div></div>`+
+    STYLEBLOCK({c:'#1b2130',w:'0.30',pen:'1',fill:'None',op:'100',note:'Current style: new geometry is drawn with it. Pick a style with the eyedropper to change it.'});
+  } else if(k==='layer'){
+    const i=state.layer;
+    const nm=['Cut — outer','Score — border','Engrave — logo','Draw — notes','Reference'][i];
+    const op=['Cut','Score','Engrave','Draw','Reference'][i];
+    h=`<div class="sec"><h4>Layer</h4><div class="row"><span class="lb">Name</span><span class="fld w">${nm}</span></div>
+     <div class="row"><span class="lb">Operation</span><span class="fld w">${op} ▾</span></div>
+     <div class="row"><span class="lb">Export</span><div class="ck on"><i></i>Include in export</div></div>
+     <div class="row"><span class="lb">Order</span><span class="fld" style="width:40px">${i+1}</span></div></div>`+
+     (op==='Cut'?`<div class="sec"><h4>Cut settings</h4><div class="row"><span class="lb">Kerf</span><span class="fld expr" style="width:110px">kerf<span class="u">= 0.15 mm</span></span></div><div class="row"><span class="lb">Compensation</span><span class="seg"><button>In</button><button class="on">Out</button><button>None</button></span></div><div class="row"><span class="lb">Passes</span><span class="fld" style="width:40px">1</span></div></div>`:
+      op==='Engrave'?`<div class="sec"><h4>Engrave settings</h4><div class="row"><span class="lb">Hatch spacing</span><span class="fld" style="width:80px">0.10<span class="u">mm</span></span></div><div class="row"><span class="lb">Angle</span><span class="fld" style="width:80px">45<span class="u">°</span></span></div><div class="ck"><i></i>Crosshatch</div></div>`:
+      op==='Draw'?`<div class="sec"><h4>Draw settings</h4><div class="note">Pen width and pen number moved to each object's Style (#287). The layer only says these objects are plotted.</div></div>`:
+      `<div class="sec"><div class="note">No settings for ${op}.</div></div>`);
+  } else if(k==='slot'||k==='chain'||k==='cons'||k==='move'){
+    const n=k==='chain'?'Chain · 8 curves (closed)':k==='cons'?'Line · construction':k==='move'?'Slot · 4 curves':'Slot · 4 curves';
+    h=`<div class="sec"><h4>${n}<span class="sp"></span>${k==='cons'?'<span class="badge c">CONSTRUCTION</span>':'<span class="badge">FREE · 2 DOF</span>'}</h4>
+      <div class="row"><span class="lb">Layer</span><span class="fld w"><span class="sw" style="background:${k==='chain'?'#d33':'#d33'};margin-right:6px"></span>Cut — outer ▾</span></div>
+      <div class="row"><span class="lb">Construction</span><div class="ck ${k==='cons'?'on':''}" data-x="1"><i></i><span class="kbd">X</span></div></div></div>`+
+      (k==='chain'?`<div class="sec"><h4>Geometry</h4><div class="row"><span class="lb">Bounds</span><span class="fld">160.00 × 100.00</span></div><div class="row"><span class="lb">Length</span><span class="fld">498.30<span class="u">mm</span></span></div></div>`:
+       k==='cons'?`<div class="sec"><h4>Geometry</h4><div class="row"><span class="lb">Length</span><span class="fld">140.00<span class="u">mm</span></span></div><div class="row"><span class="lb">Angle</span><span class="fld">0.00<span class="u">°</span></span></div><div class="note">Construction geometry draws dashed, takes constraints and is never exported (§4).</div></div>`:
+       `<div class="sec"><h4>Geometry</h4><div class="row"><span class="lb">Length</span><span class="fld focus">20.00<span class="u">mm</span></span></div><div class="row"><span class="lb">Width</span><span class="fld">4.00<span class="u">mm</span></span></div><div class="note">Typing a value here adds a driving dimension, the same as D.</div></div>`)+
+      (k==='cons'?'':STYLEBLOCK({c:'#d33333',w:'0.30',pen:'1',fill:'None',op:'100',note:'On a Cut layer the export uses the profile colour and hairline (LightBurn: red, 0.001 mm). This style is for the screen and Draw export.'}))+
+      `<div class="sec"><h4>Constraints<span class="sp"></span><span class="cnt" style="color:var(--muted)">5</span></h4><div class="note" style="line-height:1.7">Horizontal · Equal (slot 2) · Symmetric about centre line · Dimension 20.00 · Dimension 4.00</div></div>`;
+  } else if(k==='text'){
+    h=`<div class="sec"><h4>Text · “LOCUS”<span class="sp"></span><span class="badge">RE-EDITABLE</span></h4>
+     <div class="row"><span class="lb">Content</span><span class="fld w">LOCUS</span></div>
+     <div class="row"><span class="lb">Font</span><span class="fld w">Space Grotesk Bold</span></div>
+     <div class="row"><span class="lb">Height</span><span class="fld" style="width:80px">17.5<span class="u">mm</span></span></div>
+     <div class="row"><span class="lb">Layer</span><span class="fld w"><span class="sw" style="background:#222;margin-right:6px"></span>Engrave — logo</span></div>
+     <div class="note">Double-click the text on the canvas to edit it in place. Explode turns it into plain curves.</div></div>`+
+     STYLEBLOCK({c:'#1f6fd1',w:'0.20',pen:'2',fill:'#1f6fd1',op:'100',note:'Engrave layers hatch the fill (§7). Draw layers export the fill as a filled path.'});
+  } else if(k==='hole'){
+    h=`<div class="sec"><h4>Circle · pattern instance<span class="sp"></span><span class="badge d">DRIVEN</span></h4><div class="note">This copy comes from <b>Rect pattern 1</b>. Edit the source or the pattern; constraints onto it solve in the second phase (ADR 0015).</div><div class="row" style="margin-top:6px"><button class="btn" data-go="pattern">Edit pattern</button><button class="btn">Suppress</button><button class="btn">Explode</button></div></div>`;
+  }
+  $('#inspector').innerHTML=h;
+}
+function status(){
+  $('#status').innerHTML=`<span class="prompt">${state.prompt}</span><span class="sp"></span>
+  <span class="pill free">Under-constrained · 3 DOF</span><span>${state.sel.size?state.sel.size+' selected':'Nothing selected'}</span>
+  <span class="mono">x 132.40  y 58.10 mm</span><span>Snap ✓</span><span>Auto-constrain ✓</span><span class="mono">mm</span>`;
+}
+function navbar(){
+  $('#navbar').innerHTML=['pan','zoom','fit'].map(n=>`<button class="tb" title="${{pan:'Pan (middle-drag or Space+drag)',zoom:'Zoom (wheel)',fit:'Fit (double middle-click)'}[n]}">${ic(n)}</button>`).join('')+'<span class="div"></span>'+['grid','snap','stroke','preview'].map(n=>`<button class="tb" title="${{grid:'Grid',snap:'Snap',stroke:'Stroke width',preview:'Machine preview'}[n]}">${ic(n)}</button>`).join('');
+}
+
+/* ---------- flows ---------- */
+const P='pv';
+const F={
+ layout:{name:'Layout',prompt:'Select: click to select, drag for a window, double-click for a chain. Right-click for the marking menu.',insp:'doc',
+  notes:`<h2>Layout</h2><p>Fusion's sketch environment, mapped onto Locus's dock (egui_dock, ADR 0001).</p><ul>
+  <li><b>Ribbon</b> grouped Create / Modify / Constrain / Inspect / Insert / Select, with a group's full list under its label (▾). The <b>OUTPUT</b> tab holds machine preview, validation, export and profiles.</li>
+  <li><b>Browser</b> (left) is one tree: layers, parameters, recipes (patterns, mirrors, offsets, text), regions and constraints. It replaces five separate tabs.</li>
+  <li><b>Sketch palette</b> (right, top): linetype, grid, snap, auto-constrain and display toggles, plus the active tool's options.</li>
+  <li><b>Inspector</b> (right, bottom) changes with the selection: document and current style when empty, geometry + style + constraints for curves, operation settings for a layer. Click a layer in the browser, or a shape.</li>
+  <li><b>Status bar</b>: what the next click does, sketch DOF, selection count, cursor, snap and units.</li>
+  <li><b>Navigation bar</b> on the canvas: pan, zoom, fit and the display toggles. Pan is middle-drag or Space+drag; right-click is the marking menu.</li>
+  <li>Every pane header has ⧉ to undock it (see <i>Undocked panes</i>).</li></ul>`},
+ line:{name:'Tool model: Line',prompt:'Line: type a length, Tab for the angle, Enter to place. Esc ends the line; Esc again returns to Select.',insp:'doc',tool:'sketch.line',
+  toolOpt:`<div class="row"><span class="lb">Line</span><span class="note" style="margin:0">Click-drag from an end for a tangent arc</span></div>`,
+  extra:`<line class="pv" x1="482" y1="150" x2="612" y2="110" stroke="var(--preview)"/><circle cx="482" cy="150" r="3" fill="var(--geom-free)" stroke="none"/>
+   <path d="M522 150 A40 40 0 0 0 520 138" stroke="var(--dim)" stroke-width="1"/><line x1="482" y1="150" x2="540" y2="150" class="dimln" stroke-dasharray="3 3"/>
+   <g class="hud"><rect x="514" y="100" width="70" height="22" rx="4" stroke-width="2"/><text x="522" y="115">34.0|</text><text class="u" x="560" y="115">mm</text></g>
+   <g class="hud"><rect x="528" y="150" width="48" height="22" rx="4" style="stroke:var(--line)"/><text x="534" y="165">17.1</text><text class="u" x="566" y="165">°</text></g>
+   <g transform="translate(616,96)">${'<rect width="14" height="13" rx="2" fill="var(--panel)" stroke="var(--line)"/><text x="7" y="9.5" text-anchor="middle" style="font:600 9px var(--f-ui);fill:var(--muted)">⊙</text>'}</g>
+   <text class="lbl" x="630" y="92">coincident hint</text>
+   <path d="M612 110 l-6 -6 m6 6 l6 -6 m-6 6 l-6 6 m6 -6 l6 6" stroke="var(--ink)" stroke-width="1"/>`,
+  notes:`<h2>Tool interaction model</h2><p>Every tool follows the same four steps (#283):</p><ol>
+  <li><b>Pick</b> the tool (ribbon, key, marking menu or S search). The status bar says what to click.</li>
+  <li><b>Drag or type</b>. The preview follows the cursor; the heads-up fields next to it show length and angle. Typing goes straight into the focused field, Tab moves to the next. A typed value locks that degree of freedom while you keep moving the mouse, as in Fusion.</li>
+  <li><b>Enter</b> commits (one command, one undo step, §11). <b>Esc</b> drops the uncommitted segment; a second Esc returns to Select.</li>
+  <li>Typed values become <b>driving dimensions</b>, so they stay editable: double-click the dimension later, type a number or an expression (<code>pitch/2</code>).</li></ul>
+  <p>Auto-constraint hints (coincident, horizontal, tangent) show as glyphs while drawing; hold Alt to suppress them (§6.2). The same model drives modify tools: Offset, Move, Pattern and Mirror open a command dialog with the same fields, and Enter / Esc mean the same thing.</p>`},
+ marking:{name:'Marking menu',prompt:'Right-click: flick toward a slot, or release and pick. The list below changes with the selection.',insp:'slot',sel:['s1'],mm:{x:330,y:300},
+  notes:`<h2>Marking menu</h2><p>Right-click opens a ring of 8 actions around the cursor with a list underneath (#290). Right-clicking an unselected shape selects it first.</p><ul>
+  <li><b>Ring (fixed)</b>: N Repeat last · NE Undo · E Move/Copy · SE Offset · S Delete · SW Construction · W Trim · NW Dimension. Slots that can't run are dimmed, never moved.</li>
+  <li><b>Flick</b>: press right, drag toward a slot and release to run it without the menu appearing; practised users never see the ring.</li>
+  <li><b>List</b> depends on context. Selection: Constrain ▸, Select chain, Copy / Paste / Duplicate, Style…, Properties. Empty canvas: Paste, Select all, Fit to content. Layers in the browser get the same menu with layer items.</li>
+  <li>Touch long-press (#251) opens the same menu.</li>
+  <li>Pan moved from right-drag to <b>middle-drag</b> and <b>Space+drag</b>; wheel zooms about the cursor.</li></ul>`},
+ shortcuts:{name:'Shortcut map',prompt:'Shortcut map (?)',insp:'doc',modal:'shortcuts',
+  notes:`<h2>Shortcut map</h2><p>Follows Fusion's sketch letters. Amber notes show where a key changes from today's Locus. Every shortcut comes from the action registry, so the map, the menus and the tool search can't disagree, and users can rebind keys in Settings.</p>`},
+ search:{name:'Tool search (S)',prompt:'Tool search: type to filter, Enter runs the top match.',insp:'doc',search:true,
+  notes:`<h2>Tool search</h2><p><b>S</b> opens a search box at the cursor (Fusion's shortcut box). It searches every action in the registry by name and keywords, shows its key, and shows why a disabled action can't run ("select two lines"). Recent and pinned actions show before you type.</p><p>This replaces <b>S = Select</b>. Select is now Esc, as in Fusion.</p>`},
+ style:{name:'Style + eyedropper',prompt:'Eyedropper: click the object to copy its style from. Esc cancels.',insp:'text',sel:['tx'],
+  notes:`<h2>Per-object style</h2><p>Owner decision: style belongs to each object, not the layer (#287).</p><ul>
+  <li>Stroke colour, width, pen number, fill and opacity sit in the Inspector's <b>Style</b> section for any selection. Mixed values show as "—"; typing sets them all.</li>
+  <li><b>Eyedropper</b> (⌖ in the Style header): click it, then click any object; its style is copied to the selection in one undo step. With nothing selected it sets the current style for new geometry.</li>
+  <li>Layers keep operation settings only. Draw layers lose pen width and pen number (spec §7 changes with #287).</li>
+  <li>Stroke-edge dimensions (ADR 0014) read the pen width from each object instead of its layer.</li>
+  <li>On Cut, Score and Drag-knife layers the export uses the profile's colour and hairline (#284); the Style section says so.</li></ul><p>Try the eyedropper: click it, then click a slot.</p>`},
+ export:{name:'Export',prompt:'Export: choose a profile and layers.',insp:'doc',modal:'export',
+  notes:`<h2>Export dialog</h2><ul><li><b>Profile picker</b> at the top; "Manage…" opens the profile manager.</li>
+  <li>The layer table lists every layer with its operation, colour and object count; Reference layers and empty layers can't be ticked.</li>
+  <li><b>Export each layer as a separate file</b> (#291) shows the file names it will write (<code>document-layer.svg</code>, unsafe characters replaced). Desktop asks for a folder once and asks before overwriting; the web build downloads one .zip.</li>
+  <li>Validation (§8) runs per layer and shows errors and warnings in the same dialog; "Show" selects the problem on the canvas.</li></ul>`},
+ profiles:{name:'Profile manager',prompt:'Machine profiles',insp:'doc',modal:'profiles',
+  notes:`<h2>Profile manager</h2><p>Machine profiles become editable in the app (#286, §7).</p><ul>
+  <li>Built-in presets are read-only and locked; <b>Duplicate</b> makes an editable copy.</li>
+  <li>User profiles: New, Duplicate, Rename, Delete, Import .json and Export .json. Imports are untrusted: size-bounded and validated.</li>
+  <li>The editor covers format (exporter), units, bed size and origin corner, offsets, colour per operation, the hairline width for Cut/Score (#284), and default operation parameters.</li></ul><p>Click the profiles on the left.</p>`},
+ text:{name:'Text',prompt:'Text: type in place. Ctrl+Enter or OK commits; Esc cancels. Double-click placed text to edit it again.',insp:'text',sel:['tx'],dlg:'text',
+  notes:`<h2>Text</h2><p>Fusion-style text (#222). Click to place, then type on the canvas; the dialog sets the rest with a live preview.</p><ul>
+  <li><b>Font list</b> is searchable and previews each font in its own face; single-line (Hershey/EMS) fonts are marked for plotters.</li>
+  <li>Height, alignment, letter spacing, and placement: free, fit to box, or on a path.</li>
+  <li><b>Re-editable</b>: double-click placed text, or "Edit text" in the marking menu, reopens this dialog (owner decision). Explode turns it into curves.</li></ul><p>Type in the font search to filter.</p>`},
+ offset:{name:'Offset',prompt:'Offset: drag the arrow or type a distance. Enter commits.',insp:'slot',sel:['s1'],dlg:'offset',
+  extra:`<path class="pv" d="${SLOT(220,300,380,16)}"/><line x1="260" y1="372" x2="260" y2="358" stroke="var(--preview)" stroke-width="2" marker-end="url(#arp)"/>
+  <g class="hud"><rect x="268" y="344" width="58" height="20" rx="4" stroke-width="2"/><text x="274" y="358">2.00</text><text class="u" x="306" y="358">mm</text></g>`,
+  notes:`<h2>Offset</h2><p>Like Fusion's sketch Offset (#218): one pick, one value, Enter.</p><ul>
+  <li>Picking a curve selects its whole connected chain (Chain selection on by default).</li>
+  <li>Drag the arrow or type the distance; the flip button reverses the side. The preview is live.</li>
+  <li>After Enter the distance stays on the canvas as an editable dimension; the offset stays a live recipe (ADR 0010/0011) until exploded.</li></ul>`},
+ move:{name:'Move / Rotate / Scale',prompt:'Move: drag an arrow or the centre, or type X and Y. Enter commits.',insp:'move',sel:['s2'],dlg:'move',
+  notes:`<h2>Move, Rotate and Scale</h2><p>Three tools sharing one dialog (#219), so switching keeps the selection.</p><ul>
+  <li><b>Move</b> (M): a manipulator with X/Y arrows and a free-drag centre; typed X and Y distances.</li>
+  <li><b>Rotate</b>: pick a pivot (defaults to the selection centre), then drag the ring or type the angle.</li>
+  <li><b>Scale</b>: pick a base point, then drag or type a factor.</li>
+  <li><b>Create copy</b> on any of them. Each commit is one undo step through the command API and respects constraints (§6.2).</li></ul><p>Switch the tabs in the dialog.</p>`},
+ pattern:{name:'Patterns',prompt:'Rectangular pattern: set quantity and distance; click an instance to suppress it.',insp:'hole',sel:['h1'],dlg:'pattern',
+  notes:`<h2>Patterns</h2><p>Fusion-style Rectangular and Circular Pattern dialogs (#221, §6.2.1).</p><ul>
+  <li>Pick objects, then directions (a line, or the X/Y axis) or the centre point.</li>
+  <li>Quantity and distance (spacing or extent) per direction, accepting expressions; One / Symmetric direction.</li>
+  <li>Drag the arrow handles on the canvas; click an instance's dot to suppress it.</li>
+  <li>Patterns stay recipes; their parameters show as editable dimensions after commit.</li></ul>`},
+ mirror:{name:'Mirror',prompt:'Mirror: select objects, then the mirror line. Enter commits.',insp:'slot',sel:['s1','cl'],dlg:'mirror',hidden:['s2'],
+  extra:`<path class="pv" d="${SLOT(500,580,380,8)}"/>${''}`,
+  notes:`<h2>Mirror</h2><p>Mirror gets a tool (#215). The recipe already exists (ADR 0011).</p><ul>
+  <li>Select the objects, then any line or construction line as the mirror line.</li>
+  <li>Copies are tied by Symmetric constraints, so they follow the source and the line.</li>
+  <li><b>Merge on mirror line</b> avoids double cuts where the copy meets the source.</li></ul>`},
+ construction:{name:'Construction',prompt:'Toggled 1 line to construction (X). It draws dashed and is never exported.',insp:'cons',sel:['cc'],pal:{cons:true},
+  extra:`<line id="cc" class="pick cons sel" x1="120" y1="320" x2="680" y2="320"/>`,
+  notes:`<h2>Construction</h2><p>Construction becomes editable (#289).</p><ul>
+  <li><b>X</b>, the Modify ▸ Normal/Construction button, the marking menu (SW) and the Inspector checkbox all toggle the selection. One undo step per toggle.</li>
+  <li>The palette's <b>Linetype</b> switch makes drawing tools create construction geometry, like Fusion's sketch palette.</li>
+  <li>Construction draws dashed in amber, takes constraints and is never exported (§4).</li></ul><p>X used to be Collinear; Collinear moves to Shift+X.</p>`},
+ chain:{name:'Chain select',prompt:'Selected a chain: 8 curves, closed. Shift+double-click adds another chain.',insp:'chain',sel:['o1','o2','o3','o4','o5','o6','o7','o8'],
+  notes:`<h2>Chain select</h2><p>Double-click a curve to select every curve joined end to end with it (#220). Single click still selects one curve.</p><ul>
+  <li>Works across lines, arcs and Béziers, open and closed.</li>
+  <li>Stops at branch points (three or more curves at one point), as Fusion does.</li>
+  <li>Shift+double-click adds a chain; Ctrl+double-click toggles it.</li></ul><p>Double-click any part of the outer edge, or a single click to select one segment.</p>`},
+ undock:{name:'Undocked panes',prompt:'Drag a pane tab out of the window to undock it; drag it back to re-dock.',insp:'doc',float:true,
+  notes:`<h2>Undocked panes</h2><p>Panes can leave the main window (#285).</p><ul>
+  <li>Desktop: drag a tab out (or click ⧉) to get its own OS window, using eframe multi-viewport. It can live on a second monitor.</li>
+  <li>Drag it back onto the dock to re-dock. Window positions save with the layout and are restored if the monitor still exists.</li>
+  <li>Web: the same pane floats inside the browser window.</li>
+  <li>The saved layout becomes <code>locus.layout.v2</code>; v1 layouts migrate (see the design doc).</li></ul>`}
+};
+const ORDER=['layout','line','marking','search','shortcuts','style','text','offset','move','pattern','mirror','construction','chain','export','profiles','undock'];
+const state={flow:'layout',sel:new Set(),hidden:new Set(),dims:true,insp:'doc',layer:-1,prompt:'',pal:{grid:1,snap:1,auto:1,prof:0,pts:1,dims:1,cons:1,stroke:0},extra:'',eyedrop:false,moveTab:'Move'};
+
+function dialog(){
+  const f=F[state.flow]; let h='';
+  const sb=(t,empty)=>`<span class="selbox ${empty?'empty':''}">${t}${empty?'':' <b>✕</b>'}</span>`;
+  const r=(l,c)=>`<div class="row"><span class="lb">${l}</span><span class="grow">${c}</span></div>`;
+  const foot=`<div class="df"><span class="lft"><span class="kbd">Enter</span> OK · <span class="kbd">Esc</span> cancel</span><button class="btn" data-go="layout">Cancel</button><button class="btn pri" data-ok="1">OK</button></div>`;
+  if(f.dlg==='offset') h=`<div class="dlg"><div class="dh">${ic('offset')}Offset<span class="sp"></span></div><div class="db">
+   ${r('Curves',sb('1 chain · 4 curves'))}${r('',`<div class="ck on"><i></i>Chain selection</div>`)}
+   ${r('Distance',`<span class="fld focus w">2.00<span class="u">mm</span></span>`)}
+   ${r('Direction',`<button class="btn">⇄ Flip</button>`)}${r('Corners',`<span class="seg"><button class="on">Round</button><button>Sharp</button></span>`)}
+   <div class="note">The offset stays live: it follows the source until you explode it.</div></div>${foot}</div>`;
+  if(f.dlg==='mirror') h=`<div class="dlg"><div class="dh">${ic('mirror')}Mirror</div><div class="db">
+   ${r('Objects',sb('4 curves'))}${r('Mirror line',sb('1 line'))}${r('',`<div class="ck on"><i></i>Merge on mirror line</div>`)}</div>${foot}</div>`;
+  if(f.dlg==='pattern') h=`<div class="dlg"><div class="dh">${ic('rpattern')}Pattern<span class="sp"></span><span class="seg"><button class="on">Rectangular</button><button>Circular</button></span></div><div class="db">
+   ${r('Objects',sb('1 circle'))}${r('Directions',sb('X axis')+' '+sb('Y axis'))}
+   ${r('Distribution',`<span class="seg"><button>Extent</button><button class="on">Spacing</button></span>`)}
+   <div class="row"><span class="lb">Quantity</span><span class="fld focus" style="width:50px">3</span><span class="fld" style="width:50px">2</span></div>
+   <div class="row"><span class="lb">Distance</span><span class="fld expr" style="width:80px">pitch/2</span><span class="fld" style="width:70px">75.00</span></div>
+   ${r('Direction type',`<span class="seg"><button class="on">One</button><button>Symmetric</button></span>`)}
+   ${r('Suppressed',`<span class="fld">1 instance</span>`)}</div>${foot}</div>`;
+  if(f.dlg==='move'){
+   const t=state.moveTab;
+   const flds=t==='Move'?`<div class="row"><span class="lb">X distance</span><span class="fld" style="width:90px">0.00<span class="u">mm</span></span></div><div class="row"><span class="lb">Y distance</span><span class="fld focus" style="width:90px">-10.00<span class="u">mm</span></span></div>`:
+    t==='Rotate'?`${r('Pivot',sb('Selection centre'))}<div class="row"><span class="lb">Angle</span><span class="fld focus" style="width:90px">15.0<span class="u">°</span></span></div>`:
+    `${r('Base point',sb('Selection centre'))}<div class="row"><span class="lb">Scale factor</span><span class="fld focus" style="width:90px">1.50</span></div>`;
+   h=`<div class="dlg"><div class="dh">${ic(t==='Move'?'move':t==='Rotate'?'rotate':'scale')}${t}<span class="sp"></span></div><div class="db">
+   <div class="row"><span class="seg">${['Move','Rotate','Scale'].map(x=>`<button class="${x===t?'on':''}" data-mt="${x}">${x}${x==='Move'?' (M)':''}</button>`).join('')}</span></div>
+   ${r('Objects',sb('4 curves'))}${flds}${r('',`<div class="ck"><i></i>Create copy</div>`)}</div>${foot}</div>`;
+  }
+  if(f.dlg==='text'){
+   const fonts=[['Space Grotesk','var(--f-head)','Outline'],['Inter','var(--f-ui)','Outline'],['IBM Plex Mono','var(--f-mono)','Outline'],['Hershey Simplex','var(--f-ui)','Single-line'],['Hershey Script','cursive','Single-line'],['EMS Allure','cursive','Single-line'],['Relief SingleLine','var(--f-ui)','Single-line'],['Georgia','Georgia,serif','System'],['Courier New','\'Courier New\',monospace','System']];
+   h=`<div class="dlg" style="width:300px"><div class="dh">${ic('text')}Text</div><div class="db">
+   ${r('Text',`<span class="fld w focus">LOCUS|</span>`)}
+   <div class="row"><span class="lb">Font</span><input id="fontq" class="fld w" placeholder="Search fonts" value="${state.fontq||''}" style="font-family:var(--f-ui)"></div>
+   <div class="fonts" id="fontlist">${fonts.filter(x=>!state.fontq||x[0].toLowerCase().includes(state.fontq.toLowerCase())).map((x,i)=>`<div class="${x[0]==='Space Grotesk'?'on':''}"><span class="pv" style="font-family:${x[1]}">LOCUS Aa</span><span class="nm">${x[0]} · ${x[2]}</span></div>`).join('')||'<div class="nm" style="padding:8px">No fonts match</div>'}</div>
+   <div class="row"><span class="lb">Height</span><span class="fld" style="width:80px">17.5<span class="u">mm</span></span></div>
+   ${r('Align',`<span class="seg"><button>Left</button><button class="on">Centre</button><button>Right</button></span>`)}
+   ${r('Placement',`<span class="seg"><button class="on">Free</button><button>Fit box</button><button>On path</button></span>`)}
+   </div>${foot}</div>`;
+  }
+  $('#dlg').innerHTML=h;
+  const q=$('#fontq'); if(q){q.addEventListener('input',e=>{state.fontq=e.target.value;dialog();const n=$('#fontq');n.focus();n.setSelectionRange(n.value.length,n.value.length);});}
+}
+
+function patternExtra(){
+  let g='';
+  // new instances at middle column, one suppressed
+  [[400,120,0],[400,420,1]].forEach(([x,y,sup])=>g+=`<circle cx="${x}" cy="${y}" r="14" class="pv" ${sup?'opacity=".35"':''}/>`);
+  [[130,120],[400,120],[670,120],[130,420],[400,420],[670,420]].forEach(([x,y],i)=>{const sup=(x===400&&y===420);g+=`<g style="cursor:pointer"><circle cx="${x+17}" cy="${y-17}" r="6" fill="${sup?'var(--panel)':'var(--preview)'}" stroke="var(--preview)" stroke-width="1.4"/>${sup?`<path d="M${x+14} ${y-20}l6 6m0-6-6 6" stroke="var(--preview)" stroke-width="1.4"/>`:''}</g>`});
+  g+=`<line x1="130" y1="120" x2="380" y2="120" stroke="var(--preview)" stroke-width="2" marker-end="url(#arp)"/><line x1="130" y1="120" x2="130" y2="400" stroke="var(--preview)" stroke-width="2" marker-end="url(#arp)"/>`;
+  g+=`<g class="hud"><rect x="230" y="96" width="62" height="20" rx="4" stroke-width="2"/><text x="236" y="110">3 ×</text><text class="u" x="262" y="110">qty</text></g>`;
+  return g;
+}
+function moveExtra(){
+  const t=state.moveTab, cx=540, cy=380;
+  let ghost='';
+  if(t==='Move') ghost=`<path class="pv" d="${SLOT(500,580,340,8)}"/>`;
+  if(t==='Rotate') ghost=`<path class="pv" d="${SLOT(500,580,380,8)}" transform="rotate(-15 ${cx} ${cy})"/>`;
+  if(t==='Scale') ghost=`<path class="pv" d="${SLOT(500,580,380,8)}" transform="translate(${cx} ${cy}) scale(1.5) translate(${-cx} ${-cy})"/>`;
+  return ghost+`<line x1="${cx}" y1="${cy}" x2="${cx+70}" y2="${cy}" stroke="#d64545" stroke-width="2.4" marker-end="url(#arx)"/>
+  <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy-70}" stroke="#2f9a50" stroke-width="2.4" marker-end="url(#ary)"/>
+  <defs><marker id="arx" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="#d64545"/></marker><marker id="ary" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="#2f9a50"/></marker></defs>
+  <path d="M${cx+52} ${cy+20} A56 56 0 0 1 ${cx+20} ${cy+52}" stroke="var(--accent)" stroke-width="3" opacity="${t==='Rotate'?1:.5}"/>
+  <rect x="${cx-6}" y="${cy-6}" width="12" height="12" fill="var(--panel)" stroke="var(--accent)" stroke-width="2"/>
+  ${t==='Scale'?`<rect x="${cx+60}" y="${cy-70}" width="10" height="10" fill="var(--accent)" stroke="none"/>`:''}`;
+}
+
+/* ---------- modals ---------- */
+function modal(kind){
+  let h='';
+  if(kind==='export'){
+    const per=state.perLayer!==false;
+    const rows=[['#d33','Cut — outer','Cut',9,1,'ok'],['#2a6fd6','Score — border','Score',1,1,'ok'],['#222','Engrave — logo','Engrave',5,1,'warn'],['#2f8a4c','Draw — notes','Draw',0,0,'empty'],['#999','Reference','Reference',2,0,'ref']];
+    h=`<div class="modal" style="width:640px"><div class="mh2">${ic('export')}Export<span class="sp"></span><button class="ib" data-close="1">✕</button></div><div class="mb">
+    <div class="row"><span class="lb">Profile</span><span class="fld" style="width:260px">LightBurn (SVG) ▾</span><button class="btn" data-go="profiles">Manage…</button></div>
+    <div class="row"><span class="lb">Format</span><span class="seg"><button class="on">SVG</button><button>DXF</button><button>PDF</button><button>HPGL (plugin)</button></span></div>
+    <table class="t" style="margin-top:10px"><tr><th></th><th>Layer</th><th>Operation</th><th>Objects</th><th>Validation</th></tr>
+    ${rows.map(r=>`<tr style="${r[4]?'':'opacity:.55'}"><td><span class="ck ${r[4]?'on':''}"><i></i></span></td><td><span class="sw" style="background:${r[0]};display:inline-block;margin-right:6px"></span>${r[1]}</td><td>${r[2]}</td><td class="mono">${r[3]}</td>
+    <td>${r[5]==='ok'?'<span class="v-ok">✓ ready</span>':r[5]==='warn'?'<span class="v-warn">⚠ 2 self-intersections</span> <button class="btn" style="padding:1px 6px">Show</button>':r[5]==='empty'?'<span style="color:var(--muted)">empty, skipped</span>':'<span style="color:var(--muted)">never exported</span>'}</td></tr>`).join('')}</table>
+    <div class="ck ${per?'on':''}" id="perlayer" style="margin-top:10px"><i></i><b>Export each layer as a separate file</b></div>
+    ${per?`<div class="files" style="margin-top:6px">coaster-tray-Cut_outer.svg<br>coaster-tray-Score_border.svg<br>coaster-tray-Engrave_logo.svg</div><div class="note">Same origin and canvas bounds in every file, so they line up when re-imported. Desktop: choose a folder once; you're asked before any file is overwritten. Web: downloads <code>coaster-tray-layers.zip</code>.</div>`:`<div class="files" style="margin-top:6px">coaster-tray.svg</div>`}
+    </div><div class="mf"><span class="lft">0 errors · 1 warning</span><button class="btn" data-close="1">Cancel</button><button class="btn pri" data-close="1" data-toast="Exported 3 files">${per?'Export 3 files…':'Export…'}</button></div></div>`;
+  }
+  if(kind==='profiles'){
+    const pr=state.prof||'k40';
+    const builtin=['LightBurn (SVG)','LightBurn (DXF)','Cricut Design Space','Silhouette Studio Basic','Silhouette Designer+','Generic HPGL','Generic SVG','Generic DXF'];
+    const ro=pr!=='k40';
+    h=`<div class="modal" style="width:820px;height:600px"><div class="mh2">${ic('profile')}Machine profiles<span class="sp"></span><button class="ib" data-close="1">✕</button></div>
+    <div style="display:grid;grid-template-columns:230px 1fr;min-height:0;flex:1">
+     <div style="border-right:1px solid var(--line);padding:8px;overflow:auto;display:flex;flex-direction:column;gap:8px">
+      <ul class="plist"><li class="mh">YOUR PROFILES</li><li data-prof="k40" class="${pr==='k40'?'on':''}">My K40 laser</li><li data-prof="plot" class="${pr==='plot'?'on':''}">AxiDraw A3</li>
+      <li class="mh">BUILT-IN</li>${builtin.map((b,i)=>`<li data-prof="b${i}" class="${pr==='b'+i?'on':''}">🔒 ${b}</li>`).join('')}</ul>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:auto"><button class="btn">New</button><button class="btn">Duplicate</button><button class="btn">Rename</button><button class="btn">Delete</button><button class="btn">Import .json…</button><button class="btn">Export .json…</button></div>
+     </div>
+     <div class="mb" style="${ro?'opacity:.92':''}">
+      ${ro?`<div class="banner">🔒 Built-in profiles can't be edited. <button class="btn pri" style="margin-left:auto">Duplicate to edit</button></div>`:''}
+      <div class="row" style="margin-top:6px"><span class="lb">Name</span><span class="fld" style="width:240px">${pr==='k40'?'My K40 laser':pr==='plot'?'AxiDraw A3':builtin[+pr.slice(1)]}</span></div>
+      <div class="row"><span class="lb">Format</span><span class="fld" style="width:240px">${pr==='plot'?'HPGL (plugin)':'SVG — LightBurn flavour'} ▾</span></div>
+      <div class="row"><span class="lb">Units</span><span class="seg"><button class="on">mm</button><button>in</button></span></div>
+      <div class="row"><span class="lb">Bed</span><span class="fld" style="width:80px">${pr==='plot'?'420':'300'}<span class="u">mm</span></span>×<span class="fld" style="width:80px">${pr==='plot'?'297':'200'}<span class="u">mm</span></span></div>
+      <div class="row"><span class="lb">Origin</span><span class="corner"><span class="on"></span><span></span><span></span><span></span></span><span class="note" style="margin:0 0 0 6px">top-left</span></div>
+      <div class="row"><span class="lb">Offset</span><span class="fld" style="width:80px">0.00<span class="u">X</span></span><span class="fld" style="width:80px">0.00<span class="u">Y</span></span></div>
+      <h4 style="margin:12px 0 4px;font:600 10.5px var(--f-ui);letter-spacing:.07em;color:var(--muted)">OPERATIONS</h4>
+      <table class="t"><tr><th>Operation</th><th>Colour</th><th>Hairline</th><th>Defaults</th></tr>
+      <tr><td>Cut</td><td><span class="sw" style="background:#f00;display:inline-block"></span> #FF0000</td><td class="mono">0.001 mm</td><td class="mono">kerf 0.15 · out</td></tr>
+      <tr><td>Score</td><td><span class="sw" style="background:#00f;display:inline-block"></span> #0000FF</td><td class="mono">0.001 mm</td><td>—</td></tr>
+      <tr><td>Engrave</td><td><span class="sw" style="background:#000;display:inline-block"></span> #000000</td><td>object style</td><td class="mono">hatch 0.10 · 45°</td></tr>
+      <tr><td>Draw</td><td>object style</td><td>object style</td><td>—</td></tr>
+      <tr><td>Drag-knife</td><td><span class="sw" style="background:#0a0;display:inline-block"></span> #00AA00</td><td class="mono">0.001 mm</td><td class="mono">blade 0.25</td></tr></table>
+     </div></div>
+     <div class="mf"><span class="lft">Profiles are saved in app settings, not in documents.</span><button class="btn" data-close="1">Close</button></div></div>`;
+  }
+  if(kind==='shortcuts'){
+    const S=[['Fusion sketch keys',[['S','Tool search','was Select'],['L','Line',''],['R','2-Point Rectangle','was Center Arc'],['C','Center Circle',''],['A','3-Point Arc',''],['D','Sketch Dimension',''],['T','Trim','was Tangent'],['O','Offset','was Concentric'],['M','Move/Copy','was Midpoint'],['X','Normal/Construction','was Collinear'],['I','Measure','was Tangent Arc']]],
+     ['Other Locus tools',[['P','Point',''],['G','Polygon',''],['U','Slot',''],['N','Bézier pen',''],['F','Fix/Unfix',''],['H','Horizontal/Vertical','V merged in'],['K','Coincident',''],['Q','Parallel',''],['W','Perpendicular',''],['Y','Symmetric',''],['E','Equal',''],['⇧T ⇧O ⇧M ⇧X','Tangent · Concentric · Midpoint · Collinear','']]],
+     ['Edit, view and mouse',[['Del / ⌫','Delete selection','now deletes (#223)'],['Esc','Cancel step · back to Select',''],['Enter','Commit',''],['Tab','Next typed field',''],['Ctrl+Z / Ctrl+Y','Undo / redo',''],['Ctrl+C / V / D','Copy · paste · duplicate',''],['Ctrl+A','Select all',''],['Ctrl+E','Export…',''],['Right-click','Marking menu','was pan'],['Middle-drag / Space+drag','Pan',''],['Wheel · double middle-click','Zoom · fit',''],['Alt (hold)','Suppress auto-constraints',''],['?','This map','']]]];
+    h=`<div class="modal"><div class="mh2">Keyboard and mouse<span class="sp"></span><button class="ib" data-close="1">✕</button></div><div class="mb"><div class="sheet">
+    ${S.map(([t,rows])=>`<div><h5>${t}</h5>${rows.map(r=>`<div class="r"><span><span class="kbd">${r[0]}</span></span><span style="text-align:right">${r[1]}${r[2]?`<span class="was">${r[2]}</span>`:''}</span></div>`).join('')}</div>`).join('')}
+    </div><p class="note" style="margin-top:10px">B (was 2-Point Rectangle) and V (was Vertical) are freed. Fusion gives constraints no letters; the ones kept here are Locus extras. Rebind any key in Settings ▸ Keyboard.</p></div></div>`;
+  }
+  $('#overlay').innerHTML=`<div class="scrim" data-scrim="1">${h}</div>`;
+}
+
+/* ---------- marking menu ---------- */
+const RING=[['N','Repeat Line','repeat',''],['NE','Undo','undo','Ctrl+Z'],['E','Move/Copy','move','M'],['SE','Offset','offset','O'],['S','Delete','delete','Del'],['SW','Construction','construction','X'],['W','Trim','trim','T'],['NW','Dimension','dimension','D']];
+function markingMenu(x,y){
+  const hasSel=state.sel.size>0;
+  const pos={N:[0,-82],NE:[66,-58],E:[96,0],SE:[66,58],S:[0,82],SW:[-66,58],W:[-96,0],NW:[-66,-58]};
+  const list=hasSel?[['Constrain ▸',''],['Select chain','dbl-click'],['Copy','Ctrl+C'],['Duplicate','Ctrl+D'],['Style…',''],['Edit text','dbl-click'],['Properties','']]:[['Paste','Ctrl+V'],['Select all','Ctrl+A'],['Fit to content','dbl middle']];
+  const off=n=>!hasSel&&['Move/Copy','Offset','Delete','Construction'].includes(n);
+  $('#overlay').innerHTML=`<div class="mm" style="left:${x}px;top:${y}px"><div class="ring"></div><div class="hub"></div>
+  ${RING.map(([d,n,i,k])=>`<button class="slot ${off(n)?'off':''}" style="left:${pos[d][0]}px;top:${pos[d][1]}px" data-ring="${n}">${ic(i)}${n}${k?`<span class="k">${k}</span>`:''}</button>`).join('')}
+  <div class="list">${list.filter(l=>l[0]!=='Edit text'||state.sel.has('tx')).map(l=>`<button class="mi" data-ring="${l[0]}">${l[0]}<span class="k">${l[1]}</span></button>`).join('')}</div></div>`;
+}
+/* ---------- tool search ---------- */
+function toolSearch(q=''){
+  const all=A.filter(a=>a[0]!=='sep').concat(OUT);
+  const needsSel=['modify.move','modify.rotate','modify.scale','sketch.offset','modify.construction','edit.delete','constrain.hv','constrain.parallel','constrain.tangent','sketch.mirror'];
+  const qq=q.trim().toLowerCase();
+  let items=qq?all.filter(a=>(a[1]+' '+a[0]).toLowerCase().includes(qq)):[all.find(a=>a[0]==='sketch.offset'),all.find(a=>a[0]==='sketch.line'),all.find(a=>a[0]==='constrain.tangent'),all.find(a=>a[0]==='output.export')];
+  items=items.slice(0,9);
+  const box=$('.search .res');
+  const h=(qq?'':'<div class="note" style="padding:4px 8px">Recent</div>')+items.map((a,i)=>{const dis=!state.sel.size&&needsSel.includes(a[0]);return `<button class="mi ${i===0?'hot':''} ${dis?'dis':''}" data-act="${a[0]}">${ic(a[2])}<span>${a[1]}<span class="grp2"> · ${a[4]}</span>${dis?'<span class="why">select something first</span>':''}</span><span class="k">${a[3]||''}</span></button>`}).join('')+(items.length?'':'<div class="note" style="padding:8px">No matching tool</div>');
+  if(box) box.innerHTML=h; else {
+    $('#overlay').innerHTML=`<div class="search" style="left:470px;top:150px"><input id="sq" placeholder="Search tools… (try “pat”, “tan”, “exp”)" autocomplete="off"><div class="res">${h}</div></div>`;
+    const inp=$('#sq'); inp.focus();
+    inp.addEventListener('input',e=>toolSearch(e.target.value));
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){const b=document.querySelector('.search .mi.hot');if(b)runAction(b.dataset.act);} if(e.key==='Escape'){closeOverlay();e.stopPropagation();}});
+  }
+}
+
+/* ---------- state transitions ---------- */
+function closeOverlay(){$('#overlay').innerHTML='';}
+let toastT;
+function toast(t){const cw=$('#cw');cw.querySelector('.toast')?.remove();const d=document.createElement('div');d.className='toast';d.textContent=t;cw.appendChild(d);clearTimeout(toastT);toastT=setTimeout(()=>d.remove(),2200);}
+function markActive(){
+  const f=F[state.flow];
+  document.querySelectorAll('#ribbon .tb').forEach(b=>{const a=A.concat(OUT).find(x=>x[0]===b.dataset.act);b.classList.toggle('on',!!a&&a[6]===state.flow&&state.flow!=='layout');});
+}
+function setFlow(id){
+  const f=F[id]; if(!f) return;
+  state.flow=id; state.sel=new Set(f.sel||[]); state.hidden=new Set(f.hidden||[]); state.insp=f.insp||'doc'; state.layer=-1; state.prompt=f.prompt; state.eyedrop=false;
+  state.pal.cons=!!(f.pal&&f.pal.cons); state.toolOpt=f.toolOpt||'';
+  if(id==='move') state.moveTab=state.moveTab||'Move';
+  if(id==='export'||id==='profiles'||id==='undock'){ if(tab!=='output'&&id!=='undock'){tab='output';$('#tabOutput').classList.add('on');$('#tabSketch').classList.remove('on');} }
+  else if(tab!=='sketch'){tab='sketch';$('#tabSketch').classList.add('on');$('#tabOutput').classList.remove('on');}
+  render();
+  closeOverlay();
+  if(f.modal) modal(f.modal);
+  if(f.mm) markingMenu(f.mm.x+238,f.mm.y+118);
+  if(f.search) toolSearch('');
+  if(f.float) floatPane();
+  document.querySelectorAll('#flows button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.flow===id));
+  $('#notesFlow').innerHTML=f.notes;
+  try{localStorage.setItem('locus-m5-flow',id);}catch(e){}
+}
+function render(){
+  const f=F[state.flow];
+  state.extra=(f.extra||'')+(state.flow==='pattern'?patternExtra():'')+(state.flow==='move'?moveExtra():'');
+  ribbon();drawCanvas();browser();palette();inspector();status();dialog();
+}
+function floatPane(){
+  $('#overlay').innerHTML=`<div class="floatwin" style="left:930px;top:430px"><div class="osbar"><b>Constraints — Locus</b><span class="sp"></span><button class="ib" data-go="layout" title="Dock back">⇲ Dock</button><i></i><i></i><i></i></div>
+  <div class="pb"><table class="t"><tr><th>Constraint</th><th>Between</th></tr><tr><td>Horizontal</td><td>Line 12</td></tr><tr><td>Equal</td><td>Slot 1 · Slot 2</td></tr><tr><td>Symmetric</td><td>Slot 1 · Slot 2 · centre</td></tr><tr><td>Distance 20.00</td><td>Slot 1</td></tr><tr><td>Diameter ⌀7.00 = hole</td><td>Circle 4</td></tr></table>
+  <div class="note">An OS window (eframe viewport) on the desktop; a floating panel on the web.</div></div></div>`;
+}
+function runAction(id){
+  const a=A.concat(OUT).find(x=>x[0]===id); if(!a) return;
+  closeOverlay();closeMenus();
+  if(a[6]){ if(id==='modify.rotate'){state.moveTab='Rotate'} else if(id==='modify.scale'){state.moveTab='Scale'} else if(id==='modify.move'){state.moveTab='Move'} setFlow(a[6]); return; }
+  if(id==='edit.delete'){ deleteSel(); return; }
+  state.prompt=`${a[1]}: ${a[4]==='Constrain'?'pick the geometry to constrain':'click on the canvas'} (mockup: no geometry is created)`;
+  status(); toast(`${a[1]}${a[3]?' ('+a[3]+')':''}`);
+}
+function deleteSel(){
+  if(!state.sel.size){toast('Nothing selected');return;}
+  const n=state.sel.size; state.sel.forEach(id=>state.hidden.add(id)); state.sel.clear(); drawCanvas(); status();
+  toast(`Deleted ${n} ${n>1?'objects':'object'} · Ctrl+Z to undo`);
+}
+
+/* ---------- events ---------- */
+$('#flows').innerHTML=ORDER.map(id=>`<button data-flow="${id}" aria-pressed="false">${F[id].name}</button>`).join('');
+$('#flows').addEventListener('click',e=>{const b=e.target.closest('[data-flow]');if(b)setFlow(b.dataset.flow);});
+$('#tabSketch').onclick=()=>{tab='sketch';$('#tabSketch').classList.add('on');$('#tabOutput').classList.remove('on');ribbon();};
+$('#tabOutput').onclick=()=>{tab='output';$('#tabOutput').classList.add('on');$('#tabSketch').classList.remove('on');ribbon();};
+$('#searchBtn').onclick=()=>setFlow('search');
+frame.addEventListener('click',e=>{
+  const t=e.target;
+  const g=t.closest('[data-grp]'); if(g){ if(g.parentElement.querySelector('.menu')){closeMenus();} else groupMenu(g.dataset.grp,g); return; }
+  const go=t.closest('[data-go]'); if(go){ setFlow(go.dataset.go); return; }
+  const act=t.closest('[data-act]'); if(act){ runAction(act.dataset.act); return; }
+  if(!t.closest('.menu')) closeMenus();
+  const ring=t.closest('[data-ring]'); if(ring){ const n=ring.dataset.ring; closeOverlay();
+    if(n==='Delete') deleteSel(); else if(n==='Offset') setFlow('offset'); else if(n==='Move/Copy') setFlow('move'); else if(n==='Construction') setFlow('construction');
+    else if(n==='Select chain') setFlow('chain'); else if(n==='Style…') setFlow('style'); else if(n==='Edit text') setFlow('text'); else toast(n); return; }
+  if(t.closest('[data-close]')){ const tt=t.closest('[data-toast]'); closeOverlay(); setFlow('layout'); if(tt) toast(tt.dataset.toast); return; }
+  if(t.dataset&&t.dataset.scrim){ closeOverlay(); return; }
+  if(t.closest('#perlayer')){ state.perLayer=!(state.perLayer!==false); modal('export'); return; }
+  const pr=t.closest('[data-prof]'); if(pr){ state.prof=pr.dataset.prof; modal('profiles'); return; }
+  const mt=t.closest('[data-mt]'); if(mt){ state.moveTab=mt.dataset.mt; render(); return; }
+  if(t.closest('[data-ok]')){ const fl=state.flow; setFlow('layout'); toast({offset:'Offset added · distance stays editable on the canvas',move:'Moved 4 curves · one undo step',pattern:'Pattern updated · 5 instances, 1 suppressed',mirror:'Mirrored 4 curves · symmetric constraints added',text:'Text updated'}[fl]||'Done'); return; }
+  const lt=t.closest('[data-lt]'); if(lt){ state.pal.cons=lt.dataset.lt==='1'; palette(); toast(state.pal.cons?'Drawing tools now create construction geometry':'Drawing tools create normal geometry'); return; }
+  const pal=t.closest('[data-pal]'); if(pal){ const k=pal.dataset.pal; state.pal[k]=!state.pal[k]; if(k==='dims'){state.dims=!!state.pal[k];drawCanvas();} palette(); return; }
+  if(t.closest('#eyedrop')){ state.eyedrop=!state.eyedrop; state.prompt=state.eyedrop?'Eyedropper: click the object to copy its style from. Esc cancels.':F[state.flow].prompt; inspector(); status(); $('#cv').style.cursor=state.eyedrop?'crosshair':''; return; }
+  const ly=t.closest('[data-layer]'); if(ly){ state.layer=+ly.dataset.layer; state.insp='layer'; state.sel.clear(); browser(); inspector(); drawCanvas(); status(); return; }
+  const xx=t.closest('[data-x]'); if(xx){ setFlow('construction'); return; }
+});
+// canvas picking: single click = one curve, double click = chain
+const cv=$('#cv');
+function pickKind(id){ if(id==='tx') return 'text'; if(/^h[234]$/.test(id)) return 'hole'; if(id==='cl'||id==='cc') return 'cons'; return 'slot'; }
+let clickT=null;
+cv.addEventListener('click',e=>{
+  const p=e.target.closest('.pick');
+  if(state.eyedrop){ if(p){ state.eyedrop=false; $('#cv').style.cursor=''; inspector(); toast(`Style copied from ${p.id==='tx'?'the text':'this object'} to the selection · one undo step`); state.prompt=F[state.flow].prompt; status(); } return; }
+  clearTimeout(clickT);
+  clickT=setTimeout(()=>{
+    if(!p){ state.sel.clear(); state.insp='doc'; } else {
+      if(e.shiftKey) state.sel.add(p.id); else if(e.ctrlKey){ state.sel.has(p.id)?state.sel.delete(p.id):state.sel.add(p.id);} else state.sel=new Set([p.id]);
+      state.insp=pickKind(p.id);
+    }
+    state.layer=-1; drawCanvas(); inspector(); status(); browser();
+  },220);
+});
+cv.addEventListener('dblclick',e=>{
+  clearTimeout(clickT);
+  const p=e.target.closest('.pick'); if(!p) return;
+  if(/^o\d$/.test(p.id)) { setFlow('chain'); return; }
+  if(p.id==='tx'){ setFlow('text'); return; }
+  if(p.id==='s1'||p.id==='s2'){ state.sel=new Set([p.id]); state.insp='slot'; drawCanvas(); inspector(); status(); toast('Chain: 4 curves (closed)'); }
+});
+function frameScale(){return frame.getBoundingClientRect().width/1280;}
+$('#cw').addEventListener('contextmenu',e=>{
+  e.preventDefault();
+  const r=frame.getBoundingClientRect(), s=frameScale();
+  const p=e.target.closest&&e.target.closest('.pick');
+  if(p && !state.sel.has(p.id)){ state.sel=new Set([p.id]); state.insp=pickKind(p.id); drawCanvas(); inspector(); status(); }
+  markingMenu((e.clientX-r.left)/s,(e.clientY-r.top)/s);
+});
+document.addEventListener('keydown',e=>{
+  const tag=(e.target.tagName||'').toLowerCase(); if(tag==='input'||tag==='textarea') return;
+  const k=e.key;
+  if(k==='Escape'){ if($('#overlay').innerHTML||document.querySelector('.menu')){closeOverlay();closeMenus();return;} if(state.eyedrop){state.eyedrop=false;inspector();return;} setFlow('layout'); return; }
+  if(e.ctrlKey||e.metaKey){ if(k.toLowerCase()==='e'){e.preventDefault();setFlow('export');} if(k.toLowerCase()==='a'){e.preventDefault();state.sel=new Set(['o1','o2','o3','o4','o5','o6','o7','o8','ofs','h1','h2','h3','h4','s1','s2','tx']);state.insp='chain';drawCanvas();inspector();status();} return; }
+  if(k==='Delete'||k==='Backspace'){ e.preventDefault(); deleteSel(); return; }
+  if(k==='?'){ setFlow('shortcuts'); return; }
+  if(k===' '){ e.preventDefault(); state.prompt='Space held: drag to pan'; status(); return; }
+  const m={l:'sketch.line',o:'sketch.offset',m:'modify.move',x:'modify.construction',t:'modify.trim',d:'constrain.dimension',c:'sketch.circle',r:'sketch.rect2',a:'sketch.arc3',h:'constrain.hv',i:'inspect.measure',e:'constrain.equal',p:'sketch.point',g:'sketch.polygon',u:'sketch.slot',n:'sketch.bezier',k:'constrain.coincident',f:'constrain.fix',q:'constrain.parallel',w:'constrain.perp',y:'constrain.symmetric'};
+  if(e.shiftKey){ const sm={T:'constrain.tangent',O:'constrain.concentric',M:'constrain.midpoint',X:'constrain.collinear'}; if(sm[k]){runAction(sm[k]);} return; }
+  if(k==='s'){ e.preventDefault(); setFlow('search'); return; }
+  if(k==='x' && state.sel.size && state.flow!=='construction'){ setFlow('construction'); return; }
+  if(m[k]) runAction(m[k]);
+});
+document.addEventListener('keyup',e=>{ if(e.key===' '){ state.prompt=F[state.flow].prompt; status(); }});
+
+/* ---------- scale the frame to the stage ---------- */
+function fit(){
+  const w=$('#stage').clientWidth; const s=Math.max(.62,Math.min(1,w/1282));
+  frame.style.transform=`scale(${s})`; $('#scaler').style.width=1282*s+'px'; $('#scaler').style.height=782*s+'px';
+}
+window.addEventListener('resize',fit);
+navbar(); fit();
+let start='layout'; try{const v=localStorage.getItem('locus-m5-flow'); if(v&&F[v]) start=v;}catch(e){}
+setFlow(start);
+})();
+</script>
