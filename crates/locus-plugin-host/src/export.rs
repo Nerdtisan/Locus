@@ -7,7 +7,8 @@
 
 use locus_export::{ExportError, Exported, Exporter};
 
-use crate::runtime::{CallError, Plugin};
+use crate::error::CallError;
+use crate::runtime::Plugin;
 use crate::types::{
     Compensation, ExportModel, FormatInfo, Layer, Operation, Path, Segment, Shape, Vec2,
 };

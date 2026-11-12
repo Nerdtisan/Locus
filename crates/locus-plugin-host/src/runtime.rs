@@ -28,12 +28,13 @@ use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap, UpdateDeadline};
 
 use crate::api::{PACKAGE as API_PACKAGE, SUPPORTED_API_MAJORS};
+use crate::error::{CallError, CancelToken};
 use crate::types::{
     Compensation, Constraint, Entity, ExportModel, Finding, FormatInfo, Generated, Kind, Operation,
     Param, ParamKind, ParamSpec, ParamValue, Path, PluginFailure, PluginInfo, Segment, Severity,
     Shape, Vec2,
 };
-use crate::validate::{self, Malformed};
+use crate::validate;
 
 mod bindings {
     // One world per kind (ADR 0009). The modifier and exporter worlds reuse
@@ -94,7 +95,7 @@ use bindings::modifier::exports::locus::plugin::modifier as wmod;
 use bindings::validator::exports::locus::plugin::validator as wval;
 
 /// Largest component accepted, before compiling it.
-pub const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_COMPONENT_BYTES: usize = validate::MAX_COMPONENT_BYTES;
 
 /// How often the epoch ticks; timeouts are rounded up to this.
 const TICK: Duration = Duration::from_millis(10);
@@ -142,62 +143,6 @@ pub enum LoadError {
     NoSupportedKind,
     #[error("the plugin failed while describing itself: {0}")]
     Describe(#[source] CallError),
-}
-
-/// Why a call produced no result. Every variant leaves the document unchanged.
-#[derive(Debug, thiserror::Error)]
-pub enum CallError {
-    #[error("the plugin used more than its CPU budget")]
-    CpuLimit,
-    #[error("the plugin took longer than {0:?}")]
-    Timeout(Duration),
-    #[error("the plugin needed more than {} MB of memory", .0 / (1024 * 1024))]
-    MemoryLimit(usize),
-    /// A trap: a panic, `unreachable`, out-of-bounds access, stack overflow…
-    #[error("the plugin crashed ({0})")]
-    Trap(String),
-    /// The plugin returned data that failed validation, or that the host
-    /// couldn't even read (bad pointers, invalid UTF-8, …).
-    #[error("the plugin returned malformed output: {0}")]
-    Malformed(String),
-    /// The plugin reported an error itself.
-    #[error(transparent)]
-    Plugin(PluginFailure),
-    #[error("the plugin doesn't provide a {0}")]
-    NotProvided(&'static str),
-    #[error("plugin host error: {0}")]
-    Host(String),
-    /// Stopped through its [`CancelToken`] (#214).
-    #[error("the plugin call was cancelled")]
-    Cancelled,
-}
-
-/// Cancels a running call from another thread (#214). Cheap to clone; give
-/// one to [`Plugin::with_cancel`]. The call stops at the next epoch tick
-/// (10 ms) with [`CallError::Cancelled`] and returns nothing.
-#[derive(Debug, Clone, Default)]
-pub struct CancelToken(Arc<AtomicBool>);
-
-impl CancelToken {
-    #[must_use]
-    pub fn new() -> CancelToken {
-        CancelToken::default()
-    }
-
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
-    }
-}
-
-impl From<Malformed> for CallError {
-    fn from(m: Malformed) -> Self {
-        CallError::Malformed(m.0)
-    }
 }
 
 /// Owns the wasmtime engine and the epoch ticker. Create one per process

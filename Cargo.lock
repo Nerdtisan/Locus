@@ -2259,6 +2259,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "toml",
+ "wasmparser 0.263.0",
  "wasmtime",
  "wat",
  "wit-component 0.261.0",

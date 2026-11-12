@@ -314,6 +314,9 @@ pub fn export_model(m: &ExportModel) -> Result {
     count("paths", all.len(), MAX_ITEMS)
 }
 
+/// Largest plugin component accepted, before compiling it.
+pub const MAX_COMPONENT_BYTES: usize = 64 * 1024 * 1024;
+
 /// Largest file an importer is given (§15.4: the host reads it, the plugin
 /// only sees bytes).
 pub const MAX_IMPORT_BYTES: usize = 64 * 1024 * 1024;
