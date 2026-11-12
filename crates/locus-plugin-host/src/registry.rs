@@ -13,6 +13,11 @@
 //! Plugins are never auto-updated (§15.7); installing a new version is an
 //! explicit act. Signing is later (§15.4): today every plugin is unsigned and
 //! labelled so.
+//!
+//! A plugin can be disabled without uninstalling it (#235): a `disabled`
+//! marker file in its folder, kept across reinstalls. A disabled plugin is
+//! listed but never loaded, so documents that use it open from their cached
+//! geometry with the "plugin missing" badge (§15.5).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +38,8 @@ pub enum InstallError {
     Mismatch(String),
     #[error("no plugin with that id is installed")]
     NotInstalled,
+    #[error("the plugin is disabled")]
+    Disabled,
     #[error("couldn't update the plugin folder: {0}")]
     Io(String),
 }
@@ -49,6 +56,8 @@ pub struct Installed {
     pub dir: PathBuf,
     /// Always false until signing lands (§15.4); the UI labels these.
     pub signed: bool,
+    /// False once disabled in the plugin manager (#235).
+    pub enabled: bool,
 }
 
 impl Installed {
@@ -56,7 +65,18 @@ impl Installed {
     pub fn trust_label(&self) -> &'static str {
         if self.signed { "Signed" } else { "Unsigned" }
     }
+
+    /// The capabilities granted at install, for the plugin manager. Locus v1
+    /// grants none (§15.4), and the manifest check refuses any request.
+    pub fn capabilities(&self) -> &'static [&'static str] {
+        &[]
+    }
 }
+
+/// Marker file of a disabled plugin.
+const DISABLED: &str = "disabled";
+/// Largest README shown (the archive limit).
+const MAX_README_BYTES: usize = 256 * 1024;
 
 /// Loads an archive's component and checks it against the manifest.
 pub fn verify(host: &Host, archive: &Archive) -> Result<Plugin, InstallError> {
@@ -130,6 +150,10 @@ impl Registry {
             if let Some(readme) = &archive.readme {
                 fs::write(staging.join(archive::README), readme)?;
             }
+            // Reinstalling keeps a plugin disabled if it was.
+            if target.join(DISABLED).exists() {
+                fs::write(staging.join(DISABLED), b"")?;
+            }
             fs::write(staging.join(archive::MANIFEST), &archive.manifest_toml)
         })();
         if let Err(e) = written {
@@ -146,11 +170,38 @@ impl Registry {
             return Err(io(e));
         }
         let _ = fs::remove_dir_all(&old);
+        let enabled = !target.join(DISABLED).exists();
         Ok(Installed {
             manifest: archive.manifest,
             dir: target,
             signed: false,
+            enabled,
         })
+    }
+
+    /// Enables or disables an installed plugin without uninstalling it.
+    pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), InstallError> {
+        let dir = self.plugin_dir(id)?;
+        if !dir.is_dir() {
+            return Err(InstallError::NotInstalled);
+        }
+        let marker = dir.join(DISABLED);
+        if enabled {
+            match fs::remove_file(marker) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(e)),
+                _ => Ok(()),
+            }
+        } else {
+            fs::write(marker, b"").map_err(io)
+        }
+    }
+
+    /// The plugin's README as text, if it has one (at most 256 KiB, UTF-8).
+    /// Shown as plain text: never rendered as HTML or followed as links.
+    pub fn readme(&self, id: &str) -> Option<String> {
+        let dir = self.plugin_dir(id).ok()?;
+        let bytes = read_limited(&dir.join(archive::README), MAX_README_BYTES)?;
+        String::from_utf8(bytes).ok()
     }
 
     /// The installed plugins, sorted by id. Folders that don't hold a valid
@@ -182,10 +233,12 @@ impl Registry {
         .ok_or(InstallError::NotInstalled)?;
         let src = String::from_utf8(src).map_err(|_| InstallError::NotInstalled)?;
         let manifest = Manifest::parse(&src).map_err(ArchiveError::from)?;
+        let enabled = !dir.join(DISABLED).exists();
         Ok(Installed {
             manifest,
             dir,
             signed: false,
+            enabled,
         })
     }
 
@@ -198,10 +251,13 @@ impl Registry {
         String::from_utf8(src).ok()
     }
 
-    /// Loads an installed plugin, re-checking it: the files on disk are as
-    /// untrusted as the archive was.
+    /// Loads an installed, enabled plugin, re-checking it: the files on disk
+    /// are as untrusted as the archive was.
     pub fn load(&self, host: &Host, id: &str) -> Result<(Installed, Plugin), InstallError> {
         let installed = self.get(id)?;
+        if !installed.enabled {
+            return Err(InstallError::Disabled);
+        }
         let wasm = read_limited(
             &installed.dir.join(archive::WASM),
             crate::runtime::MAX_COMPONENT_BYTES,

@@ -22,15 +22,66 @@ use crate::operation::Operation;
 /// Colour of imported reference layers: neutral grey, so it reads as "not mine".
 pub const REFERENCE_COLOUR: [u8; 3] = [128, 128, 128];
 
+/// One piece of imported geometry, in millimetres. Unlike [`GenShape`] it can
+/// carry a cubic Bézier, which SVG and DXF imports produce (§13 M4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ImportShape {
+    Line {
+        a: Vec2,
+        b: Vec2,
+    },
+    /// Counter-clockwise from `start` to `end` about `center`.
+    Arc {
+        center: Vec2,
+        start: Vec2,
+        end: Vec2,
+    },
+    Circle {
+        center: Vec2,
+        radius: f64,
+    },
+    Cubic {
+        a: Vec2,
+        c1: Vec2,
+        c2: Vec2,
+        b: Vec2,
+    },
+}
+
+impl From<GenShape> for ImportShape {
+    fn from(s: GenShape) -> Self {
+        match s {
+            GenShape::Line { a, b } => ImportShape::Line { a, b },
+            GenShape::Arc { center, start, end } => ImportShape::Arc { center, start, end },
+            GenShape::Circle { center, radius } => ImportShape::Circle { center, radius },
+        }
+    }
+}
+
 /// The command that adds `paths` on a new locked Reference layer named `name`.
+/// See [`import_shapes_command`].
+pub fn import_command(doc: &Document, name: &str, paths: &[GenPath]) -> Result<Command, DocError> {
+    let shapes: Vec<ImportShape> = paths
+        .iter()
+        .flat_map(|p| &p.segments)
+        .map(|s| s.shape.into())
+        .collect();
+    import_shapes_command(doc, name, &shapes)
+}
+
+/// The command that adds `shapes` on a new locked Reference layer named `name`.
 ///
 /// IDs are predicted from [`Document::next_id`]: commands in a compound
 /// allocate in order, one ID each, so the layer gets the next ID and every
 /// point and curve the ones after it. Apply the command to the same document
 /// it was built from. End points shared bit-for-bit become one point, so
 /// imported paths stay connected.
-pub fn import_command(doc: &Document, name: &str, paths: &[GenPath]) -> Result<Command, DocError> {
-    if paths.iter().all(|p| p.segments.is_empty()) {
+pub fn import_shapes_command(
+    doc: &Document,
+    name: &str,
+    shapes: &[ImportShape],
+) -> Result<Command, DocError> {
+    if shapes.is_empty() {
         return Err(DocError::Invalid("there is no geometry to import".into()));
     }
     let mut next = doc.next_id();
@@ -58,9 +109,9 @@ pub fn import_command(doc: &Document, name: &str, paths: &[GenPath]) -> Result<C
                 EntityId::new(alloc())
             })
     };
-    for seg in paths.iter().flat_map(|p| &p.segments) {
-        let geom = match seg.shape {
-            GenShape::Line { a, b } => {
+    for shape in shapes {
+        let geom = match *shape {
+            ImportShape::Line { a, b } => {
                 let (start, end) = (
                     point(a, &mut commands, &mut alloc),
                     point(b, &mut commands, &mut alloc),
@@ -70,14 +121,20 @@ pub fn import_command(doc: &Document, name: &str, paths: &[GenPath]) -> Result<C
                 }
                 Geom::Line { start, end }
             }
-            GenShape::Arc { center, start, end } => Geom::Arc {
+            ImportShape::Arc { center, start, end } => Geom::Arc {
                 center: point(center, &mut commands, &mut alloc),
                 start: point(start, &mut commands, &mut alloc),
                 end: point(end, &mut commands, &mut alloc),
             },
-            GenShape::Circle { center, radius } => Geom::Circle {
+            ImportShape::Circle { center, radius } => Geom::Circle {
                 center: point(center, &mut commands, &mut alloc),
                 radius,
+            },
+            ImportShape::Cubic { a, c1, c2, b } => Geom::Bezier {
+                start: point(a, &mut commands, &mut alloc),
+                start_ctrl: point(c1, &mut commands, &mut alloc),
+                end_ctrl: point(c2, &mut commands, &mut alloc),
+                end: point(b, &mut commands, &mut alloc),
             },
         };
         commands.push(Command::AddEntity {

@@ -10,6 +10,10 @@
 //! - Read, write and export are granted separately (read only by default);
 //!   writes are asked for each time, once per session, or not at all, and
 //!   export always asks unless the user allows it.
+//! - **Allow Docker clients** (off by default, #270): also accept the
+//!   `host.docker.internal` host name, so clients in Docker Desktop
+//!   containers (e.g. Open WebUI) can connect. The bind stays 127.0.0.1;
+//!   the token, `Origin` refusal and everything else still apply.
 //! - The AI's tool calls run here, in the frame loop, through the canvas:
 //!   each is one labelled undo step and the user watches it happen.
 //!
@@ -19,7 +23,7 @@ use std::sync::Arc;
 
 use locus_doc::{Applied, Command, DocError, LayerId, Sketcher};
 use locus_mcp::attach::{self, Jobs, Prompts};
-use locus_mcp::http::Attached;
+use locus_mcp::http::{Access, Attached, DOCKER_HOST};
 use locus_mcp::plugins::RegistryPlugins;
 use locus_mcp::{ApprovalMode, Grants, LocusServer, Options, Plugins, Scope, Workspace};
 use serde::{Deserialize, Serialize};
@@ -37,6 +41,8 @@ struct Saved {
     enabled: bool,
     port: u16,
     grants: Grants,
+    /// Accept `Host: host.docker.internal` (#270). Off by default.
+    allow_docker: bool,
 }
 
 impl Default for Saved {
@@ -45,6 +51,7 @@ impl Default for Saved {
             enabled: false,
             port: DEFAULT_PORT,
             grants: Grants::default(),
+            allow_docker: false,
         }
     }
 }
@@ -158,7 +165,10 @@ impl Mcp {
             self.saved.grants,
             Options::default(),
         );
-        match Attached::start(self.saved.port, server.clone(), token.clone()) {
+        let access = Access {
+            allow_docker: self.saved.allow_docker,
+        };
+        match Attached::start(self.saved.port, server.clone(), token.clone(), access) {
             Ok(http) => {
                 self.live = Some(Live {
                     url: http.url(),
@@ -223,10 +233,18 @@ impl Mcp {
         };
         let r = ui
             .add(egui::Button::new(egui::RichText::new(text).color(colour)).frame(false))
-            .on_hover_text(format!(
-                "AI clients can connect at {}. Click for settings.",
-                live.url
-            ));
+            .on_hover_text(if self.saved.allow_docker {
+                format!(
+                    "AI clients can connect at {} (Docker clients: {}). Click for settings.",
+                    live.url,
+                    docker_url(live.url.as_str())
+                )
+            } else {
+                format!(
+                    "AI clients can connect at {}. Click for settings.",
+                    live.url
+                )
+            });
         if r.clicked() {
             self.window = true;
         }
@@ -309,6 +327,12 @@ impl Mcp {
                     "What your AI client does with the data it reads is outside Locus. \
                      If it uses a cloud model, your drawing goes to that service.",
                 );
+                if self.saved.allow_docker {
+                    ui.add_space(4.0);
+                    ui.label(
+                        "Docker clients are allowed: programs running in Docker containers on this computer                          can also try to connect (through host.docker.internal). They still need the access token.",
+                    );
+                }
                 ui.add_space(4.0);
                 ui.weak("You can turn it off at any time. It starts with read access only.");
                 ui.horizontal(|ui| {
@@ -343,6 +367,13 @@ impl Mcp {
                             ui.label("Port");
                             ui.add(egui::DragValue::new(&mut self.saved.port).range(1024..=65535));
                         });
+                        ui.checkbox(
+                            &mut self.saved.allow_docker,
+                            "Allow Docker clients (host.docker.internal)",
+                        )
+                        .on_hover_text(
+                            "For AI clients running in Docker Desktop on this computer, such as Open WebUI.                              Any program in a container here can then try to connect; it still needs the token.",
+                        );
                         if ui.button("Turn on…").clicked() {
                             toggle = Some(true);
                         }
@@ -355,6 +386,13 @@ impl Mcp {
                                 toggle = Some(false);
                             }
                         });
+                        if self.saved.allow_docker {
+                            ui.horizontal(|ui| {
+                                ui.label("Docker clients:");
+                                ui.monospace(docker_url(&live.url));
+                            });
+                        }
+                        ui.weak("Turn the server off to change the port or Docker access.");
                     }
                 }
                 if let Some(e) = &self.error {
@@ -432,6 +470,11 @@ impl Mcp {
     }
 }
 
+/// The URL a client in a Docker Desktop container uses for `url`.
+pub fn docker_url(url: &str) -> String {
+    url.replacen("127.0.0.1", DOCKER_HOST, 1)
+}
+
 /// An `mcpServers` entry for clients configured with JSON.
 pub fn client_json(url: &str, token: &str) -> String {
     serde_json::json!({
@@ -462,6 +505,7 @@ mod tests {
         let s = Saved::default();
         assert!(!s.enabled);
         assert_eq!(s.grants, Grants::default());
+        assert!(!s.allow_docker, "Docker clients are opt-in (#270)");
         assert!(s.grants.read && !s.grants.write && !s.grants.export);
     }
 
@@ -471,6 +515,7 @@ mod tests {
             enabled: true,
             port: 50000,
             grants: Grants::headless(true, true, false),
+            allow_docker: true,
         };
         let j = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<Saved>(&j).unwrap(), s);
@@ -490,6 +535,10 @@ mod tests {
             "Bearer tok"
         );
         assert!(claude_code_command("u", "t").contains("--transport http locus u"));
+        assert_eq!(
+            docker_url("http://127.0.0.1:47811/mcp"),
+            "http://host.docker.internal:47811/mcp"
+        );
     }
 
     #[test]

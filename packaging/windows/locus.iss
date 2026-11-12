@@ -53,13 +53,13 @@ Name: "{group}\Uninstall Locus"; Filename: "{uninstallexe}"
 [Registry]
 ; .locus documents. Written under HKCU\Software\Classes, which is what a per-user
 ; install must use. uninsdeletekey removes the keys on uninstall.
-Root: HKA; Subkey: "Software\Classes\.locus"; ValueType: string; ValueData: "Locus.Document"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.locus"; ValueType: string; ValueData: "Locus.Document"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\Locus.Document"; ValueType: string; ValueData: "Locus document"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\Locus.Document\DefaultIcon"; ValueType: string; ValueData: "{app}\locus.ico"
 Root: HKA; Subkey: "Software\Classes\Locus.Document\shell\open\command"; ValueType: string; ValueData: """{app}\locus.exe"" ""%1"""
 ; .locusplugin archives. The app does not install plugins from a double-click yet
 ; (it ignores the path); association is registered so the file type is recognised.
-Root: HKA; Subkey: "Software\Classes\.locusplugin"; ValueType: string; ValueData: "Locus.Plugin"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.locusplugin"; ValueType: string; ValueData: "Locus.Plugin"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\Locus.Plugin"; ValueType: string; ValueData: "Locus plugin"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\Locus.Plugin\DefaultIcon"; ValueType: string; ValueData: "{app}\locus.ico"
 Root: HKA; Subkey: "Software\Classes\Locus.Plugin\shell\open\command"; ValueType: string; ValueData: """{app}\locus.exe"" ""%1"""

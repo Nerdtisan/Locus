@@ -1,0 +1,22 @@
+[package]
+name = "locus-import"
+description = "SVG and DXF parsers for locked reference geometry (SPEC §13 M4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+locus-geom.workspace = true
+locus-doc.workspace = true
+roxmltree = { version = "0.21", default-features = false, features = ["std"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+locus-export.workspace = true
