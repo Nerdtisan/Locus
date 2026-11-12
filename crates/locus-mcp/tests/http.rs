@@ -19,9 +19,13 @@ use tokio::net::TcpStream;
 const TOKEN: &str = "test-token-0123456789abcdefghijklmnopqrstuv";
 
 async fn start(grants: Grants) -> http::Running {
+    start_with(grants, http::Access::default()).await
+}
+
+async fn start_with(grants: Grants, access: http::Access) -> http::Running {
     let backend = LocalBackend::spawn(Headless::new(locus_doc::Document::new())).unwrap();
     let server = LocusServer::new(backend, Arc::new(NeverApprove), grants, Options::default());
-    http::start("127.0.0.1:0".parse().unwrap(), server, TOKEN.into())
+    http::start("127.0.0.1:0".parse().unwrap(), server, TOKEN.into(), access)
         .await
         .unwrap()
 }
@@ -120,7 +124,16 @@ fn non_loopback_bind_is_rejected() {
                 Grants::default(),
                 Options::default(),
             );
-            let r = http::start(addr.parse().unwrap(), server, TOKEN.into()).await;
+            let r = http::start(
+                addr.parse().unwrap(),
+                server,
+                TOKEN.into(),
+                http::Access {
+                    allow_docker: true,
+                    ..Default::default()
+                },
+            )
+            .await;
             assert!(matches!(r, Err(HttpError::NotLoopback(_))), "{addr}");
         }
     });
@@ -258,4 +271,266 @@ async fn other_paths_and_stop() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     let r = TcpStream::connect(s.addr).await;
     assert!(r.is_err(), "the listener is closed after stop");
+}
+
+// ── #270: opt-in Docker clients (host.docker.internal) ─────────────────────
+
+async fn summary_from(s: &http::Running, host: &str, origin: Option<&str>) -> Reply {
+    let auth = bearer();
+    let mut h = vec![("Authorization", auth.as_str()), ("Host", host)];
+    if let Some(o) = origin {
+        h.push(("Origin", o));
+    }
+    post_call(s.addr, &h, "get_document_summary", json!({})).await
+}
+
+#[tokio::test]
+async fn docker_host_is_refused_by_default() {
+    let s = start(Grants::default()).await;
+    let host = format!("host.docker.internal:{}", s.addr.port());
+    let r = summary_from(&s, &host, None).await;
+    assert_eq!(r.status, 403, "{}", r.body);
+    let r = summary_from(&s, "host.docker.internal", None).await;
+    assert_eq!(r.status, 403);
+    s.stop();
+}
+
+#[tokio::test]
+async fn docker_host_is_accepted_when_allowed() {
+    let s = start_with(
+        Grants::default(),
+        http::Access {
+            allow_docker: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let host = format!("host.docker.internal:{}", s.addr.port());
+    let r = summary_from(&s, &host, None).await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.message()["result"]["isError"], false);
+    let r = summary_from(&s, "HOST.DOCKER.INTERNAL", None).await;
+    assert_eq!(r.status, 200, "without a port, any case: {}", r.body);
+    // Loopback names still work.
+    let r = summary_from(&s, &format!("127.0.0.1:{}", s.addr.port()), None).await;
+    assert_eq!(r.status, 200);
+    s.stop();
+}
+
+#[tokio::test]
+async fn allowing_docker_lets_in_nothing_else() {
+    let s = start_with(
+        Grants::default(),
+        http::Access {
+            allow_docker: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    for host in [
+        "attacker.example",
+        "host.docker.internal.attacker.example",
+        "docker.internal",
+        "gateway.docker.internal",
+        "192.168.65.254",
+    ] {
+        let r = summary_from(&s, host, None).await;
+        assert!((400..500).contains(&r.status), "{host}: {}", r.status);
+    }
+    // A browser Origin is refused whatever the Host.
+    let host = format!("host.docker.internal:{}", s.addr.port());
+    for origin in ["http://evil.example", "http://host.docker.internal:3000"] {
+        assert_eq!(
+            summary_from(&s, &host, Some(origin)).await.status,
+            403,
+            "{origin}"
+        );
+    }
+    // And the token is still required.
+    let r = post_call(
+        s.addr,
+        &[("Host", host.as_str())],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 401);
+    s.stop();
+}
+
+#[tokio::test]
+async fn origin_is_refused_without_docker_too() {
+    let s = start(Grants::default()).await;
+    let host = format!("127.0.0.1:{}", s.addr.port());
+    assert_eq!(
+        summary_from(&s, &host, Some("http://localhost:3000"))
+            .await
+            .status,
+        403
+    );
+    s.stop();
+}
+
+// ── #272: opt-in network clients (private bind + allowlist) ────────────────
+
+/// This machine's first private address, or `None` (the LAN tests then skip).
+fn private_ip() -> Option<std::net::Ipv4Addr> {
+    let ip = http::private_addresses().into_iter().next();
+    if ip.is_none() {
+        eprintln!("no private IPv4 interface here: skipping a LAN test");
+    }
+    ip
+}
+
+fn lan_access(bind: std::net::Ipv4Addr, allow: &[String]) -> http::Access {
+    http::Access {
+        allow_docker: false,
+        network: Some(http::Network {
+            bind,
+            allow: allow.iter().map(|s| s.parse().unwrap()).collect(),
+        }),
+    }
+}
+
+#[tokio::test]
+async fn network_off_listens_on_loopback_only() {
+    let Some(ip) = private_ip() else { return };
+    let s = start(Grants::default()).await;
+    assert!(s.network_addr.is_none());
+    let r = TcpStream::connect((ip, s.addr.port())).await;
+    assert!(r.is_err(), "nothing listens on the LAN address while off");
+    s.stop();
+}
+
+#[tokio::test]
+async fn empty_allowlist_admits_nobody_from_the_network() {
+    let Some(ip) = private_ip() else { return };
+    let s = start_with(Grants::default(), lan_access(ip, &[])).await;
+    let lan = s.network_addr.unwrap();
+    assert_eq!(lan.ip(), std::net::IpAddr::V4(ip));
+    let auth = bearer();
+    let r = post_call(
+        lan,
+        &[("Authorization", auth.as_str())],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 0, "connection dropped before HTTP: {}", r.body);
+    // Loopback still works.
+    let r = post_call(
+        s.addr,
+        &[("Authorization", auth.as_str())],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 200);
+    s.stop();
+}
+
+#[tokio::test]
+async fn client_outside_the_allowlist_is_dropped() {
+    let Some(ip) = private_ip() else { return };
+    // A range that can't contain this machine's address.
+    let other = if ip.octets()[0] == 10 {
+        "192.168.0.0/16"
+    } else {
+        "10.0.0.0/8"
+    };
+    let s = start_with(Grants::default(), lan_access(ip, &[other.to_owned()])).await;
+    let auth = bearer();
+    let r = post_call(
+        s.network_addr.unwrap(),
+        &[("Authorization", auth.as_str())],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 0);
+    s.stop();
+}
+
+#[tokio::test]
+async fn allowlisted_client_still_needs_token_and_no_origin() {
+    let Some(ip) = private_ip() else { return };
+    let s = start_with(Grants::default(), lan_access(ip, &[ip.to_string()])).await;
+    let lan = s.network_addr.unwrap();
+    // No token.
+    let r = post_call(lan, &[], "get_document_summary", json!({})).await;
+    assert_eq!(r.status, 401);
+    // Origin, even with the token.
+    let auth = bearer();
+    let r = post_call(
+        lan,
+        &[
+            ("Authorization", auth.as_str()),
+            ("Origin", "http://evil.example"),
+        ],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 403);
+    // A foreign Host.
+    let r = post_call(
+        lan,
+        &[
+            ("Authorization", auth.as_str()),
+            ("Host", "attacker.example"),
+        ],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 403);
+    // Token, the LAN address as Host: in. Scopes still apply.
+    let r = post_call(
+        lan,
+        &[("Authorization", auth.as_str())],
+        "get_document_summary",
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let r = post_call(
+        lan,
+        &[("Authorization", auth.as_str())],
+        "add_entities",
+        json!({"entities": [{"type": "point", "x": 0.0, "y": 0.0}]}),
+    )
+    .await;
+    assert_eq!(
+        r.message()["result"]["structuredContent"]["error"]["kind"],
+        "scope_denied"
+    );
+    s.stop();
+}
+
+#[test]
+fn public_or_unspecified_network_bind_is_refused() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        for bind in [
+            std::net::Ipv4Addr::UNSPECIFIED,
+            std::net::Ipv4Addr::new(8, 8, 8, 8),
+        ] {
+            let backend = LocalBackend::spawn(Headless::new(locus_doc::Document::new())).unwrap();
+            let server = LocusServer::new(
+                backend,
+                Arc::new(NeverApprove),
+                Grants::default(),
+                Options::default(),
+            );
+            let access = http::Access {
+                allow_docker: false,
+                network: Some(http::Network {
+                    bind,
+                    allow: vec![],
+                }),
+            };
+            let r = http::start("127.0.0.1:0".parse().unwrap(), server, TOKEN.into(), access).await;
+            assert!(matches!(r, Err(HttpError::NotLoopback(_))), "{bind}");
+        }
+    });
 }

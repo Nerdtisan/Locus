@@ -1886,6 +1886,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2123,6 +2133,7 @@ dependencies = [
  "locus-doc",
  "locus-export",
  "locus-geom",
+ "locus-import",
  "locus-mcp",
  "locus-plugin-host",
  "locus-region",
@@ -2188,6 +2199,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "locus-import"
+version = "0.0.0"
+dependencies = [
+ "locus-doc",
+ "locus-export",
+ "locus-geom",
+ "proptest",
+ "roxmltree",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "locus-mcp"
 version = "0.0.0"
 dependencies = [
@@ -2198,6 +2221,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "if-addrs",
  "locus-doc",
  "locus-export",
  "locus-geom",
@@ -3373,6 +3397,15 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
+]
+
+[[package]]
+name = "roxmltree"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

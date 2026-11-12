@@ -32,6 +32,8 @@ const AUTOSAVE_RETRY: f64 = 10.0;
 pub enum Msg {
     /// `Ok(None)` = the picker was cancelled.
     Picked(Result<Option<(String, String)>, String>),
+    /// File ▸ Import reference…: an SVG or DXF, name and text (#243).
+    PickedReference(Result<Option<(String, String)>, String>),
     /// The autosaved document text found at startup, if any.
     Restore(Option<String>),
     AutosaveDone(Result<(), String>),
@@ -89,6 +91,20 @@ impl Web {
                 Err(_) => Err("Could not open the file picker.".to_owned()),
             };
             Msg::Picked(res)
+        });
+    }
+
+    /// Show the file picker for an SVG or DXF to import as a reference.
+    pub fn pick_reference(&self) {
+        self.spawn(async {
+            let res = match pick_text(".svg,.dxf").await {
+                Ok(v) => match v.as_string() {
+                    None => Ok(None),
+                    Some(json) => parse_picked(&json).map(Some),
+                },
+                Err(_) => Err("Could not open the file picker.".to_owned()),
+            };
+            Msg::PickedReference(res)
         });
     }
 

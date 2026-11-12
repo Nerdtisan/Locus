@@ -75,6 +75,8 @@ pub struct FileIo {
     recent: Vec<PathBuf>,
     error: Option<String>,
     notice: Option<String>,
+    /// What File ▸ Import reference… did (#243): result and warnings.
+    reference_notice: Option<String>,
     pending: Option<Action>,
     /// The open pre-export panel (SPEC §8 Validation, #128).
     export: Option<ExportPanel>,
@@ -101,6 +103,7 @@ impl FileIo {
             recent: recent.into_iter().take(MAX_RECENT).collect(),
             error: None,
             notice: None,
+            reference_notice: None,
             pending: None,
             export: None,
             exporters: locus_export::Registry::builtin(),
@@ -139,6 +142,14 @@ impl FileIo {
 
     fn dirty(&self, canvas: &Canvas) -> bool {
         canvas.document() != &self.baseline
+    }
+
+    /// Opens a `.locus` file named on the command line (a file-association
+    /// double-click, packaging #245). Nothing is open yet, so no guard is
+    /// needed; a bad file shows the usual error dialog.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_startup_path(&mut self, canvas: &mut Canvas, path: PathBuf) {
+        self.open_path(canvas, path);
     }
 
     /// Replace the open document with a built-in sample (guarded).
@@ -231,6 +242,16 @@ impl FileIo {
                 }
             });
         });
+        if ui
+            .button("Import reference…")
+            .on_hover_text(
+                "Add an SVG or DXF as locked reference geometry to trace, snap and constrain to. It is never exported.",
+            )
+            .clicked()
+        {
+            self.begin_import_reference(canvas);
+            ui.close();
+        }
         ui.separator();
         if ui.button("Save").clicked() {
             self.save(canvas, false);
@@ -322,6 +343,60 @@ impl FileIo {
     #[cfg(target_arch = "wasm32")]
     fn begin_open(&mut self, _canvas: &mut Canvas) {
         self.web.pick();
+    }
+
+    /// File ▸ Import reference… (SPEC §13 M4, #243): adds an SVG or DXF on a
+    /// new locked Reference layer. It doesn't replace the document, so the
+    /// unsaved-changes guard doesn't apply; it is one undo step.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn begin_import_reference(&mut self, canvas: &mut Canvas) {
+        use std::io::Read;
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("SVG or DXF", &["svg", "dxf"])
+            .pick_file()
+        else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let limit = locus_import::MAX_INPUT_BYTES;
+        let mut bytes = Vec::new();
+        let read = std::fs::File::open(&path)
+            .and_then(|f| f.take(limit as u64 + 1).read_to_end(&mut bytes));
+        if read.is_err() {
+            self.error = Some("Could not read the file.".to_owned());
+        } else if bytes.len() > limit {
+            self.error = Some("The file is too large to import.".to_owned());
+        } else {
+            self.add_reference(canvas, &name, &bytes);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn begin_import_reference(&mut self, _canvas: &mut Canvas) {
+        self.web.pick_reference();
+    }
+
+    /// Parses `bytes` and applies the import as one undo step. Failures are
+    /// shown and change nothing; messages never contain the file name.
+    fn add_reference(&mut self, canvas: &mut Canvas, name: &str, bytes: &[u8]) {
+        match locus_import::reference_command(canvas.document(), name, bytes) {
+            Ok((cmd, warnings)) => match canvas.apply(&cmd) {
+                Ok(()) => {
+                    let mut msg = String::from(
+                        "Imported as a locked reference layer. It is never exported; snap and constrain to it.",
+                    );
+                    for w in warnings {
+                        msg.push('\n');
+                        msg.push_str(&w);
+                    }
+                    self.reference_notice = Some(msg);
+                }
+                Err(e) => self.error = Some(format!("Could not import the file: {e}.")),
+            },
+            Err(e) => self.error = Some(format!("Could not import the file: {e}.")),
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -664,6 +739,11 @@ impl FileIo {
                 },
                 web::Msg::Picked(Ok(None)) => {}
                 web::Msg::Picked(Err(msg)) => self.error = Some(msg),
+                web::Msg::PickedReference(Ok(Some((name, text)))) => {
+                    self.add_reference(canvas, &name, text.as_bytes());
+                }
+                web::Msg::PickedReference(Ok(None)) => {}
+                web::Msg::PickedReference(Err(msg)) => self.error = Some(msg),
                 web::Msg::Restore(text) => {
                     // Only if the user has not started on something else yet.
                     let untouched = !self.dirty(canvas) && self.name.is_none();
@@ -728,6 +808,18 @@ impl FileIo {
                     ui.weak("Autosave is stored in this browser only.");
                     if ui.button("OK").clicked() {
                         self.notice = None;
+                    }
+                });
+        }
+        if let Some(msg) = self.reference_notice.clone() {
+            egui::Window::new("Reference imported")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(msg);
+                    if ui.button("OK").clicked() {
+                        self.reference_notice = None;
                     }
                 });
         }

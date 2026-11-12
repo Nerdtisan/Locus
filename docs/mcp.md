@@ -23,6 +23,8 @@ Both speak MCP revision **2026-07-28**, and also accept clients still on **2025-
    - **Read the document**: on by default.
    - **Change the document**: off by default. Then choose when to ask: *every time*, *once until the server is turned off*, or *don't ask*.
    - **Export files**: off by default. Export asks every time unless you tick *Export without asking*.
+   - **Allow network clients**: off by default. For AI clients on *other computers* on your network; see [Other computers on your network](#other-computers-on-your-network). An SSH tunnel or Tailscale is safer and needs no setting.
+   - **Allow Docker clients (host.docker.internal)**: off by default. Tick it (while the server is off) only if your AI client runs in Docker Desktop on this computer, such as Open WebUI in a container. See [Open WebUI](#open-webui).
 4. Copy the token or a config snippet into your client (below).
 
 While the server runs, the status bar shows **● MCP on (…)**. It turns to **● MCP: approval needed** when the AI is waiting for you; the prompt says what it wants to do. *Deny* changes nothing.
@@ -125,13 +127,52 @@ The llama-server web UI is an MCP client **running in your browser**. Browsers s
 
 URL `http://127.0.0.1:47811/mcp`, header `Authorization: Bearer TOKEN`.
 
+### Open WebUI
+
+Open WebUI connects to MCP servers from its backend (not from your browser), so the `Origin` rule doesn't get in the way. Where its backend runs decides the URL:
+
+- **Installed directly on this computer** (`pip`, desktop app): URL `http://127.0.0.1:47811/mcp`. No extra setting.
+- **In Docker Desktop on this computer** (the usual `docker run … open-webui` install): inside a container, `127.0.0.1` is the container itself, so it must use `http://host.docker.internal:47811/mcp`. Locus refuses that name unless you turn on **Allow Docker clients**:
+  1. In Locus, View ▸ MCP server…, turn the server off if it's on, tick **Allow Docker clients (host.docker.internal)**, then **Turn on…**. The window then shows the Docker URL.
+  2. Copy the token.
+
+Then in Open WebUI: **Admin Settings ▸ External Tools ▸ +** (add a tool server):
+
+- Type: **MCP (Streamable HTTP)**
+- URL: `http://host.docker.internal:47811/mcp` (Docker) or `http://127.0.0.1:47811/mcp` (installed directly)
+- Auth: **Bearer**, and paste the token
+- Save, then enable the tool in a chat.
+
+With **Allow Docker clients** on, any program in a Docker container on this computer can try to connect. It still needs the token, and everything else below still applies. Turn it off again when you no longer need it.
+
 ### Ollama-based front-ends
 
-Ollama itself is not an MCP client; the front-end you chat in is. Desktop front-ends that support Streamable HTTP MCP with custom headers (for example Open WebUI's MCP tool servers, which connect from its backend) use the URL and header above, or the headless command where they can start stdio servers. Browser-only front-ends hit the same `Origin` rule as llama.cpp's web UI.
+Ollama itself is not an MCP client; the front-end you chat in is. Front-ends that connect to Streamable HTTP MCP servers from a backend with a custom header use the URL and header above, or the headless command where they can start stdio servers. If that backend runs in Docker Desktop, it needs **Allow Docker clients** and the `host.docker.internal` URL, as for [Open WebUI](#open-webui). Browser-only front-ends hit the same `Origin` rule as llama.cpp's web UI.
 
 ### Unsloth Studio
 
 Unsloth Studio can add custom MCP servers. Add Locus with the URL and `Authorization` header above; if your version only takes a command, use the headless form.
+
+### Other computers on your network
+
+An AI client on another machine (for example a separate LLM box) can't reach `127.0.0.1` on this PC. Two ways to connect it:
+
+**Recommended: a tunnel (no setting needed).** Keep Locus on loopback and carry the connection over an encrypted channel:
+
+- **SSH**, from the other machine: `ssh -N -L 47811:127.0.0.1:47811 you@locus-pc`, then point the client at `http://127.0.0.1:47811/mcp` on *that* machine, with the Bearer token. (Windows has an OpenSSH server you can enable under Settings ▸ Optional features.)
+- **Tailscale** (or another VPN): connect both machines, then use the same SSH tunnel over the Tailscale address, or Tailscale's own SSH.
+
+**Direct, unencrypted: Allow network clients.** In View ▸ MCP server…, with the server off:
+
+1. Tick **Allow network clients (other computers on this network)**.
+2. **Listen on**: pick this PC's address on your network (only private addresses such as `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x` are offered).
+3. **Allowed clients**: add the other machine's IP (`192.168.1.20`) or your network's range (`192.168.1.0/24`). Empty means nobody gets in. Only private addresses are accepted.
+4. Optionally tick **Keep this token after restarts**, so the other machine's config stays valid; **Regenerate token** makes a new one.
+5. **Turn on…**, read the warning, and point the client at the *Network clients* URL shown, e.g. `http://192.168.1.10:47811/mcp`, with the Bearer token.
+
+The status bar shows `· network: N connected` while this is on.
+
+Risks: the connection is plain HTTP. Anyone who can watch your network (shared Wi-Fi, a compromised device) can read the drawing and copy the token, then use it from an allowed address. Use it only on a network you trust, keep the allowlist as small as possible, and turn it off when you're done. Windows Firewall may ask whether to allow Locus on private networks; allow it there only. Encrypted (TLS) connections are a possible follow-up.
 
 ### Any other client
 
@@ -197,9 +238,9 @@ Errors come back as data the AI can act on, e.g. a dimension that contradicts ex
 ## Security model (SPEC §16.4)
 
 - **Off by default**, turned on per install, with the status indicator always visible while it runs.
-- **127.0.0.1 only.** Any other address, including `0.0.0.0` and `::1`, is refused before a socket opens.
+- **127.0.0.1 only**, unless you turn on **Allow network clients**: then also one private address you choose, and only for the clients in your allowlist (checked before any HTTP). `0.0.0.0`, `::1` and public addresses are always refused before a socket opens.
 - **Bearer token** per server session (256 random bits, compared in constant time), shown only in the app.
-- **No browsers.** Any request with an `Origin` header is refused, and the `Host` must be `127.0.0.1` or `localhost`; this blocks DNS rebinding.
+- **No browsers.** Any request with an `Origin` header is refused, and the `Host` must be `127.0.0.1` or `localhost` (plus `host.docker.internal` only while **Allow Docker clients** is on); this blocks DNS rebinding.
 - **Scopes** read / write / export are separate; read only by default.
 - **Approval modes**: ask each write, ask once per session, or allow. Export always asks unless you allow it.
 - **One labelled undo step per AI action.** A refused or failed call leaves the document and the undo history untouched.

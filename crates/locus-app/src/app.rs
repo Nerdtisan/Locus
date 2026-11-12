@@ -128,6 +128,15 @@ impl App {
         app
     }
 
+    /// Opens the first command-line argument that names a `.locus` file, as
+    /// the OS passes one on a file-association double-click (packaging #245).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_startup_file(&mut self, args: impl Iterator<Item = String>) {
+        if let Some(path) = startup_file(args) {
+            self.files.open_startup_path(&mut self.canvas, path);
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_stress(&mut self) {
         self.canvas.load(crate::demo::stress(5000));
@@ -714,5 +723,35 @@ mod tests {
             serde_json::to_string(&DockState::new(vec![Tab::Properties])).unwrap_or_default();
         let back = parse_layout(&json);
         assert!(back.iter_all_tabs().any(|(_, t)| *t == Tab::Canvas));
+    }
+}
+
+/// The first argument (after the program name) naming a `.locus` file.
+#[cfg(not(target_arch = "wasm32"))]
+fn startup_file(args: impl Iterator<Item = String>) -> Option<std::path::PathBuf> {
+    args.skip(1).map(std::path::PathBuf::from).find(|p| {
+        p.extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("locus"))
+    })
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::unwrap_used)]
+mod startup_tests {
+    use super::startup_file;
+
+    fn args(a: &[&str]) -> impl Iterator<Item = String> {
+        a.iter()
+            .map(|s| (*s).to_owned())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn picks_the_locus_file_and_skips_flags_and_program() {
+        let got = startup_file(args(&["locus", "--stress", "dir/Plate.LOCUS", "b.locus"]));
+        assert_eq!(got.unwrap().file_name().unwrap(), "Plate.LOCUS");
+        assert!(startup_file(args(&["plate.locus"])).is_none()); // argv[0]
+        assert!(startup_file(args(&["locus", "x.svg"])).is_none());
     }
 }
