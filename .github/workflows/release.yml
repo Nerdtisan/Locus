@@ -139,7 +139,8 @@ jobs:
           $h = (Get-FileHash "$env:RUNNER_TEMP/inno.exe" -Algorithm SHA256).Hash.ToLower()
           if ($h -ne $env:INNO_SHA256) { throw "Inno Setup hash mismatch: $h" }
           Start-Process "$env:RUNNER_TEMP/inno.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
-          $iscc = Get-ChildItem "$env:LOCALAPPDATA/Programs" -Filter ISCC.exe -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA/Programs") | Where-Object { $_ -and (Test-Path $_) }
+          $iscc = Get-ChildItem $roots -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like '*Inno Setup*' } | Select-Object -First 1 -ExpandProperty FullName
           if (-not $iscc) { throw "ISCC.exe not found after install" }
           "ISCC=$iscc" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
