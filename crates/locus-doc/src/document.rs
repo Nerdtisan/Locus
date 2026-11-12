@@ -195,6 +195,52 @@ impl Document {
 
     // ── Read API ─────────────────────────────────────────────────────────
 
+    /// The stroke width of the layer an entity is on, mm: the pen width on a
+    /// Draw layer, the kerf on a Cut layer, otherwise 0 (SPEC §5, §7).
+    #[must_use]
+    pub fn stroke_width(&self, entity: EntityId) -> f64 {
+        let Some(layer) = self.entity(entity).and_then(|e| self.layers.get(&e.layer)) else {
+            return 0.0;
+        };
+        match &layer.operation {
+            Operation::Cut(p) => p.kerf_width,
+            Operation::Draw(p) => p.pen_width,
+            _ => 0.0,
+        }
+    }
+
+    /// What to add to a dimension's value to get the centreline value the
+    /// solver is given (SPEC §5 Stroke-edge reference, ADR 0014): `-half` for
+    /// the outside edge, `+half` for the inside edge, where `half` sums the
+    /// half stroke widths of the measured operands (a circle's diameter counts
+    /// the stroke twice). Zero for centreline dimensions.
+    #[must_use]
+    pub fn edge_offset(&self, c: &crate::constraint::Constraint) -> f64 {
+        use crate::constraint::{Constraint, Edge};
+        let Some(dim) = c.dimension() else {
+            return 0.0;
+        };
+        let half = |id: &EntityId| self.stroke_width(*id) / 2.0;
+        let sum = match c {
+            Constraint::Distance { a, b, .. } => {
+                // A point has no stroke; only lines contribute.
+                let is_line = |id: &EntityId| {
+                    self.entity(*id)
+                        .is_some_and(|e| matches!(e.geom, crate::entity::Geom::Line { .. }))
+                };
+                [a, b].into_iter().filter(|i| is_line(i)).map(half).sum()
+            }
+            Constraint::Radius { curve, .. } => half(curve),
+            Constraint::Diameter { curve, .. } => 2.0 * half(curve),
+            _ => 0.0,
+        };
+        match dim.edge {
+            Edge::Centre => 0.0,
+            Edge::Inside => sum,
+            Edge::Outside => -sum,
+        }
+    }
+
     /// The selected machine profile id, if any (SPEC §7).
     #[must_use]
     pub fn profile(&self) -> Option<&str> {

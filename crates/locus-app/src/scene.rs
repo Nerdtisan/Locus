@@ -6,7 +6,7 @@
 //! point-entity indirection every frame. The scene is rebuilt after every
 //! successful command; it is derived state and never edited (SPEC §11).
 
-use locus_doc::{Constraint, ConstraintId, Document, EntityId, Geom};
+use locus_doc::{Constraint, ConstraintId, Document, Edge, EntityId, Geom};
 use locus_geom::{Aabb, Arc, Circle, Cubic, Line, Vec2};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -89,6 +89,8 @@ pub enum Annot {
         kind: DimKind,
         value: f64,
         driven: bool,
+        /// Which edge the value is measured to (#240).
+        edge: Edge,
     },
 }
 
@@ -270,10 +272,19 @@ impl Scene {
                 Constraint::VerticalDistance { a, b, .. } => pos(*a)
                     .zip(pos(*b))
                     .map(|(a, b)| DimKind::Vertical { a, b }),
-                Constraint::Radius { curve, .. } => curve_centre(doc, *curve)
-                    .map(|(center, radius)| DimKind::Radius { center, radius }),
-                Constraint::Diameter { curve, .. } => curve_centre(doc, *curve)
-                    .map(|(center, radius)| DimKind::Diameter { center, radius }),
+                // Drawn on the edge being measured, not the centreline (#240).
+                Constraint::Radius { curve, .. } => {
+                    curve_centre(doc, *curve).map(|(center, radius)| DimKind::Radius {
+                        center,
+                        radius: radius - doc.edge_offset(c),
+                    })
+                }
+                Constraint::Diameter { curve, .. } => {
+                    curve_centre(doc, *curve).map(|(center, radius)| DimKind::Diameter {
+                        center,
+                        radius: radius - doc.edge_offset(c) / 2.0,
+                    })
+                }
                 Constraint::Angle { a, .. } => pos(*a).map(|at| DimKind::Angle { at }),
                 _ => None,
             };
@@ -283,6 +294,7 @@ impl Scene {
                     kind,
                     value: dim.value,
                     driven: dim.driven,
+                    edge: dim.edge,
                 });
             }
         }
@@ -408,5 +420,65 @@ mod tests {
         assert_eq!(points(&hidden), 2);
         let shown = Scene::build(&doc, &BTreeSet::new(), &BTreeSet::from([curve]));
         assert_eq!(points(&shown), 4);
+    }
+
+    /// A stroke-edge radius is drawn on the edge it measures (#240).
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn edge_radius_dimension_is_drawn_on_the_edge() {
+        use locus_doc::{Command, CutParams, Edge, LayerProps, Operation, Sketcher};
+        let mut s = Sketcher::new(demo::sketch());
+        let radius = s
+            .document()
+            .constraints()
+            .iter()
+            .find(|(_, c)| matches!(c, Constraint::Radius { .. }))
+            .map(|(id, _)| *id)
+            .unwrap();
+        s.apply(&Command::SetLayerProps {
+            id: Document::default_layer(),
+            props: LayerProps {
+                operation: Some(Operation::Cut(CutParams {
+                    kerf_width: 1.0,
+                    ..CutParams::default()
+                })),
+                ..LayerProps::default()
+            },
+        })
+        .unwrap();
+        s.apply(&Command::SetDimensionEdge {
+            id: radius,
+            edge: Edge::Outside,
+        })
+        .unwrap();
+        let doc = s.document();
+        let radius_id = radius;
+        let scene = Scene::build(doc, &BTreeSet::new(), &BTreeSet::new());
+        let Some(Constraint::Radius { curve, .. }) = doc.constraint(radius) else {
+            unreachable!()
+        };
+        let centre_r = doc
+            .circle(*curve)
+            .map(|c| c.radius)
+            .or_else(|| doc.arc(*curve).map(|a| a.radius()))
+            .unwrap();
+        let (shown, edge) = scene
+            .annots
+            .iter()
+            .find_map(|a| match a {
+                Annot::Dim {
+                    id,
+                    kind: DimKind::Radius { radius, .. },
+                    edge,
+                    ..
+                } if *id == radius_id => Some((*radius, *edge)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(edge, Edge::Outside);
+        assert!(
+            (shown - (centre_r + 0.5)).abs() < 1e-9,
+            "{shown} vs {centre_r}"
+        );
     }
 }

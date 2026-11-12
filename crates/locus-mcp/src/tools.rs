@@ -843,10 +843,11 @@ impl Plan {
                 }
             };
             Ok((
-                Dimension {
-                    value: if angle { value.to_radians() } else { value },
-                    driven: d.driven,
-                },
+                Dimension::new(
+                    if angle { value.to_radians() } else { value },
+                    d.driven,
+                    locus_doc::Edge::Centre,
+                ),
                 d.expr.clone(),
             ))
         };
