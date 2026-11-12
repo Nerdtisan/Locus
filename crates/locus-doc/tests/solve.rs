@@ -238,10 +238,7 @@ fn redundant_constraint_is_refused_but_driven_is_accepted_and_measured() {
         Constraint::Distance {
             a: r.p[0],
             b: r.p[2],
-            dim: Dimension {
-                value: 1.0,
-                driven: true,
-            },
+            dim: Dimension::new(1.0, true, locus_doc::Edge::Centre),
         },
     )
     .unwrap();
@@ -455,10 +452,7 @@ fn dragging_a_circle_centre_keeps_a_driven_dimension_measured() {
         Constraint::Distance {
             a: c,
             b: q,
-            dim: Dimension {
-                value: 20.0,
-                driven: true,
-            },
+            dim: Dimension::new(20.0, true, locus_doc::Edge::Centre),
         },
     )
     .unwrap();

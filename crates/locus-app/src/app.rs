@@ -212,6 +212,16 @@ impl App {
                 {
                     self.canvas.set_machine_preview(machine);
                 }
+                let mut stroke = self.canvas.stroke_preview();
+                if ui
+                    .checkbox(&mut stroke, "Stroke width")
+                    .on_hover_text(
+                        "Draw the pen width of Draw layers and the kerf of Cut layers at true                          scale, so the edges a dimension can measure to are visible",
+                    )
+                    .changed()
+                {
+                    self.canvas.set_stroke_preview(stroke);
+                }
                 ui.separator();
                 for tab in [
                     Tab::Properties,

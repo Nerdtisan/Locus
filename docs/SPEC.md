@@ -165,6 +165,7 @@ Distance (point–point, point–line, line–line parallel), horizontal distanc
 
 ### Stroke-edge constraint reference (v2, differentiator)
 - Dimensional constraints may optionally reference a **stroke edge** (offset by pen width / kerf) rather than the zero-width centreline. Primarily relevant to plotter pen width and laser kerf compensation previews.
+- **Decided ([ADR 0014](adr/0014-stroke-edge-dimensions.md), #239):** a dimension carries `edge` = centreline / inside / outside; its value is measured to that edge and the solver is given the centreline value (±half the pen width or kerf of each stroked operand). Distances with a line, radii and diameters support it; point-to-point, horizontal / vertical distances and angles do not. Changing the pen width or kerf re-solves; a change that would make a centreline value negative is refused whole. `.locus` format v12.
 
 ### Solver UX
 - Sketch status: under-constrained (show remaining DOF count), fully constrained (geometry turns distinct colour, as in Fusion), over-constrained (highlight conflicting set, refuse to apply new conflicting constraint, offer to make it a driven/reference dimension).

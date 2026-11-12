@@ -11,7 +11,7 @@ use crate::scene::{Annot, DimKind, Item, Scene, Shape};
 use crate::settings::Units;
 use crate::view::View;
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape as EShape, Stroke, Vec2 as EVec2};
-use locus_doc::ConstraintId;
+use locus_doc::{ConstraintId, Edge, EntityId};
 use locus_geom::{Aabb, Arc, Circle, Cubic, Vec2};
 use std::collections::BTreeSet;
 
@@ -163,6 +163,35 @@ impl Frame<'_> {
         drawn
     }
 
+    /// The stroke width of Draw (pen) and Cut (kerf) geometry at true scale,
+    /// under the sketch, so the edges a dimension can measure to are visible
+    /// (SPEC §5, §7, #240). `width_of` gives an entity's stroke width in mm
+    /// (0 = none). Never less than a hairline.
+    pub fn draw_strokes(&self, scene: &Scene, width_of: impl Fn(EntityId) -> f64, colour: Color32) {
+        let (lo, hi) = self.visible(4.0);
+        for item in &scene.items {
+            if item.construction || !intersects(&item.bbox, lo, hi) {
+                continue;
+            }
+            let w = width_of(item.id);
+            if w <= 0.0 {
+                continue;
+            }
+            let px = (w * self.view.pt_per_mm).max(1.0) as f32;
+            let stroke = Stroke::new(px, colour);
+            match item.shape {
+                Shape::Point(_) => {}
+                Shape::Line(l) => {
+                    self.painter
+                        .line_segment([self.s(l.a), self.s(l.b)], stroke);
+                }
+                Shape::Circle(c) => self.circle(c, stroke, false),
+                Shape::Arc(a) => self.arc(a, stroke, false),
+                Shape::Cubic(c) => self.cubic(&c, stroke, false),
+            }
+        }
+    }
+
     fn polyline(&self, pts: Vec<Pos2>, stroke: Stroke, dashed: bool) {
         if dashed {
             self.painter
@@ -302,9 +331,10 @@ impl Frame<'_> {
                     kind,
                     value,
                     driven,
+                    edge,
                 } => {
                     let bad = flagged.contains(id);
-                    if let Some(r) = self.dimension(*kind, *value, *driven, bad, lo, hi) {
+                    if let Some(r) = self.dimension(*kind, *value, *driven, *edge, bad, lo, hi) {
                         labels.push((*id, r));
                     }
                 }
@@ -348,11 +378,13 @@ impl Frame<'_> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dimension(
         &self,
         kind: DimKind,
         value: f64,
         driven: bool,
+        edge: Edge,
         bad: bool,
         lo: Vec2,
         hi: Vec2,
@@ -366,11 +398,16 @@ impl Frame<'_> {
         };
         let stroke = Stroke::new(1.0, colour);
         let units = self.units;
+        let suffix = match edge {
+            Edge::Centre => "",
+            Edge::Inside => " in",
+            Edge::Outside => " out",
+        };
         let text = |v: f64| {
             if driven {
-                format!("({})", units.format_len(v))
+                format!("({}){suffix}", units.format_len(v))
             } else {
-                units.format_len(v)
+                format!("{}{suffix}", units.format_len(v))
             }
         };
         const OFF: f32 = 26.0;
