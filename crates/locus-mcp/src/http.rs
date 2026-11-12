@@ -7,7 +7,9 @@
 //! 1. **Origin**: any `Origin` header is refused. Browsers always send one;
 //!    a local AI client does not. This blocks DNS rebinding and drive-by
 //!    pages (rmcp's own Origin check is also enforced, as a second line).
-//! 2. **Host**: loopback names only (rmcp's `allowed_hosts`).
+//! 2. **Host**: `127.0.0.1` or `localhost`, plus `host.docker.internal`
+//!    only when the user turned on [`Access::allow_docker`] (#270). Checked
+//!    here and again by rmcp's `allowed_hosts`.
 //! 3. **Bearer token**: `Authorization: Bearer <token>`, compared in
 //!    constant time. The token is per MCP session (ADR 0005: from enabling
 //!    MCP until it is disabled or the app quits).
@@ -72,6 +74,43 @@ pub fn new_token() -> Result<String, HttpError> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b))
 }
 
+/// Docker Desktop's name for the host, as seen from a container. Docker
+/// forwards it to the host's loopback, so the bind stays 127.0.0.1.
+pub const DOCKER_HOST: &str = "host.docker.internal";
+
+/// Who may reach the server besides clients on loopback names (SPEC §16.4).
+/// Everything else (token, Origin refusal, scopes, approvals, caps) applies
+/// regardless.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Access {
+    /// Accept `Host: host.docker.internal[:port]`, so MCP clients in Docker
+    /// Desktop containers on this PC (e.g. Open WebUI) can connect. Off by
+    /// default (owner decision 2026-11-12, #270).
+    pub allow_docker: bool,
+}
+
+impl Access {
+    /// The host names accepted in the `Host` header.
+    #[must_use]
+    pub fn hosts(self) -> Vec<&'static str> {
+        let mut h = vec!["127.0.0.1", "localhost"];
+        if self.allow_docker {
+            h.push(DOCKER_HOST);
+        }
+        h
+    }
+}
+
+/// The host name of a `Host` header value, without the port, lower-cased.
+fn host_name(value: &str) -> String {
+    let v = value.trim();
+    let name = match v.rsplit_once(':') {
+        Some((n, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => n,
+        _ => v,
+    };
+    name.to_ascii_lowercase()
+}
+
 /// Equal without leaking where the first difference is.
 fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
@@ -96,7 +135,7 @@ fn reply(status: StatusCode, msg: &'static str) -> Response<Body> {
 }
 
 /// The checks before rmcp sees a request; `Some` is the refusal.
-fn refuse<B>(req: &Request<B>, token: &str) -> Option<Response<Body>> {
+fn refuse<B>(req: &Request<B>, token: &str, hosts: &[&str]) -> Option<Response<Body>> {
     if req.uri().path() != PATH {
         return Some(reply(StatusCode::NOT_FOUND, "not found"));
     }
@@ -105,6 +144,15 @@ fn refuse<B>(req: &Request<B>, token: &str) -> Option<Response<Body>> {
             StatusCode::FORBIDDEN,
             "browser requests are not accepted",
         ));
+    }
+    let host_ok = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(host_name)
+        .is_some_and(|h| hosts.contains(&h.as_str()));
+    if !host_ok {
+        return Some(reply(StatusCode::FORBIDDEN, "host not allowed"));
     }
     let given = req
         .headers()
@@ -136,7 +184,8 @@ impl Running {
 }
 
 /// Listen on `addr` (must be 127.0.0.1; port 0 picks a free one) and serve
-/// `server` to clients presenting `token`. Runs on the current tokio runtime.
+/// `server` to clients presenting `token`, from the hosts `access` allows.
+/// Runs on the current tokio runtime.
 ///
 /// # Errors
 /// A non-loopback address or the port is taken.
@@ -144,13 +193,14 @@ pub async fn start(
     addr: SocketAddr,
     server: LocusServer,
     token: String,
+    access: Access,
 ) -> Result<Running, HttpError> {
     let addr = check_bind(addr)?;
     let listener = TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;
     let cancel = CancellationToken::new();
     let config = StreamableHttpServerConfig::default()
-        .with_allowed_hosts(["127.0.0.1", "localhost"])
+        .with_allowed_hosts(access.hosts())
         .enforce_origin_validation()
         .with_max_request_body_bytes(MAX_BODY_BYTES)
         .with_cancellation_token(cancel.child_token());
@@ -160,6 +210,7 @@ pub async fn start(
         config,
     );
     let token: Arc<str> = token.into();
+    let hosts: Arc<[&'static str]> = access.hosts().into();
     let stop = cancel.clone();
     tokio::spawn(async move {
         loop {
@@ -172,13 +223,15 @@ pub async fn start(
             };
             let service = service.clone();
             let token = token.clone();
+            let hosts = hosts.clone();
             let stop = stop.clone();
             tokio::spawn(async move {
                 let svc = hyper::service::service_fn(move |req: Request<Incoming>| {
                     let mut service = service.clone();
                     let token = token.clone();
+                    let hosts = hosts.clone();
                     async move {
-                        if let Some(r) = refuse(&req, &token) {
+                        if let Some(r) = refuse(&req, &token, &hosts) {
                             return Ok::<_, Infallible>(r);
                         }
                         let r = tower_service::Service::call(&mut service, req).await?;
@@ -210,14 +263,19 @@ impl Attached {
     ///
     /// # Errors
     /// The runtime could not start or the port is taken.
-    pub fn start(port: u16, server: LocusServer, token: String) -> Result<Self, HttpError> {
+    pub fn start(
+        port: u16,
+        server: LocusServer,
+        token: String,
+        access: Access,
+    ) -> Result<Self, HttpError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("locus-mcp-http")
             .enable_all()
             .build()?;
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-        let running = rt.block_on(start(addr, server, token))?;
+        let running = rt.block_on(start(addr, server, token, access))?;
         Ok(Self {
             rt: Some(rt),
             running,
@@ -276,6 +334,19 @@ mod tests {
         let b = new_token().unwrap();
         assert_ne!(a, b);
         assert_eq!(a.len(), 43);
+    }
+
+    #[test]
+    fn host_names_and_ports() {
+        assert_eq!(host_name("127.0.0.1:47811"), "127.0.0.1");
+        assert_eq!(host_name("LOCALHOST"), "localhost");
+        assert_eq!(
+            host_name("host.docker.internal:47811"),
+            "host.docker.internal"
+        );
+        assert_eq!(host_name("evil.example:"), "evil.example:");
+        assert!(!Access::default().hosts().contains(&DOCKER_HOST));
+        assert!(Access { allow_docker: true }.hosts().contains(&DOCKER_HOST));
     }
 
     #[test]
