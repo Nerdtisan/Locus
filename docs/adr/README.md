@@ -28,5 +28,6 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | [0012](0012-text-entity.md) | Text entity: container with cached geometry, fonts by reference, format v9 | Accepted | §9, §10 |
 | [0013](0013-plugin-host-runtime.md) | Plugin host runtime: wasmtime 50, empty linker, fresh instance per call | Accepted | §15.1, §15.4, §15.8 |
 | [0014](0014-stroke-edge-dimensions.md) | Stroke-edge dimensions: edge on the dimension, solver gets the centreline value | Accepted | §5, §7 |
+| [0015](0015-two-phase-solve-for-pattern-instances.md) | Two-phase solve: constraints onto pattern instances with the pattern held fixed | Accepted | §6.2.1 |
 
 All §12 M0 decisions are recorded.

@@ -18,7 +18,7 @@
 //!   dimensions get their measured values written back.
 
 use crate::boolean::BooleanError;
-use crate::command::{Applied, Command, Editor, Solution};
+use crate::command::{Applied, Command, Editor, Solution, SolvePhase};
 use crate::constraint::{Constraint, G1Other, g1_joint};
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
@@ -135,6 +135,9 @@ impl Sketcher {
             // positions are then kept, which is the safe fallback.
             let _ = s.editor.apply_solution_unrecorded(&sol);
         }
+        if let Ok(Some(sol)) = solve_late(&mut s.solver, s.editor.document()) {
+            let _ = s.editor.apply_solution_unrecorded(&sol);
+        }
         s.refresh();
         s
     }
@@ -176,13 +179,17 @@ impl Sketcher {
         // positions instead of refusing.
         let strict = self.state.converged;
         let solver = &mut self.solver;
-        let out = self
-            .editor
-            .apply_solved(cmd, |doc| match solve(solver, doc) {
+        let out = self.editor.apply_solved(cmd, |doc, phase| {
+            let r = match phase {
+                SolvePhase::Main => solve(solver, doc).map(Some),
+                SolvePhase::Late => solve_late(solver, doc),
+            };
+            match r {
                 Ok(sol) => Ok(sol),
                 Err(e) if strict => Err(e),
-                Err(_) => Ok(Solution::default()),
-            })?;
+                Err(_) => Ok(None),
+            }
+        })?;
         self.refresh();
         Ok(out)
     }
@@ -319,8 +326,11 @@ impl Sketcher {
             .take()
             .ok_or_else(|| DocError::Invalid("no drag in progress".to_owned()))?;
         self.editor.commit_from("Drag", &drag.start)?;
-        // Offsets follow the dragged geometry in the same undo step (#164).
+        // Offsets follow the dragged geometry in the same undo step (#164),
+        // then constraints onto pattern instances are solved (ADR 0015).
         self.editor.regenerate_into_last()?;
+        let solver = &mut self.solver;
+        self.editor.late_into_last(|doc| solve_late(solver, doc))?;
         self.refresh();
         Ok(())
     }
@@ -424,6 +434,12 @@ impl Sketcher {
                     return Ok(());
                 }
                 constraint.validate(doc)?;
+                // Constraints onto pattern instances are checked by the
+                // second solve phase, not here (ADR 0015).
+                let inst = doc.pattern_instances();
+                if constraint.references().iter().any(|e| inst.contains(e)) {
+                    return Ok(());
+                }
                 let low = lower(doc)?;
                 let kind = low.constraint_kind(doc, constraint)?;
                 // `next_id` is not yet allocated, so it can't clash with a key.
@@ -441,6 +457,10 @@ impl Sketcher {
                     .constraint(*id)
                     .ok_or(DocError::UnknownConstraint(*id))?;
                 if !c.dimension().is_some_and(|d| d.driven) {
+                    return Ok(());
+                }
+                let inst = doc.pattern_instances();
+                if c.references().iter().any(|e| inst.contains(e)) {
                     return Ok(());
                 }
                 let low = lower(doc)?;
@@ -524,6 +544,12 @@ fn lower(doc: &Document) -> Result<Lowered, DocError> {
     lower_locking(doc, None)
 }
 
+/// The second phase's sketch (ADR 0015): pattern instances included and held
+/// fixed with their sources, constraints that touch them solved.
+fn lower_late(doc: &Document) -> Result<Lowered, DocError> {
+    lower_inner(doc, None, true)
+}
+
 /// Keys at or above this belong to the lock constraints [`lower_locking`]
 /// adds (document IDs stay below `MAX_ID`, ADR-0003); they never reach a
 /// caller as a [`ConstraintId`].
@@ -542,6 +568,14 @@ fn has_lock(set: &ls::ConstraintSet) -> bool {
 /// [`lower`], additionally treating `also_locked` as locked (the pre-lock
 /// check, SPEC §4 rule 3).
 fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered, DocError> {
+    lower_inner(doc, also_locked, false)
+}
+
+fn lower_inner(
+    doc: &Document,
+    also_locked: Option<LayerId>,
+    late: bool,
+) -> Result<Lowered, DocError> {
     let mut low = Lowered {
         sketch: ls::Sketch::default(),
         point_index: BTreeMap::new(),
@@ -550,8 +584,21 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
         curves: Vec::new(),
         constraints: Vec::new(),
     };
-    // Offset instances are written after the solve, not solved (#164).
-    let unsolved = doc.unsolved_instances();
+    // Offset instances are written after the solve, not solved (#164). In
+    // the second phase pattern instances join the sketch, held fixed.
+    let (unsolved, pins, touches_pattern) = if late {
+        (
+            doc.constraint_free_instances(),
+            doc.late_pins(),
+            BTreeSet::new(),
+        )
+    } else {
+        (
+            doc.unsolved_instances(),
+            BTreeSet::new(),
+            doc.pattern_instances(),
+        )
+    };
     // Points first: curves refer to them by index.
     for (id, e) in doc.entities().iter() {
         if unsolved.contains(&id) {
@@ -598,6 +645,10 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
         low.curves.push(id);
     }
     for (id, c) in doc.constraints() {
+        // Constraints onto pattern instances wait for the second phase.
+        if c.references().iter().any(|e| touches_pattern.contains(e)) {
+            continue;
+        }
         let kind = low.constraint_kind(doc, c)?;
         low.sketch.constraints.push(ls::Constraint {
             key: key(id.get()),
@@ -613,7 +664,9 @@ fn lower_locking(doc: &Document, also_locked: Option<LayerId>) -> Result<Lowered
         if unsolved.contains(&id) {
             continue;
         }
-        let locked = also_locked == Some(e.layer) || doc.layer(e.layer).is_some_and(|l| l.locked);
+        let locked = also_locked == Some(e.layer)
+            || doc.layer(e.layer).is_some_and(|l| l.locked)
+            || pins.contains(&id);
         if !locked {
             continue;
         }
@@ -832,7 +885,52 @@ fn radii(low: &Lowered) -> Vec<(EntityId, f64)> {
 
 /// Solve the document and return the result in document terms.
 fn solve(solver: &mut ls::LmSolver, doc: &Document) -> Result<Solution, DocError> {
-    let mut low = lower(doc)?;
+    solve_lowered(solver, doc, lower(doc)?)
+}
+
+/// The second phase (ADR 0015): `None` when no constraint touches a pattern
+/// instance, otherwise the solution with the pattern, its sources and
+/// everything it reads held fixed, so only other geometry moves.
+fn solve_late(solver: &mut ls::LmSolver, doc: &Document) -> Result<Option<Solution>, DocError> {
+    if doc.late_constraints().is_empty() {
+        return Ok(None);
+    }
+    match solve_lowered(solver, doc, lower_late(doc)?) {
+        Err(DocError::Unsolvable { unsatisfied }) => Err(held_pattern(doc, unsatisfied)),
+        other => other.map(Some),
+    }
+}
+
+/// Name the pattern instances and their sources behind an unsatisfiable
+/// second phase (ADR 0015); a plain [`DocError::Unsolvable`] when none of the
+/// unsatisfied constraints touches an instance.
+fn held_pattern(doc: &Document, unsatisfied: Vec<ConstraintId>) -> DocError {
+    let inst = doc.pattern_instances();
+    let mut instances = BTreeSet::new();
+    let mut sources = BTreeSet::new();
+    for c in unsatisfied.iter().filter_map(|id| doc.constraint(*id)) {
+        for e in c.references().into_iter().filter(|e| inst.contains(e)) {
+            instances.insert(e);
+            if let Some(r) = doc.driven_by(e).and_then(|rid| doc.recipe(rid)) {
+                sources.extend(r.sources.iter().copied());
+            }
+        }
+    }
+    if instances.is_empty() {
+        return DocError::Unsolvable { unsatisfied };
+    }
+    DocError::PatternHeld {
+        constraints: unsatisfied,
+        instances: instances.into_iter().collect(),
+        sources: sources.into_iter().collect(),
+    }
+}
+
+fn solve_lowered(
+    solver: &mut ls::LmSolver,
+    doc: &Document,
+    mut low: Lowered,
+) -> Result<Solution, DocError> {
     let report = solver.solve(&mut low.sketch).map_err(solver_err)?;
     if !report.converged {
         return Err(DocError::Unsolvable {

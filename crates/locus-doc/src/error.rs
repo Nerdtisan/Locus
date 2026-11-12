@@ -104,7 +104,25 @@ pub enum DocError {
     /// The solver could not satisfy these after the change, so it was undone.
     #[error("the sketch cannot be solved with this change ({} constraint(s) unsatisfied)", .unsatisfied.len())]
     Unsolvable { unsatisfied: Vec<ConstraintId> },
+    /// A constraint onto a pattern instance could only hold if the pattern or
+    /// its source moved, which the second solve phase never does (ADR 0015).
+    #[error(
+        "cannot be satisfied while pattern instance(s) {} stay fixed with their source(s) {};          constrain the source or a pattern parameter instead",
+        ids(.instances), ids(.sources)
+    )]
+    PatternHeld {
+        constraints: Vec<ConstraintId>,
+        instances: Vec<EntityId>,
+        sources: Vec<EntityId>,
+    },
     /// The document could not be turned into solver input.
     #[error("solver input rejected: {0}")]
     Solver(String),
+}
+
+fn ids<T: std::fmt::Display>(v: &[T]) -> String {
+    v.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }

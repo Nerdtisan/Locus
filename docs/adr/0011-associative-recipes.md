@@ -19,7 +19,7 @@
 * **ID policy (ADR 0003).** Instance IDs come from the document's normal allocator when first created. The recipe holds them in `pool` (every ID ever allocated to it, including copies that don't currently exist), so a count decrease followed by an increase, or an undo, re-creates entities under *the recipe's own* IDs. An ID is never given to anything else and `next_id` never decreases.
 * **Limits.** At most `MAX_INSTANCES` = 10 000 copies per recipe and `MAX_INSTANCE_ENTITIES` = 200 000 generated entities; exceeding either is `DocError::InstanceLimit` (surfaced as the §6.2.1 warning). Files are validated against both (no panics on hostile input).
 
-## Known limitation (recorded in §6.2.1)
+## Known limitation (recorded in §6.2.1) — lifted for patterns by [ADR 0015](0015-two-phase-solve-for-pattern-instances.md)
 
 §6.2.1 says instances "can be referenced by other constraints (e.g. dimension to an instance)". For **pattern** (and offset) instances v1 refuses *every* constraint, driven (reference) dimensions included, with a `DocError` that says why, because the instances are not solver variables and a measured value would go stale (measuring them needs the same two-phase solve). Mirror instances are solver entities and accept any constraint the solver can satisfy. Lifting this (a two-phase solve with the instances fixed) is tracked as an M4 follow-up.
 
