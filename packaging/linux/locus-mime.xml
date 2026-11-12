@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Shared MIME database entries for Locus files (SPEC §0, packaging #247-#249). -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-locus">
+    <comment>Locus document</comment>
+    <icon name="locus"/>
+    <glob pattern="*.locus"/>
+  </mime-type>
+  <mime-type type="application/x-locusplugin">
+    <comment>Locus plugin</comment>
+    <icon name="locus"/>
+    <glob pattern="*.locusplugin"/>
+  </mime-type>
+</mime-info>

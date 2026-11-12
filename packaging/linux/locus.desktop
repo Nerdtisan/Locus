@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Locus
+GenericName=Constrained 2D vector editor
+Comment=Constraint-driven 2D design for pen plotters, vinyl cutters and laser cutters
+Exec=locus %F
+Icon=locus
+Terminal=false
+Categories=Graphics;2DGraphics;VectorGraphics;Engineering;
+MimeType=application/x-locus;application/x-locusplugin;
+StartupWMClass=locus
+Keywords=cad;vector;plotter;laser;cutter;svg;dxf;
