@@ -62,6 +62,12 @@ pub enum Command {
         id: ConstraintId,
         value: f64,
     },
+    /// Measure a dimension to the centreline or a stroke edge (SPEC §5, #239).
+    /// The value is kept; the geometry re-solves to honour it at the new edge.
+    SetDimensionEdge {
+        id: ConstraintId,
+        edge: crate::constraint::Edge,
+    },
     /// Switch a dimensional constraint between driving and driven (reference).
     SetDriven {
         id: ConstraintId,
@@ -121,6 +127,10 @@ pub enum Command {
     SetParameter {
         name: String,
         expr: String,
+    },
+    /// Select (or clear) the document's machine profile by id (SPEC §7).
+    SetProfile {
+        id: Option<String>,
     },
     /// Delete a parameter. Refused with [`DocError::ParameterInUse`] (listing
     /// the users) while an expression refers to it.
@@ -213,6 +223,7 @@ impl Command {
             }
             Command::RemoveConstraint { .. } => "Remove constraint".to_owned(),
             Command::SetDimension { .. } => "Set dimension".to_owned(),
+            Command::SetDimensionEdge { .. } => "Set dimension edge".to_owned(),
             Command::SetDriven { .. } => "Set driven".to_owned(),
             Command::AddLayer { .. } => "Add layer".to_owned(),
             Command::SetLayerProps { .. } => "Change layer".to_owned(),
@@ -224,6 +235,7 @@ impl Command {
             Command::EditBoolean { .. } => "Edit boolean".to_owned(),
             Command::RemoveBoolean { .. } => "Remove boolean".to_owned(),
             Command::SetParameter { name, .. } => format!("Set parameter {name}"),
+            Command::SetProfile { .. } => "Set machine profile".to_owned(),
             Command::RemoveParameter { name } => format!("Remove parameter {name}"),
             Command::RenameParameter { from, .. } => format!("Rename parameter {from}"),
             Command::SetDimensionExpr { .. } => "Set dimension expression".to_owned(),
@@ -308,6 +320,10 @@ pub(crate) enum Patch {
         before: Option<String>,
         after: Option<String>,
     },
+    Profile {
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 impl Patch {
@@ -353,6 +369,9 @@ impl Patch {
                     None => doc.dim_exprs.remove(id),
                 };
             }
+            Patch::Profile { before, after } => {
+                doc.profile = if forward { after } else { before }.clone();
+            }
             Patch::Recipe { id, before, after } => {
                 match if forward { after } else { before }.clone() {
                     Some(r) => doc.recipes.insert(*id, r),
@@ -361,6 +380,15 @@ impl Patch {
             }
         }
     }
+}
+
+/// Which solve a callback is asked for (ADR 0015).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SolvePhase {
+    /// Everything except constraints that touch pattern instances.
+    Main,
+    /// Those constraints, with the pattern and its sources held fixed.
+    Late,
 }
 
 #[derive(Debug, Clone)]
@@ -528,11 +556,24 @@ fn exec(
             edit_dimension(doc, *id, patches, |d| d.value = *value)?;
             set_dim_expr(doc, *id, None, patches);
         }
+        Command::SetDimensionEdge { id, edge } => {
+            edit_dimension(doc, *id, patches, |d| d.edge = *edge)?;
+        }
         Command::SetDriven { id, driven } => {
             edit_dimension(doc, *id, patches, |d| d.driven = *driven)?;
             if *driven {
                 set_dim_expr(doc, *id, None, patches);
             }
+        }
+        Command::SetProfile { id } => {
+            if let Some(id) = id {
+                crate::document::check_profile_id(id)?;
+            }
+            let p = Patch::Profile {
+                before: doc.profile.clone(),
+                after: id.clone(),
+            };
+            record(doc, patches, p);
         }
         Command::SetParameter { name, expr } => {
             params::check_name(name)?;
@@ -1510,14 +1551,24 @@ impl Editor {
     pub(crate) fn apply_solved(
         &mut self,
         cmd: &Command,
-        solve: impl FnOnce(&Document) -> Result<Solution, DocError>,
+        mut solve: impl FnMut(&Document, SolvePhase) -> Result<Option<Solution>, DocError>,
     ) -> Result<Applied, DocError> {
         let mut patches = Vec::new();
         let mut out = Applied::default();
         let result = exec(&mut self.doc, cmd, &mut patches, &mut out)
-            .and_then(|()| solve(&self.doc))
-            .and_then(|sol| solution_patches(&mut self.doc, &sol, &mut patches))
-            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()));
+            .and_then(|()| solve(&self.doc, SolvePhase::Main))
+            .and_then(|sol| match sol {
+                Some(sol) => solution_patches(&mut self.doc, &sol, &mut patches),
+                None => Ok(()),
+            })
+            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()))
+            // Phase 2 (ADR 0015): constraints that touch pattern instances,
+            // solved with the freshly regenerated pattern held fixed.
+            .and_then(|()| solve(&self.doc, SolvePhase::Late))
+            .and_then(|sol| match sol {
+                Some(sol) => solution_patches(&mut self.doc, &sol, &mut patches),
+                None => Ok(()),
+            });
         if let Err(e) = result {
             for p in patches.iter().rev() {
                 p.set(&mut self.doc, false);
@@ -1552,6 +1603,28 @@ impl Editor {
                 patches,
             });
             self.redo.clear();
+        }
+        Ok(())
+    }
+
+    /// Run the second solve phase and add its changes to the last undo step
+    /// (the one a drag just recorded; ADR 0015).
+    pub(crate) fn late_into_last(
+        &mut self,
+        solve: impl FnOnce(&Document) -> Result<Option<Solution>, DocError>,
+    ) -> Result<(), DocError> {
+        let Some(sol) = solve(&self.doc)? else {
+            return Ok(());
+        };
+        let mut patches = Vec::new();
+        if let Err(e) = solution_patches(&mut self.doc, &sol, &mut patches) {
+            for p in patches.iter().rev() {
+                p.set(&mut self.doc, false);
+            }
+            return Err(e);
+        }
+        if let Some(t) = self.undo.last_mut() {
+            t.patches.extend(patches);
         }
         Ok(())
     }

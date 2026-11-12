@@ -257,6 +257,10 @@ impl LocusServer {
                 "validate_export",
                 "Export validation report: open cut paths, self-intersections, duplicates, with entity IDs.",
             ),
+            read::<dto::PreviewArgs>(
+                "render_preview",
+                "A PNG of the document or an [x0,y0,x1,y1] mm region, styled like the canvas: blue can still move, black is fully constrained, purple dashed is construction, shaded areas are closed regions.",
+            ),
             read::<dto::NoArgs>(
                 "list_plugins",
                 "Installed plugins with their parameter schemas.",

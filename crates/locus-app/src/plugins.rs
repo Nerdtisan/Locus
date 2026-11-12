@@ -55,7 +55,7 @@ use crate::canvas::Canvas;
 use crate::file_io::{ExtraChecks, ExtraFinding, FileIo};
 
 /// The app's plugin folder, next to its settings.
-fn plugin_dir() -> Option<PathBuf> {
+pub(crate) fn plugin_dir() -> Option<PathBuf> {
     eframe::storage_dir("locus").map(|d| d.join("plugins"))
 }
 
@@ -844,11 +844,23 @@ impl Plugins {
         }
         if ui
             .button("Explode")
-            .on_hover_text("Turn it into ordinary, editable geometry.")
+            .on_hover_text(
+                "Turn it into ordinary, editable geometry, keeping the plugin's \
+                 constraints where they still fit. One undo step.",
+            )
             .clicked()
-            && let Err(e) = canvas.apply(&Command::ExplodeRecipe { id: rid })
         {
-            self.message = Some(format!("Couldn't explode it: {e}"));
+            match canvas.explode_plugin_object(rid) {
+                Ok(0) => {}
+                Ok(n) => {
+                    self.message = Some(format!(
+                        "Exploded. {n} of the plugin's constraints were left out: they \
+                         would have turned the object back to the axes, or conflicted \
+                         with or repeated other constraints."
+                    ));
+                }
+                Err(e) => self.message = Some(format!("Couldn't explode it: {e}")),
+            }
         }
         ui.separator();
     }

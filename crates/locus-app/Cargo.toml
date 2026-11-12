@@ -37,3 +37,10 @@ web-sys = { workspace = true, features = ["Window", "Document", "HtmlCanvasEleme
 rfd.workspace = true
 # Plugins are desktop-only (SPEC §0, §15).
 locus-plugin-host.workspace = true
+# The MCP server is desktop-only too (SPEC §0, §16).
+locus-mcp = { path = "../locus-mcp" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Drives an MCP call from another thread in the canvas test (#230).
+tokio = { version = "1", features = ["rt"] }
+

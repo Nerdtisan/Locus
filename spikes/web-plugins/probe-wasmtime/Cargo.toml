@@ -1,0 +1,19 @@
+[package]
+name = "probe-wasmtime"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasmtime = { version = "50.0.1", default-features = false, features = ["runtime", "component-model", "pulley", "cranelift", "custom-virtual-memory"] }
