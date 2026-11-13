@@ -798,6 +798,7 @@ mod chain_tests {
 
     /// Double-clicking a curve selects its chain (design §3.1, #220).
     #[test]
+    #[allow(clippy::expect_used)]
     fn double_click_selects_the_chain() {
         let ctx = egui::Context::default();
         let mut c = AppState::default();
