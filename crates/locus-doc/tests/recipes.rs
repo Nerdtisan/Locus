@@ -321,3 +321,42 @@ fn hostile_recipe_files_are_rejected() {
     let bad = text.replacen("sources: [", "sources: [999999, ", 1);
     assert!(file::load(&bad).is_err());
 }
+
+/// Regression (#215): mirroring an arc left the sketch "over-constrained,
+/// 1 redundant". A Symmetric constraint on every copied point plus the
+/// arc's own rule (its end lies on its circle) say the same thing twice.
+#[test]
+fn mirroring_an_arc_is_not_redundant() {
+    let mut f = fx();
+    let c = pt(&mut f.s, 6.0, 0.0);
+    let st = pt(&mut f.s, 8.0, 0.0);
+    let en = pt(&mut f.s, 6.0, 2.0);
+    let arc = add(
+        &mut f.s,
+        Geom::Arc {
+            center: c,
+            start: st,
+            end: en,
+        },
+    );
+    assert!(f.s.state().redundant.is_empty());
+    let rid = mirror(&mut f, &[arc]).unwrap();
+    let state = f.s.state();
+    assert!(state.redundant.is_empty(), "{:?}", state.redundant);
+    assert!(state.conflicts.is_empty());
+    // The copy still follows: move the source's end round its circle.
+    f.s.apply(&Command::ModifyEntity {
+        id: st,
+        geom: Geom::Point {
+            pos: Vec2::new(6.0, -2.0),
+        },
+    })
+    .unwrap();
+    // The copy mirrors wherever the solve left the source (axis x = 0).
+    let (src, ist) = (pos(&f.s, st), pos(&f.s, copy_of(&f.s, rid, st)));
+    assert!(
+        (ist - Vec2::new(-src.x, src.y)).length() < 1e-6,
+        "{src:?} {ist:?}"
+    );
+    assert!(f.s.state().redundant.is_empty());
+}

@@ -476,6 +476,8 @@ pub static BUILTIN: &[Action] = &[
         &[],
         Modify::Pattern(true),
     ),
+    // Mirror creates geometry too (design §2, §6.9, #215).
+    modify("sketch.mirror", Group::Create, "⫴", &[], Modify::Mirror),
     // ── Modify ──
     modify(
         "modify.trim",
@@ -745,7 +747,7 @@ pub const SKETCH_MENU: &[Item] =
     &concat::<17>(&[&DRAWING, &[Sep, A("sketch.linetype_construction")]]);
 
 /// The tool strip: Select, the drawing tools, then the modify tools.
-pub const TOOL_STRIP: &[Item] = &concat::<29>(&[
+pub const TOOL_STRIP: &[Item] = &concat::<30>(&[
     &[A("select.select")],
     &DRAWING,
     &[
@@ -758,6 +760,7 @@ pub const TOOL_STRIP: &[Item] = &concat::<29>(&[
         A("modify.offset"),
         A("sketch.pattern_rect"),
         A("sketch.pattern_circ"),
+        A("sketch.mirror"),
         A("modify.move"),
         A("modify.rotate"),
         A("modify.scale"),

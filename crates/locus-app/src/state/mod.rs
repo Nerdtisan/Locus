@@ -114,6 +114,11 @@ impl AppState {
                 }
             }
             Modify::Pattern(_) => {}
+            Modify::Mirror => {
+                // Selection first, then the line (design §6.9).
+                self.tools.mirror.picking =
+                    !self.selection.items.is_empty() || self.tools.mirror.axis.is_none();
+            }
             _ => self.selection.items.clear(),
         }
         self.tools.host.set(Box::new(ModifyTool::new(m)));
