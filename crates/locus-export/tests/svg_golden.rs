@@ -64,6 +64,15 @@ fn layers_match_golden() {
         },
     })
     .unwrap();
+    // The default layer is Draw (#288); this golden wants one of each.
+    ed.apply(&Command::SetLayerProps {
+        id: cut,
+        props: LayerProps {
+            operation: Some(OperationKind::Cut.default_operation()),
+            ..LayerProps::default()
+        },
+    })
+    .unwrap();
     // Vinyl first in the export order, to prove ordering follows it.
     ed.apply(&Command::SetLayerProps {
         id: knife,
