@@ -1,0 +1,17 @@
+# Standalone spike workspace (#153, ADR 0018): not part of the root workspace.
+[package]
+name = "solidcore-spike"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[workspace]
+
+[dependencies]
+# Pinned to the commit measured in ADR 0018. Git source: solidcore is not on crates.io.
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "510e41d44256c634d2fcb1abb7f84c78b81b48c3" }
+
+[profile.release]
+debug = false
+strip = true
