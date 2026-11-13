@@ -17,6 +17,7 @@ use locus_geom::{Aabb, Vec2};
 #[cfg(not(target_arch = "wasm32"))]
 mod ai;
 mod bed;
+mod corner_dialog;
 mod dialog;
 mod machine;
 mod manipulator;
@@ -288,6 +289,9 @@ impl AppState {
         if let Some(mode) = self.transform_mode() {
             self.draw_manipulator(&frame, mode);
         }
+        if let Some(m) = self.modify().filter(|m| m.takes_two()) {
+            self.draw_corner_preview(&frame, m);
+        }
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -298,6 +302,9 @@ impl AppState {
         self.refusal_banner(ui, rect);
         if let Some(mode) = self.transform_mode() {
             self.transform_dialog(ui, rect, mode, settings.units);
+        }
+        if let Some(m) = self.modify().filter(|m| m.takes_two()) {
+            self.corner_dialog(ui, rect, m, settings.units);
         }
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));
@@ -421,7 +428,16 @@ impl AppState {
                 egui::CursorIcon::Default
             });
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.tool_event(ToolEvent::Esc, None, units);
+                // Esc drops a picked corner first, then leaves the tool.
+                if !self.corner_esc() {
+                    self.tool_event(ToolEvent::Esc, None, units);
+                }
+                return;
+            }
+            if self.tools.corner_pick.is_some() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if let Some(m) = self.modify() {
+                    self.corner_ok(m, units);
+                }
                 return;
             }
         }

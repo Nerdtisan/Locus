@@ -13,7 +13,7 @@
 use crate::actions::{ActionId, BUILTIN, Op};
 use crate::constrain::{self, Kind};
 use crate::hit;
-use crate::modify_tool::{CornerSettings, Modify};
+use crate::modify_tool::Modify;
 use crate::scene::{Scene, Shape};
 use crate::settings::Units;
 use crate::tools::{Draft, Outcome, Pick, Tool as DrawKind};
@@ -94,8 +94,6 @@ pub struct ToolCx<'a> {
     pub hover: Option<EntityId>,
     /// Laid-out text for the Text tool (#180), when it could be laid out.
     pub text: Option<TextData>,
-    /// Fillet, chamfer and offset sizes from the tool options.
-    pub corner: &'a CornerSettings,
     // ── Requests back to the host ──
     /// Replace the status-bar notice (`Some(None)` clears it).
     pub notice: Option<Option<String>>,
@@ -103,6 +101,9 @@ pub struct ToolCx<'a> {
     pub select: Option<Vec<EntityId>>,
     /// An offset click: pick or create an offset on this curve (#164).
     pub offset: Option<EntityId>,
+    /// A fillet or chamfer corner was picked: the two curves, for the
+    /// command dialog to size and commit (#217).
+    pub corner_pick: Option<(EntityId, EntityId)>,
 }
 
 /// What a commit left behind, for the host to show.
@@ -348,8 +349,9 @@ impl Tool for DrawTool {
 // ── Modify tools ────────────────────────────────────────────────────────
 
 /// Trim, extend, break, fillet, chamfer and offset (SPEC §6.2): pick a
-/// curve, or two curves (or the corner they share). Move/rotate/scale works
-/// on the selection from the tool options and takes no picks.
+/// curve, or two curves (or the corner they share). A fillet or chamfer
+/// corner goes to the command dialog, which sizes it with a live preview
+/// and commits it (#217). Move/rotate/scale has its own manipulator.
 pub struct ModifyTool {
     m: Modify,
     /// The first curve picked for a fillet or chamfer.
@@ -414,28 +416,32 @@ impl Tool for ModifyTool {
             return Flow::Continue;
         }
         let doc = cx.doc;
-        let plan = if self.m.takes_two() {
+        if self.m.takes_two() {
             // A corner point shared by exactly two curves picks both.
             let corner = hit::pick_point(&cx.scene.items, at, cx.tol)
                 .map(|(p, _)| doc.dependents(p).0)
                 .filter(|users| users.len() == 2);
-            match (corner, self.first, cx.hover) {
-                (Some(users), _, _) => self.m.plan_corner(doc, users[0], users[1], cx.corner),
+            let pair = match (corner, self.first, cx.hover) {
+                (Some(users), _, _) => (users[0], users[1]),
                 (None, None, Some(id)) => {
                     self.first = Some(id);
                     cx.select = Some(vec![id]);
                     cx.notice = Some(None);
                     return Flow::Continue;
                 }
-                (None, Some(first), Some(id)) => self.m.plan_corner(doc, first, id, cx.corner),
-                (None, _, None) => return Flow::Continue,
-            }
-        } else {
-            let Some(id) = cx.hover else {
-                return Flow::Continue;
+                (None, Some(first), Some(id)) if first != id => (first, id),
+                (None, _, _) => return Flow::Continue,
             };
-            self.m.plan(doc, id, at)
+            self.first = None;
+            cx.select = Some(vec![pair.0, pair.1]);
+            cx.notice = Some(None);
+            cx.corner_pick = Some(pair);
+            return Flow::Continue;
+        }
+        let Some(id) = cx.hover else {
+            return Flow::Continue;
         };
+        let plan = self.m.plan(doc, id, at);
         self.first = None;
         cx.select = Some(Vec::new());
         match plan {
@@ -613,7 +619,7 @@ mod tests {
     use super::*;
     use crate::demo;
 
-    fn cx<'a>(doc: &'a Document, scene: &'a Scene, corner: &'a CornerSettings) -> ToolCx<'a> {
+    fn cx<'a>(doc: &'a Document, scene: &'a Scene) -> ToolCx<'a> {
         ToolCx {
             doc,
             scene,
@@ -625,10 +631,10 @@ mod tests {
             selection: Vec::new(),
             hover: None,
             text: None,
-            corner,
             notice: None,
             select: None,
             offset: None,
+            corner_pick: None,
         }
     }
 
@@ -651,8 +657,7 @@ mod tests {
     fn a_line_commits_one_command_per_segment_and_esc_cancels_then_finishes() {
         let doc = Document::new();
         let scene = Scene::default();
-        let corner = CornerSettings::default();
-        let mut c = cx(&doc, &scene, &corner);
+        let mut c = cx(&doc, &scene);
         let mut t = DrawTool::new(DrawKind::Line, Document::default_layer());
         assert_eq!(
             t.event(ToolEvent::Click(Pick::free(Vec2::ZERO)), &mut c),
@@ -674,8 +679,7 @@ mod tests {
     fn a_constraint_is_selection_first_and_explains_a_refusal() {
         let doc = demo::sketch();
         let scene = Scene::default();
-        let corner = CornerSettings::default();
-        let mut c = cx(&doc, &scene, &corner);
+        let mut c = cx(&doc, &scene);
         let mut t = ConstrainTool::new(Kind::Parallel);
         assert_eq!(t.event(ToolEvent::Activate, &mut c), Flow::Done);
         assert!(matches!(&c.notice, Some(Some(n)) if n.contains("two lines")));
@@ -683,11 +687,39 @@ mod tests {
     }
 
     #[test]
+    fn a_chamfer_pick_goes_to_the_dialog_not_straight_to_a_commit() {
+        let doc = demo::sketch();
+        let scene = Scene::default();
+        let lines: Vec<EntityId> = doc
+            .entities()
+            .iter()
+            .filter(|(_, e)| matches!(e.geom, locus_doc::Geom::Line { .. }))
+            .map(|(id, _)| id)
+            .take(2)
+            .collect();
+        let mut t = ModifyTool::new(Modify::Chamfer);
+        let mut c = cx(&doc, &scene);
+        c.hover = Some(lines[0]);
+        assert_eq!(
+            t.event(ToolEvent::Click(Pick::free(Vec2::ZERO)), &mut c),
+            Flow::Continue
+        );
+        assert!(t.busy());
+        let mut c = cx(&doc, &scene);
+        c.hover = Some(lines[1]);
+        assert_eq!(
+            t.event(ToolEvent::Click(Pick::free(Vec2::ZERO)), &mut c),
+            Flow::Continue
+        );
+        assert_eq!(c.corner_pick, Some((lines[0], lines[1])));
+        assert!(t.commit().is_none() && !t.busy());
+    }
+
+    #[test]
     fn modify_esc_clears_and_is_done() {
         let doc = Document::new();
         let scene = Scene::default();
-        let corner = CornerSettings::default();
-        let mut c = cx(&doc, &scene, &corner);
+        let mut c = cx(&doc, &scene);
         let mut t = ModifyTool::new(Modify::Fillet);
         assert_eq!(t.event(ToolEvent::Esc, &mut c), Flow::Done);
         assert_eq!(c.select, Some(Vec::new()));

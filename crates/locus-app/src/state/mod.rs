@@ -90,6 +90,7 @@ impl AppState {
         let layer = self.active_layer();
         self.tools.host.set_draw(tool, layer);
         self.tools.typed.clear();
+        self.tools.corner_pick = None;
         self.doc.notice = None;
     }
 
@@ -164,13 +165,17 @@ impl AppState {
             selection,
             hover,
             text,
-            corner: &self.tools.corner,
             notice: None,
             select: None,
             offset: None,
+            corner_pick: None,
         };
         let flow = self.tools.host.tool_mut().event(ev, &mut cx);
         let (notice, select, offset) = (cx.notice, cx.select, cx.offset);
+        if let Some(pair) = cx.corner_pick {
+            self.tools.corner_pick = Some(pair);
+            self.tools.corner_focus = true;
+        }
         if let Some(n) = notice {
             self.doc.notice = n;
         }

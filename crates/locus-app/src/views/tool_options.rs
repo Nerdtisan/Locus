@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The active tool's options in the tool strip: fillet radius, chamfer,
-//! offset, polygon sides and text settings. Move, Rotate and Scale have
-//! their own command dialog on the canvas (design §6.7).
+//! The active tool's options in the tool strip: offset, polygon sides and
+//! text settings. Move, Rotate, Scale, Fillet and Chamfer have their own
+//! command dialog on the canvas (design §6.6–6.7, #217).
 
-use crate::modify_tool::{ChamferMode, Modify};
+use crate::modify_tool::Modify;
 use crate::state::AppState;
 use crate::tools::Tool;
 use crate::views::text_ui;
@@ -19,84 +19,46 @@ impl AppState {
         self.tools.host.tool_mut().dialog(ui);
     }
 
-    /// Fillet radius and chamfer size, while those tools are active (mm and
-    /// degrees; SPEC §6.2).
+    /// The offset distance, while Offset is active (SPEC §6.2). Fillet and
+    /// chamfer sizes are in their command dialog (#217).
     pub(crate) fn corner_sizes(&mut self, ui: &mut egui::Ui) {
-        fn len(v: &mut f64) -> egui::DragValue<'_> {
-            egui::DragValue::new(v)
-                .range(0.001..=10_000.0)
-                .speed(0.1)
-                .suffix(" mm")
+        if self.modify() != Some(Modify::Offset) {
+            return;
         }
-        let m = self.modify();
         let c = &mut self.tools.corner;
-        match m {
-            Some(Modify::Fillet) => {
-                ui.label("Radius");
-                ui.add(len(&mut c.radius));
-                ui.separator();
+        ui.label("Distance");
+        ui.add(egui::DragValue::new(&mut c.offset).speed(0.1).suffix(" mm"));
+        ui.checkbox(&mut c.sharp, "Sharp corners");
+        if let Some(rid) = self.offset_selected()
+            && let Some((mut d, mut sharp)) = self.offset_params(rid)
+        {
+            ui.separator();
+            ui.label("Picked offset");
+            // Typed, not dragged: each change is one undo step.
+            let r1 = ui
+                .add(
+                    egui::DragValue::new(&mut d)
+                        .speed(0.0)
+                        .max_decimals(3)
+                        .suffix(" mm"),
+                )
+                .on_hover_text("Click to type a new distance");
+            let r2 = ui.checkbox(&mut sharp, "Sharp");
+            if (r1.changed() || r2.changed()) && d != 0.0 {
+                self.set_offset_params(rid, d, sharp);
             }
-            Some(Modify::Chamfer) => {
-                egui::ComboBox::from_id_salt("chamfer-mode")
-                    .selected_text(c.mode.label())
-                    .show_ui(ui, |ui| {
-                        for m in ChamferMode::ALL {
-                            ui.selectable_value(&mut c.mode, m, m.label());
-                        }
-                    });
-                ui.add(len(&mut c.d1));
-                match c.mode {
-                    ChamferMode::Equal => {}
-                    ChamferMode::TwoDistances => {
-                        ui.add(len(&mut c.d2));
-                    }
-                    ChamferMode::DistanceAngle => {
-                        ui.add(
-                            egui::DragValue::new(&mut c.angle_deg)
-                                .range(0.1..=179.9)
-                                .suffix("°"),
-                        );
-                    }
-                }
-                ui.separator();
+            if ui
+                .button("Explode")
+                .on_hover_text("Turn the offset into ordinary geometry")
+                .clicked()
+            {
+                self.finish_offset(rid, true);
             }
-            Some(Modify::Offset) => {
-                ui.label("Distance");
-                ui.add(egui::DragValue::new(&mut c.offset).speed(0.1).suffix(" mm"));
-                ui.checkbox(&mut c.sharp, "Sharp corners");
-                if let Some(rid) = self.offset_selected()
-                    && let Some((mut d, mut sharp)) = self.offset_params(rid)
-                {
-                    ui.separator();
-                    ui.label("Picked offset");
-                    // Typed, not dragged: each change is one undo step.
-                    let r1 = ui
-                        .add(
-                            egui::DragValue::new(&mut d)
-                                .speed(0.0)
-                                .max_decimals(3)
-                                .suffix(" mm"),
-                        )
-                        .on_hover_text("Click to type a new distance");
-                    let r2 = ui.checkbox(&mut sharp, "Sharp");
-                    if (r1.changed() || r2.changed()) && d != 0.0 {
-                        self.set_offset_params(rid, d, sharp);
-                    }
-                    if ui
-                        .button("Explode")
-                        .on_hover_text("Turn the offset into ordinary geometry")
-                        .clicked()
-                    {
-                        self.finish_offset(rid, true);
-                    }
-                    if ui.button("Remove").clicked() {
-                        self.finish_offset(rid, false);
-                    }
-                }
-                ui.separator();
+            if ui.button("Remove").clicked() {
+                self.finish_offset(rid, false);
             }
-            _ => {}
         }
+        ui.separator();
     }
 
     /// Tool-bar controls while the Text tool is active.
