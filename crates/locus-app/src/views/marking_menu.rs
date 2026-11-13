@@ -188,7 +188,7 @@ mod tests {
             [
                 "edit.repeat",
                 "edit.undo",
-                "modify.transform",
+                "modify.move",
                 "modify.offset",
                 "edit.delete",
                 "modify.construction",

@@ -244,6 +244,15 @@ The canvas **⇅** control and the dialog's Flip button reverse the side without
 
 There are three tools, Move/Copy (M), Rotate and Sketch Scale, sharing one dialog with a Move | Rotate | Scale switch so changing mode keeps the selection. An on-canvas manipulator has X and Y arrows, a free-drag centre, a rotation ring and a scale handle. Rotate picks a pivot (the selection centre by default) and an angle; Scale picks a base point and a factor. **Create copy** is available in all three. Each commit is one command and respects constraints (§6.2). Rotate's current failure gets a regression test (#219).
 
+**As built (#219):**
+- Why Rotate failed: every rectangle carries its own Horizontal and Vertical constraints, so an in-place rotation was always refused as "held in place".
+- Rotate now handles the constraints that lie wholly inside the selection, in the same undo step. A quarter turn swaps Horizontal and Vertical. A half turn keeps them. Any other angle removes them, along with horizontal and vertical distances, and the status bar names what was removed.
+- Sketch Scale scales the selection's driving dimensions (not angles or expression-driven values), as Fusion does.
+- Constraints that tie the selection to geometry outside it still apply, and a fix still blocks the change.
+- Dragged values snap to 1°, ×0.01 and 0.1 mm; holding Shift snaps to 15°, ×0.1 and 1 mm.
+- The pivot (or base point) snaps to points, and Reset in the dialog puts it back at the selection's centre.
+- OK or Enter applies the change and returns to Select. Esc first resets the values, and a second Esc leaves the tool.
+
 ### 6.8 Patterns (#221)
 
 There is one Pattern dialog with Rectangular and Circular tabs. Rectangular: objects, one or two directions (a line, or the X/Y axis), Extent or Spacing, quantity and distance per direction (expressions allowed), direction angle, One or Symmetric. Circular: objects, centre point, quantity, total angle or spacing, and rotate-instances.

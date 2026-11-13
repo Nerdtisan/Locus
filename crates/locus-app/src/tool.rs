@@ -406,7 +406,7 @@ impl Tool for ModifyTool {
             ToolEvent::Click(p) => p.pos,
             _ => return Flow::Continue,
         };
-        if self.m == Modify::Transform {
+        if let Modify::Transform(_) = self.m {
             return Flow::Continue;
         }
         if self.m == Modify::Offset {

@@ -13,7 +13,7 @@
 //! Constraints have no default keys (owner decision, design §2, §5).
 
 use crate::constrain::Kind;
-use crate::modify_tool::Modify;
+use crate::modify_tool::{Modify, TransformMode};
 use crate::settings::Settings;
 use crate::state::AppState;
 use crate::tools::Tool;
@@ -472,12 +472,27 @@ pub static BUILTIN: &[Action] = &[
     modify("modify.break", Group::Modify, "⌇", &[], Modify::Break),
     modify("modify.fillet", Group::Modify, "◜", &[], Modify::Fillet),
     modify("modify.chamfer", Group::Modify, "◸", &[], Modify::Chamfer),
+    // Three tools sharing one dialog and manipulator (design §6.7, #219).
     modify(
-        "modify.transform",
+        "modify.move",
         Group::Modify,
         "✥",
         &[key(Key::M)],
-        Modify::Transform,
+        Modify::Transform(TransformMode::Move),
+    ),
+    modify(
+        "modify.rotate",
+        Group::Modify,
+        "⟳",
+        &[],
+        Modify::Transform(TransformMode::Rotate),
+    ),
+    modify(
+        "modify.scale",
+        Group::Modify,
+        "⤡",
+        &[],
+        Modify::Transform(TransformMode::Scale),
     ),
     a(
         "edit.delete",
@@ -714,7 +729,7 @@ pub const SKETCH_MENU: &[Item] =
     &concat::<17>(&[&DRAWING, &[Sep, A("sketch.linetype_construction")]]);
 
 /// The tool strip: Select, the drawing tools, then the modify tools.
-pub const TOOL_STRIP: &[Item] = &concat::<25>(&[
+pub const TOOL_STRIP: &[Item] = &concat::<27>(&[
     &[A("select.select")],
     &DRAWING,
     &[
@@ -725,7 +740,9 @@ pub const TOOL_STRIP: &[Item] = &concat::<25>(&[
         A("modify.fillet"),
         A("modify.chamfer"),
         A("modify.offset"),
-        A("modify.transform"),
+        A("modify.move"),
+        A("modify.rotate"),
+        A("modify.scale"),
         A("modify.construction"),
     ],
 ]);
@@ -746,7 +763,7 @@ pub const CONSTRAINT_BAR: &[Item] =
 pub const MARKING_RING: [&str; 8] = [
     "edit.repeat",
     "edit.undo",
-    "modify.transform",
+    "modify.move",
     "modify.offset",
     "edit.delete",
     "modify.construction",
@@ -1241,7 +1258,7 @@ mod tests {
             ("constrain.dimension", Key::D),
             ("modify.trim", Key::T),
             ("modify.offset", Key::O),
-            ("modify.transform", Key::M),
+            ("modify.move", Key::M),
             ("sketch.point", Key::P),
             ("sketch.polygon", Key::G),
             ("sketch.slot", Key::U),

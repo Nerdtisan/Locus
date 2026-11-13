@@ -6,7 +6,6 @@ use crate::app::Status;
 use crate::grid;
 use crate::hit::{self, BoxMode, Mods};
 use crate::infer;
-use crate::modify_tool::Modify;
 use crate::render::{Emphasis, Frame, Palette};
 use crate::settings::{Settings, Units};
 use crate::state::AppState;
@@ -18,7 +17,9 @@ use locus_geom::{Aabb, Vec2};
 #[cfg(not(target_arch = "wasm32"))]
 mod ai;
 mod bed;
+mod dialog;
 mod machine;
+mod manipulator;
 mod offsets;
 mod pattern_labels;
 pub mod plugin_objects;
@@ -62,6 +63,8 @@ impl AppState {
             .fixed_pos(rect.left_top() + egui::vec2(12.0, 12.0))
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    // Wrap clear of the command dialog in the top-right corner.
+                    ui.set_max_width((rect.width() - 280.0).max(180.0));
                     ui.colored_label(
                         Palette::new(ui.visuals().dark_mode).conflict,
                         r.message
@@ -235,10 +238,12 @@ impl AppState {
         }
         if suppress || space || self.view.marking.is_some() {
             // A gesture, a Space pan or the marking menu: no tool sees the pointer.
-        } else if self.modify().is_some_and(|m| m != Modify::Transform) {
+        } else if let Some(mode) = self.transform_mode() {
+            self.transform_input(ui, &resp, rect, settings.units, mode);
+        } else if self.modify().is_some() {
             self.modify_input(ui, &resp, rect, settings.units);
         } else if self.tool() == Tool::Select {
-            self.pick_and_select(ui, &resp, rect, settings.units);
+            self.pick_and_select(ui, &resp, rect, settings.units, true);
         } else {
             self.tool_input(ui, &resp, rect, settings);
         }
@@ -280,6 +285,9 @@ impl AppState {
         frame.draw_handle_guides(&guides);
         self.view.dim_rects = frame.draw_annotations(&self.doc.scene, &flag_constraints);
         self.draw_tool_overlay(&frame, &painter);
+        if let Some(mode) = self.transform_mode() {
+            self.draw_manipulator(&frame, mode);
+        }
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -288,6 +296,9 @@ impl AppState {
         self.draw_pattern_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
+        if let Some(mode) = self.transform_mode() {
+            self.transform_dialog(ui, rect, mode, settings.units);
+        }
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));
         status.extent_mm = self.view.camera.extent_mm(rect);
@@ -604,13 +615,16 @@ impl AppState {
     }
 
     /// Hover, click and box selection (#67). Left-drag is a rubber-band box;
-    /// pan stays on middle/right-drag.
+    /// pan stays on middle/right-drag. With `drag_geometry`, a drag that
+    /// starts on a curve or point drags it instead (Select, not the
+    /// Move/Rotate/Scale tools, which drag their manipulator).
     pub(crate) fn pick_and_select(
         &mut self,
         ui: &egui::Ui,
         resp: &egui::Response,
         rect: egui::Rect,
         units: Units,
+        drag_geometry: bool,
     ) {
         let mods = ui.input(|i| Mods {
             add: i.modifiers.shift || self.view.touch_add,
@@ -633,7 +647,10 @@ impl AppState {
         if resp.drag_started_by(PointerButton::Primary) {
             // The press, not where the drag threshold was crossed.
             let origin = ui.input(|i| i.pointer.press_origin());
-            match origin.and_then(|o| pick_at(self, o).map(|id| (o, id))) {
+            match origin
+                .filter(|_| drag_geometry)
+                .and_then(|o| pick_at(self, o).map(|id| (o, id)))
+            {
                 Some((o, id)) if self.begin_drag(id, self.view.camera.to_world(o, rect)) => {
                     self.selection.items.set_all([id]);
                 }

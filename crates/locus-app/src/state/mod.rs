@@ -9,7 +9,7 @@
 
 use crate::constrain::{self, Kind};
 use crate::demo;
-use crate::modify_tool::Modify;
+use crate::modify_tool::{Modify, TransformMode};
 use crate::scene::Scene;
 use crate::settings::Units;
 use crate::tool::{ConstrainTool, Flow, ModifyTool, ToolCx, ToolEvent, ToolKind};
@@ -99,9 +99,16 @@ impl AppState {
     }
 
     pub fn set_modify(&mut self, m: Modify) {
+        // Switching between Move, Rotate and Scale keeps the values and the
+        // pivot, as the dialog's mode switch does (design §6.7).
+        let was_transform = matches!(self.modify(), Some(Modify::Transform(_)));
         self.set_tool(Tool::Select);
         // Move/rotate/scale works on the selection; the others pick curves.
-        if m != Modify::Transform {
+        if let Modify::Transform(_) = m {
+            if !was_transform {
+                self.tools.transform.reset();
+            }
+        } else {
             self.selection.items.clear();
         }
         self.tools.host.set(Box::new(ModifyTool::new(m)));
@@ -219,25 +226,49 @@ impl AppState {
         !self.selection.items.is_empty()
     }
 
-    /// Move, rotate or scale the selection by the typed values, about the
-    /// centre of its bounding box, as one undo step (SPEC §6.2). When
-    /// constraints forbid it, they are named and highlighted instead.
-    pub fn apply_transform(&mut self, units: Units) {
-        let sel: Vec<EntityId> = self.selection.items.iter().collect();
-        let center = self
-            .doc
+    /// The centre of the selection's bounding box: where the manipulator
+    /// sits and, unless a pivot was placed, what Rotate and Scale turn
+    /// about (design §6.7).
+    pub fn selection_center(&self) -> Option<Vec2> {
+        self.doc
             .scene
             .items
             .iter()
             .filter(|i| self.selection.items.contains(i.id))
             .map(|i| i.bbox)
             .reduce(Aabb::union)
-            .map_or(Vec2::ZERO, |b| b.min.lerp(b.max, 0.5));
-        let t = self.tools.transform.transform(center);
+            .map(|b| b.min.lerp(b.max, 0.5))
+    }
+
+    /// Move, rotate or scale the selection by the tool's values, as one undo
+    /// step (SPEC §6.2, §11). Constraints the transform itself breaks
+    /// (a rotated rectangle's horizontals) go in the same step and are named
+    /// in the status bar; when constraints forbid it, they are named and
+    /// highlighted instead. Returns whether it was applied.
+    pub fn apply_transform(&mut self, mode: TransformMode, units: Units) -> bool {
+        let sel: Vec<EntityId> = self.selection.items.iter().collect();
+        let center = self.selection_center().unwrap_or(Vec2::ZERO);
+        let t = self.tools.transform.transform(mode, center);
         let doc = self.doc.sketcher.document();
         match locus_doc::transform::transform(doc, &sel, t, self.tools.transform.copy) {
             Ok(plan) => {
-                self.apply_reporting(&plan.command);
+                let names: Vec<String> = plan
+                    .dropped
+                    .iter()
+                    .filter_map(|c| doc.constraint(*c))
+                    .map(|c| constrain::describe(doc, c, units))
+                    .collect();
+                let ok = self.apply_reporting(&plan.command);
+                if ok && !names.is_empty() {
+                    let s = if names.len() == 1 { "" } else { "s" };
+                    self.doc.notice = Some(format!(
+                        "{}: removed {} constraint{s} that no longer hold: {}",
+                        mode.label(),
+                        names.len(),
+                        names.join("; ")
+                    ));
+                }
+                ok
             }
             Err(locus_doc::modify::ModifyError::Blocked(cs)) => {
                 let cs_len = cs.len();
@@ -261,8 +292,12 @@ impl AppState {
                         cs_len
                     )),
                 });
+                false
             }
-            Err(e) => self.doc.notice = Some(e.to_string()),
+            Err(e) => {
+                self.doc.notice = Some(e.to_string());
+                false
+            }
         }
     }
 

@@ -241,7 +241,7 @@ impl App {
                 );
             }
             ui.separator();
-            self.state.tool_options_ui(ui, self.settings.units);
+            self.state.tool_options_ui(ui);
             ui.weak(self.state.hint());
         });
     }
