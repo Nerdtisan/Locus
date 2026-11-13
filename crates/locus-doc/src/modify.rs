@@ -585,7 +585,7 @@ fn rebuild(doc: &Document, id: EntityId, t: &Target, pieces: Pieces, label: &str
                 // Each piece is the same polynomial on [s0, s1]. The kept
                 // piece (first) moves the original control points, so its
                 // constraints and identity survive; the others get new ones.
-                let sub = restrict(&c, s0, s1);
+                let sub = restrict(c, s0, s1);
                 let ctrl = match (&geom, k) {
                     (
                         Some(Geom::Bezier {
