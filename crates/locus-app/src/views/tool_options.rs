@@ -16,21 +16,7 @@ impl AppState {
             self.text_tool_ui(ui);
             ui.separator();
         }
-        if self.tool() == Tool::Polygon {
-            let (mut sides, mut outside) = self.polygon();
-            let changed = ui
-                .add(
-                    egui::DragValue::new(&mut sides)
-                        .range(3..=64)
-                        .suffix(" sides"),
-                )
-                .changed()
-                | ui.checkbox(&mut outside, "Circumscribed").changed();
-            if changed {
-                self.set_polygon(sides, outside);
-            }
-            ui.separator();
-        }
+        self.tools.host.tool_mut().dialog(ui);
     }
 
     /// Fillet radius and chamfer size, while those tools are active (mm and

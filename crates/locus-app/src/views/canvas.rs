@@ -3,7 +3,6 @@
 //! pointer, touch and key input into tool steps and commands (SPEC §11).
 
 use crate::app::Status;
-use crate::constrain;
 use crate::grid;
 use crate::hit::{self, BoxMode, Mods};
 use crate::infer;
@@ -11,6 +10,7 @@ use crate::modify_tool::Modify;
 use crate::render::{Emphasis, Frame, Palette};
 use crate::settings::{Settings, Units};
 use crate::state::AppState;
+use crate::tool::ToolEvent;
 use crate::tools::{Pick, Tool};
 use egui::{Color32, PointerButton, Pos2, Sense, Stroke};
 use locus_geom::{Aabb, Vec2};
@@ -220,9 +220,9 @@ impl AppState {
         }
         if suppress {
             // Gesture in progress: no tool sees the pointer.
-        } else if let Some(m) = self.tools.modify.filter(|m| *m != Modify::Transform) {
-            self.modify_input(ui, &resp, rect, m, settings.units);
-        } else if self.tools.draft.tool() == Tool::Select {
+        } else if self.modify().is_some_and(|m| m != Modify::Transform) {
+            self.modify_input(ui, &resp, rect, settings.units);
+        } else if self.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect, settings.units);
         } else {
             self.tool_input(ui, &resp, rect, settings);
@@ -282,7 +282,7 @@ impl AppState {
     /// Long press (#251): in Select, the thing under the finger is selected
     /// first (unless it already is), then the menu opens at the finger.
     pub(crate) fn open_touch_menu(&mut self, at: Pos2, rect: egui::Rect) {
-        if self.tools.draft.tool() == Tool::Select && self.tools.modify.is_none() {
+        if self.tool() == Tool::Select && self.modify().is_none() {
             let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
             let w = self.view.camera.to_world(at, rect);
             if let Some(id) = hit::pick(&self.doc.scene.items, w, tol)
@@ -328,17 +328,14 @@ impl AppState {
             enabled: auto,
             tol: self.view.tol_pt / self.view.camera.pt_per_mm,
         };
-        let anchor = self
-            .tools
-            .draft
-            .line_anchor()
-            .map(|(pos, point)| infer::Anchor { pos, point });
+        let snap = self.tools.host.tool().snap();
+        let anchor = snap.anchor.map(|(pos, point)| infer::Anchor { pos, point });
         infer::infer(
             &self.doc.scene.items,
             opts,
-            self.tools.draft.tool(),
+            snap.kind,
             anchor,
-            self.tools.draft.curve_snap(),
+            snap.curve,
             world,
         )
     }
@@ -362,28 +359,14 @@ impl AppState {
         if resp.hovered() || !self.tools.typed.is_empty() {
             self.tool_keys(ui, settings.units);
         }
-        if self.tools.draft.tool() == Tool::Bezier {
-            self.pen_drag(ui, resp, rect, auto);
+        if self.tool() == Tool::Bezier {
+            self.pen_drag(ui, resp, rect, auto, settings.units);
         }
         if resp.clicked_by(PointerButton::Primary)
             && let Some(pick) = self.tools.cursor
         {
-            self.tools.draft.set_layer(self.active_layer());
-            if self.tools.draft.tool() == Tool::Text {
-                match self.tools.text_settings.to_data(&self.tools.fonts.library) {
-                    Ok(t) => self.tools.draft.set_text(Some(t)),
-                    Err(e) => {
-                        self.tools.draft.set_text(None);
-                        self.doc.notice = Some(e.to_string());
-                    }
-                }
-            }
-            let out = self
-                .tools
-                .draft
-                .click(pick, self.doc.sketcher.document().next_id());
+            self.tool_event(ToolEvent::Click(pick), None, settings.units);
             self.tools.typed.clear();
-            self.run(out);
         }
     }
 
@@ -395,7 +378,6 @@ impl AppState {
         ui: &egui::Ui,
         resp: &egui::Response,
         rect: egui::Rect,
-        m: Modify,
         units: Units,
     ) {
         let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
@@ -408,69 +390,16 @@ impl AppState {
                 egui::CursorIcon::Default
             });
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.tools.modify = None;
-                self.tools.corner_first = None;
-                self.selection.items.clear();
-                self.doc.notice = None;
+                self.tool_event(ToolEvent::Esc, None, units);
                 return;
             }
         }
         if !resp.clicked_by(PointerButton::Primary) {
             return;
         }
-        if m == Modify::Offset {
-            if let Some(id) = self.selection.hover {
-                self.offset_click(id, units);
-            }
-            return;
-        }
-        let doc = self.doc.sketcher.document();
-        let plan = if m.takes_two() {
-            // A corner point shared by exactly two curves picks both.
-            let corner = at
-                .and_then(|w| hit::pick_point(&self.doc.scene.items, w, tol))
-                .map(|(p, _)| doc.dependents(p).0)
-                .filter(|users| users.len() == 2);
-            match (corner, self.tools.corner_first, self.selection.hover) {
-                (Some(users), _, _) => m.plan_corner(doc, users[0], users[1], &self.tools.corner),
-                (None, None, Some(id)) => {
-                    self.tools.corner_first = Some(id);
-                    self.selection.items.set_all([id]);
-                    self.doc.notice = None;
-                    return;
-                }
-                (None, Some(first), Some(id)) => m.plan_corner(doc, first, id, &self.tools.corner),
-                (None, _, None) => return,
-            }
-        } else {
-            let (Some(id), Some(w)) = (self.selection.hover, at) else {
-                return;
-            };
-            m.plan(doc, id, w)
-        };
-        self.tools.corner_first = None;
-        self.selection.items.clear();
-        match plan {
-            Err(e) => self.doc.notice = Some(e.to_string()),
-            Ok(plan) => {
-                let names: Vec<String> = plan
-                    .dropped
-                    .iter()
-                    .filter_map(|c| doc.constraint(*c))
-                    .map(|c| constrain::describe(doc, c, units))
-                    .collect();
-                self.apply_reporting(&plan.command);
-                if self.doc.notice.is_none() && !names.is_empty() {
-                    let s = if names.len() == 1 { "" } else { "s" };
-                    self.doc.notice = Some(format!(
-                        "{}: removed {} constraint{s}: {}",
-                        m.label(),
-                        names.len(),
-                        names.join("; ")
-                    ));
-                }
-                self.selection.hover = None;
-            }
+        if let Some(w) = at {
+            let hover = self.selection.hover;
+            self.tool_event(ToolEvent::Click(Pick::free(w)), hover, units);
         }
     }
 
@@ -482,6 +411,7 @@ impl AppState {
         resp: &egui::Response,
         rect: egui::Rect,
         auto: bool,
+        units: Units,
     ) {
         if resp.drag_started_by(PointerButton::Primary)
             && let Some(o) = ui.input(|i| i.pointer.press_origin())
@@ -497,14 +427,15 @@ impl AppState {
         if resp.drag_stopped_by(PointerButton::Primary)
             && let Some((pick, now)) = self.tools.pen.take()
         {
-            self.tools.draft.set_layer(self.active_layer());
-            let out = self.tools.draft.pen(
-                pick,
-                Some(now - pick.pos),
-                self.doc.sketcher.document().next_id(),
+            self.tool_event(
+                ToolEvent::Drag {
+                    from: pick,
+                    to: now,
+                },
+                None,
+                units,
             );
             self.tools.typed.clear();
-            self.run(out);
         }
     }
 
@@ -526,7 +457,7 @@ impl AppState {
                 i.key_pressed(Key::Backspace),
             )
         });
-        if self.tools.draft.is_drawing() {
+        if self.is_drawing() {
             self.tools
                 .typed
                 .extend(text.chars().filter(|c| c.is_ascii_digit() || *c == '.'));
@@ -537,19 +468,14 @@ impl AppState {
         if enter {
             let value = std::mem::take(&mut self.tools.typed);
             if value.is_empty() {
-                self.tools.draft.finish();
+                self.tool_event(ToolEvent::Enter, None, units);
             } else if let Ok(v) = value.parse::<f64>() {
                 let mm = match units {
                     Units::Mm => v,
                     Units::Inch => v * 25.4,
                 };
                 let at = self.tools.cursor.unwrap_or_else(|| Pick::free(Vec2::ZERO));
-                self.tools.draft.set_layer(self.active_layer());
-                let out = self
-                    .tools
-                    .draft
-                    .typed(mm, at, self.doc.sketcher.document().next_id());
-                self.run(out);
+                self.tool_event(ToolEvent::Typed(mm, at), None, units);
             } else {
                 self.doc.notice = Some(format!("\"{value}\" is not a number"));
             }
@@ -557,27 +483,23 @@ impl AppState {
         if esc {
             if !self.tools.typed.is_empty() {
                 self.tools.typed.clear();
-            } else if self.tools.draft.is_drawing() {
-                self.tools.draft.cancel();
             } else {
-                self.set_tool(Tool::Select);
+                // Cancels the step; with nothing pending, back to Select.
+                self.tool_event(ToolEvent::Esc, None, units);
             }
         }
     }
 
     pub(crate) fn draw_tool_overlay(&self, frame: &Frame<'_>, painter: &egui::Painter) {
-        if self.tools.draft.tool() == Tool::Select {
+        if self.tool() == Tool::Select {
             return;
         }
         let Some(pick) = self.tools.cursor else {
             return;
         };
-        match self.tools.pen {
-            Some((anchor, now)) => {
-                frame.draw_preview(&self.tools.draft.preview_pen(anchor.pos, now))
-            }
-            None => frame.draw_preview(&self.tools.draft.preview(pick.pos)),
-        }
+        let tool = self.tools.host.tool();
+        let pen = self.tools.pen.map(|(anchor, now)| (anchor.pos, now));
+        frame.draw_preview(&tool.preview(pick.pos, pen));
         if pick.point.is_some() {
             frame.draw_snap(pick.pos);
         }
@@ -591,16 +513,10 @@ impl AppState {
             frame.draw_hint(pick.pos, b);
         }
         let label = if self.tools.typed.is_empty() {
-            self.tools
-                .draft
-                .readout(pick.pos)
+            tool.readout(pick.pos)
                 .map(|(what, mm)| format!("{what} {}", frame.units.format_len(mm)))
         } else {
-            let what = self
-                .tools
-                .draft
-                .readout(pick.pos)
-                .map_or("Value", |(w, _)| w);
+            let what = tool.readout(pick.pos).map_or("Value", |(w, _)| w);
             Some(format!("{what} {}▏", self.tools.typed))
         };
         if let Some(text) = label {

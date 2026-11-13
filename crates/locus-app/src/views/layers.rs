@@ -122,7 +122,6 @@ impl LayersView {
     fn apply_wants(&mut self, app: &mut AppState, want: Wants, ui: &Ui, settings: &Settings) {
         if let Some(id) = want.activate {
             app.doc.active_layer = id;
-            app.tools.draft.set_layer(id);
         }
         if want.add {
             let cmd = new_layer(app.doc.sketcher.document());

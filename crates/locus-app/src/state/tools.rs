@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Tool state (design §7.3): the active drawing or modify tool and its
-//! in-progress input. The `Tool` trait and `ToolHost` (§7.2) replace this
-//! with one boxed tool.
+//! Tool state (design §7.3): the active tool, held by the [`ToolHost`]
+//! (§7.2), and the canvas-level input around it: the typed heads-up value,
+//! the cursor, a point drag, and the tool options.
 
 use crate::constrain::DimSpec;
-use crate::modify_tool::{CornerSettings, Modify, TransformSettings};
-use crate::tools::{Draft, Pick, Tool};
+use crate::modify_tool::{CornerSettings, TransformSettings};
+use crate::tool::ToolHost;
+use crate::tools::Pick;
 use crate::views::text_ui::{FontCatalog, TextSettings};
 use locus_doc::{ConstraintId, EntityId, RecipeId};
 use locus_geom::Vec2;
@@ -35,8 +36,8 @@ pub struct DimEdit {
 }
 
 pub struct ToolState {
-    /// The active drawing tool and its clicks so far (#68).
-    pub(crate) draft: Draft,
+    /// The active tool (design §7.2): Select, a drawing tool or a modify tool.
+    pub(crate) host: ToolHost,
     /// Pen tool: where the button went down and where the pointer is now
     /// while dragging out a handle (#160).
     pub(crate) pen: Option<(Pick, Vec2)>,
@@ -48,12 +49,8 @@ pub struct ToolState {
     pub(crate) dim_edit: Option<DimEdit>,
     /// A point drag is in progress (#71): frames re-solve, release records.
     pub(crate) dragging: bool,
-    /// The active modify tool, if any (SPEC §6.2): clicks go to it.
-    pub(crate) modify: Option<Modify>,
     /// The offset picked with the Offset tool (#164).
     pub(crate) offset_pick: Option<RecipeId>,
-    /// The first curve picked for a fillet or chamfer.
-    pub(crate) corner_first: Option<EntityId>,
     /// Fillet radius and chamfer sizes, edited in the tool options.
     pub(crate) corner: CornerSettings,
     /// Move/rotate/scale values, edited in the tool options.
@@ -68,15 +65,13 @@ pub struct ToolState {
 impl Default for ToolState {
     fn default() -> Self {
         Self {
-            draft: Draft::new(Tool::Select),
+            host: ToolHost::default(),
             pen: None,
             typed: String::new(),
             cursor: None,
             dim_edit: None,
             dragging: false,
-            modify: None,
             offset_pick: None,
-            corner_first: None,
             corner: CornerSettings::default(),
             transform: TransformSettings::default(),
             text_settings: TextSettings::default(),

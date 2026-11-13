@@ -14,7 +14,7 @@ impl AppState {
     /// Apply a command from the AI client (one undo step, §16.4).
     pub fn apply_ai(&mut self, cmd: &Command) -> Result<Applied, DocError> {
         // A half-drawn shape may refer to what the AI changes.
-        self.tools.draft.cancel();
+        self.tools.host.tool_mut().reset();
         let out = self.doc.sketcher.apply(cmd)?;
         self.rebuild();
         Ok(out)

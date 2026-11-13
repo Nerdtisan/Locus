@@ -25,6 +25,7 @@ mod scene;
 mod settings;
 mod shapes;
 mod state;
+mod tool;
 mod tools;
 mod touch;
 mod view;
