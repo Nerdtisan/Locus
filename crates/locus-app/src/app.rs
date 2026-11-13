@@ -394,7 +394,7 @@ impl eframe::App for App {
             .show_inside(ui, &mut viewer);
         let ctx = ui.ctx().clone();
         let mut cx = cx!(self);
-        actions::touch_menu(&ctx, &self.registry, &mut cx);
+        crate::views::marking_menu::show(&ctx, &self.registry, &mut cx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

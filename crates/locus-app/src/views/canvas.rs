@@ -179,7 +179,19 @@ impl AppState {
                 .request_repaint_after(std::time::Duration::from_secs_f64(due + 0.01));
         }
         if let Some(p) = step.long_press {
-            self.open_touch_menu(p, rect);
+            self.open_marking(p, rect, false, now);
+        }
+        // Right-click opens the marking menu (design §3.1, §4, #290).
+        if !suppress
+            && resp.hovered()
+            && let Some(p) = ui.input(|i| {
+                i.pointer
+                    .button_pressed(PointerButton::Secondary)
+                    .then(|| i.pointer.press_origin())
+                    .flatten()
+            })
+        {
+            self.open_marking(p, rect, true, now);
         }
         let gesture = if self.view.touches.gesture_allowed() {
             ui.input(|i| i.multi_touch())
@@ -193,7 +205,8 @@ impl AppState {
             self.view.auto_fit = false;
         }
 
-        // Zoom about the cursor; middle/right-drag pans.
+        // Zoom about the cursor; middle-drag or Space + drag pans (design §3.1).
+        let space = ui.input(|i| i.key_down(egui::Key::Space));
         let hover = resp.hover_pos();
         if let Some(hp) = hover.filter(|_| !suppress) {
             let (scroll, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
@@ -203,7 +216,9 @@ impl AppState {
                 self.view.auto_fit = false;
             }
         }
-        if resp.dragged_by(PointerButton::Middle) || resp.dragged_by(PointerButton::Secondary) {
+        if resp.dragged_by(PointerButton::Middle)
+            || (space && resp.dragged_by(PointerButton::Primary))
+        {
             self.view.camera.pan_points(resp.drag_delta());
             self.view.auto_fit = false;
         }
@@ -218,8 +233,8 @@ impl AppState {
             self.selection.handles = wanted;
             self.rebuild();
         }
-        if suppress {
-            // Gesture in progress: no tool sees the pointer.
+        if suppress || space || self.view.marking.is_some() {
+            // A gesture, a Space pan or the marking menu: no tool sees the pointer.
         } else if self.modify().is_some_and(|m| m != Modify::Transform) {
             self.modify_input(ui, &resp, rect, settings.units);
         } else if self.tool() == Tool::Select {
@@ -279,9 +294,10 @@ impl AppState {
         status.grid = grid::label(grid::minor_step(self.view.camera.pt_per_mm).0);
     }
 
-    /// Long press (#251): in Select, the thing under the finger is selected
-    /// first (unless it already is), then the menu opens at the finger.
-    pub(crate) fn open_touch_menu(&mut self, at: Pos2, rect: egui::Rect) {
+    /// Right-click or long press (design §3.1, §4; #251, #290): in Select,
+    /// the thing under the pointer is selected first (unless it already is),
+    /// then the marking menu opens there.
+    pub(crate) fn open_marking(&mut self, at: Pos2, rect: egui::Rect, held: bool, now: f64) {
         if self.tool() == Tool::Select && self.modify().is_none() {
             let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
             let w = self.view.camera.to_world(at, rect);
@@ -291,7 +307,11 @@ impl AppState {
                 self.selection.items.set_all([id]);
             }
         }
-        self.view.touch_menu = Some(at);
+        self.view.marking = Some(crate::state::Marking {
+            at,
+            held,
+            since: now,
+        });
     }
 
     /// Sticky on-screen Shift / Ctrl for touch selection (#251). Shown once

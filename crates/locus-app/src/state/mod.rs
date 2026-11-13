@@ -15,7 +15,6 @@ use crate::settings::Units;
 use crate::tool::{ConstrainTool, Flow, ModifyTool, ToolCx, ToolEvent, ToolKind};
 use crate::tools::Tool;
 use crate::views::text_ui::FontCatalog;
-use egui::Pos2;
 use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, Sketcher};
 use locus_geom::{Aabb, Vec2};
 use std::collections::BTreeSet;
@@ -24,6 +23,7 @@ mod doc;
 mod selection;
 mod tools;
 mod view;
+pub(crate) use view::Marking;
 
 pub use doc::{DocState, Refusal};
 pub use selection::SelectionState;
@@ -674,13 +674,19 @@ impl AppState {
         self.tools.fonts = FontCatalog::new(ctx);
     }
 
-    /// Where the long-press menu is open, and the canvas it stays inside.
-    pub fn touch_menu(&self) -> Option<(Pos2, egui::Rect)> {
-        self.view.touch_menu.map(|p| (p, self.view.rect))
+    /// The open marking menu, and the canvas it stays inside.
+    pub fn marking(&self) -> Option<(crate::state::Marking, egui::Rect)> {
+        self.view.marking.map(|m| (m, self.view.rect))
     }
 
-    pub fn close_touch_menu(&mut self) {
-        self.view.touch_menu = None;
+    pub fn set_marking_held(&mut self, held: bool) {
+        if let Some(m) = &mut self.view.marking {
+            m.held = held;
+        }
+    }
+
+    pub fn close_marking(&mut self) {
+        self.view.marking = None;
     }
 
     /// Start dragging what was grabbed (#71). A point moves itself; a line

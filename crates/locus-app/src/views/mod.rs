@@ -8,6 +8,7 @@
 pub mod canvas;
 pub mod constraints;
 pub mod layers;
+pub mod marking_menu;
 pub mod parameters;
 pub mod patterns;
 pub mod properties;

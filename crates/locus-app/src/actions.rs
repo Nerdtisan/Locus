@@ -123,6 +123,8 @@ pub enum Op {
     Delete,
     /// Toggle the selection between normal and construction (#289).
     ToggleConstruction,
+    /// Run the last tool or command again (marking menu N slot, design §4).
+    Repeat,
     Fit,
     Toggle(Flag),
     /// A plugin command (SPEC §15), run by the [`PluginHost`].
@@ -141,6 +143,29 @@ pub enum ActionKind {
     Command,
     /// Flips a setting; shown as a checkbox.
     Toggle,
+}
+
+impl Action {
+    /// Is this worth repeating (design §4 N slot)? Tools and commands that
+    /// make or change something; not history, selection, view or Select.
+    fn repeatable(&self) -> bool {
+        match &self.op {
+            Op::Draw(t) => *t != Tool::Select,
+            Op::Modify(_)
+            | Op::Constrain(_)
+            | Op::Dimension
+            | Op::Delete
+            | Op::ToggleConstruction
+            | Op::Plugin { .. } => true,
+            Op::Undo
+            | Op::Redo
+            | Op::Repeat
+            | Op::SelectAll
+            | Op::Deselect
+            | Op::Fit
+            | Op::Toggle(_) => false,
+        }
+    }
 }
 
 impl Op {
@@ -521,6 +546,17 @@ pub static BUILTIN: &[Action] = &[
     ),
     // ── Edit ──
     a(
+        "edit.repeat",
+        "Repeat",
+        Group::Edit,
+        "⟳",
+        &["again", "last command"],
+        "Run the last tool or command again",
+        &[],
+        KeyScope::Global,
+        Op::Repeat,
+    ),
+    a(
         "edit.undo",
         "Undo",
         Group::Edit,
@@ -690,19 +726,50 @@ pub const CONSTRAIN_MENU: &[Item] = &concat::<16>(&[
 pub const CONSTRAINT_BAR: &[Item] =
     &concat::<14>(&[&CONSTRAINTS, &[Sep, A("constrain.dimension")]]);
 
-/// The touch long-press menu (#251).
-pub const TOUCH_MENU: &[Item] = &concat::<19>(&[
-    &CONSTRAINTS,
-    &[
-        A("constrain.dimension"),
-        Sep,
-        A("edit.select_all"),
-        A("edit.deselect"),
-        Sep,
-        A("edit.undo"),
-        A("edit.redo"),
-    ],
-]);
+/// The marking menu's ring (design §4, #290), clockwise from the top:
+/// N, NE, E, SE, S, SW, W, NW. It never changes with context, so a flick
+/// toward a slot becomes muscle memory; actions that can't run are dimmed.
+pub const MARKING_RING: [&str; 8] = [
+    "edit.repeat",
+    "edit.undo",
+    "modify.transform",
+    "modify.offset",
+    "edit.delete",
+    "modify.construction",
+    "modify.trim",
+    "constrain.dimension",
+];
+
+/// The marking menu's list under the ring (design §4): it depends on
+/// whether anything is selected. Constraints that fit the selection follow
+/// it under "Constrain" (see [`constraints_for`]).
+#[must_use]
+pub fn marking_list(selected: bool) -> &'static [Item] {
+    if selected {
+        &[
+            A("modify.construction"),
+            A("edit.delete"),
+            Sep,
+            A("edit.deselect"),
+            A("edit.select_all"),
+        ]
+    } else {
+        &[A("edit.select_all"), A("view.fit"), Sep, A("edit.redo")]
+    }
+}
+
+/// The constraint actions the selection supports now.
+#[must_use]
+pub fn constraints_for<'a>(reg: &'a Registry, state: &AppState) -> Vec<&'a Action> {
+    CONSTRAINTS
+        .iter()
+        .filter_map(|i| match i {
+            Item::Action(id) => reg.get(id),
+            Item::Separator => None,
+        })
+        .filter(|a| reg.enabled(a, state).yes())
+        .collect()
+}
 
 pub const EDIT_MENU: &[Item] = &[
     A("edit.undo"),
@@ -847,6 +914,15 @@ impl Registry {
             .filter(move |a| matches!(&a.op, Op::Plugin { kind: k, .. } if *k == kind))
     }
 
+    /// The action Repeat would run: the last tool or command that ran.
+    pub fn repeatable(&self, canvas: &AppState) -> Option<&Action> {
+        canvas
+            .tools
+            .last_action
+            .as_deref()
+            .and_then(|id| self.get(id))
+    }
+
     /// The first key bound to an action, as menus show it.
     pub fn shortcut(&self, a: &Action) -> Option<KeyboardShortcut> {
         a.keys.first().copied()
@@ -862,6 +938,10 @@ impl Registry {
             Op::Undo => Enabled::when(canvas.undo_label().is_some(), "Nothing to undo"),
             Op::Redo => Enabled::when(canvas.redo_label().is_some(), "Nothing to redo"),
             Op::Delete => Enabled::when(!canvas.is_drawing(), "Finish the shape being drawn"),
+            Op::Repeat => match self.repeatable(canvas) {
+                Some(last) => self.enabled(last, canvas),
+                None => Enabled::No("Nothing to repeat yet".into()),
+            },
             Op::ToggleConstruction => {
                 Enabled::when(canvas.construction_toggle().is_some(), a.hint.clone())
             }
@@ -891,6 +971,7 @@ impl Registry {
         let step = match a.op {
             Op::Undo => canvas.undo_label(),
             Op::Redo => canvas.redo_label(),
+            Op::Repeat => self.repeatable(canvas).map(|l| l.label.as_ref()),
             _ => None,
         };
         match step {
@@ -903,7 +984,15 @@ impl Registry {
     /// rather than doing nothing silently.
     pub fn run(&self, a: &Action, cx: &mut Cx<'_>) {
         let canvas = &mut *cx.state;
+        if a.repeatable() {
+            canvas.tools.last_action = Some(a.id.as_str().to_owned());
+        }
         match &a.op {
+            Op::Repeat => {
+                if let Some(last) = self.repeatable(canvas) {
+                    self.run(last, cx);
+                }
+            }
             Op::Draw(t) => canvas.set_tool(*t),
             Op::Modify(m) => canvas.set_modify(*m),
             Op::Constrain(k) => canvas.constrain(*k),
@@ -991,8 +1080,6 @@ pub enum Style {
     Menu,
     /// The tool strip and constraint bar: compact, key in the label.
     Strip,
-    /// The touch menu: large plain buttons.
-    Touch,
 }
 
 /// Draw `items` from the registry. Returns true when an action ran.
@@ -1085,35 +1172,6 @@ pub fn show_one(
     clicked
 }
 
-/// The long-press menu (#251), opened by the canvas: what the selection
-/// supports, selection and history. A press outside it, Esc or a choice
-/// closes it.
-pub fn touch_menu(ctx: &egui::Context, reg: &Registry, cx: &mut Cx<'_>) {
-    let Some((at, rect)) = cx.state.touch_menu() else {
-        return;
-    };
-    let mut close = false;
-    let area = egui::Area::new(egui::Id::new("locus-touch-menu"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(at)
-        .constrain_to(rect)
-        .show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.spacing_mut().button_padding = egui::vec2(14.0, 10.0);
-                close = show(ui, reg, cx, TOUCH_MENU, Style::Touch);
-            });
-        });
-    let outside = ctx.input(|i| {
-        i.pointer.any_pressed()
-            && i.pointer
-                .press_origin()
-                .is_some_and(|p| !area.response.rect.contains(p))
-    });
-    if close || outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        cx.state.close_touch_menu();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,7 +1246,9 @@ mod tests {
             TOOL_STRIP,
             CONSTRAIN_MENU,
             CONSTRAINT_BAR,
-            TOUCH_MENU,
+            marking_list(true),
+            marking_list(false),
+            &MARKING_RING.map(Item::Action),
             EDIT_MENU,
             VIEW_MENU,
         ] {
@@ -1280,6 +1340,30 @@ mod tests {
         }
         assert!(canvas.stroke_preview());
         assert_eq!(settings.auto_constrain, !before);
+    }
+
+    /// Repeat (marking menu N slot) runs the last tool or command; undo,
+    /// selection and view actions don't count as one.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn repeat_runs_the_last_tool_again() {
+        let r = Registry::default();
+        let mut canvas = AppState::default();
+        let mut settings = Settings::default();
+        let repeat = r.get("edit.repeat").unwrap();
+        assert!(!r.enabled(repeat, &canvas).yes(), "nothing to repeat yet");
+        let mut cx = Cx {
+            state: &mut canvas,
+            settings: &mut settings,
+            plugins: None,
+        };
+        r.run(r.get("modify.trim").unwrap(), &mut cx);
+        r.run(r.get("select.select").unwrap(), &mut cx);
+        r.run(r.get("view.fit").unwrap(), &mut cx);
+        assert_eq!(cx.state.modify(), None);
+        assert_eq!(r.label(repeat, cx.state), "Repeat Trim");
+        r.run(repeat, &mut cx);
+        assert_eq!(cx.state.modify(), Some(Modify::Trim));
     }
 
     #[test]
