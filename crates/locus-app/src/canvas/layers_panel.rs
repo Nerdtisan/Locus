@@ -130,13 +130,7 @@ impl Canvas {
             self.draft.set_layer(id);
         }
         if want.add {
-            let doc = self.sketcher.document();
-            let n = doc.layers().len();
-            let cmd = Command::AddLayer {
-                name: unique_name(doc),
-                colour: PALETTE[n % PALETTE.len()],
-                operation: OperationKind::Cut.default_operation(),
-            };
+            let cmd = new_layer(self.sketcher.document());
             self.apply_reporting(&cmd);
             if self.notice.is_none()
                 && let Some(&newest) = self.sketcher.document().layers().keys().next_back()
@@ -306,6 +300,15 @@ impl Canvas {
                 }
             });
         self.settle_dialog(dialog, run, keep);
+    }
+}
+
+/// The command behind "+ Add layer": a Draw layer (#288), next palette colour.
+fn new_layer(doc: &Document) -> Command {
+    Command::AddLayer {
+        name: unique_name(doc),
+        colour: PALETTE[doc.layers().len() % PALETTE.len()],
+        operation: OperationKind::Draw.default_operation(),
     }
 }
 
@@ -696,5 +699,22 @@ impl LayerUi {
             plan,
             error: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_layer_defaults_to_draw() {
+        let doc = Document::new();
+        assert!(matches!(
+            new_layer(&doc),
+            Command::AddLayer {
+                operation: Operation::Draw(_),
+                ..
+            }
+        ));
     }
 }

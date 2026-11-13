@@ -7,10 +7,9 @@
     1: (
       name: "Layer 1",
       colour: (0, 0, 0),
-      operation: Cut((
-        kerf_width: 0.0,
-        compensation: r#None,
-        passes: 1,
+      operation: Draw((
+        pen_number: 1,
+        pen_width: 0.4,
       )),
       export_order: 0,
       visible: true,
