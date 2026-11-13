@@ -86,6 +86,8 @@ pub struct FileIo {
     pending: Option<Action>,
     /// The open pre-export panel (SPEC §8 Validation, #128).
     export: Option<ExportPanel>,
+    /// File ▸ Export ▸ "Each layer as a separate file" (#291).
+    export_each_layer: bool,
     exporters: locus_export::Registry,
     checks: Option<ExtraChecks>,
     allow_close: bool,
@@ -112,6 +114,7 @@ impl FileIo {
             reference_notice: None,
             pending: None,
             export: None,
+            export_each_layer: false,
             exporters: locus_export::Registry::builtin(),
             checks: None,
             allow_close: false,
@@ -280,6 +283,12 @@ impl FileIo {
                 ui.close();
             }
             ui.separator();
+            ui.checkbox(&mut self.export_each_layer, "Each layer as a separate file")
+                .on_hover_text(if cfg!(target_arch = "wasm32") {
+                    "One file per layer on the same canvas, downloaded as a .zip."
+                } else {
+                    "One file per layer on the same canvas, written to a folder you pick."
+                });
             let formats: Vec<(String, String)> = self
                 .exporters
                 .iter()
@@ -475,7 +484,11 @@ impl FileIo {
         let prepared = locus_export::prepare(canvas.document(), false);
         let extra = self.extra(&prepared);
         if prepared.report.issues.is_empty() && extra.is_empty() {
-            self.write_export(format, &prepared);
+            if self.export_each_layer {
+                self.write_export_per_layer(format, &prepared);
+            } else {
+                self.write_export(format, &prepared);
+            }
         } else {
             self.export = Some(ExportPanel {
                 format: format.to_owned(),
@@ -485,6 +498,7 @@ impl FileIo {
                 picker: false,
                 profile_changed: false,
                 extra,
+                per_layer: self.export_each_layer,
             });
         }
     }
@@ -509,6 +523,7 @@ impl FileIo {
             picker: true,
             profile_changed: false,
             extra,
+            per_layer: self.export_each_layer,
         });
     }
 
@@ -541,6 +556,90 @@ impl FileIo {
         };
         if let Err(msg) = write_atomic(&path, &done.bytes) {
             self.error = Some(msg);
+        }
+    }
+
+    /// One exported file per layer, named `<document>-<layer>.<ext>` (#291).
+    /// Returns the (name, bytes) pairs, or reports why there are none.
+    fn per_layer_files(
+        &mut self,
+        format: &str,
+        prepared: &Prepared,
+    ) -> Option<Vec<(String, Vec<u8>)>> {
+        let files = locus_export::split_layers(&prepared.model);
+        if files.is_empty() {
+            self.error = Some("No layer has anything to export.".to_owned());
+            return None;
+        }
+        let exporter = self.exporters.get(format)?;
+        let stem = self.name.as_deref().map_or("untitled", strip_ext);
+        let names = locus_export::file_names(stem, &files, exporter.extension());
+        let mut out = Vec::with_capacity(files.len());
+        for (f, name) in files.iter().zip(names) {
+            match exporter.export(&f.model) {
+                Ok(done) => out.push((name, done.bytes)),
+                Err(e) => {
+                    self.error = Some(format!("Export failed: {e}."));
+                    return None;
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// Browser: all the layer files as one `.zip` download.
+    #[cfg(target_arch = "wasm32")]
+    fn write_export_per_layer(&mut self, format: &str, prepared: &Prepared) {
+        let Some(files) = self.per_layer_files(format, prepared) else {
+            return;
+        };
+        match locus_export::zip(&files) {
+            Ok(bytes) => {
+                let stem = self.name.as_deref().map_or("untitled", strip_ext);
+                web::Web::download(&format!("{stem}.zip"), &bytes, "application/zip");
+            }
+            Err(e) => self.error = Some(format!("Export failed: {e}.")),
+        }
+    }
+
+    /// Desktop: pick a folder once, ask before replacing files, write each
+    /// atomically.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn write_export_per_layer(&mut self, format: &str, prepared: &Prepared) {
+        let Some(files) = self.per_layer_files(format, prepared) else {
+            return;
+        };
+        let Some(dir) = rfd::FileDialog::new()
+            .set_title("Export each layer to a folder")
+            .pick_folder()
+        else {
+            return;
+        };
+        let existing: Vec<&str> = files
+            .iter()
+            .filter(|(n, _)| dir.join(n).exists())
+            .map(|(n, _)| n.as_str())
+            .collect();
+        if !existing.is_empty() {
+            let answer = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Warning)
+                .set_title("Replace existing files?")
+                .set_description(format!(
+                    "{} of these files already exist in that folder and will be replaced:\n{}",
+                    existing.len(),
+                    existing.join("\n")
+                ))
+                .set_buttons(rfd::MessageButtons::YesNo)
+                .show();
+            if answer != rfd::MessageDialogResult::Yes {
+                return;
+            }
+        }
+        for (name, bytes) in &files {
+            if let Err(msg) = write_atomic(&dir.join(name), bytes) {
+                self.error = Some(msg);
+                return;
+            }
         }
     }
 
@@ -666,6 +765,12 @@ impl FileIo {
                         "Errors block export. Fix them in the sketch or apply the auto-fixes.",
                     );
                 }
+                ui.checkbox(&mut panel.per_layer, "Export each layer as a separate file")
+                    .on_hover_text(if cfg!(target_arch = "wasm32") {
+                        "One file per layer on the same canvas, downloaded as a .zip."
+                    } else {
+                        "One file per layer on the same canvas, written to a folder you pick."
+                    });
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
@@ -713,12 +818,17 @@ impl FileIo {
                 );
                 let extra = extra_for(&prepared);
                 let format = panel.format.clone();
+                let per_layer = panel.per_layer;
                 if blocked(&prepared, &extra) {
                     panel.prepared = prepared;
                     panel.extra = extra;
                 } else {
                     self.export = None;
-                    self.write_export(&format, &prepared);
+                    if per_layer {
+                        self.write_export_per_layer(&format, &prepared);
+                    } else {
+                        self.write_export(&format, &prepared);
+                    }
                 }
             }
             Some(Do::Cancel) => self.export = None,
@@ -861,6 +971,8 @@ struct ExportPanel {
     profile_changed: bool,
     /// Validator plugins' findings on `prepared` (#234).
     extra: Vec<ExtraFinding>,
+    /// Write one file per layer instead of one file (#291).
+    per_layer: bool,
 }
 
 /// The profile combo, import / save buttons and a one-line summary. A change
