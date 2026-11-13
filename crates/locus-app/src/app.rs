@@ -7,74 +7,14 @@
 
 use crate::actions::{self, Cx, Registry, Style};
 use crate::file_io::FileIo;
+use crate::layout::{self, Tab, default_layout};
 use crate::settings::{Settings, Theme, Units};
 use crate::state::AppState;
 use crate::views::layers::LayersView;
 use crate::views::parameters::ParametersView;
 use crate::views::patterns::PatternsView;
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui_dock::{DockArea, DockState, TabViewer};
 use locus_geom::Vec2;
-use serde::{Deserialize, Serialize};
-
-const LAYOUT_KEY: &str = "locus.layout.v1";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Tab {
-    Canvas,
-    Properties,
-    Layers,
-    Constraints,
-    /// Regions and boolean recipes (#124).
-    Regions,
-    /// Named parameters for dimension expressions (#171).
-    Parameters,
-    /// Linear and circular patterns (#168, #169).
-    Patterns,
-}
-
-impl Tab {
-    fn title(self) -> &'static str {
-        match self {
-            Tab::Canvas => "Sketch",
-            Tab::Properties => "Properties",
-            Tab::Layers => "Layers",
-            Tab::Constraints => "Constraints",
-            Tab::Regions => "Regions",
-            Tab::Parameters => "Parameters",
-            Tab::Patterns => "Patterns",
-        }
-    }
-}
-
-fn default_layout() -> DockState<Tab> {
-    let mut dock = DockState::new(vec![Tab::Canvas]);
-    let tree = dock.main_surface_mut();
-    let [_canvas, right] = tree.split_right(
-        NodeIndex::root(),
-        0.76,
-        vec![
-            Tab::Properties,
-            Tab::Layers,
-            Tab::Regions,
-            Tab::Parameters,
-            Tab::Patterns,
-        ],
-    );
-    tree.split_below(right, 0.55, vec![Tab::Constraints]);
-    dock
-}
-
-/// A saved layout is only trusted if it parses and still holds the canvas;
-/// otherwise the default is used (a corrupt file never crashes the app).
-fn parse_layout(json: &str) -> DockState<Tab> {
-    match serde_json::from_str::<DockState<Tab>>(json) {
-        Ok(d) if d.iter_all_tabs().any(|(_, t)| *t == Tab::Canvas) => d,
-        _ => {
-            tracing::warn!("saved layout unusable, using default");
-            default_layout()
-        }
-    }
-}
 
 /// What the status bar shows, refreshed by the canvas each frame.
 #[derive(Debug, Default)]
@@ -131,10 +71,12 @@ impl App {
         crate::fonts::install(&cc.egui_ctx);
         let settings = Settings::load(cc.storage);
         cc.egui_ctx.set_theme(settings.theme.preference());
-        let dock = cc
-            .storage
-            .and_then(|s| s.get_string(LAYOUT_KEY))
-            .map_or_else(default_layout, |j| parse_layout(&j));
+        let dock = cc.storage.map_or_else(default_layout, |s| {
+            layout::load(
+                s.get_string(layout::LAYOUT_V2_KEY).as_deref(),
+                s.get_string(layout::LAYOUT_V1_KEY).as_deref(),
+            )
+        });
         #[allow(unused_mut)] // mutated only on desktop
         let mut app = Self {
             dock,
@@ -460,36 +402,10 @@ impl eframe::App for App {
         self.files.save_state(storage);
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp.save(storage);
-        if let Ok(json) = serde_json::to_string(&self.dock) {
-            storage.set_string(LAYOUT_KEY, json);
+        // v1 is left in place for older builds (design §7.4).
+        if let Some(json) = layout::save(&self.dock) {
+            storage.set_string(layout::LAYOUT_V2_KEY, json);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn layout_round_trips() {
-        let json = serde_json::to_string(&default_layout()).unwrap_or_default();
-        assert_eq!(parse_layout(&json).iter_all_tabs().count(), 7);
-    }
-
-    #[test]
-    fn corrupt_layout_falls_back() {
-        for bad in ["", "{", "null", "{\"surfaces\":[]}", "42"] {
-            let d = parse_layout(bad);
-            assert!(d.iter_all_tabs().any(|(_, t)| *t == Tab::Canvas), "{bad:?}");
-        }
-    }
-
-    #[test]
-    fn layout_without_canvas_falls_back() {
-        let json =
-            serde_json::to_string(&DockState::new(vec![Tab::Properties])).unwrap_or_default();
-        let back = parse_layout(&json);
-        assert!(back.iter_all_tabs().any(|(_, t)| *t == Tab::Canvas));
     }
 }
 

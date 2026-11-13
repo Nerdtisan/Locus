@@ -12,6 +12,7 @@ mod fonts;
 mod grid;
 mod hit;
 mod infer;
+mod layout;
 #[cfg(not(target_arch = "wasm32"))]
 mod mcp;
 mod modify_tool;
