@@ -122,7 +122,7 @@ impl AppState {
             // offset path would vanish into the sketch line: a translucent
             // band (true kerf width, at least 6 px) marks where the cut goes.
             if p.kerf > 0.0 {
-                let band = (p.kerf * self.view.pt_per_mm).max(6.0) as f32;
+                let band = (p.kerf * self.view.camera.pt_per_mm).max(6.0) as f32;
                 painter.add(egui::Shape::line(
                     pts.clone(),
                     Stroke::new(band, colour.gamma_multiply(0.3)),
