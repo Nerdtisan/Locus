@@ -54,6 +54,7 @@ pub enum Tool {
 }
 
 impl Tool {
+    #[cfg(test)]
     pub const DRAWING: [Tool; 15] = [
         Tool::Point,
         Tool::Line,
@@ -72,7 +73,7 @@ impl Tool {
         Tool::Text,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Tool::Select => "Select",
             Tool::Point => "Point",
@@ -90,25 +91,6 @@ impl Tool {
             Tool::Text => "Text",
             Tool::ArcThreePoint => "Arc (3-point)",
             Tool::ArcCentre => "Arc (centre)",
-        }
-    }
-
-    /// Single-key shortcut shown in menus and tooltips.
-    pub fn key(self) -> Option<char> {
-        match self {
-            Tool::Select => Some('S'),
-            Tool::Point => Some('P'),
-            Tool::Line => Some('L'),
-            Tool::Circle => Some('C'),
-            Tool::ArcThreePoint => Some('A'),
-            Tool::ArcCentre => Some('R'),
-            Tool::RectCorner => Some('B'),
-            Tool::ArcTangent => Some('I'),
-            Tool::Polygon => Some('G'),
-            Tool::Slot => Some('U'),
-            Tool::Bezier => Some('N'),
-            // T is Tangent; text has no single-key shortcut.
-            Tool::RectCentre | Tool::RectThree | Tool::Circle2 | Tool::Circle3 | Tool::Text => None,
         }
     }
 

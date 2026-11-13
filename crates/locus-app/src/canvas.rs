@@ -108,6 +108,9 @@ pub struct Canvas {
     touch_toggle: bool,
     /// Long-press context menu anchor, in screen points (#251).
     touch_menu: Option<Pos2>,
+    /// The canvas rectangle and whether the pointer was over it, last frame.
+    rect: egui::Rect,
+    pointer_over: bool,
     /// Béziers whose handles are shown: selected, or with a selected point (#160).
     handles: BTreeSet<EntityId>,
     /// Pen tool: where the button went down and where the pointer is now
@@ -178,6 +181,8 @@ impl Default for Canvas {
             touch_add: false,
             touch_toggle: false,
             touch_menu: None,
+            rect: egui::Rect::NOTHING,
+            pointer_over: false,
             handles: BTreeSet::new(),
             pen: None,
             draft: Draft::new(Tool::Select),
@@ -722,51 +727,28 @@ impl Canvas {
         }
     }
 
-    /// Single-key shortcuts: tools anywhere, constraints in Select mode (#68,
-    /// #70). Not while typing a value or in a text field.
-    fn hotkeys(&mut self, ui: &egui::Ui, units: Units) {
-        use egui::Key;
-        if self.dim_edit.is_some() || !self.typed.is_empty() || ui.ctx().egui_wants_keyboard_input()
-        {
-            return;
-        }
-        if !self.draft.is_drawing()
-            && ui.input(|i| {
-                !(i.modifiers.command || i.modifiers.alt)
-                    && (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
-            })
-        {
-            self.delete_selection();
-            return;
-        }
-        let pressed = |c: char| {
-            ui.input(|i| {
-                !(i.modifiers.command || i.modifiers.alt)
-                    && Key::from_name(&c.to_string()).is_some_and(|k| i.key_pressed(k))
-            })
-        };
-        if let Some(t) = [Tool::Select]
-            .into_iter()
-            .chain(Tool::DRAWING)
-            .find(|t| t.key().is_some_and(pressed))
-        {
-            self.set_tool(t);
-            return;
-        }
-        if self.draft.tool() != Tool::Select || self.modify.is_some() {
-            return;
-        }
-        if pressed('D') {
-            self.start_dimension(units);
-        } else if let Some(k) = Kind::ALL.into_iter().find(|k| pressed(k.key())) {
-            self.constrain(k);
-        }
+    /// Whether the canvas lets a plain-key shortcut through: not while a
+    /// value is typed or the dimension editor is open (#68, #70). A focused
+    /// text field is checked by the registry's dispatch.
+    pub fn accepts_keys(&self) -> bool {
+        self.dim_edit.is_none() && self.typed.is_empty()
+    }
+
+    /// True while a drawing tool has clicks pending.
+    pub fn is_drawing(&self) -> bool {
+        self.draft.is_drawing()
+    }
+
+    /// Whether the pointer was over the canvas last frame: plain-letter
+    /// shortcuts only act there.
+    pub fn pointer_over(&self) -> bool {
+        self.pointer_over
     }
 
     /// Delete the selection with its dependents as one undo step (#223,
-    /// SPEC §11). Only reached from [`Self::hotkeys`], so never while a typed
-    /// value or a text field has the keyboard.
-    fn delete_selection(&mut self) {
+    /// SPEC §11). Run by the `edit.delete` action, whose key waits while a
+    /// typed value or a text field has the keyboard.
+    pub fn delete_selection(&mut self) {
         let ids: Vec<EntityId> = self.selection.iter().collect();
         if let Some(cmd) = locus_doc::delete::delete_entities(self.sketcher.document(), &ids)
             && self.apply_reporting(&cmd)
@@ -1094,9 +1076,8 @@ impl Canvas {
         if suppress {
             self.abandon_pointer_action();
         }
-        if resp.hovered() {
-            self.hotkeys(ui, settings.units);
-        }
+        self.pointer_over = resp.hovered();
+        self.rect = rect;
         let wanted = self.wanted_handles();
         if wanted != self.handles {
             self.handles = wanted;
@@ -1156,7 +1137,6 @@ impl Canvas {
         self.draw_pattern_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
-        self.touch_menu_ui(ui, rect, settings.units);
 
         status.cursor = hover.map(|p| self.view.to_world(p, rect));
         status.extent_mm = self.view.extent_mm(rect);
@@ -1178,64 +1158,13 @@ impl Canvas {
         self.touch_menu = Some(at);
     }
 
-    /// The long-press context menu: what the selection supports, plus undo.
-    fn touch_menu_ui(&mut self, ui: &mut egui::Ui, rect: egui::Rect, units: Units) {
-        let Some(at) = self.touch_menu else { return };
-        let mut close = false;
-        let area = egui::Area::new(egui::Id::new("locus-touch-menu"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(at)
-            .constrain_to(rect)
-            .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.spacing_mut().button_padding = egui::vec2(14.0, 10.0);
-                    for kind in Kind::ALL {
-                        let on = self.can_constrain(kind);
-                        if ui
-                            .add_enabled(on, egui::Button::new(kind.label()))
-                            .clicked()
-                        {
-                            self.constrain(kind);
-                            close = true;
-                        }
-                    }
-                    let dim = egui::Button::new("Dimension");
-                    if ui.add_enabled(self.can_dimension(), dim).clicked() {
-                        self.start_dimension(units);
-                        close = true;
-                    }
-                    ui.separator();
-                    if ui.button("Select all").clicked() {
-                        self.select_all();
-                        close = true;
-                    }
-                    if ui.button("Clear selection").clicked() {
-                        self.clear_selection();
-                        close = true;
-                    }
-                    ui.separator();
-                    let undo = egui::Button::new("Undo");
-                    if ui.add_enabled(self.undo_label().is_some(), undo).clicked() {
-                        self.undo();
-                        close = true;
-                    }
-                    let redo = egui::Button::new("Redo");
-                    if ui.add_enabled(self.redo_label().is_some(), redo).clicked() {
-                        self.redo();
-                        close = true;
-                    }
-                });
-            });
-        // A press anywhere outside dismisses it.
-        let outside = ui.input(|i| {
-            i.pointer.any_pressed()
-                && i.pointer
-                    .press_origin()
-                    .is_some_and(|p| !area.response.rect.contains(p))
-        });
-        if close || outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.touch_menu = None;
-        }
+    /// Where the long-press menu is open, and the canvas it stays inside.
+    pub fn touch_menu(&self) -> Option<(Pos2, egui::Rect)> {
+        self.touch_menu.map(|p| (p, self.rect))
+    }
+
+    pub fn close_touch_menu(&mut self) {
+        self.touch_menu = None;
     }
 
     /// Sticky on-screen Shift / Ctrl for touch selection (#251). Shown once
@@ -1729,12 +1658,7 @@ impl Canvas {
         }
 
         if resp.hovered() {
-            let (esc, all) = ui.input(|i| {
-                (
-                    i.key_pressed(egui::Key::Escape),
-                    i.modifiers.command && i.key_pressed(egui::Key::A),
-                )
-            });
+            let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if esc && self.region_ui.combine.is_some() {
                 self.cancel_combine();
@@ -1744,9 +1668,6 @@ impl Canvas {
             }
             if enter && self.region_ui.combine.is_some() {
                 self.finish_combine();
-            }
-            if all {
-                self.select_all();
             }
         }
     }
@@ -2324,7 +2245,8 @@ mod tests {
         assert_eq!(c.active_layer(), l1);
     }
 
-    /// Runs one frame of `hotkeys` with `key` pressed.
+    /// Runs one frame of the registry's key dispatch with `key` pressed and
+    /// the pointer over the canvas.
     fn press(c: &mut Canvas, key: egui::Key) {
         let ctx = egui::Context::default();
         let input = egui::RawInput {
@@ -2337,7 +2259,16 @@ mod tests {
             }],
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| c.hotkeys(ui, Units::Mm));
+        let reg = crate::actions::Registry::default();
+        let mut settings = Settings::default();
+        let _ = ctx.run_ui(input, |ui| {
+            let mut cx = crate::actions::Cx {
+                canvas: c,
+                settings: &mut settings,
+                plugins: None,
+            };
+            reg.dispatch_keys(ui.ctx(), &mut cx, true);
+        });
     }
 
     #[test]
@@ -2383,6 +2314,35 @@ mod tests {
             assert_eq!(c.document().entities(), before.entities());
             assert_eq!(c.document().constraints(), before.constraints());
         }
+    }
+
+    /// The design's shortcut map (§5): tool letters pick tools; constraints
+    /// have no letters, so H no longer adds Horizontal (owner decision).
+    #[test]
+    fn letters_pick_tools_and_constraints_have_none() {
+        let mut c = Canvas::default();
+        press(&mut c, egui::Key::L);
+        assert_eq!(c.tool(), Tool::Line);
+        press(&mut c, egui::Key::R);
+        assert_eq!(c.tool(), Tool::RectCorner);
+        press(&mut c, egui::Key::T);
+        assert_eq!(c.modify(), Some(Modify::Trim));
+        // B (old rectangle key) is unbound now.
+        press(&mut c, egui::Key::B);
+        assert_eq!(c.modify(), Some(Modify::Trim));
+        c.set_tool(Tool::Select);
+        let line = c
+            .document()
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Line { .. }) && e.construction)
+            .map(|(id, _)| id);
+        c.selection.set_all(line);
+        let before = c.document().constraints().len();
+        for k in [egui::Key::H, egui::Key::V, egui::Key::K, egui::Key::F] {
+            press(&mut c, k);
+        }
+        assert_eq!(c.document().constraints().len(), before);
     }
 
     #[test]
