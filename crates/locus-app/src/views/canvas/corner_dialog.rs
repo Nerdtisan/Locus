@@ -19,7 +19,7 @@ use locus_doc::{Document, Editor, EntityId, Geom};
 
 /// A size field's value in mm (or degrees, for an angle), and the
 /// expression to keep when it wasn't a plain number.
-fn field(
+pub(crate) fn field(
     text: &str,
     angle: bool,
     units: Units,
@@ -190,18 +190,7 @@ impl AppState {
                                 .show(ui);
                             let r = out.response.response.clone();
                             if first && focus {
-                                // Focus the size with its text selected, so
-                                // typing replaces it (design §3).
-                                r.request_focus();
-                                let mut state = out.state;
-                                let end = text.chars().count();
-                                state
-                                    .cursor
-                                    .set_char_range(Some(egui::text::CCursorRange::two(
-                                        egui::text::CCursor::new(0),
-                                        egui::text::CCursor::new(end),
-                                    )));
-                                state.store(ui.ctx(), r.id);
+                                focus_all(ui, &r, out.state, text);
                             }
                             first = false;
                             if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -244,6 +233,25 @@ impl AppState {
             self.set_tool(crate::tools::Tool::Select);
         }
     }
+}
+
+/// Focus a dialog field with its text selected, so typing replaces it
+/// (design §3: typing goes into the focused field).
+pub(crate) fn focus_all(
+    ui: &egui::Ui,
+    r: &egui::Response,
+    mut state: egui::text_edit::TextEditState,
+    text: &str,
+) {
+    r.request_focus();
+    let end = text.chars().count();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(end),
+        )));
+    state.store(ui.ctx(), r.id);
 }
 
 /// A curve's shape from its geometry in `doc`, for previews.

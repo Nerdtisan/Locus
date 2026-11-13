@@ -249,7 +249,7 @@ impl AppState {
         let center = self.selection_center().unwrap_or(Vec2::ZERO);
         let world = |p: Pos2| self.view.camera.to_world(p, rect);
         if resp.drag_started_by(PointerButton::Primary)
-            && let Some(o) = ui.input(|i| i.pointer.press_origin())
+            && let Some(o) = super::press_pos(ui, resp)
         {
             let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
             let grip = gizmo.grip_at(o).or_else(|| {
@@ -286,8 +286,7 @@ impl AppState {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
         // A click on a grip is not a selection click.
-        let on_grip = ui
-            .input(|i| i.pointer.press_origin())
+        let on_grip = super::press_pos(ui, resp)
             .and_then(|o| gizmo.grip_at(o))
             .is_some();
         if !on_grip {
