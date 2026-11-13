@@ -13,7 +13,7 @@
 //! and never panics). A document stores only the profile *id* (SPEC §10).
 
 use crate::pipeline::ExportModel;
-use locus_doc::{Operation, OperationKind, check_profile_id};
+use locus_doc::{Operation, OperationKind, Style, check_profile_id};
 use locus_geom::{Aabb, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -146,14 +146,21 @@ impl Defaults {
                     p.blade_offset = b;
                 }
             }
-            Operation::Draw(p) => {
-                if let Some(w) = self.pen_width_mm {
-                    p.pen_width = w;
-                }
-            }
             _ => {}
         }
         op
+    }
+
+    /// The style this profile suggests for new objects: its pen width, if it
+    /// sets one. The pen is each object's own since M5 (SPEC §4, §7, #287), so
+    /// it seeds the app's current style instead of a Draw layer.
+    #[must_use]
+    pub fn style(&self) -> Style {
+        let mut s = Style::default();
+        if let Some(w) = self.pen_width_mm {
+            s.width = w;
+        }
+        s
     }
 
     fn validate(&self) -> Result<(), ProfileError> {
@@ -480,9 +487,9 @@ mod tests {
         assert!(
             matches!(d.operation(OperationKind::DragKnife), Operation::DragKnife(p) if p.blade_offset == 0.5)
         );
-        assert!(
-            matches!(d.operation(OperationKind::Draw), Operation::Draw(p) if p.pen_width == 0.7)
-        );
+        assert!(matches!(d.operation(OperationKind::Draw), Operation::Draw));
+        assert_eq!(d.style().width, 0.7);
+        assert_eq!(Defaults::default().style(), Style::default());
         assert!(matches!(
             Defaults::default().operation(OperationKind::Score),
             Operation::Score

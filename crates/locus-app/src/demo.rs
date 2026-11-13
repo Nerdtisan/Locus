@@ -20,6 +20,7 @@ impl Builder {
         let cmd = Command::AddEntity {
             layer: Document::default_layer(),
             construction,
+            style: Default::default(),
             geom,
         };
         self.ed.apply(&cmd).ok()?.entities.first().copied()

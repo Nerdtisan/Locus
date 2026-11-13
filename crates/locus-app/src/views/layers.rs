@@ -639,20 +639,12 @@ fn operation_editor(
                     done |= r.changed();
                     ui.end_row();
                 }
-                Operation::Draw(p) => {
-                    ui.label("Pen number");
-                    let r = ui.add(DragValue::new(&mut p.pen_number).range(1..=256));
-                    changed |= r.changed();
-                    done |= r.drag_stopped() || r.lost_focus();
+                Operation::Draw => {
+                    // Draw layers have no pen settings since M5: the pen is
+                    // each object's style (design §2.1, #287).
+                    ui.label("");
+                    ui.weak("Pen and width are set per object (Style)");
                     ui.end_row();
-                    f(
-                        ui,
-                        "Pen width",
-                        &mut p.pen_width,
-                        (0.001, 1000.0),
-                        " mm",
-                        (&mut changed, &mut done),
-                    );
                 }
                 Operation::DragKnife(p) => {
                     f(
@@ -728,7 +720,7 @@ mod tests {
         assert!(matches!(
             new_layer(&doc),
             Command::AddLayer {
-                operation: Operation::Draw(_),
+                operation: Operation::Draw,
                 ..
             }
         ));

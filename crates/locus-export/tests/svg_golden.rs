@@ -87,6 +87,7 @@ fn layers_match_golden() {
             ed.apply(&Command::AddEntity {
                 layer: l,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Point {
                     pos: Vec2::new(x, y),
                 },
@@ -98,6 +99,7 @@ fn layers_match_golden() {
         ed.apply(&Command::AddEntity {
             layer: l,
             construction: false,
+            style: Default::default(),
             geom: Geom::Line { start: s, end: e },
         })
         .unwrap();

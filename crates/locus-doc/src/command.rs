@@ -25,6 +25,7 @@ use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 use crate::operation::Operation;
 use crate::params;
 use crate::recipe::{self, Recipe, RecipeKind};
+use crate::style::{Style, StylePatch};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,9 @@ pub enum Command {
         layer: LayerId,
         construction: bool,
         geom: Geom,
+        /// Absent (the default style) in commands written before M5.
+        #[serde(default)]
+        style: Style,
     },
     /// Replace an entity's geometry. The kind (point, line, …) must not change.
     ModifyEntity {
@@ -50,6 +54,15 @@ pub enum Command {
     },
     ToggleConstruction {
         id: EntityId,
+    },
+    /// Change the style of every entity in `entities` (SPEC §4, #287), as one
+    /// undo step. Only the fields set in `patch` change, so a mixed selection
+    /// keeps what it doesn't share. Pattern and mirror copies follow their
+    /// source, as they do for construction (SPEC §6.2.1). Style never moves
+    /// geometry, so recipe instances and plugin output may be styled too.
+    SetStyle {
+        entities: Vec<EntityId>,
+        patch: StylePatch,
     },
     AddConstraint {
         constraint: Constraint,
@@ -218,6 +231,7 @@ impl Command {
             Command::ModifyEntity { .. } => "Modify entity".to_owned(),
             Command::DeleteEntity { .. } => "Delete entity".to_owned(),
             Command::ToggleConstruction { .. } => "Toggle construction".to_owned(),
+            Command::SetStyle { .. } => "Set style".to_owned(),
             Command::AddConstraint { constraint } => {
                 format!("Add {} constraint", constraint.name())
             }
@@ -410,12 +424,14 @@ fn exec(
             layer,
             construction,
             geom,
+            style,
         } => {
             doc.check_unlocked(*layer)?;
             let e = Entity {
                 layer: *layer,
                 construction: *construction,
                 geom: geom.clone(),
+                style: *style,
             };
             doc.check_entity(&e)?;
             let id = EntityId::new(doc.alloc_id()?);
@@ -512,6 +528,42 @@ fn exec(
                             id: inst,
                             before: Some(b),
                             after: Some(a),
+                        },
+                    );
+                }
+            }
+        }
+        Command::SetStyle { entities, patch } => {
+            if entities.is_empty() || patch.is_empty() {
+                return Err(DocError::NothingToDo("set style"));
+            }
+            let mut targets: Vec<EntityId> = Vec::new();
+            for id in entities {
+                let e = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?;
+                doc.check_unlocked(e.layer)?;
+                targets.push(*id);
+                // Instances follow their source (SPEC §6.2.1: associative).
+                targets.extend(recipe::instances_of(doc, *id).into_iter().map(|(i, _)| i));
+            }
+            targets.sort_unstable();
+            targets.dedup();
+            for id in targets {
+                let Some(before) = doc.entity(id).cloned() else {
+                    continue;
+                };
+                let after = Entity {
+                    style: before.style.patched(patch),
+                    ..before.clone()
+                };
+                after.style.validate()?;
+                if after != before {
+                    record(
+                        doc,
+                        patches,
+                        Patch::Entity {
+                            id,
+                            before: Some(before),
+                            after: Some(after),
                         },
                     );
                 }
@@ -972,6 +1024,7 @@ fn exec(
                     layer: *layer,
                     construction: false,
                     geom: Geom::Point { pos },
+                    style: Style::default(),
                 };
                 record(
                     doc,
@@ -1167,6 +1220,7 @@ fn add_recipe(
             layer: src.layer,
             construction: src.construction,
             geom: recipe::copy_geom(&src.geom, xf, &rename),
+            style: src.style,
         };
         doc.check_entity(&e)?;
         record(
@@ -1828,6 +1882,7 @@ mod tests {
             .apply(&Command::AddEntity {
                 layer: L,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Point {
                     pos: Vec2::new(x, y),
                 },
@@ -1852,6 +1907,7 @@ mod tests {
             .apply(&Command::AddEntity {
                 layer: L,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Line {
                     start: p[0],
                     end: p[1],
@@ -1960,11 +2016,13 @@ mod tests {
                 Command::AddEntity {
                     layer: L,
                     construction: false,
+                    style: Default::default(),
                     geom: Geom::Point { pos: Vec2::ZERO },
                 },
                 Command::AddEntity {
                     layer: L,
                     construction: false,
+                    style: Default::default(),
                     geom: Geom::Point {
                         pos: Vec2::new(1.0, 0.0),
                     },
@@ -1998,6 +2056,7 @@ mod tests {
                 Command::AddEntity {
                     layer: L,
                     construction: false,
+                    style: Default::default(),
                     geom: Geom::Point {
                         pos: Vec2::new(5.0, 5.0),
                     },
@@ -2083,6 +2142,7 @@ mod tests {
             Command::AddEntity {
                 layer: LayerId::new(42),
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Point { pos: Vec2::ZERO },
             },
             Command::SetDimension {

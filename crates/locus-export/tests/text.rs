@@ -16,6 +16,7 @@ fn add(ed: &mut Editor, geom: Geom) -> EntityId {
     ed.apply(&Command::AddEntity {
         layer: L,
         construction: false,
+        style: Default::default(),
         geom,
     })
     .unwrap()

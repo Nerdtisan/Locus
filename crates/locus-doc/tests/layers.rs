@@ -4,8 +4,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use locus_doc::{
-    Command, Constraint, Dimension, DocError, Document, DrawParams, EntityId, Geom, LayerId,
-    LayerProps, Operation, OperationKind, Sketcher,
+    Command, Constraint, Dimension, DocError, Document, EntityId, Geom, LayerId, LayerProps,
+    Operation, OperationKind, Sketcher,
 };
 use locus_geom::Vec2;
 
@@ -23,6 +23,7 @@ fn pt(s: &mut Sketcher, layer: LayerId, x: f64, y: f64) -> EntityId {
     s.apply(&Command::AddEntity {
         layer,
         construction: false,
+        style: Default::default(),
         geom: Geom::Point {
             pos: Vec2::new(x, y),
         },
@@ -62,9 +63,9 @@ fn bad_layers_are_rejected_without_a_trace() {
     let bad_op = Command::AddLayer {
         name: "x".to_owned(),
         colour: [0; 3],
-        operation: Operation::Draw(DrawParams {
-            pen_number: 0,
-            pen_width: 0.4,
+        operation: Operation::Cut(locus_doc::CutParams {
+            passes: 0,
+            ..Default::default()
         }),
     };
     assert!(matches!(s.apply(&bad_op), Err(DocError::BadValue { .. })));
@@ -254,6 +255,7 @@ fn locked_geometry_is_fixed_for_the_solver_and_refuses_edits() {
         Command::AddEntity {
             layer: l1,
             construction: false,
+            style: Default::default(),
             geom: Geom::Point { pos: Vec2::ZERO },
         },
         Command::MoveToLayer {
@@ -407,6 +409,7 @@ fn delete_layer_refusals_change_nothing() {
         .apply(&Command::AddEntity {
             layer: l1,
             construction: false,
+            style: Default::default(),
             geom: Geom::Line { start: a, end: b },
         })
         .unwrap()

@@ -1,0 +1,137 @@
+(
+  format_version: 12,
+  units: Mm,
+  next_id: 13,
+  parameters: {},
+  layers: {
+    1: (
+      name: "Pens",
+      colour: (0, 0, 0),
+      operation: Draw((
+        pen_number: 3,
+        pen_width: 0.7,
+      )),
+      export_order: 0,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    2: (
+      name: "Default pens",
+      colour: (0, 0, 0),
+      operation: Draw((
+        pen_number: 1,
+        pen_width: 0.4,
+      )),
+      export_order: 1,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+    3: (
+      name: "Cut",
+      colour: (0, 0, 0),
+      operation: Cut((
+        kerf_width: 0.0,
+        compensation: r#None,
+        passes: 1,
+      )),
+      export_order: 2,
+      visible: true,
+      locked: false,
+      export_enabled: true,
+    ),
+  },
+  entities: {
+    4: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    5: (
+      layer: 1,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 10.0,
+          y: 0.0,
+        ),
+      ),
+    ),
+    6: (
+      layer: 1,
+      construction: false,
+      geom: Line(
+        start: 4,
+        end: 5,
+      ),
+    ),
+    7: (
+      layer: 2,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    8: (
+      layer: 2,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 10.0,
+          y: 10.0,
+        ),
+      ),
+    ),
+    9: (
+      layer: 2,
+      construction: false,
+      geom: Line(
+        start: 7,
+        end: 8,
+      ),
+    ),
+    10: (
+      layer: 3,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 0.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    11: (
+      layer: 3,
+      construction: false,
+      geom: Point(
+        pos: (
+          x: 10.0,
+          y: 20.0,
+        ),
+      ),
+    ),
+    12: (
+      layer: 3,
+      construction: false,
+      geom: Line(
+        start: 10,
+        end: 11,
+      ),
+    ),
+  },
+  constraints: {},
+  booleans: {},
+  recipes: {},
+  dim_exprs: {},
+  view: None,
+  profile: None,
+)

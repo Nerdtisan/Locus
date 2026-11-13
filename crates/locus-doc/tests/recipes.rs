@@ -14,6 +14,7 @@ fn add(s: &mut Sketcher, geom: Geom) -> EntityId {
     s.apply(&Command::AddEntity {
         layer: L,
         construction: false,
+        style: Default::default(),
         geom,
     })
     .unwrap()

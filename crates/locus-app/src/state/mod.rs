@@ -116,6 +116,23 @@ impl AppState {
         hover: Option<EntityId>,
         units: Units,
     ) -> Flow {
+        // The Style eyedropper takes the next click, whatever the tool
+        // (design §6.2); Esc puts it away.
+        if self.tools.eyedropper {
+            match ev {
+                ToolEvent::Click(_) => {
+                    if let Some(id) = hover {
+                        self.eyedrop(id);
+                    }
+                    return Flow::Continue;
+                }
+                ToolEvent::Esc => {
+                    self.tools.eyedropper = false;
+                    return Flow::Continue;
+                }
+                _ => {}
+            }
+        }
         let text = if self.tool() == Tool::Text && matches!(ev, ToolEvent::Click(_)) {
             match self.tools.text_settings.to_data(&self.tools.fonts.library) {
                 Ok(t) => Some(t),
@@ -135,6 +152,7 @@ impl AppState {
             tol: self.view.tol_pt / self.view.camera.pt_per_mm,
             units,
             layer,
+            style: self.doc.current_style,
             selection,
             hover,
             text,
@@ -769,6 +787,7 @@ mod tests {
         c.apply_reporting(&Command::AddEntity {
             layer: c.active_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point { pos: Vec2::ZERO },
         });
         let p = c
@@ -833,6 +852,7 @@ mod tests {
         c.apply_reporting(&Command::AddEntity {
             layer: c.active_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(1.0, 1.0),
             },
@@ -890,6 +910,7 @@ mod tests {
         c.apply_reporting(&Command::AddEntity {
             layer: c.active_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point { pos: Vec2::ZERO },
         });
         let p = c
@@ -902,6 +923,7 @@ mod tests {
         c.apply_reporting(&Command::AddEntity {
             layer: c.active_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Circle {
                 center: p,
                 radius: 1.0,
@@ -966,6 +988,7 @@ mod tests {
         let centre = Command::AddEntity {
             layer: c.active_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point { pos: Vec2::ZERO },
         };
         c.apply_reporting(&centre);
@@ -980,6 +1003,7 @@ mod tests {
         c.apply_reporting(&Command::AddEntity {
             layer: c.active_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Circle {
                 center: p,
                 radius: 1.0,
@@ -1052,6 +1076,7 @@ mod tests {
         c.apply_reporting(&Command::AddEntity {
             layer: l2,
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(1.0, 1.0),
             },
@@ -1179,6 +1204,7 @@ mod tests {
                 c.apply_reporting(&Command::AddEntity {
                     layer,
                     construction: false,
+                    style: Default::default(),
                     geom,
                 });
                 c.document()
@@ -1250,6 +1276,7 @@ mod tests {
         c.apply_reporting(&Command::AddEntity {
             layer: c.active_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point { pos: Vec2::ZERO },
         });
         let p = c
@@ -1273,6 +1300,7 @@ mod tests {
         let cmd = Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(1.0, 2.0),
             },

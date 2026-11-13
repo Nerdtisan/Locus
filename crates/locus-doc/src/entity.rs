@@ -8,6 +8,7 @@
 //! (SPEC §10).
 
 use crate::ids::{EntityId, LayerId};
+use crate::style::Style;
 use crate::text::TextData;
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
@@ -104,4 +105,8 @@ pub struct Entity {
     /// Never exported, drawn dashed; independent of the layer.
     pub construction: bool,
     pub geom: Geom,
+    /// Per-object style (SPEC §4, #287; file format v13). Left out of the
+    /// file while it is the default.
+    #[serde(default, skip_serializing_if = "Style::is_default")]
+    pub style: Style,
 }

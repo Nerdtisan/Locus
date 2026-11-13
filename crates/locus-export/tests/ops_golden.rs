@@ -31,6 +31,7 @@ impl B {
             .apply(&Command::AddEntity {
                 layer,
                 construction: false,
+                style: Default::default(),
                 geom,
             })
             .unwrap()

@@ -747,6 +747,7 @@ impl Plan {
         self.cmds.push(Command::AddEntity {
             layer: self.layer,
             construction,
+            style: Default::default(),
             geom,
         });
         self.entities += 1;

@@ -58,6 +58,10 @@ impl AppState {
                 }
             }
         }
+        if self.selection.regions.selected.is_empty() {
+            ui.separator();
+            self.style_ui(ui);
+        }
         if let Some((id, anchor, dir, text)) = selected_text {
             ui.separator();
             self.edit_text(ui, id, anchor, dir, &text);

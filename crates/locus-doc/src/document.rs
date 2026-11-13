@@ -11,7 +11,7 @@ use crate::constraint::Constraint;
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID, RecipeId};
-use crate::operation::{DrawParams, Operation};
+use crate::operation::Operation;
 use crate::recipe::Recipe;
 use locus_geom::{Arc, Circle, Cubic, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
@@ -169,7 +169,7 @@ impl Document {
         let layer = Layer {
             name: "Layer 1".to_owned(),
             colour: [0, 0, 0],
-            operation: Operation::Draw(DrawParams::default()),
+            operation: Operation::Draw,
             export_order: 0,
             visible: true,
             locked: false,
@@ -198,16 +198,17 @@ impl Document {
 
     // ── Read API ─────────────────────────────────────────────────────────
 
-    /// The stroke width of the layer an entity is on, mm: the pen width on a
-    /// Draw layer, the kerf on a Cut layer, otherwise 0 (SPEC §5, §7).
+    /// The stroke width an entity has on the machine, mm: its own pen width
+    /// on a Draw layer (SPEC §4, #287), the kerf on a Cut layer, otherwise 0
+    /// (SPEC §5, §7).
     #[must_use]
     pub fn stroke_width(&self, entity: EntityId) -> f64 {
-        let Some(layer) = self.entity(entity).and_then(|e| self.layers.get(&e.layer)) else {
+        let Some(e) = self.entity(entity) else {
             return 0.0;
         };
-        match &layer.operation {
-            Operation::Cut(p) => p.kerf_width,
-            Operation::Draw(p) => p.pen_width,
+        match self.layers.get(&e.layer).map(|l| &l.operation) {
+            Some(Operation::Cut(p)) => p.kerf_width,
+            Some(Operation::Draw) => e.style.width,
             _ => 0.0,
         }
     }
@@ -600,6 +601,7 @@ impl Document {
         if !self.layers.contains_key(&e.layer) {
             return Err(DocError::UnknownLayer(e.layer));
         }
+        e.style.validate()?;
         match &e.geom {
             Geom::Point { pos } => {
                 if !pos.is_finite() {
@@ -708,6 +710,7 @@ mod tests {
         let e = Entity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(x, y),
             },
@@ -732,7 +735,7 @@ mod tests {
     fn new_document_starts_with_a_draw_layer() {
         let d = Document::new();
         let l = d.layer(Document::default_layer()).unwrap();
-        assert!(matches!(l.operation, Operation::Draw(_)));
+        assert!(matches!(l.operation, Operation::Draw));
     }
 
     #[test]
@@ -759,6 +762,7 @@ mod tests {
         let mk = |start, end| Entity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Line { start, end },
         };
         assert_eq!(
@@ -792,6 +796,7 @@ mod tests {
         let circle = |radius| Entity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Circle { center: c, radius },
         };
         assert!(d.check_entity(&circle(5.0)).is_ok());

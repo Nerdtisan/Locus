@@ -11,5 +11,6 @@ pub mod layers;
 pub mod parameters;
 pub mod patterns;
 pub mod properties;
+pub mod style;
 pub mod text_ui;
 pub mod tool_options;

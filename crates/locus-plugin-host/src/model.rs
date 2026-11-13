@@ -92,10 +92,16 @@ fn operation(o: &locus_doc::Operation) -> Operation {
             hatch_spacing: e.hatch_spacing,
             hatch_angle: e.hatch_angle,
         },
-        D::Draw(d) => Operation::Draw {
-            pen_number: d.pen_number,
-            pen_width: d.pen_width,
-        },
+        // The pen is each object's own since M5 (SPEC §4, #287); the plugin
+        // API (`locus:plugin@1.0.0`) still has one pen per layer, so the layer
+        // reports the default pen.
+        D::Draw => {
+            let pen = locus_doc::Style::default();
+            Operation::Draw {
+                pen_number: pen.pen,
+                pen_width: pen.width,
+            }
+        }
         D::DragKnife(k) => Operation::DragKnife {
             blade_offset: k.blade_offset,
         },

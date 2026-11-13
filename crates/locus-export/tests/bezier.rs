@@ -12,6 +12,7 @@ fn add(ed: &mut Editor, geom: Geom) -> EntityId {
     ed.apply(&Command::AddEntity {
         layer: Document::default_layer(),
         construction: false,
+        style: Default::default(),
         geom,
     })
     .unwrap()
@@ -137,12 +138,12 @@ fn beziers_fixture_is_current() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/beziers.locus");
     let mut ed = Editor::new(arch_doc());
     let draw = {
-        use locus_doc::{DrawParams, Operation};
+        use locus_doc::Operation;
         let r = ed
             .apply(&Command::AddLayer {
                 name: "Pen".to_owned(),
                 colour: [0, 0, 200],
-                operation: Operation::Draw(DrawParams::default()),
+                operation: Operation::Draw,
             })
             .unwrap();
         r.layers[0]
@@ -151,6 +152,7 @@ fn beziers_fixture_is_current() {
         ed.apply(&Command::AddEntity {
             layer: draw,
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(x, y),
             },
@@ -169,6 +171,7 @@ fn beziers_fixture_is_current() {
         .apply(&Command::AddEntity {
             layer: draw,
             construction: false,
+            style: Default::default(),
             geom: Geom::Line {
                 start: p[0],
                 end: p[1],
@@ -180,6 +183,7 @@ fn beziers_fixture_is_current() {
         .apply(&Command::AddEntity {
             layer: draw,
             construction: false,
+            style: Default::default(),
             geom: Geom::Bezier {
                 start: p[1],
                 start_ctrl: p[2],

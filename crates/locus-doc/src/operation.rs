@@ -59,7 +59,7 @@ impl OperationKind {
             OperationKind::Cut => Operation::Cut(CutParams::default()),
             OperationKind::Score => Operation::Score,
             OperationKind::Engrave => Operation::Engrave(EngraveParams::default()),
-            OperationKind::Draw => Operation::Draw(DrawParams::default()),
+            OperationKind::Draw => Operation::Draw,
             OperationKind::DragKnife => Operation::DragKnife(DragKnifeParams::default()),
             OperationKind::Reference => Operation::Reference,
         }
@@ -108,24 +108,6 @@ impl Default for EngraveParams {
     }
 }
 
-/// Pen-plotter parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct DrawParams {
-    /// `1..=MAX_PEN`.
-    pub pen_number: u32,
-    /// Pen width, mm, `>0..=MAX_LENGTH`.
-    pub pen_width: f64,
-}
-
-impl Default for DrawParams {
-    fn default() -> Self {
-        Self {
-            pen_number: 1,
-            pen_width: 0.4,
-        }
-    }
-}
-
 /// Drag-knife (vinyl) parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DragKnifeParams {
@@ -150,7 +132,9 @@ pub enum Operation {
     Cut(CutParams),
     Score,
     Engrave(EngraveParams),
-    Draw(DrawParams),
+    /// Pen plotter. Pen number and width are each object's style since M5
+    /// (SPEC §7, #287); file format v13 moved them off the layer.
+    Draw,
     DragKnife(DragKnifeParams),
     /// Never exported.
     Reference,
@@ -183,7 +167,7 @@ impl Operation {
             Operation::Cut(_) => OperationKind::Cut,
             Operation::Score => OperationKind::Score,
             Operation::Engrave(_) => OperationKind::Engrave,
-            Operation::Draw(_) => OperationKind::Draw,
+            Operation::Draw => OperationKind::Draw,
             Operation::DragKnife(_) => OperationKind::DragKnife,
             Operation::Reference => OperationKind::Reference,
         }
@@ -207,14 +191,10 @@ impl Operation {
                 check("hatch spacing", p.hatch_spacing, 0.0, MAX_LENGTH, true)?;
                 check("hatch angle", p.hatch_angle, -360.0, 360.0, false)
             }
-            Operation::Draw(p) => {
-                check_int("pen number", p.pen_number, MAX_PEN)?;
-                check("pen width", p.pen_width, 0.0, MAX_LENGTH, true)
-            }
             Operation::DragKnife(p) => {
                 check("blade offset", p.blade_offset, 0.0, MAX_LENGTH, false)
             }
-            Operation::Score | Operation::Reference => Ok(()),
+            Operation::Score | Operation::Draw | Operation::Reference => Ok(()),
         }
     }
 }
@@ -257,14 +237,6 @@ mod tests {
                 hatch_spacing: 1.0,
                 hatch_angle: 400.0,
                 crosshatch: false,
-            }),
-            Operation::Draw(DrawParams {
-                pen_number: 0,
-                pen_width: 0.4,
-            }),
-            Operation::Draw(DrawParams {
-                pen_number: 1,
-                pen_width: f64::INFINITY,
             }),
             Operation::DragKnife(DragKnifeParams { blade_offset: -1.0 }),
         ];

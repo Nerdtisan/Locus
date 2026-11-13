@@ -78,6 +78,7 @@ fn reference_geometry_acts_as_fixed_geometry_for_constraints() {
         .apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(r_at.x + 3.0, r_at.y + 1.0),
             },
@@ -113,6 +114,7 @@ fn reference_layers_are_never_exported() {
         .apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point { pos: Vec2::ZERO },
         })
         .unwrap()
@@ -121,6 +123,7 @@ fn reference_layers_are_never_exported() {
         .apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(10.0, 0.0),
             },
@@ -130,6 +133,7 @@ fn reference_layers_are_never_exported() {
     s.apply(&Command::AddEntity {
         layer: Document::default_layer(),
         construction: false,
+        style: Default::default(),
         geom: Geom::Line { start: a, end: b },
     })
     .unwrap();

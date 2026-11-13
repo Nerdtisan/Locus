@@ -474,6 +474,7 @@ mod tests {
         s.apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom,
         })
         .unwrap()

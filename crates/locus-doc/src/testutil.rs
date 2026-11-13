@@ -12,6 +12,7 @@ pub(crate) fn add(doc: &mut Document, geom: Geom) -> EntityId {
     let e = Entity {
         layer: Document::default_layer(),
         construction: false,
+        style: Default::default(),
         geom,
     };
     doc.check_entity(&e).unwrap();

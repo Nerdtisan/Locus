@@ -1097,6 +1097,7 @@ mod tests {
         ed.apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(1.5, 2.5),
             },

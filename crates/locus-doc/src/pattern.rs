@@ -82,12 +82,15 @@ pub(crate) fn regenerate(
             let Some(src) = doc.entity(cl[*i]).cloned() else {
                 continue;
             };
+            let id = set[*i];
+            // A copy keeps a style it was given; a new copy takes its source's.
+            let style = doc.entity(id).map_or(src.style, |e| e.style);
             let e = Entity {
                 layer: src.layer,
                 construction: src.construction,
                 geom: recipe::copy_geom(&src.geom, xf, &map),
+                style,
             };
-            let id = set[*i];
             if doc.entity(id) != Some(&e) {
                 let before = doc.entity(id).cloned();
                 record(

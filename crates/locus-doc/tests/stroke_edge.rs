@@ -5,8 +5,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use locus_doc::{
-    Command, Compensation, Constraint, CutParams, Dimension, Document, DrawParams, Edge, EntityId,
-    Geom, LayerId, LayerProps, Operation, Sketcher,
+    Command, Compensation, Constraint, CutParams, Dimension, Document, Edge, EntityId, Geom,
+    LayerId, LayerProps, Operation, Sketcher,
 };
 use locus_geom::Vec2;
 
@@ -35,6 +35,7 @@ fn pt(s: &mut Sketcher, layer: LayerId, x: f64, y: f64) -> EntityId {
     s.apply(&Command::AddEntity {
         layer,
         construction: false,
+        style: Default::default(),
         geom: Geom::Point {
             pos: Vec2::new(x, y),
         },
@@ -47,6 +48,7 @@ fn line(s: &mut Sketcher, layer: LayerId, a: EntityId, b: EntityId) -> EntityId 
     s.apply(&Command::AddEntity {
         layer,
         construction: false,
+        style: Default::default(),
         geom: Geom::Line { start: a, end: b },
     })
     .unwrap()
@@ -131,10 +133,7 @@ fn each_operand_uses_its_own_layers_stroke() {
         .apply(&Command::AddLayer {
             name: "Pen".into(),
             colour: [0, 0, 255],
-            operation: Operation::Draw(DrawParams {
-                pen_number: 1,
-                pen_width: 0.8,
-            }),
+            operation: Operation::Draw,
         })
         .unwrap()
         .layers[0];
@@ -144,6 +143,15 @@ fn each_operand_uses_its_own_layers_stroke() {
     );
     let (c, d) = (pt(&mut s, pen, 0.0, 9.0), pt(&mut s, pen, 20.0, 9.0));
     let (l0, l1) = (line(&mut s, cut_layer, a, b), line(&mut s, pen, c, d));
+    // The pen width is the line's own style since #287 (SPEC §4).
+    s.apply(&Command::SetStyle {
+        entities: vec![l1],
+        patch: locus_doc::StylePatch {
+            width: Some(0.8),
+            ..Default::default()
+        },
+    })
+    .unwrap();
     for k in [a, b] {
         add(&mut s, Constraint::Fix { point: k });
     }
@@ -158,6 +166,16 @@ fn each_operand_uses_its_own_layers_stroke() {
     );
     // Outside: 10 = centre + 0.2 + 0.4.
     assert!((gap(&s, l0, l1) - 9.4).abs() < TOL, "{}", gap(&s, l0, l1));
+    // A wider pen on the line re-solves the gap (SPEC §5, #287): 10 = centre + 0.2 + 0.8.
+    s.apply(&Command::SetStyle {
+        entities: vec![l1],
+        patch: locus_doc::StylePatch {
+            width: Some(1.6),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    assert!((gap(&s, l0, l1) - 9.0).abs() < TOL, "{}", gap(&s, l0, l1));
 }
 
 /// Radius and diameter to a circle's outer / inner edge; a driven dimension
@@ -172,6 +190,7 @@ fn circles_and_driven_dimensions_measure_to_the_edge() {
         .apply(&Command::AddEntity {
             layer: l,
             construction: false,
+            style: Default::default(),
             geom: Geom::Circle {
                 center: ctr,
                 radius: 4.0,
