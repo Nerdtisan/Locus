@@ -105,13 +105,16 @@ impl AppState {
         // pivot, as the dialog's mode switch does (design §6.7).
         let was_transform = matches!(self.modify(), Some(Modify::Transform(_)));
         self.set_tool(Tool::Select);
-        // Move/rotate/scale works on the selection; the others pick curves.
-        if let Modify::Transform(_) = m {
-            if !was_transform {
-                self.tools.transform.reset();
+        // Move/rotate/scale and patterns work on the selection; the others
+        // pick curves.
+        match m {
+            Modify::Transform(_) => {
+                if !was_transform {
+                    self.tools.transform.reset();
+                }
             }
-        } else {
-            self.selection.items.clear();
+            Modify::Pattern(_) => {}
+            _ => self.selection.items.clear(),
         }
         self.tools.host.set(Box::new(ModifyTool::new(m)));
     }

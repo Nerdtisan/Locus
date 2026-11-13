@@ -578,7 +578,9 @@ pub(crate) fn validate(
     let driven = doc.driven_entities();
     for id in sources.iter().chain(&kind.references()) {
         doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?;
-        if let Some(r) = driven.get(id).filter(|r| Some(**r) != self_id) {
+        if let Some(r) = driven.get(id).filter(|r| Some(**r) != self_id)
+            && !copies_output_of(doc, kind, *r, self_id)
+        {
             return Err(DocError::Driven {
                 entity: *id,
                 recipe: *r,
@@ -718,6 +720,24 @@ pub(crate) fn instances_of(doc: &Document, source: EntityId) -> Vec<(EntityId, R
 /// Whole-document recipe consistency, for file loading: pool IDs are unique
 /// and below the counter, active copies exist and inactive ones don't, and
 /// every reference resolves. Never panics on a hostile file.
+/// Whether a recipe of `kind` (`self_id`, or a new one) may take recipe
+/// `from`'s instances as inputs (#221): a pattern may copy what an
+/// unsolved recipe (an offset, a pattern, a plugin object) wrote, since
+/// both are written after the solve. The source recipe must be older, so
+/// regenerating in ID order (`command::regenerate_all`) writes it first and
+/// no cycle can form. A mirror's copies are solved, and instances aren't
+/// solver variables, so a mirror never may.
+fn copies_output_of(
+    doc: &Document,
+    kind: &RecipeKind,
+    from: RecipeId,
+    self_id: Option<RecipeId>,
+) -> bool {
+    kind.is_pattern()
+        && doc.recipe(from).is_some_and(|r| !r.kind.solved())
+        && self_id.is_none_or(|me| from < me)
+}
+
 pub(crate) fn validate_all(doc: &Document) -> Result<(), DocError> {
     let mut seen = BTreeSet::new();
     for (rid, r) in doc.recipes() {

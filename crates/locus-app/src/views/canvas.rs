@@ -25,11 +25,13 @@ mod manipulator;
 mod offset_tool;
 mod offsets;
 mod pattern_labels;
+mod pattern_tool;
 pub mod plugin_objects;
 mod regions;
 
 pub(crate) use machine::MachinePath;
 pub(crate) use offset_tool::OffsetDraft;
+pub(crate) use pattern_tool::PatternDraft;
 pub(crate) use regions::RegionUi;
 
 /// Pick radius while a finger drives the pointer (#251): a fingertip covers
@@ -244,6 +246,9 @@ impl AppState {
             // A gesture, a Space pan or the marking menu: no tool sees the pointer.
         } else if let Some(mode) = self.transform_mode() {
             self.transform_input(ui, &resp, rect, settings.units, mode);
+        } else if let Some(circular) = self.pattern_kind() {
+            self.pattern_input(ui, &resp, rect, settings.units, circular);
+            self.refresh_pattern_preview(circular, settings.units);
         } else if self.modify().is_some() {
             if !(self.modify() == Some(Modify::Offset)
                 && self.offset_pointer(ui, &resp, rect, settings.units))
@@ -301,6 +306,9 @@ impl AppState {
             self.draw_corner_preview(&frame, m);
         }
         self.draw_offset_draft(&frame);
+        if let Some(circular) = self.pattern_kind() {
+            self.draw_pattern_draft(&frame, circular);
+        }
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -317,6 +325,9 @@ impl AppState {
         }
         if self.modify() == Some(Modify::Offset) {
             self.offset_dialog(ui, rect, settings.units);
+        }
+        if let Some(circular) = self.pattern_kind() {
+            self.pattern_dialog(ui, rect, circular, settings.units);
         }
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));

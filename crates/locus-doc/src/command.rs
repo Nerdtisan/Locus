@@ -1292,6 +1292,21 @@ fn remove_recipe(
 ) -> Result<(), DocError> {
     let recipe = doc.recipe(id).ok_or(DocError::UnknownRecipe(id))?.clone();
     let instances: Vec<EntityId> = recipe.instances().collect();
+    // A pattern copying this recipe's output would lose its sources (#221).
+    for inst in &instances {
+        let users: Vec<RecipeId> = doc
+            .recipes()
+            .iter()
+            .filter(|(rid, r)| **rid != id && r.inputs(doc).contains(inst))
+            .map(|(rid, _)| *rid)
+            .collect();
+        if !users.is_empty() {
+            return Err(DocError::RecipeInUse {
+                entity: *inst,
+                recipes: users,
+            });
+        }
+    }
     for inst in &instances {
         let (ents, cons) = doc.dependents(*inst);
         let ents: Vec<_> = ents
