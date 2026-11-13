@@ -12,10 +12,10 @@
 //!
 //! Constraints have no default keys (owner decision, design §2, §5).
 
-use crate::canvas::Canvas;
 use crate::constrain::Kind;
 use crate::modify_tool::Modify;
 use crate::settings::Settings;
+use crate::state::AppState;
 use crate::tools::Tool;
 use egui::{Key, KeyboardShortcut, Modifiers};
 use std::borrow::Cow;
@@ -179,10 +179,9 @@ pub struct Action {
     pub source: Source,
 }
 
-/// What actions read and act on. Becomes `AppState` when `Canvas` is split
-/// (design §7.3).
+/// What actions read and act on. The registry acts on [`AppState`] (design §7.3).
 pub struct Cx<'a> {
-    pub canvas: &'a mut Canvas,
+    pub state: &'a mut AppState,
     pub settings: &'a mut Settings,
     /// Runs plugin actions; `None` where no plugins are loaded (tests).
     pub plugins: Option<&'a mut dyn PluginHost>,
@@ -191,7 +190,7 @@ pub struct Cx<'a> {
 /// The plugin side of plugin actions: desktop (wasmtime) and web (Worker)
 /// hosts both implement it.
 pub trait PluginHost {
-    fn run_action(&mut self, plugin: &str, kind: PluginKind, canvas: &Canvas);
+    fn run_action(&mut self, plugin: &str, kind: PluginKind, canvas: &AppState);
 }
 
 const fn key(k: Key) -> KeyboardShortcut {
@@ -824,7 +823,7 @@ impl Registry {
     }
 
     /// Can `a` run now, and if not, why.
-    pub fn enabled(&self, a: &Action, canvas: &Canvas) -> Enabled {
+    pub fn enabled(&self, a: &Action, canvas: &AppState) -> Enabled {
         match &a.op {
             Op::Constrain(k) => {
                 Enabled::when(canvas.can_constrain(*k), format!("Select {}", k.needs()))
@@ -842,7 +841,7 @@ impl Registry {
     }
 
     /// For a tool: is it the active one. For a toggle: is it on.
-    pub fn is_on(&self, a: &Action, canvas: &Canvas, settings: &Settings) -> bool {
+    pub fn is_on(&self, a: &Action, canvas: &AppState, settings: &Settings) -> bool {
         match &a.op {
             Op::Draw(t) => canvas.tool() == *t,
             Op::Modify(m) => canvas.modify() == Some(*m),
@@ -854,7 +853,7 @@ impl Registry {
     }
 
     /// The label to show now: undo and redo name the step ("Undo Add line").
-    pub fn label<'a>(&self, a: &'a Action, canvas: &Canvas) -> Cow<'a, str> {
+    pub fn label<'a>(&self, a: &'a Action, canvas: &AppState) -> Cow<'a, str> {
         let step = match a.op {
             Op::Undo => canvas.undo_label(),
             Op::Redo => canvas.redo_label(),
@@ -869,7 +868,7 @@ impl Registry {
     /// Run `a`. A disabled command explains itself in the status bar
     /// rather than doing nothing silently.
     pub fn run(&self, a: &Action, cx: &mut Cx<'_>) {
-        let canvas = &mut *cx.canvas;
+        let canvas = &mut *cx.state;
         match &a.op {
             Op::Draw(t) => canvas.set_tool(*t),
             Op::Modify(m) => canvas.set_modify(*m),
@@ -913,8 +912,8 @@ impl Registry {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let canvas_free = over_canvas && cx.canvas.accepts_keys();
-        let select_mode = cx.canvas.tool() == Tool::Select && cx.canvas.modify().is_none();
+        let canvas_free = over_canvas && cx.state.accepts_keys();
+        let select_mode = cx.state.tool() == Tool::Select && cx.state.modify().is_none();
         for &(sc, i) in &self.keys {
             let a = &self.actions[i];
             let live = match a.scope {
@@ -988,10 +987,10 @@ pub fn show_one(
     style: Style,
 ) -> bool {
     let key = reg.shortcut(a).map(|k| ui.ctx().format_shortcut(&k));
-    let label = reg.label(a, cx.canvas);
+    let label = reg.label(a, cx.state);
     let clicked = match (a.op.kind(), style) {
         (ActionKind::Toggle, _) => {
-            let mut on = reg.is_on(a, cx.canvas, cx.settings);
+            let mut on = reg.is_on(a, cx.state, cx.settings);
             let r = ui.checkbox(&mut on, label.as_ref());
             let r = if a.hint.is_empty() {
                 r
@@ -1006,11 +1005,11 @@ pub fn show_one(
                 Some(k) => format!("{label}{sep}({k})"),
                 None => label.into_owned(),
             };
-            ui.selectable_label(reg.is_on(a, cx.canvas, cx.settings), text)
+            ui.selectable_label(reg.is_on(a, cx.state, cx.settings), text)
                 .clicked()
         }
         (ActionKind::Command, _) => {
-            let enabled = reg.enabled(a, cx.canvas);
+            let enabled = reg.enabled(a, cx.state);
             let mut b = egui::Button::new(label.as_ref());
             if style == Style::Menu
                 && let Some(k) = &key
@@ -1049,7 +1048,7 @@ pub fn show_one(
 /// supports, selection and history. A press outside it, Esc or a choice
 /// closes it.
 pub fn touch_menu(ctx: &egui::Context, reg: &Registry, cx: &mut Cx<'_>) {
-    let Some((at, rect)) = cx.canvas.touch_menu() else {
+    let Some((at, rect)) = cx.state.touch_menu() else {
         return;
     };
     let mut close = false;
@@ -1070,7 +1069,7 @@ pub fn touch_menu(ctx: &egui::Context, reg: &Registry, cx: &mut Cx<'_>) {
                 .is_some_and(|p| !area.response.rect.contains(p))
     });
     if close || outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        cx.canvas.close_touch_menu();
+        cx.state.close_touch_menu();
     }
 }
 
@@ -1175,7 +1174,7 @@ mod tests {
     #[test]
     fn enabled_predicates_follow_the_selection_and_history() {
         let r = Registry::default();
-        let c = Canvas::default();
+        let c = AppState::default();
         let get = |id| r.get(id).map(|a| r.enabled(a, &c));
         // Nothing selected: constraints say what they need.
         assert_eq!(
@@ -1210,7 +1209,7 @@ mod tests {
         let d = r.get("plugin.dogbone.apply");
         assert!(d.is_some_and(|a| a.group == Group::Modify));
         // A modifier needs a selection.
-        let c = Canvas::default();
+        let c = AppState::default();
         assert!(d.is_some_and(|a| !r.enabled(a, &c).yes()));
         // Removing one drops its action.
         r.sync_plugins(vec![gear]);
@@ -1223,11 +1222,11 @@ mod tests {
     #[test]
     fn toggles_flip_their_setting() {
         let r = Registry::default();
-        let mut canvas = Canvas::default();
+        let mut canvas = AppState::default();
         let mut settings = Settings::default();
         let before = settings.auto_constrain;
         let mut cx = Cx {
-            canvas: &mut canvas,
+            state: &mut canvas,
             settings: &mut settings,
             plugins: None,
         };

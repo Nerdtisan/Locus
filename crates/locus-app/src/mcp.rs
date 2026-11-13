@@ -33,7 +33,7 @@ use locus_mcp::plugins::RegistryPlugins;
 use locus_mcp::{ApprovalMode, Grants, LocusServer, Options, Plugins, Scope, Workspace};
 use serde::{Deserialize, Serialize};
 
-use crate::canvas::Canvas;
+use crate::state::AppState;
 
 const STORAGE_KEY: &str = "locus.mcp";
 /// A fixed default so client configurations keep working across launches.
@@ -120,7 +120,7 @@ pub struct Mcp {
 
 /// The canvas as the server's document (see `locus_mcp::Workspace`).
 struct CanvasWs<'a> {
-    canvas: &'a mut Canvas,
+    canvas: &'a mut AppState,
     exporters: &'a locus_export::Registry,
     plugins: Option<&'a mut RegistryPlugins>,
 }
@@ -395,7 +395,7 @@ impl Mcp {
     }
 
     /// Run queued AI calls, then draw the dialogs.
-    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut AppState) {
         if let Some(live) = &self.live {
             let exporters = self
                 .exporters
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn ai_edits_go_through_the_canvas_as_one_undo_step() {
-        let mut canvas = Canvas::default();
+        let mut canvas = AppState::default();
         let before = canvas.document().entities().len();
         let (backend, jobs) = attach::jobs(|| {});
         let server = LocusServer::new(

@@ -3,19 +3,19 @@
 //! to read, and a way to apply an AI command exactly like a user one, so it
 //! is one undo step and the canvas updates live. Desktop-only.
 
-use super::Canvas;
+use crate::state::AppState;
 use locus_doc::{Applied, Command, DocError, LayerId, Sketcher};
 
-impl Canvas {
+impl AppState {
     pub fn sketcher(&self) -> &Sketcher {
-        &self.sketcher
+        &self.doc.sketcher
     }
 
     /// Apply a command from the AI client (one undo step, §16.4).
     pub fn apply_ai(&mut self, cmd: &Command) -> Result<Applied, DocError> {
         // A half-drawn shape may refer to what the AI changes.
-        self.draft.cancel();
-        let out = self.sketcher.apply(cmd)?;
+        self.tools.draft.cancel();
+        let out = self.doc.sketcher.apply(cmd)?;
         self.rebuild();
         Ok(out)
     }

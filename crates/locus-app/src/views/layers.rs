@@ -5,9 +5,9 @@
 //! colour edits are held in a local copy while the pointer is down and
 //! committed once, on release, so a drag is not a hundred undo steps.
 
-use super::Canvas;
 use crate::constrain;
 use crate::settings::Settings;
+use crate::state::AppState;
 use egui::{DragValue, Ui};
 use locus_doc::{
     Command, Compensation, ConstraintId, Document, EntityId, LayerDeletion, LayerId, LayerProps,
@@ -26,7 +26,7 @@ const PALETTE: [[u8; 3]; 6] = [
 
 /// A confirmation waiting for the user.
 #[derive(Debug)]
-pub(super) enum Dialog {
+pub(crate) enum Dialog {
     Lock {
         layer: LayerId,
         report: LockReport,
@@ -41,12 +41,14 @@ pub(super) enum Dialog {
 
 /// Transient panel state (never part of the document, SPEC §11).
 #[derive(Debug, Default)]
-pub(super) struct LayerUi {
+pub struct LayersView {
     expanded: Option<LayerId>,
     rename: Option<(LayerId, String)>,
     colour: Option<(LayerId, [u8; 3])>,
     op: Option<(LayerId, Operation)>,
     dialog: Option<Dialog>,
+    /// The document generation this state belongs to.
+    seen: u64,
 }
 
 /// What the user asked for this frame; applied after the borrows end.
@@ -59,41 +61,34 @@ struct Wants {
     delete: Option<LayerId>,
 }
 
-impl Canvas {
+impl LayersView {
     /// Confirm the open delete dialog, as its Delete button does.
     #[cfg(test)]
-    pub(super) fn confirm_delete_for_test(&mut self) {
-        let Some(dialog) = self.layer_ui.dialog.take() else {
+    pub(crate) fn confirm_delete_for_test(&mut self, app: &mut AppState) {
+        let Some(dialog) = self.dialog.take() else {
             return;
         };
         if let Dialog::Delete { layer, .. } = &dialog {
             let cmd = Command::DeleteLayer { id: *layer };
-            self.settle_dialog(dialog, Some(cmd), false);
+            self.settle_dialog(app, dialog, Some(cmd), false);
         }
     }
 
-    /// The layer new geometry goes on. Falls back to the first layer in
-    /// export order when the remembered one is gone.
-    pub(super) fn active_layer(&self) -> LayerId {
-        let doc = self.sketcher.document();
-        if doc.layer(self.active_layer).is_some() {
-            self.active_layer
-        } else {
-            sorted(doc)
-                .first()
-                .copied()
-                .unwrap_or_else(Document::default_layer)
+    /// Draw the pane. Transient state is dropped when another document loads.
+    pub fn ui(&mut self, ui: &mut Ui, app: &mut AppState, settings: &Settings) {
+        if self.seen != app.doc.generation {
+            *self = Self {
+                seen: app.doc.generation,
+                ..Self::default()
+            };
         }
-    }
-
-    pub fn layers_ui(&mut self, ui: &mut Ui, settings: &Settings) {
-        self.active_layer = self.active_layer();
+        app.doc.active_layer = app.active_layer();
         let mut want = Wants::default();
-        let selected: Vec<EntityId> = self.selection.iter().collect();
+        let selected: Vec<EntityId> = app.selection.items.iter().collect();
         {
-            let doc = self.sketcher.document();
-            let st = &mut self.layer_ui;
-            let active = self.active_layer;
+            let doc = app.doc.sketcher.document();
+            let st = &mut *self;
+            let active = app.doc.active_layer;
             ui.horizontal(|ui| {
                 if ui.button("+ Add layer").clicked() {
                     want.add = true;
@@ -121,74 +116,80 @@ impl Canvas {
                 }
             });
         }
-        self.apply_wants(want, ui, settings);
+        self.apply_wants(app, want, ui, settings);
     }
 
-    fn apply_wants(&mut self, want: Wants, ui: &Ui, settings: &Settings) {
+    fn apply_wants(&mut self, app: &mut AppState, want: Wants, ui: &Ui, settings: &Settings) {
         if let Some(id) = want.activate {
-            self.active_layer = id;
-            self.draft.set_layer(id);
+            app.doc.active_layer = id;
+            app.tools.draft.set_layer(id);
         }
         if want.add {
-            let cmd = new_layer(self.sketcher.document());
-            self.apply_reporting(&cmd);
-            if self.notice.is_none()
-                && let Some(&newest) = self.sketcher.document().layers().keys().next_back()
+            let cmd = new_layer(app.doc.sketcher.document());
+            app.apply_reporting(&cmd);
+            if app.doc.notice.is_none()
+                && let Some(&newest) = app.doc.sketcher.document().layers().keys().next_back()
             {
-                self.active_layer = newest;
+                app.doc.active_layer = newest;
             }
         }
         for cmd in &want.commands {
-            self.apply_reporting(cmd);
+            app.apply_reporting(cmd);
         }
         if let Some(id) = want.lock {
-            match self.sketcher.check_lock(id) {
+            match app.doc.sketcher.check_lock(id) {
                 Ok(r) if r.conflicts.is_empty() && r.redundant.is_empty() => {
-                    self.apply_reporting(&Command::SetLayerLocked { id, locked: true });
+                    app.apply_reporting(&Command::SetLayerLocked { id, locked: true });
                 }
                 Ok(report) => {
-                    self.layer_ui.dialog = Some(Dialog::Lock { layer: id, report });
+                    self.dialog = Some(Dialog::Lock { layer: id, report });
                 }
-                Err(e) => self.notice = Some(e.to_string()),
+                Err(e) => app.doc.notice = Some(e.to_string()),
             }
         }
         if let Some(id) = want.delete {
-            match self.sketcher.document().layer_deletion(id) {
+            match app.doc.sketcher.document().layer_deletion(id) {
                 Ok(plan) => {
-                    self.layer_ui.dialog = Some(Dialog::Delete {
+                    self.dialog = Some(Dialog::Delete {
                         layer: id,
                         plan,
                         error: None,
                     });
                 }
-                Err(e) => self.notice = Some(e.to_string()),
+                Err(e) => app.doc.notice = Some(e.to_string()),
             }
         }
-        self.layer_dialog(ui.ctx(), settings);
+        self.layer_dialog(app, ui.ctx(), settings);
     }
 
     /// Runs the confirmed command and decides whether the dialog stays. A
     /// refusal stays on screen with its reason, never only in the status bar
     /// (#292).
-    fn settle_dialog(&mut self, mut dialog: Dialog, run: Option<Command>, mut keep: bool) {
+    fn settle_dialog(
+        &mut self,
+        app: &mut AppState,
+        mut dialog: Dialog,
+        run: Option<Command>,
+        mut keep: bool,
+    ) {
         if let Some(cmd) = run
-            && !self.apply_reporting(&cmd)
+            && !app.apply_reporting(&cmd)
             && let Dialog::Delete { error, .. } = &mut dialog
         {
-            *error = self.notice.clone();
+            *error = app.doc.notice.clone();
             keep = true;
         }
         if keep {
-            self.layer_ui.dialog = Some(dialog);
+            self.dialog = Some(dialog);
         }
     }
 
     /// The lock / delete confirmation (SPEC §4 rules 3 and 4).
-    fn layer_dialog(&mut self, ctx: &egui::Context, settings: &Settings) {
-        let Some(dialog) = self.layer_ui.dialog.take() else {
+    fn layer_dialog(&mut self, app: &mut AppState, ctx: &egui::Context, settings: &Settings) {
+        let Some(dialog) = self.dialog.take() else {
             return;
         };
-        let doc = self.sketcher.document();
+        let doc = app.doc.sketcher.document();
         let mut keep = true;
         let mut run: Option<Command> = None;
         let (title, layer) = match &dialog {
@@ -299,7 +300,23 @@ impl Canvas {
                     });
                 }
             });
-        self.settle_dialog(dialog, run, keep);
+        self.settle_dialog(app, dialog, run, keep);
+    }
+}
+
+impl AppState {
+    /// The layer new geometry goes on. Falls back to the first layer in
+    /// export order when the remembered one is gone.
+    pub(crate) fn active_layer(&self) -> LayerId {
+        let doc = self.doc.sketcher.document();
+        if doc.layer(self.doc.active_layer).is_some() {
+            self.doc.active_layer
+        } else {
+            sorted(doc)
+                .first()
+                .copied()
+                .unwrap_or_else(Document::default_layer)
+        }
     }
 }
 
@@ -371,7 +388,7 @@ fn reorder(doc: &Document, order: &[LayerId], pos: usize, dir: isize) -> Option<
 fn layer_row(
     ui: &mut Ui,
     doc: &Document,
-    st: &mut LayerUi,
+    st: &mut LayersView,
     want: &mut Wants,
     order: &[LayerId],
     pos: usize,
@@ -515,7 +532,7 @@ fn layer_row(
 /// Operation kind and parameters (SPEC §7).
 fn operation_editor(
     ui: &mut Ui,
-    st: &mut LayerUi,
+    st: &mut LayersView,
     want: &mut Wants,
     id: LayerId,
     current: Operation,
@@ -677,23 +694,23 @@ fn operation_editor(
 }
 
 #[cfg(test)]
-impl LayerUi {
-    pub(super) fn expanded_for_test(&mut self, id: LayerId) {
+impl LayersView {
+    pub(crate) fn expanded_for_test(&mut self, id: LayerId) {
         self.expanded = Some(id);
     }
 
-    pub(super) fn dialog_error_for_test(&self) -> Option<&str> {
+    pub(crate) fn dialog_error_for_test(&self) -> Option<&str> {
         match &self.dialog {
             Some(Dialog::Delete { error, .. }) => error.as_deref(),
             _ => None,
         }
     }
 
-    pub(super) fn has_dialog_for_test(&self) -> bool {
+    pub(crate) fn has_dialog_for_test(&self) -> bool {
         self.dialog.is_some()
     }
 
-    pub(super) fn dialog_for_test(&mut self, layer: LayerId, plan: LayerDeletion) {
+    pub(crate) fn dialog_for_test(&mut self, layer: LayerId, plan: LayerDeletion) {
         self.dialog = Some(Dialog::Delete {
             layer,
             plan,

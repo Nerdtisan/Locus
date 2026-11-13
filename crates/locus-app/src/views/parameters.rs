@@ -5,14 +5,14 @@
 //! held in a draft while a box has focus and committed when focus leaves it,
 //! so typing is not one undo step per keystroke.
 
-use super::Canvas;
+use crate::state::AppState;
 use egui::{TextEdit, Ui};
 use locus_doc::Command;
 use std::collections::BTreeMap;
 
 /// Transient panel state (never part of the document, SPEC §11).
 #[derive(Debug, Default)]
-pub(super) struct ParamUi {
+pub struct ParametersView {
     new_name: String,
     new_expr: String,
     /// Text being edited: (parameter, 0 = name / 1 = expression) → draft.
@@ -24,12 +24,13 @@ fn trimmed(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
-impl Canvas {
-    pub fn parameters_ui(&mut self, ui: &mut Ui) {
+impl ParametersView {
+    /// Draw the pane. Transient state is dropped when another document loads.
+    pub fn ui(&mut self, ui: &mut Ui, app: &mut AppState) {
         let mut cmds: Vec<Command> = Vec::new();
         {
-            let doc = self.sketcher.document();
-            let st = &mut self.param_ui;
+            let doc = app.doc.sketcher.document();
+            let st = &mut *self;
             ui.label("Name a value once, use it in any dimension: material * 2 + 0.2");
             ui.separator();
             if doc.parameters().is_empty() {
@@ -105,7 +106,7 @@ impl Canvas {
             });
         }
         for cmd in &cmds {
-            self.apply_reporting(cmd);
+            app.apply_reporting(cmd);
         }
     }
 }

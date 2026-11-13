@@ -4,57 +4,69 @@
 //! distance as an editable label, and the tool strip edits, explodes or
 //! removes the picked one.
 
-use super::{Canvas, DimEdit, DimTarget};
 use crate::render::Palette;
 use crate::settings::Units;
+use crate::state::{AppState, DimEdit, DimTarget};
 use egui::{Align2, FontId, Painter, Rect, Stroke};
 use locus_doc::recipe::RecipeKind;
 use locus_doc::{Command, EntityId, Geom, RecipeId};
 use locus_geom::Vec2;
 
-impl Canvas {
+impl AppState {
     /// The offset recipe picked with the Offset tool, for the tool strip.
     pub fn offset_selected(&self) -> Option<RecipeId> {
-        self.offset_pick
-            .filter(|r| self.sketcher.document().recipe(*r).is_some())
+        self.tools
+            .offset_pick
+            .filter(|r| self.doc.sketcher.document().recipe(*r).is_some())
     }
 
     /// A click with the Offset tool: on an offset's own curve, pick that
     /// offset (and open its distance); on any other curve, offset its chain.
-    pub(super) fn offset_click(&mut self, id: EntityId, units: Units) {
-        let doc = self.sketcher.document();
+    pub(crate) fn offset_click(&mut self, id: EntityId, units: Units) {
+        let doc = self.doc.sketcher.document();
         if let Some(rid) = doc.driven_by(id)
             && matches!(
                 doc.recipe(rid).map(|r| &r.kind),
                 Some(RecipeKind::Offset { .. })
             )
         {
-            self.offset_pick = Some(rid);
+            self.tools.offset_pick = Some(rid);
             self.edit_offset(rid, units);
             return;
         }
         let chain = locus_doc::offset::chain_through(doc, id);
         if chain.is_empty() {
-            self.notice = Some("That curve can't be offset".to_owned());
+            self.doc.notice = Some("That curve can't be offset".to_owned());
             return;
         }
         let cmd = Command::AddRecipe {
             kind: RecipeKind::Offset {
-                distance: self.corner.offset,
-                sharp: self.corner.sharp,
+                distance: self.tools.corner.offset,
+                sharp: self.tools.corner.sharp,
                 expr: None,
             },
             sources: chain,
         };
         if self.apply_reporting(&cmd) {
-            self.offset_pick = self.sketcher.document().recipes().keys().last().copied();
+            self.tools.offset_pick = self
+                .doc
+                .sketcher
+                .document()
+                .recipes()
+                .keys()
+                .last()
+                .copied();
         }
     }
 
     /// Change the picked offset's distance (or corners) from the tool strip.
     pub fn set_offset_params(&mut self, rid: RecipeId, distance: f64, sharp: bool) {
-        let Some(RecipeKind::Offset { expr, .. }) =
-            self.sketcher.document().recipe(rid).map(|r| r.kind.clone())
+        let Some(RecipeKind::Offset { expr, .. }) = self
+            .doc
+            .sketcher
+            .document()
+            .recipe(rid)
+            .map(|r| r.kind.clone())
         else {
             return;
         };
@@ -76,13 +88,13 @@ impl Canvas {
             Command::RemoveRecipe { id: rid }
         };
         if self.apply_reporting(&cmd) {
-            self.offset_pick = None;
+            self.tools.offset_pick = None;
         }
     }
 
     /// The distance an offset uses now (its expression evaluated).
     pub fn offset_params(&self, rid: RecipeId) -> Option<(f64, bool)> {
-        let doc = self.sketcher.document();
+        let doc = self.doc.sketcher.document();
         let r = doc.recipe(rid)?;
         let RecipeKind::Offset { sharp, .. } = r.kind else {
             return None;
@@ -92,8 +104,8 @@ impl Canvas {
 
     /// Open the inline editor on an offset's distance: a number or an
     /// expression over the parameters, like any dimension.
-    pub(super) fn edit_offset(&mut self, rid: RecipeId, units: Units) {
-        let doc = self.sketcher.document();
+    pub(crate) fn edit_offset(&mut self, rid: RecipeId, units: Units) {
+        let doc = self.doc.sketcher.document();
         let Some(r) = doc.recipe(rid) else {
             return;
         };
@@ -101,13 +113,13 @@ impl Canvas {
             return;
         };
         let d = locus_doc::offset::distance(doc, &r.kind).unwrap_or(0.0);
-        self.dim_edit = Some(DimEdit {
+        self.tools.dim_edit = Some(DimEdit {
             target: DimTarget::Offset(rid),
             what: "offset",
             angle: false,
             text: expr.as_ref().map_or_else(
-                || super::format_value(d, false, units),
-                |s| super::to_display(s, units),
+                || crate::state::format_value(d, false, units),
+                |s| crate::state::to_display(s, units),
             ),
             at: label_anchor(doc, rid).unwrap_or(Vec2::ZERO),
             fresh: true,
@@ -116,13 +128,13 @@ impl Canvas {
 
     /// The command for an edited offset distance: a value (mm) or an
     /// expression.
-    pub(super) fn offset_command(
+    pub(crate) fn offset_command(
         &self,
         rid: RecipeId,
         value: Option<f64>,
         text: &str,
     ) -> Option<Command> {
-        let r = self.sketcher.document().recipe(rid)?;
+        let r = self.doc.sketcher.document().recipe(rid)?;
         let RecipeKind::Offset {
             distance, sharp, ..
         } = r.kind
@@ -146,19 +158,19 @@ impl Canvas {
 
     /// Each offset's distance as a label on its first curve; remembered for
     /// double-click editing.
-    pub(super) fn draw_offset_labels(
+    pub(crate) fn draw_offset_labels(
         &mut self,
         painter: &Painter,
         rect: Rect,
         dark: bool,
         units: Units,
     ) {
-        self.offset_rects.clear();
-        if self.dragging {
+        self.view.offset_rects.clear();
+        if self.tools.dragging {
             return;
         }
         let pal = Palette::new(dark);
-        let doc = self.sketcher.document();
+        let doc = self.doc.sketcher.document();
         for (rid, r) in doc.recipes() {
             if !matches!(r.kind, RecipeKind::Offset { .. }) {
                 continue;
@@ -169,7 +181,7 @@ impl Canvas {
             ) else {
                 continue;
             };
-            let p = self.view.to_screen(at, rect);
+            let p = self.view.camera.to_screen(at, rect);
             let text = format!("offset {}", units.format_len(d));
             let galley = painter.layout_no_wrap(text, FontId::proportional(12.0), pal.dim);
             let r = Align2::CENTER_CENTER
@@ -183,7 +195,7 @@ impl Canvas {
                 egui::StrokeKind::Outside,
             );
             painter.galley(r.shrink(3.0).min, galley, pal.dim);
-            self.offset_rects.push((*rid, r));
+            self.view.offset_rects.push((*rid, r));
         }
     }
 }
