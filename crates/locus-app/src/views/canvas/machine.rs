@@ -3,7 +3,7 @@
 //! paths and hatch fills, drawn over the sketch from the same `prepare` call
 //! the exporters use, so what is shown is what will be cut.
 
-use super::Canvas;
+use crate::state::AppState;
 use egui::{Color32, Painter, Pos2, Rect, Stroke};
 use locus_doc::{Compensation, Operation};
 use locus_export::{ExportModel, PathSeg, Shape};
@@ -11,7 +11,7 @@ use locus_geom::{EXPORT_TOL, Vec2};
 
 /// One polyline to draw, and whether it is a hatch line (drawn thinner).
 #[derive(Debug, Clone, Default)]
-pub(super) struct MachinePath {
+pub(crate) struct MachinePath {
     pub points: Vec<Vec2>,
     pub hatch: bool,
     /// The kerf the path was offset for, mm (0 off a Cut layer): drawn as a
@@ -58,7 +58,7 @@ fn push_seg(s: &PathSeg, out: &mut Vec<Vec2>) {
 }
 
 /// The preview polylines of a prepared model.
-pub(super) fn paths(model: &ExportModel) -> Vec<MachinePath> {
+pub(crate) fn paths(model: &ExportModel) -> Vec<MachinePath> {
     let mut out = Vec::new();
     for layer in model.layers.iter().filter(|l| transformed(&l.operation)) {
         let engrave = matches!(layer.operation, Operation::Engrave(_));
@@ -83,28 +83,28 @@ pub(super) fn paths(model: &ExportModel) -> Vec<MachinePath> {
     out
 }
 
-impl Canvas {
+impl AppState {
     /// Show the machine preview (View menu).
     pub fn machine_preview(&self) -> bool {
-        self.machine_on
+        self.view.machine_on
     }
 
     pub fn set_machine_preview(&mut self, on: bool) {
-        self.machine_on = on;
+        self.view.machine_on = on;
         self.refresh_machine();
     }
 
     /// Recompute the preview from the document (after every change).
-    pub(super) fn refresh_machine(&mut self) {
-        self.machine = if self.machine_on {
-            paths(&locus_export::prepare(self.sketcher.document(), false).model)
+    pub(crate) fn refresh_machine(&mut self) {
+        self.view.machine = if self.view.machine_on {
+            paths(&locus_export::prepare(self.doc.sketcher.document(), false).model)
         } else {
             Vec::new()
         };
     }
 
-    pub(super) fn draw_machine(&self, painter: &Painter, rect: Rect, dark: bool) {
-        if !self.machine_on || self.dragging {
+    pub(crate) fn draw_machine(&self, painter: &Painter, rect: Rect, dark: bool) {
+        if !self.view.machine_on || self.tools.dragging {
             return;
         }
         let colour = if dark {
@@ -112,17 +112,17 @@ impl Canvas {
         } else {
             Color32::from_rgb(200, 0, 150)
         };
-        for p in &self.machine {
+        for p in &self.view.machine {
             let pts: Vec<Pos2> = p
                 .points
                 .iter()
-                .map(|q| self.view.to_screen(*q, rect))
+                .map(|q| self.view.camera.to_screen(*q, rect))
                 .collect();
             // The kerf itself is a fraction of a pixel at normal zoom, so the
             // offset path would vanish into the sketch line: a translucent
             // band (true kerf width, at least 6 px) marks where the cut goes.
             if p.kerf > 0.0 {
-                let band = (p.kerf * self.view.pt_per_mm).max(6.0) as f32;
+                let band = (p.kerf * self.view.camera.pt_per_mm).max(6.0) as f32;
                 painter.add(egui::Shape::line(
                     pts.clone(),
                     Stroke::new(band, colour.gamma_multiply(0.3)),

@@ -6,11 +6,12 @@
 //! edit goes through its command API (SPEC §11).
 
 use crate::actions::{self, Cx, Registry, Style};
-use crate::canvas::Canvas;
 use crate::file_io::FileIo;
-use crate::modify_tool::{ChamferMode, Modify, TransformMode};
 use crate::settings::{Settings, Theme, Units};
-use crate::tools::Tool;
+use crate::state::AppState;
+use crate::views::layers::LayersView;
+use crate::views::parameters::ParametersView;
+use crate::views::patterns::PatternsView;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
@@ -91,11 +92,19 @@ pub struct Status {
 macro_rules! cx {
     ($app:expr) => {
         Cx {
-            canvas: &mut $app.canvas,
+            state: &mut $app.state,
             settings: &mut $app.settings,
             plugins: Some(&mut $app.plugins),
         }
     };
+}
+
+/// Per-pane widget state, kept across frames; never part of the document.
+#[derive(Default)]
+struct Panes {
+    layers: LayersView,
+    parameters: ParametersView,
+    patterns: PatternsView,
 }
 
 pub struct App {
@@ -103,7 +112,10 @@ pub struct App {
     /// Every command the UI offers (#294, design §7.1).
     registry: Registry,
     settings: Settings,
-    canvas: Canvas,
+    /// The one mutable state (design §7.3).
+    state: AppState,
+    /// The panes' transient widget state (design §7.3).
+    panes: Panes,
     status: Status,
     files: FileIo,
     #[cfg(not(target_arch = "wasm32"))]
@@ -127,9 +139,10 @@ impl App {
         let mut app = Self {
             dock,
             registry: Registry::default(),
+            panes: Panes::default(),
             settings,
-            canvas: {
-                let mut c = Canvas::default();
+            state: {
+                let mut c = AppState::default();
                 c.install_fonts(&cc.egui_ctx);
                 c
             },
@@ -143,7 +156,7 @@ impl App {
             mcp: crate::mcp::Mcp::load(&cc.egui_ctx, cc.storage),
         };
         #[cfg(not(target_arch = "wasm32"))]
-        app.plugins.attach(&mut app.canvas, &mut app.files);
+        app.plugins.attach(&mut app.state, &mut app.files);
         app
     }
 
@@ -152,13 +165,13 @@ impl App {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn open_startup_file(&mut self, args: impl Iterator<Item = String>) {
         if let Some(path) = startup_file(args) {
-            self.files.open_startup_path(&mut self.canvas, path);
+            self.files.open_startup_path(&mut self.state, path);
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_stress(&mut self) {
-        self.canvas.load(crate::demo::stress(5000));
+        self.state.load(crate::demo::stress(5000));
     }
 
     fn toggle_tab(&mut self, tab: Tab) {
@@ -172,19 +185,19 @@ impl App {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                self.files.file_menu(ui, &mut self.canvas, &self.settings);
+                self.files.file_menu(ui, &mut self.state, &self.settings);
                 ui.separator();
                 ui.menu_button("Samples", |ui| {
                     if ui.button("Demo sketch").clicked() {
                         let ctx = ui.ctx().clone();
                         self.files
-                            .open_sample(&ctx, &mut self.canvas, crate::demo::sketch());
+                            .open_sample(&ctx, &mut self.state, crate::demo::sketch());
                         ui.close();
                     }
                     if ui.button("Stress scene (5 000 curves)").clicked() {
                         let ctx = ui.ctx().clone();
                         self.files
-                            .open_sample(&ctx, &mut self.canvas, crate::demo::stress(5000));
+                            .open_sample(&ctx, &mut self.state, crate::demo::stress(5000));
                         ui.close();
                     }
                 });
@@ -263,7 +276,7 @@ impl App {
                 );
             });
             ui.menu_button("Plugins", |ui| {
-                self.plugins.menu(ui, &mut self.registry, &self.canvas);
+                self.plugins.menu(ui, &mut self.registry, &self.state);
             });
             ui.menu_button("Help", |ui| {
                 ui.hyperlink_to("Locus on GitHub", "https://github.com/Nerdtisan/Locus");
@@ -286,151 +299,9 @@ impl App {
                 );
             }
             ui.separator();
-            self.corner_sizes(ui);
-            if self.canvas.tool() == Tool::Text {
-                self.canvas.text_tool_ui(ui);
-                ui.separator();
-            }
-            if self.canvas.tool() == Tool::Polygon {
-                let (mut sides, mut outside) = self.canvas.polygon();
-                let changed = ui
-                    .add(
-                        egui::DragValue::new(&mut sides)
-                            .range(3..=64)
-                            .suffix(" sides"),
-                    )
-                    .changed()
-                    | ui.checkbox(&mut outside, "Circumscribed").changed();
-                if changed {
-                    self.canvas.set_polygon(sides, outside);
-                }
-                ui.separator();
-            }
-            ui.weak(self.canvas.hint());
+            self.state.tool_options_ui(ui, self.settings.units);
+            ui.weak(self.state.hint());
         });
-    }
-
-    /// Fillet radius and chamfer size, while those tools are active (mm and
-    /// degrees; SPEC §6.2).
-    fn corner_sizes(&mut self, ui: &mut egui::Ui) {
-        fn len(v: &mut f64) -> egui::DragValue<'_> {
-            egui::DragValue::new(v)
-                .range(0.001..=10_000.0)
-                .speed(0.1)
-                .suffix(" mm")
-        }
-        let m = self.canvas.modify();
-        let c = &mut self.canvas.corner;
-        match m {
-            Some(Modify::Fillet) => {
-                ui.label("Radius");
-                ui.add(len(&mut c.radius));
-                ui.separator();
-            }
-            Some(Modify::Chamfer) => {
-                egui::ComboBox::from_id_salt("chamfer-mode")
-                    .selected_text(c.mode.label())
-                    .show_ui(ui, |ui| {
-                        for m in ChamferMode::ALL {
-                            ui.selectable_value(&mut c.mode, m, m.label());
-                        }
-                    });
-                ui.add(len(&mut c.d1));
-                match c.mode {
-                    ChamferMode::Equal => {}
-                    ChamferMode::TwoDistances => {
-                        ui.add(len(&mut c.d2));
-                    }
-                    ChamferMode::DistanceAngle => {
-                        ui.add(
-                            egui::DragValue::new(&mut c.angle_deg)
-                                .range(0.1..=179.9)
-                                .suffix("°"),
-                        );
-                    }
-                }
-                ui.separator();
-            }
-            Some(Modify::Offset) => {
-                ui.label("Distance");
-                ui.add(egui::DragValue::new(&mut c.offset).speed(0.1).suffix(" mm"));
-                ui.checkbox(&mut c.sharp, "Sharp corners");
-                if let Some(rid) = self.canvas.offset_selected()
-                    && let Some((mut d, mut sharp)) = self.canvas.offset_params(rid)
-                {
-                    ui.separator();
-                    ui.label("Picked offset");
-                    // Typed, not dragged: each change is one undo step.
-                    let r1 = ui
-                        .add(
-                            egui::DragValue::new(&mut d)
-                                .speed(0.0)
-                                .max_decimals(3)
-                                .suffix(" mm"),
-                        )
-                        .on_hover_text("Click to type a new distance");
-                    let r2 = ui.checkbox(&mut sharp, "Sharp");
-                    if (r1.changed() || r2.changed()) && d != 0.0 {
-                        self.canvas.set_offset_params(rid, d, sharp);
-                    }
-                    if ui
-                        .button("Explode")
-                        .on_hover_text("Turn the offset into ordinary geometry")
-                        .clicked()
-                    {
-                        self.canvas.finish_offset(rid, true);
-                    }
-                    if ui.button("Remove").clicked() {
-                        self.canvas.finish_offset(rid, false);
-                    }
-                }
-                ui.separator();
-            }
-            Some(Modify::Transform) => {
-                let t = &mut self.canvas.transform;
-                egui::ComboBox::from_id_salt("transform-mode")
-                    .selected_text(t.mode.label())
-                    .show_ui(ui, |ui| {
-                        for m in TransformMode::ALL {
-                            ui.selectable_value(&mut t.mode, m, m.label());
-                        }
-                    });
-                match t.mode {
-                    TransformMode::Move => {
-                        ui.label("dx");
-                        ui.add(egui::DragValue::new(&mut t.dx).speed(0.1).suffix(" mm"));
-                        ui.label("dy");
-                        ui.add(egui::DragValue::new(&mut t.dy).speed(0.1).suffix(" mm"));
-                    }
-                    TransformMode::Rotate => {
-                        ui.add(
-                            egui::DragValue::new(&mut t.angle_deg)
-                                .speed(1.0)
-                                .suffix("°"),
-                        );
-                    }
-                    TransformMode::Scale => {
-                        ui.add(
-                            egui::DragValue::new(&mut t.factor)
-                                .range(0.001..=1000.0)
-                                .speed(0.01)
-                                .prefix("×"),
-                        );
-                    }
-                }
-                ui.checkbox(&mut t.copy, "Copy");
-                let ok = self.canvas.can_transform();
-                if ui
-                    .add_enabled(ok, egui::Button::new("Apply"))
-                    .on_disabled_hover_text("Select geometry first")
-                    .clicked()
-                {
-                    self.canvas.apply_transform(self.settings.units);
-                }
-                ui.separator();
-            }
-            _ => {}
-        }
     }
 
     /// One button per constraint, enabled when the selection supports it (#70).
@@ -446,14 +317,14 @@ impl App {
                     Style::Strip,
                 );
             }
-            self.canvas.touch_modifiers_ui(ui);
+            self.state.touch_modifiers_ui(ui);
         });
     }
 
     /// Every shortcut, from the registry's key map (design §7.1). Plain
     /// keys act while the pointer was over the canvas last frame.
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let over = self.canvas.pointer_over();
+        let over = self.state.pointer_over();
         let mut cx = cx!(self);
         self.registry.dispatch_keys(ctx, &mut cx, over);
     }
@@ -478,11 +349,11 @@ impl App {
             ui.separator();
             ui.label(format!("Grid {}", self.status.grid));
             ui.separator();
-            ui.label(self.canvas.summary());
+            ui.label(self.state.summary());
             ui.separator();
             ui.label(format!("CPU {:.1} ms/frame", self.status.frame_ms));
             ui.separator();
-            ui.label(self.canvas.solve_summary());
+            ui.label(self.state.solve_summary());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Always visible while the MCP server runs (SPEC §16.4).
                 #[cfg(not(target_arch = "wasm32"))]
@@ -498,7 +369,8 @@ impl App {
 }
 
 struct Viewer<'a> {
-    canvas: &'a mut Canvas,
+    state: &'a mut AppState,
+    panes: &'a mut Panes,
     settings: &'a Settings,
     status: &'a mut Status,
     #[cfg(not(target_arch = "wasm32"))]
@@ -516,16 +388,16 @@ impl TabViewer for Viewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
         match tab {
-            Tab::Canvas => self.canvas.ui(ui, self.settings, self.status),
+            Tab::Canvas => self.state.canvas_ui(ui, self.settings, self.status),
             Tab::Properties => {
-                self.plugins.properties_ui(ui, self.canvas);
-                self.canvas.properties_ui(ui, self.settings);
+                self.plugins.properties_ui(ui, self.state);
+                self.state.properties_ui(ui, self.settings);
             }
-            Tab::Layers => self.canvas.layers_ui(ui, self.settings),
-            Tab::Constraints => self.canvas.constraints_ui(ui, self.settings),
-            Tab::Regions => self.canvas.regions_ui(ui),
-            Tab::Parameters => self.canvas.parameters_ui(ui),
-            Tab::Patterns => self.canvas.patterns_ui(ui, self.settings.units),
+            Tab::Layers => self.panes.layers.ui(ui, self.state, self.settings),
+            Tab::Constraints => self.state.constraints_ui(ui, self.settings),
+            Tab::Regions => self.state.regions_ui(ui),
+            Tab::Parameters => self.panes.parameters.ui(ui, self.state),
+            Tab::Patterns => self.panes.patterns.ui(ui, self.state, self.settings.units),
         }
     }
 
@@ -556,20 +428,21 @@ impl eframe::App for App {
         self.registry.sync_plugins(self.plugins.plugin_actions());
         self.shortcuts(ui.ctx());
         self.files
-            .update(ui.ctx(), &mut self.canvas, &mut self.settings);
+            .update(ui.ctx(), &mut self.state, &mut self.settings);
         #[cfg(not(target_arch = "wasm32"))]
         self.plugins
-            .windows(ui.ctx(), &mut self.canvas, &mut self.files);
+            .windows(ui.ctx(), &mut self.state, &mut self.files);
         #[cfg(target_arch = "wasm32")]
-        self.plugins.windows(ui.ctx(), &mut self.canvas);
+        self.plugins.windows(ui.ctx(), &mut self.state);
         #[cfg(not(target_arch = "wasm32"))]
-        self.mcp.update(ui.ctx(), &mut self.canvas);
+        self.mcp.update(ui.ctx(), &mut self.state);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::top("constraints").show(ui, |ui| self.constraint_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
-            canvas: &mut self.canvas,
+            state: &mut self.state,
+            panes: &mut self.panes,
             settings: &self.settings,
             status: &mut self.status,
             plugins: &mut self.plugins,

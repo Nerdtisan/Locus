@@ -5,7 +5,6 @@
 
 mod actions;
 mod app;
-mod canvas;
 mod constrain;
 mod demo;
 mod file_io;
@@ -25,9 +24,11 @@ mod render;
 mod scene;
 mod settings;
 mod shapes;
+mod state;
 mod tools;
 mod touch;
 mod view;
+mod views;
 #[cfg(target_arch = "wasm32")]
 mod web_plugins;
 
