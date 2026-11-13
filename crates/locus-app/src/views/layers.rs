@@ -125,13 +125,7 @@ impl LayersView {
             app.tools.draft.set_layer(id);
         }
         if want.add {
-            let doc = app.doc.sketcher.document();
-            let n = doc.layers().len();
-            let cmd = Command::AddLayer {
-                name: unique_name(doc),
-                colour: PALETTE[n % PALETTE.len()],
-                operation: OperationKind::Cut.default_operation(),
-            };
+            let cmd = new_layer(app.doc.sketcher.document());
             app.apply_reporting(&cmd);
             if app.doc.notice.is_none()
                 && let Some(&newest) = app.doc.sketcher.document().layers().keys().next_back()
@@ -323,6 +317,15 @@ impl AppState {
                 .copied()
                 .unwrap_or_else(Document::default_layer)
         }
+    }
+}
+
+/// The command behind "+ Add layer": a Draw layer (#288), next palette colour.
+fn new_layer(doc: &Document) -> Command {
+    Command::AddLayer {
+        name: unique_name(doc),
+        colour: PALETTE[doc.layers().len() % PALETTE.len()],
+        operation: OperationKind::Draw.default_operation(),
     }
 }
 
@@ -713,5 +716,22 @@ impl LayersView {
             plan,
             error: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_layer_defaults_to_draw() {
+        let doc = Document::new();
+        assert!(matches!(
+            new_layer(&doc),
+            Command::AddLayer {
+                operation: Operation::Draw(_),
+                ..
+            }
+        ));
     }
 }

@@ -11,7 +11,7 @@ use crate::constraint::Constraint;
 use crate::entity::{Entity, EntityKind, Geom};
 use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID, RecipeId};
-use crate::operation::{CutParams, Operation};
+use crate::operation::{DrawParams, Operation};
 use crate::recipe::Recipe;
 use locus_geom::{Arc, Circle, Cubic, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
@@ -169,7 +169,7 @@ impl Document {
         let layer = Layer {
             name: "Layer 1".to_owned(),
             colour: [0, 0, 0],
-            operation: Operation::Cut(CutParams::default()),
+            operation: Operation::Draw(DrawParams::default()),
             export_order: 0,
             visible: true,
             locked: false,
@@ -724,6 +724,15 @@ mod tests {
         assert!(d.layer(Document::default_layer()).is_some());
         assert_eq!(d.next_id(), 2);
         assert!(d.entities().is_empty());
+    }
+
+    /// #288: a new document's first layer is Draw. Files written earlier
+    /// keep their stored operation (see the file-format migration tests).
+    #[test]
+    fn new_document_starts_with_a_draw_layer() {
+        let d = Document::new();
+        let l = d.layer(Document::default_layer()).unwrap();
+        assert!(matches!(l.operation, Operation::Draw(_)));
     }
 
     #[test]
