@@ -59,6 +59,7 @@ use locus_plugin_host::validate::MAX_IMPORT_BYTES;
 use locus_plugin_host::validators;
 use locus_plugin_host::{Host, Plugin};
 
+use crate::actions::{self, plugin_actions};
 use crate::canvas::Canvas;
 use crate::file_io::{ExtraChecks, ExtraFinding, FileIo};
 use crate::plugin_job::{Job, Poll};
@@ -293,10 +294,22 @@ impl Plugins {
 
     // ── Menu ────────────────────────────────────────────────────────────────
 
-    pub fn menu(&mut self, ui: &mut Ui, canvas: &Canvas) {
+    /// The plugin commands that become registry actions (design §6.13):
+    /// enabled generators and modifiers, in install order.
+    pub fn plugin_actions(&self) -> Vec<actions::PluginAction> {
+        plugin_actions(
+            self.installed
+                .iter()
+                .filter(|i| i.enabled)
+                .map(|i| &i.manifest),
+        )
+    }
+
+    pub fn menu(&mut self, ui: &mut Ui, reg: &mut actions::Registry, canvas: &Canvas) {
         if !self.listed {
             self.refresh();
         }
+        reg.sync_plugins(self.plugin_actions());
         if ui.button("Install plugin…").clicked() {
             ui.close();
             self.install();
@@ -307,27 +320,14 @@ impl Plugins {
             self.manage = true;
         }
         ui.separator();
-        let generators: Vec<(String, String)> = self
-            .installed
-            .iter()
-            .filter(|i| i.enabled && i.manifest.kinds.contains(&Kind::Generator))
-            .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
-            .collect();
-        if generators.is_empty() {
+        if reg
+            .plugin_actions(actions::PluginKind::Generator)
+            .next()
+            .is_none()
+        {
             ui.weak("No generator plugins installed.");
         }
-        for (id, name) in generators {
-            if ui.button(format!("Insert {name}…")).clicked() {
-                ui.close();
-                self.open(&id, Target::Insert, None);
-            }
-        }
-        let modifiers: Vec<(String, String)> = self
-            .installed
-            .iter()
-            .filter(|i| i.enabled && i.manifest.kinds.contains(&Kind::Modifier))
-            .map(|i| (i.manifest.id.clone(), i.manifest.name.clone()))
-            .collect();
+        self.action_buttons(ui, reg, actions::PluginKind::Generator, canvas);
         let importers: Vec<(String, String)> = self
             .installed
             .iter()
@@ -347,21 +347,35 @@ impl Plugins {
                 }
             }
         }
-        if !modifiers.is_empty() {
+        if reg
+            .plugin_actions(actions::PluginKind::Modifier)
+            .next()
+            .is_some()
+        {
             ui.separator();
-            let curves = canvas.selected_curves();
-            for (id, name) in modifiers {
-                if ui
-                    .add_enabled(
-                        !curves.is_empty(),
-                        egui::Button::new(format!("Apply {name} to selection…")),
-                    )
-                    .on_disabled_hover_text("Select a chain of lines and arcs, or a circle.")
-                    .clicked()
-                {
-                    ui.close();
-                    self.open(&id, Target::Modify(curves.clone()), None);
-                }
+            self.action_buttons(ui, reg, actions::PluginKind::Modifier, canvas);
+        }
+    }
+
+    /// One button per plugin action of `kind`, drawn from the registry.
+    fn action_buttons(
+        &mut self,
+        ui: &mut Ui,
+        reg: &actions::Registry,
+        kind: actions::PluginKind,
+        canvas: &Canvas,
+    ) {
+        for a in reg.plugin_actions(kind) {
+            let on = reg.enabled(a, canvas);
+            let mut r = ui.add_enabled(on.yes(), egui::Button::new(a.label.as_ref()));
+            if let actions::Enabled::No(why) = &on {
+                r = r.on_disabled_hover_text(why.as_ref());
+            }
+            if r.clicked()
+                && let actions::Op::Plugin { plugin, kind } = &a.op
+            {
+                ui.close();
+                actions::PluginHost::run_action(self, plugin, *kind, canvas);
             }
         }
     }
@@ -879,5 +893,16 @@ impl Plugins {
             }
         }
         ui.separator();
+    }
+}
+
+impl actions::PluginHost for Plugins {
+    fn run_action(&mut self, plugin: &str, kind: actions::PluginKind, canvas: &Canvas) {
+        match kind {
+            actions::PluginKind::Generator => self.open(plugin, Target::Insert, None),
+            actions::PluginKind::Modifier => {
+                self.open(plugin, Target::Modify(canvas.selected_curves()), None);
+            }
+        }
     }
 }

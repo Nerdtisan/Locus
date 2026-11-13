@@ -24,6 +24,7 @@ pub enum Modify {
 }
 
 impl Modify {
+    #[cfg(test)]
     pub const ALL: [Modify; 7] = [
         Modify::Trim,
         Modify::Extend,
@@ -34,7 +35,7 @@ impl Modify {
         Modify::Transform,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Modify::Trim => "Trim",
             Modify::Extend => "Extend",
@@ -115,7 +116,7 @@ impl ChamferMode {
         ChamferMode::DistanceAngle,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             ChamferMode::Equal => "Equal distance",
             ChamferMode::TwoDistances => "Two distances",
@@ -179,7 +180,7 @@ impl TransformMode {
         TransformMode::Scale,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             TransformMode::Move => "Move",
             TransformMode::Rotate => "Rotate",

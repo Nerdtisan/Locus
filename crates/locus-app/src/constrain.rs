@@ -31,6 +31,7 @@ pub enum Kind {
 }
 
 impl Kind {
+    #[cfg(test)]
     pub const ALL: [Kind; 12] = [
         Kind::Coincident,
         Kind::Horizontal,
@@ -46,7 +47,7 @@ impl Kind {
         Kind::Fix,
     ];
 
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Kind::Coincident => "Coincident",
             Kind::Horizontal => "Horizontal",
@@ -63,26 +64,8 @@ impl Kind {
         }
     }
 
-    /// Single-key shortcut (Select mode, pointer over the canvas).
-    pub fn key(self) -> char {
-        match self {
-            Kind::Coincident => 'K',
-            Kind::Horizontal => 'H',
-            Kind::Vertical => 'V',
-            Kind::Parallel => 'Q',
-            Kind::Perpendicular => 'W',
-            Kind::Tangent => 'T',
-            Kind::Collinear => 'X',
-            Kind::Concentric => 'O',
-            Kind::Equal => 'E',
-            Kind::Symmetric => 'Y',
-            Kind::Midpoint => 'M',
-            Kind::Fix => 'F',
-        }
-    }
-
     /// What to select, for the hover text and the refusal message.
-    pub fn needs(self) -> &'static str {
+    pub const fn needs(self) -> &'static str {
         match self {
             Kind::Coincident => "two points, or a point and a curve",
             Kind::Horizontal | Kind::Vertical => "one or more lines",
@@ -376,7 +359,7 @@ impl DimSpec {
         matches!(self, DimSpec::Angle(..))
     }
 
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             DimSpec::Distance(..) => "Distance",
             DimSpec::Radius(_) => "Radius",

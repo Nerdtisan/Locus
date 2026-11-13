@@ -22,6 +22,7 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use crate::actions;
 use egui::{RichText, Ui};
 use js_sys::Uint8Array;
 use locus_doc::RecipeId;
@@ -213,7 +214,13 @@ impl WebPlugins {
 
     // ── Menu ────────────────────────────────────────────────────────────────
 
-    pub fn menu(&mut self, ui: &mut Ui, canvas: &Canvas) {
+    /// The plugin commands that become registry actions (design §6.13).
+    pub fn plugin_actions(&self) -> Vec<actions::PluginAction> {
+        actions::plugin_actions(self.installed.iter().map(|p| &p.manifest))
+    }
+
+    pub fn menu(&mut self, ui: &mut Ui, reg: &mut actions::Registry, canvas: &Canvas) {
+        reg.sync_plugins(self.plugin_actions());
         if ui.button("Install plugin…").clicked() {
             ui.close();
             self.spawn(async {
@@ -247,24 +254,22 @@ impl WebPlugins {
         if generators.is_empty() && modifiers.is_empty() && exporters.is_empty() {
             ui.weak("No plugins installed.");
         }
-        for (id, name) in generators {
-            if ui.button(format!("Insert {name}…")).clicked() {
-                ui.close();
-                self.open(&id, Target::Insert, None);
-            }
-        }
-        let curves = canvas.selected_curves();
-        for (id, name) in modifiers {
-            if ui
-                .add_enabled(
-                    !curves.is_empty(),
-                    egui::Button::new(format!("Apply {name} to selection…")),
-                )
-                .on_disabled_hover_text("Select a chain of lines and arcs, or a circle.")
-                .clicked()
-            {
-                ui.close();
-                self.open(&id, Target::Modify(curves.clone()), None);
+        for kind in [
+            actions::PluginKind::Generator,
+            actions::PluginKind::Modifier,
+        ] {
+            for a in reg.plugin_actions(kind) {
+                let on = reg.enabled(a, canvas);
+                let mut r = ui.add_enabled(on.yes(), egui::Button::new(a.label.as_ref()));
+                if let actions::Enabled::No(why) = &on {
+                    r = r.on_disabled_hover_text(why.as_ref());
+                }
+                if r.clicked()
+                    && let actions::Op::Plugin { plugin, kind } = &a.op
+                {
+                    ui.close();
+                    actions::PluginHost::run_action(self, plugin, *kind, canvas);
+                }
             }
         }
         for (id, name) in exporters {
@@ -743,6 +748,17 @@ fn explode_button(ui: &mut Ui, canvas: &mut Canvas, rid: RecipeId, message: &mut
                 ))
             }
             Err(e) => *message = Some(format!("Couldn't explode it: {e}")),
+        }
+    }
+}
+
+impl actions::PluginHost for WebPlugins {
+    fn run_action(&mut self, plugin: &str, kind: actions::PluginKind, canvas: &Canvas) {
+        match kind {
+            actions::PluginKind::Generator => self.open(plugin, Target::Insert, None),
+            actions::PluginKind::Modifier => {
+                self.open(plugin, Target::Modify(canvas.selected_curves()), None);
+            }
         }
     }
 }
