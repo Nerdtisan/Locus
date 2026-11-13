@@ -252,15 +252,18 @@ struct Plan {
     next: u64,
     layer: LayerId,
     style: Style,
+    /// Everything is construction (the Linetype switch, #289).
+    construction: bool,
     commands: Vec<Command>,
 }
 
 impl Plan {
-    fn new(doc_next_id: u64, layer: LayerId, style: Style) -> Self {
+    fn new(doc_next_id: u64, layer: LayerId, style: Style, construction: bool) -> Self {
         Self {
             next: doc_next_id,
             layer,
             style,
+            construction,
             commands: Vec::new(),
         }
     }
@@ -274,7 +277,7 @@ impl Plan {
     fn add(&mut self, geom: Geom) -> EntityId {
         self.commands.push(Command::AddEntity {
             layer: self.layer,
-            construction: false,
+            construction: self.construction,
             geom,
             style: self.style,
         });
@@ -345,6 +348,8 @@ pub struct Draft {
     last_curve: Option<EntityId>,
     /// The style new geometry gets (design §6.2; #287).
     style: Style,
+    /// New geometry is construction (#289).
+    construction: bool,
     /// Text tool: the text to place, laid out by the canvas before each click.
     text: Option<Box<TextData>>,
     /// The text entity the last click created, for the canvas to select.
@@ -365,6 +370,7 @@ impl Draft {
             out: None,
             last_curve: None,
             style: Style::default(),
+            construction: false,
             text: None,
             placed: None,
         }
@@ -388,6 +394,11 @@ impl Draft {
     /// Give new geometry `style` (the current style, #287).
     pub fn set_style(&mut self, style: Style) {
         self.style = style;
+    }
+
+    /// Make new geometry construction or normal (the Linetype switch, #289).
+    pub fn set_construction(&mut self, on: bool) {
+        self.construction = on;
     }
 
     pub fn tool(&self) -> Tool {
@@ -444,7 +455,7 @@ impl Draft {
 
     pub fn click(&mut self, pick: Pick, doc_next_id: u64) -> Outcome {
         let here = Node::from_pick(pick);
-        let mut plan = Plan::new(doc_next_id, self.layer, self.style);
+        let mut plan = Plan::new(doc_next_id, self.layer, self.style, self.construction);
         match self.tool {
             Tool::Select => Outcome::Pending,
             Tool::Point => {
@@ -697,7 +708,7 @@ impl Draft {
         let Some(&first) = self.nodes.first() else {
             return Outcome::Pending;
         };
-        let plan = Plan::new(next_id, self.layer, self.style);
+        let plan = Plan::new(next_id, self.layer, self.style, self.construction);
         if self.tool == Tool::RectThree {
             if self.nodes.len() == 1 {
                 let dir = (cursor.pos - first.pos())
@@ -980,7 +991,7 @@ impl Draft {
         }
         let closing = here.id().is_some() && here.id() == self.chain_first;
         let handle = if closing { None } else { handle };
-        let mut plan = Plan::new(doc_next_id, self.layer, self.style);
+        let mut plan = Plan::new(doc_next_id, self.layer, self.style, self.construction);
         // Corners get handles a third of the way along the chord.
         let third = (here.pos() - from.pos()) / 3.0;
         let c0 = from.pos() + self.out.unwrap_or(third);
@@ -1047,7 +1058,7 @@ impl Draft {
             .normalized(MIN_SIZE_MM)
             .unwrap_or(Vec2::new(1.0, 0.0));
         let at = Node::New(from.pos() + dir * value);
-        let mut plan = Plan::new(doc_next_id, self.layer, self.style);
+        let mut plan = Plan::new(doc_next_id, self.layer, self.style, self.construction);
         match self.tool {
             // A typed length keeps the inferred direction and its constraint.
             Tool::Line => self.segment(from, at, plan, Some(value), cursor.line),
