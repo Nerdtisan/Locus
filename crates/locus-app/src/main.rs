@@ -5,6 +5,7 @@
 
 mod actions;
 mod app;
+mod chain;
 mod constrain;
 mod demo;
 mod file_io;
