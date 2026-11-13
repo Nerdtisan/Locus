@@ -650,7 +650,7 @@ fn rebuild(doc: &Document, id: EntityId, t: &Target, pieces: Pieces, label: &str
                     b: cur.0,
                 }
             });
-        } else if !adjacent && !matches!(t, Target::Circle(_)) {
+        } else if !adjacent && matches!(t, Target::Arc(_)) {
             // Arcs on one centre point: equal radius unless they share an end.
             b.constrain(Constraint::Equal {
                 a: keeper,
@@ -1307,17 +1307,23 @@ mod tests {
     fn pieces_of(d: &Document, orig: &Cubic) -> Vec<Cubic> {
         let mut v: Vec<Cubic> = cubics(d)
             .into_iter()
-            .filter(|c| orig.distance_to(c.eval(0.5)) < 1e-6)
+            .filter(|c| off(orig, c.eval(0.5)) < 1e-6)
             .collect();
         v.sort_by(|a, b| a.p0.x.total_cmp(&b.p0.x));
         v
+    }
+
+    /// Distance from `q` to the exact curve (`Cubic::distance_to` is only
+    /// good to its 1e-3 flattening).
+    fn off(orig: &Cubic, q: Vec2) -> f64 {
+        orig.eval(bezier_param(orig, q)).distance(q)
     }
 
     /// Every piece is a sub-curve of the original: its samples lie on it.
     fn assert_on(orig: &Cubic, piece: &Cubic) {
         for i in 0..=10 {
             let q = piece.eval(f64::from(i) / 10.0);
-            assert!(orig.distance_to(q) < 1e-6, "{q:?} is off the original");
+            assert!(off(orig, q) < 1e-6, "{q:?} is off the original");
         }
     }
 
@@ -1433,7 +1439,7 @@ mod tests {
         assert!((c.p1.y + 4.0).abs() < 1e-6, "{:?}", c.p1);
         // Same polynomial: samples of the old curve are still on the new one.
         for i in 0..=10 {
-            assert!(c.distance_to(orig.eval(f64::from(i) / 10.0)) < 1e-6);
+            assert!(off(&c, orig.eval(f64::from(i) / 10.0)) < 1e-6);
         }
     }
 
@@ -1447,6 +1453,20 @@ mod tests {
         let other = pt(&mut d, 50.0, 0.0);
         line(&mut d, end, other);
         assert_eq!(extend(&d, b, v(30.0, 0.0)), Err(ModifyError::EndConnected));
+    }
+
+    #[test]
+    fn modified_beziers_solve_and_undo_as_one_step() {
+        let (d, b, orig, _) = arch();
+        for plan in [
+            trim(&d, b, orig.eval(0.5)).unwrap(),
+            split(&d, b, orig.eval(0.5)).unwrap(),
+        ] {
+            let mut sk = crate::Sketcher::new(d.clone());
+            sk.apply(&plan.command).unwrap();
+            assert!(sk.undo().is_ok());
+            assert_eq!(sk.document().cubic(b), d.cubic(b));
+        }
     }
 
     #[test]
