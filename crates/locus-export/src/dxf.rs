@@ -226,6 +226,7 @@ mod tests {
     fn rectangle_is_four_lines_on_a_named_layer() {
         let m = ExportModel {
             layers: vec![layer(OperationKind::Cut, rect(1, 0.0, 0.0, 10.0, 5.0))],
+            ..Default::default()
         };
         let s = String::from_utf8(to_dxf_model(&m)).unwrap();
         assert_eq!(s.matches("  0\nLINE\n").count(), 4);

@@ -500,6 +500,7 @@ mod tests {
         let mut l = layer(cut(0.2, Compensation::Outside), shapes);
         let mut m = ExportModel {
             layers: vec![l.clone()],
+            ..Default::default()
         };
         apply_operations(&mut m);
         l = m.layers.remove(0);
@@ -541,12 +542,14 @@ mod tests {
         let shapes = rect(0.0, 0.0, 10.0, 10.0);
         let mut m = ExportModel {
             layers: vec![layer(cut(0.4, Compensation::Inside), shapes.clone())],
+            ..Default::default()
         };
         apply_operations(&mut m);
         assert!((area(&m.layers[0]) - 9.6 * 9.6).abs() < 1e-9);
         let before = layer(cut(0.4, Compensation::None), shapes);
         let mut m = ExportModel {
             layers: vec![before.clone()],
+            ..Default::default()
         };
         apply_operations(&mut m);
         assert_eq!(m.layers[0], before);
@@ -560,6 +563,7 @@ mod tests {
         shapes.extend(rect(20.0, 20.0, 30.0, 30.0));
         let mut m = ExportModel {
             layers: vec![layer(cut(0.2, Compensation::Outside), shapes)],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let inner = m.layers[0]
@@ -581,6 +585,7 @@ mod tests {
         // radius 0.25 about the corner; the sides shift 0.25 ahead.
         let mut m = ExportModel {
             layers: vec![layer(knife(0.25), rect(0.0, 0.0, 10.0, 10.0))],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let p = &m.layers[0].paths[0];
@@ -613,6 +618,7 @@ mod tests {
                 knife(0.3),
                 vec![Shape::Circle(Circle::new(v(0.0, 0.0), 4.0))],
             )],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let Shape::Circle(c) = m.layers[0].paths[0].segs[0].shape else {
@@ -628,6 +634,7 @@ mod tests {
                 knife(0.3),
                 vec![Shape::Line(Line::new(a, b)), Shape::Line(Line::new(b, c2))],
             )],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let p = &m.layers[0].paths[0];
@@ -662,6 +669,7 @@ mod tests {
         shapes.extend(rect(3.25, 3.25, 6.75, 6.75));
         let mut m = ExportModel {
             layers: vec![layer(engrave(1.0, 0.0, false), shapes)],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let hs = hatches(&m.layers[0]);
@@ -692,6 +700,7 @@ mod tests {
         let shapes = vec![Shape::Circle(Circle::new(v(0.0, 0.0), 5.0))];
         let mut m = ExportModel {
             layers: vec![layer(engrave(0.5, 30.0, true), shapes)],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let hs = hatches(&m.layers[0]);
@@ -720,6 +729,7 @@ mod tests {
         shapes.extend(rect(3.0, 3.0, 7.0, 7.5));
         let mut m = ExportModel {
             layers: vec![layer(engrave(1.0, 0.0, false), shapes)],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let at = |y: f64| {
@@ -739,6 +749,7 @@ mod tests {
                 engrave(1e-6, 0.0, false),
                 rect(0.0, 0.0, 1000.0, 1000.0),
             )],
+            ..Default::default()
         };
         apply_operations(&mut m);
         assert!(hatches(&m.layers[0]).is_empty());
@@ -751,6 +762,7 @@ mod tests {
         shapes.push(Shape::Line(Line::new(v(30.0, 0.0), v(40.0, 0.0))));
         let mut m = ExportModel {
             layers: vec![layer(cut(0.2, Compensation::Outside), shapes)],
+            ..Default::default()
         };
         apply_operations(&mut m);
         let l = &m.layers[0];

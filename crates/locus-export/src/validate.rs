@@ -254,6 +254,7 @@ mod tests {
     fn model(op: OperationKind, segs: Vec<PathSeg>) -> ExportModel {
         ExportModel {
             layers: vec![layer(op, segs)],
+            ..Default::default()
         }
     }
 

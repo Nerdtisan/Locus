@@ -177,6 +177,7 @@ mod tests {
     fn model() -> ExportModel {
         ExportModel {
             layers: vec![layer(OperationKind::Cut, rect(1, 0.0, 0.0, 10.0, 10.0))],
+            ..Default::default()
         }
     }
 

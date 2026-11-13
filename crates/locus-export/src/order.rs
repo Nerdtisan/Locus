@@ -187,6 +187,7 @@ mod tests {
         segs.extend(rect(9, 200.0, 0.0, 220.0, 20.0));
         let mut m = ExportModel {
             layers: vec![layer(OperationKind::Cut, segs)],
+            ..Default::default()
         };
         order(&mut m);
         let xs: Vec<f64> = m.layers[0].paths.iter().map(first_x).collect();
@@ -202,6 +203,7 @@ mod tests {
         segs.extend(rect(9, 20.0, 20.0, 80.0, 80.0));
         let mut m = ExportModel {
             layers: vec![layer(OperationKind::Cut, segs)],
+            ..Default::default()
         };
         order(&mut m);
         let xs: Vec<f64> = m.layers[0].paths.iter().map(first_x).collect();
@@ -217,6 +219,7 @@ mod tests {
         }
         let mut m = ExportModel {
             layers: vec![layer(OperationKind::Cut, segs)],
+            ..Default::default()
         };
         let before = travel_length(&m);
         order(&mut m);
@@ -232,6 +235,7 @@ mod tests {
         ];
         let mut m = ExportModel {
             layers: vec![layer(OperationKind::Draw, segs)],
+            ..Default::default()
         };
         order(&mut m);
         let p = &m.layers[0].paths;

@@ -213,11 +213,18 @@ impl ExportLayer {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ExportModel {
     pub layers: Vec<ExportLayer>,
+    /// Overrides the bounds the writers place the drawing in. Per-layer export
+    /// (#291) sets it to the whole design's bounds, so every layer's file has
+    /// the same origin and canvas and the files line up when re-imported.
+    pub frame: Option<Aabb>,
 }
 
 impl ExportModel {
     #[must_use]
     pub fn bounds(&self) -> Option<Aabb> {
+        if self.frame.is_some() {
+            return self.frame;
+        }
         self.layers
             .iter()
             .flat_map(|l| &l.paths)
@@ -325,6 +332,7 @@ pub fn collect(doc: &Document) -> ExportModel {
                 (!l.paths.is_empty() || !l.degenerate.is_empty()).then_some(l)
             })
             .collect(),
+        ..Default::default()
     }
 }
 
