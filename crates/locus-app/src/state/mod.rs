@@ -153,6 +153,7 @@ impl AppState {
             units,
             layer,
             style: self.doc.current_style,
+            construction: self.doc.construction_linetype,
             selection,
             hover,
             text,
@@ -507,6 +508,40 @@ impl AppState {
     /// Delete the selection with its dependents as one undo step (#223,
     /// SPEC §11). Run by the `edit.delete` action, whose key waits while a
     /// typed value or a text field has the keyboard.
+    /// Normal/Construction on the selection (design §6.10, #289), as one
+    /// command: if every selected entity is construction they all become
+    /// normal, otherwise the normal ones become construction. Pattern and
+    /// mirror copies follow their source and are left out; `None` when
+    /// nothing selected can change.
+    pub(crate) fn construction_toggle(&self) -> Option<Command> {
+        let doc = self.doc.sketcher.document();
+        let ids: Vec<(EntityId, bool)> = self
+            .selection
+            .items
+            .iter()
+            .filter(|id| doc.driven_by(*id).is_none())
+            .filter_map(|id| doc.entity(id).map(|e| (id, e.construction)))
+            .collect();
+        if ids.is_empty() {
+            return None;
+        }
+        let to_normal = ids.iter().all(|(_, c)| *c);
+        let commands: Vec<Command> = ids
+            .into_iter()
+            .filter(|(_, c)| *c == to_normal)
+            .map(|(id, _)| Command::ToggleConstruction { id })
+            .collect();
+        Some(Command::Compound {
+            label: if to_normal {
+                "Make normal"
+            } else {
+                "Make construction"
+            }
+            .to_owned(),
+            commands,
+        })
+    }
+
     pub fn delete_selection(&mut self) {
         let ids: Vec<EntityId> = self.selection.items.iter().collect();
         if let Some(cmd) = locus_doc::delete::delete_entities(self.doc.sketcher.document(), &ids)
@@ -1238,6 +1273,99 @@ mod tests {
             assert_eq!(c.document().entities(), before.entities());
             assert_eq!(c.document().constraints(), before.constraints());
         }
+    }
+
+    /// X toggles Normal/Construction on the selection as one undo step
+    /// (design §6.10, #289): a mixed selection becomes all construction, then
+    /// all normal. Construction keeps its constraints and is not exported.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn x_toggles_construction_on_the_selection_as_one_step() {
+        let mut c = AppState::default();
+        let layer = c.active_layer();
+        let add = |c: &mut AppState, geom| {
+            c.apply_reporting(&Command::AddEntity {
+                layer,
+                construction: false,
+                style: Default::default(),
+                geom,
+            });
+            c.document()
+                .entities()
+                .iter()
+                .map(|(i, _)| i)
+                .last()
+                .unwrap()
+        };
+        let line = |c: &mut AppState, y: f64| {
+            let a = add(
+                c,
+                Geom::Point {
+                    pos: Vec2::new(500.0, y),
+                },
+            );
+            let b = add(
+                c,
+                Geom::Point {
+                    pos: Vec2::new(510.0, y),
+                },
+            );
+            add(c, Geom::Line { start: a, end: b })
+        };
+        let (l1, l2) = (line(&mut c, 500.0), line(&mut c, 520.0));
+        c.apply_reporting(&Command::ToggleConstruction { id: l2 });
+        let cons = |c: &AppState, id| c.document().entity(id).unwrap().construction;
+        c.selection.items.set_all([l1, l2]);
+        press(&mut c, egui::Key::X);
+        assert!(cons(&c, l1) && cons(&c, l2), "mixed → all construction");
+        assert_eq!(c.undo_label(), Some("Make construction"));
+        // Constraints still work on construction geometry (SPEC §4).
+        assert!(c.apply_reporting(&Command::AddConstraint {
+            constraint: locus_doc::Constraint::Horizontal { line: l1 },
+        }));
+        // …and it is never exported.
+        let exported: Vec<EntityId> = locus_export::collect(c.document())
+            .layers
+            .iter()
+            .flat_map(|l| l.paths.iter().flat_map(|p| p.entities()))
+            .collect();
+        assert!(!exported.contains(&l1) && !exported.contains(&l2));
+        c.undo();
+        press(&mut c, egui::Key::X);
+        assert!(
+            !cons(&c, l1) && !cons(&c, l2),
+            "all construction → all normal"
+        );
+        c.undo();
+        assert!(cons(&c, l1) && cons(&c, l2), "one undo per toggle");
+        c.selection.items.clear();
+        assert!(c.construction_toggle().is_none());
+    }
+
+    /// The Linetype switch makes drawing tools create construction (#289).
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn the_construction_linetype_draws_construction() {
+        use crate::tool::ToolEvent;
+        use crate::tools::Pick;
+        let mut c = AppState::default();
+        c.doc.construction_linetype = true;
+        c.set_tool(Tool::Line);
+        for x in [0.0, 40.0] {
+            c.tool_event(
+                ToolEvent::Click(Pick::free(Vec2::new(x, 300.0))),
+                None,
+                Units::Mm,
+            );
+        }
+        let last = c
+            .document()
+            .entities()
+            .iter()
+            .filter(|(_, e)| matches!(e.geom, Geom::Line { .. }))
+            .last()
+            .map(|(_, e)| e.construction);
+        assert_eq!(last, Some(true));
     }
 
     /// The design's shortcut map (§5): tool letters pick tools; constraints

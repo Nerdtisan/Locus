@@ -93,6 +93,8 @@ pub enum Flag {
     AutoConstrain,
     MachinePreview,
     StrokeWidth,
+    /// Drawing tools make construction geometry (design §6.10, #289).
+    ConstructionLinetype,
 }
 
 /// The two plugin kinds that become actions (design §6.13). Exporters
@@ -119,6 +121,8 @@ pub enum Op {
     Deselect,
     /// Delete the selection and what depends on it (#223).
     Delete,
+    /// Toggle the selection between normal and construction (#289).
+    ToggleConstruction,
     Fit,
     Toggle(Flag),
     /// A plugin command (SPEC §15), run by the [`PluginHost`].
@@ -458,6 +462,28 @@ pub static BUILTIN: &[Action] = &[
         KeyScope::Canvas,
         Op::Delete,
     ),
+    a(
+        "modify.construction",
+        "Normal/Construction",
+        Group::Modify,
+        "┄",
+        &["construction", "reference", "dashed", "linetype"],
+        "Select curves to toggle between normal and construction",
+        &[key(Key::X)],
+        KeyScope::Canvas,
+        Op::ToggleConstruction,
+    ),
+    a(
+        "sketch.linetype_construction",
+        "Construction linetype",
+        Group::Create,
+        "┈",
+        &["construction", "linetype", "dashed"],
+        "New geometry is construction: drawn dashed, constrainable, never exported",
+        &[],
+        KeyScope::Global,
+        Op::Toggle(Flag::ConstructionLinetype),
+    ),
     // ── Constrain ──
     a(
         "constrain.dimension",
@@ -633,11 +659,12 @@ const fn concat<const N: usize>(parts: &[&[Item]]) -> [Item; N] {
     out
 }
 
-/// Sketch menu: the drawing tools.
-pub const SKETCH_MENU: &[Item] = &DRAWING;
+/// Sketch menu: the drawing tools, then the linetype for new geometry.
+pub const SKETCH_MENU: &[Item] =
+    &concat::<17>(&[&DRAWING, &[Sep, A("sketch.linetype_construction")]]);
 
 /// The tool strip: Select, the drawing tools, then the modify tools.
-pub const TOOL_STRIP: &[Item] = &concat::<24>(&[
+pub const TOOL_STRIP: &[Item] = &concat::<25>(&[
     &[A("select.select")],
     &DRAWING,
     &[
@@ -649,6 +676,7 @@ pub const TOOL_STRIP: &[Item] = &concat::<24>(&[
         A("modify.chamfer"),
         A("modify.offset"),
         A("modify.transform"),
+        A("modify.construction"),
     ],
 ]);
 
@@ -682,6 +710,8 @@ pub const EDIT_MENU: &[Item] = &[
     Sep,
     A("edit.select_all"),
     A("edit.deselect"),
+    Sep,
+    A("modify.construction"),
 ];
 
 /// The View menu's action part; panes, theme and units follow it.
@@ -832,6 +862,9 @@ impl Registry {
             Op::Undo => Enabled::when(canvas.undo_label().is_some(), "Nothing to undo"),
             Op::Redo => Enabled::when(canvas.redo_label().is_some(), "Nothing to redo"),
             Op::Delete => Enabled::when(!canvas.is_drawing(), "Finish the shape being drawn"),
+            Op::ToggleConstruction => {
+                Enabled::when(canvas.construction_toggle().is_some(), a.hint.clone())
+            }
             Op::Plugin {
                 kind: PluginKind::Modifier,
                 ..
@@ -848,6 +881,7 @@ impl Registry {
             Op::Toggle(Flag::AutoConstrain) => settings.auto_constrain,
             Op::Toggle(Flag::MachinePreview) => canvas.machine_preview(),
             Op::Toggle(Flag::StrokeWidth) => canvas.stroke_preview(),
+            Op::Toggle(Flag::ConstructionLinetype) => canvas.doc.construction_linetype,
             _ => false,
         }
     }
@@ -887,6 +921,12 @@ impl Registry {
                     canvas.delete_selection();
                 }
             }
+            Op::ToggleConstruction => match canvas.construction_toggle() {
+                Some(cmd) => {
+                    canvas.apply_reporting(&cmd);
+                }
+                None => canvas.doc.notice = Some(a.hint.to_string()),
+            },
             Op::Fit => canvas.request_fit(),
             Op::Toggle(f) => {
                 let on = !self.is_on(a, canvas, cx.settings);
@@ -894,6 +934,7 @@ impl Registry {
                     Flag::AutoConstrain => cx.settings.auto_constrain = on,
                     Flag::MachinePreview => canvas.set_machine_preview(on),
                     Flag::StrokeWidth => canvas.set_stroke_preview(on),
+                    Flag::ConstructionLinetype => canvas.doc.construction_linetype = on,
                 }
             }
             Op::Plugin { plugin, kind } => {
@@ -1131,6 +1172,7 @@ mod tests {
             ("sketch.slot", Key::U),
             ("sketch.pen", Key::N),
             ("edit.delete", Key::Delete),
+            ("modify.construction", Key::X),
         ] {
             assert_eq!(bound(id), Some(k), "{id}");
         }

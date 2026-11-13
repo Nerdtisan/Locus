@@ -33,6 +33,9 @@ pub struct DocState {
     /// The style new geometry gets (design §6.2, §9 #5; #287), shown in the
     /// Inspector while nothing is selected. App state, not document state.
     pub(crate) current_style: Style,
+    /// The palette's Linetype: drawing tools make construction geometry
+    /// (design §6.10, #289). App state, not document state.
+    pub(crate) construction_linetype: bool,
     /// Last refusal or error, shown in the status bar until the next action.
     pub(crate) notice: Option<String>,
     /// The last constraint the solver refused, until dismissed (#72).
@@ -51,6 +54,7 @@ impl Default for DocState {
             scene: Scene::default(),
             active_layer: Document::default_layer(),
             current_style: Style::default(),
+            construction_linetype: false,
             notice: None,
             refusal: None,
             generation: 0,

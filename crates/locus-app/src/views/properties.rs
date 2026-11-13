@@ -58,6 +58,27 @@ impl AppState {
                 }
             }
         }
+        if let Some(cmd) = self.construction_toggle() {
+            // Normal/Construction (design §2.1, §6.10; #289): one command per click.
+            let doc = self.doc.sketcher.document();
+            let flags: Vec<bool> = self
+                .selection
+                .items
+                .iter()
+                .filter(|id| doc.driven_by(*id).is_none())
+                .filter_map(|id| doc.entity(id).map(|e| e.construction))
+                .collect();
+            let all = flags.iter().all(|c| *c);
+            let mixed = !all && flags.iter().any(|c| *c);
+            let mut on = all;
+            if ui
+                .add(egui::Checkbox::new(&mut on, "Construction").indeterminate(mixed))
+                .on_hover_text("Drawn dashed, takes constraints, never exported (X)")
+                .changed()
+            {
+                self.apply_reporting(&cmd);
+            }
+        }
         if self.selection.regions.selected.is_empty() {
             ui.separator();
             self.style_ui(ui);

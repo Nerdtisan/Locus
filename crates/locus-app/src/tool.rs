@@ -87,6 +87,8 @@ pub struct ToolCx<'a> {
     pub layer: LayerId,
     /// The style new geometry gets (design §6.2; #287).
     pub style: Style,
+    /// New geometry is construction (the Linetype switch, #289).
+    pub construction: bool,
     pub selection: Vec<EntityId>,
     /// The curve under the pointer, if any.
     pub hover: Option<EntityId>,
@@ -242,6 +244,7 @@ impl Tool for DrawTool {
     fn event(&mut self, ev: ToolEvent, cx: &mut ToolCx<'_>) -> Flow {
         self.draft.set_layer(cx.layer);
         self.draft.set_style(cx.style);
+        self.draft.set_construction(cx.construction);
         let next = cx.doc.next_id();
         match ev {
             ToolEvent::Click(pick) => {
@@ -618,6 +621,7 @@ mod tests {
             units: Units::Mm,
             layer: Document::default_layer(),
             style: Style::default(),
+            construction: false,
             selection: Vec::new(),
             hover: None,
             text: None,
