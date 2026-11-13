@@ -39,8 +39,20 @@ pub struct ViewState {
     /// On-screen Shift (add) and Ctrl (toggle) for touch selection (#251).
     pub(crate) touch_add: bool,
     pub(crate) touch_toggle: bool,
-    /// Long-press context menu anchor, in screen points (#251).
-    pub(crate) touch_menu: Option<Pos2>,
+    /// The open marking menu (design §4, #290).
+    pub(crate) marking: Option<Marking>,
+}
+
+/// A marking menu opened by right-click or a long press (design §4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Marking {
+    /// Centre of the ring, in screen points.
+    pub at: Pos2,
+    /// The right button is still down: releasing away from the centre runs
+    /// the slot in that direction (a flick).
+    pub held: bool,
+    /// When it opened (egui time, s): a flick doesn't draw the menu.
+    pub since: f64,
 }
 
 impl Default for ViewState {
@@ -62,7 +74,7 @@ impl Default for ViewState {
             touches: crate::touch::Touches::default(),
             touch_add: false,
             touch_toggle: false,
-            touch_menu: None,
+            marking: None,
         }
     }
 }

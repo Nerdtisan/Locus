@@ -62,6 +62,8 @@ pub struct ToolState {
     pub(crate) text_edit: Option<(EntityId, TextSettings)>,
     /// The Style eyedropper is waiting for a click on an object (design §6.2).
     pub(crate) eyedropper: bool,
+    /// The last tool or command run from the registry, for Repeat (design §4).
+    pub(crate) last_action: Option<String>,
 }
 
 impl Default for ToolState {
@@ -80,6 +82,7 @@ impl Default for ToolState {
             fonts: FontCatalog::headless(),
             text_edit: None,
             eyedropper: false,
+            last_action: None,
         }
     }
 }
