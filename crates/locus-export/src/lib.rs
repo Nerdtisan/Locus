@@ -13,6 +13,7 @@
 pub mod dxf;
 pub mod exporter;
 pub mod fix;
+pub mod layers;
 pub mod ops;
 pub mod order;
 pub mod overlap;
@@ -22,12 +23,14 @@ pub mod prepare;
 pub mod profile;
 pub mod svg;
 pub mod validate;
+pub mod zip;
 
 pub use dxf::{to_dxf, to_dxf_model};
 pub use exporter::{
     DxfExporter, ExportError, Exported, Exporter, PdfExporter, Registry, SvgExporter,
 };
 pub use fix::{Fix, FixKind, autofix};
+pub use layers::{LayerFile, file_names, split_layers};
 pub use ops::apply_operations;
 pub use order::{order, travel_length};
 pub use pdf::{to_pdf, to_pdf_model};
@@ -36,3 +39,4 @@ pub use prepare::{Prepared, prepare, prepare_for};
 pub use profile::{Bed, Defaults, MachineProfile, Origin, ProfileError, ProfileUnits};
 pub use svg::{to_svg, to_svg_model};
 pub use validate::{Issue, IssueKind, Report, Severity, validate, validate_for};
+pub use zip::{ZipError, zip};

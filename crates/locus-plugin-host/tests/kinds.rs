@@ -265,6 +265,7 @@ fn validator_failures_never_hide_other_findings() {
             paths: Vec::new(),
             degenerate: Vec::new(),
         }],
+        frame: None,
     };
     let found = validators::run(&[&bad, &good], &export);
     assert_eq!(found.len(), 2);

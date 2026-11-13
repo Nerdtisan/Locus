@@ -111,7 +111,10 @@ mod tests {
         segs.push(seg(10, (0.0, 0.0), (6.0, 0.0))); // inside edge 1
         let mut l = layer(OperationKind::Cut, segs);
         l.degenerate.push(EntityId::new(77));
-        let mut m = ExportModel { layers: vec![l] };
+        let mut m = ExportModel {
+            layers: vec![l],
+            ..Default::default()
+        };
         assert!(validate(&m).has_errors());
 
         let fixes = autofix(&mut m);
@@ -134,6 +137,7 @@ mod tests {
         ];
         let mut m = ExportModel {
             layers: vec![layer(OperationKind::Draw, segs)],
+            ..Default::default()
         };
         autofix(&mut m);
         let s = &m.layers[0].paths[0].segs;
