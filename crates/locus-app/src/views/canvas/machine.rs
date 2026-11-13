@@ -160,6 +160,7 @@ mod tests {
             .apply(&Command::AddEntity {
                 layer: l,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Point {
                     pos: Vec2::new(0.0, 0.0),
                 },
@@ -169,6 +170,7 @@ mod tests {
         ed.apply(&Command::AddEntity {
             layer: l,
             construction: false,
+            style: Default::default(),
             geom: Geom::Circle {
                 center: c,
                 radius: 10.0,
@@ -214,6 +216,7 @@ mod tests {
             ed.apply(&Command::AddEntity {
                 layer: l,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Point {
                     pos: Vec2::new(x, y),
                 },
@@ -227,6 +230,7 @@ mod tests {
             ed.apply(&Command::AddEntity {
                 layer: l,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Line {
                     start: corners[i],
                     end: corners[(i + 1) % 4],
@@ -238,6 +242,7 @@ mod tests {
         ed.apply(&Command::AddEntity {
             layer: l,
             construction: false,
+            style: Default::default(),
             geom: Geom::Circle {
                 center: centre,
                 radius: 5.0,

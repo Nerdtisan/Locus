@@ -24,6 +24,7 @@ use crate::constraint::Constraint;
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
 use crate::ids::{ConstraintId, EntityId, LayerId};
+use crate::style::Style;
 use core::f64::consts::TAU;
 use locus_geom::{Arc, Circle, Cubic, EXPORT_TOL, Line, Piece, SOLVER_TOL, Vec2};
 use std::collections::BTreeSet;
@@ -350,14 +351,15 @@ pub(crate) struct Builder<'a> {
     pub(crate) commands: Vec<Command>,
     layer: LayerId,
     construction: bool,
+    style: Style,
 }
 
 impl<'a> Builder<'a> {
     pub(crate) fn new(doc: &'a Document, of: EntityId) -> Self {
-        let (layer, construction) = doc
+        let (layer, construction, style) = doc
             .entity(of)
-            .map_or((Document::default_layer(), false), |e| {
-                (e.layer, e.construction)
+            .map_or((Document::default_layer(), false, Style::default()), |e| {
+                (e.layer, e.construction, e.style)
             });
         Self {
             doc,
@@ -365,6 +367,7 @@ impl<'a> Builder<'a> {
             commands: Vec::new(),
             layer,
             construction,
+            style,
         }
     }
 
@@ -379,23 +382,25 @@ impl<'a> Builder<'a> {
             layer: self.layer,
             construction: self.construction,
             geom,
+            style: self.style,
         });
         EntityId::new(self.alloc())
     }
 
-    /// Adds `geom` on the same layer, and with the same construction flag,
-    /// as entity `like`.
+    /// Adds `geom` on the same layer, and with the same construction flag
+    /// and style, as entity `like`.
     pub(crate) fn add_like(&mut self, like: EntityId, geom: Geom) -> EntityId {
-        let (layer, construction) = self
+        let (layer, construction, style) = self
             .doc
             .entity(like)
-            .map_or((self.layer, self.construction), |e| {
-                (e.layer, e.construction)
+            .map_or((self.layer, self.construction, self.style), |e| {
+                (e.layer, e.construction, e.style)
             });
         self.commands.push(Command::AddEntity {
             layer,
             construction,
             geom,
+            style,
         });
         EntityId::new(self.alloc())
     }

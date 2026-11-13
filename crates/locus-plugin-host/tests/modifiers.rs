@@ -86,6 +86,7 @@ fn registry_runner_reruns_an_installed_modifier() {
         ed.apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(x, y),
             },
@@ -98,6 +99,7 @@ fn registry_runner_reruns_an_installed_modifier() {
         .apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Line { start: a, end: b },
         })
         .unwrap()

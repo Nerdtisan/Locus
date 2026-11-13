@@ -4,7 +4,7 @@
 //! `Sketcher::apply` (SPEC §11).
 
 use crate::scene::Scene;
-use locus_doc::{Command, ConstraintId, Document, EntityId, LayerId, Sketcher};
+use locus_doc::{Command, ConstraintId, Document, EntityId, LayerId, Sketcher, Style};
 
 /// A constraint the solver refused (SPEC §5 Solver UX): shown with the set it
 /// clashes with highlighted, and — for a dimension — the offer to add it as a
@@ -30,6 +30,9 @@ pub struct DocState {
     pub(crate) scene: Scene,
     /// The layer new geometry is drawn on (#118).
     pub(crate) active_layer: LayerId,
+    /// The style new geometry gets (design §6.2, §9 #5; #287), shown in the
+    /// Inspector while nothing is selected. App state, not document state.
+    pub(crate) current_style: Style,
     /// Last refusal or error, shown in the status bar until the next action.
     pub(crate) notice: Option<String>,
     /// The last constraint the solver refused, until dismissed (#72).
@@ -47,6 +50,7 @@ impl Default for DocState {
             plugin_runner: None,
             scene: Scene::default(),
             active_layer: Document::default_layer(),
+            current_style: Style::default(),
             notice: None,
             refusal: None,
             generation: 0,

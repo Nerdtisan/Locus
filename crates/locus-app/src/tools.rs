@@ -13,7 +13,9 @@
 
 use crate::scene::Shape;
 use crate::shapes;
-use locus_doc::{Command, Constraint, Dimension, Document, EntityId, Geom, LayerId, TextData};
+use locus_doc::{
+    Command, Constraint, Dimension, Document, EntityId, Geom, LayerId, Style, TextData,
+};
 use locus_geom::{Arc, Circle, Cubic, Line, Vec2};
 
 /// Shorter than this is "the same place": no zero-length lines or radii.
@@ -249,14 +251,16 @@ pub enum Outcome {
 struct Plan {
     next: u64,
     layer: LayerId,
+    style: Style,
     commands: Vec<Command>,
 }
 
 impl Plan {
-    fn new(doc_next_id: u64, layer: LayerId) -> Self {
+    fn new(doc_next_id: u64, layer: LayerId, style: Style) -> Self {
         Self {
             next: doc_next_id,
             layer,
+            style,
             commands: Vec::new(),
         }
     }
@@ -272,6 +276,7 @@ impl Plan {
             layer: self.layer,
             construction: false,
             geom,
+            style: self.style,
         });
         EntityId::new(self.alloc())
     }
@@ -281,6 +286,7 @@ impl Plan {
             layer: self.layer,
             construction: true,
             geom,
+            style: self.style,
         });
         EntityId::new(self.alloc())
     }
@@ -337,6 +343,8 @@ pub struct Draft {
     /// the curve just drawn, so the next one is made tangent to it.
     out: Option<Vec2>,
     last_curve: Option<EntityId>,
+    /// The style new geometry gets (design §6.2; #287).
+    style: Style,
     /// Text tool: the text to place, laid out by the canvas before each click.
     text: Option<Box<TextData>>,
     /// The text entity the last click created, for the canvas to select.
@@ -356,6 +364,7 @@ impl Draft {
             circumscribed: false,
             out: None,
             last_curve: None,
+            style: Style::default(),
             text: None,
             placed: None,
         }
@@ -374,6 +383,11 @@ impl Draft {
     /// Put new geometry on `layer`.
     pub fn set_layer(&mut self, layer: LayerId) {
         self.layer = layer;
+    }
+
+    /// Give new geometry `style` (the current style, #287).
+    pub fn set_style(&mut self, style: Style) {
+        self.style = style;
     }
 
     pub fn tool(&self) -> Tool {
@@ -430,7 +444,7 @@ impl Draft {
 
     pub fn click(&mut self, pick: Pick, doc_next_id: u64) -> Outcome {
         let here = Node::from_pick(pick);
-        let mut plan = Plan::new(doc_next_id, self.layer);
+        let mut plan = Plan::new(doc_next_id, self.layer, self.style);
         match self.tool {
             Tool::Select => Outcome::Pending,
             Tool::Point => {
@@ -683,7 +697,7 @@ impl Draft {
         let Some(&first) = self.nodes.first() else {
             return Outcome::Pending;
         };
-        let plan = Plan::new(next_id, self.layer);
+        let plan = Plan::new(next_id, self.layer, self.style);
         if self.tool == Tool::RectThree {
             if self.nodes.len() == 1 {
                 let dir = (cursor.pos - first.pos())
@@ -966,7 +980,7 @@ impl Draft {
         }
         let closing = here.id().is_some() && here.id() == self.chain_first;
         let handle = if closing { None } else { handle };
-        let mut plan = Plan::new(doc_next_id, self.layer);
+        let mut plan = Plan::new(doc_next_id, self.layer, self.style);
         // Corners get handles a third of the way along the chord.
         let third = (here.pos() - from.pos()) / 3.0;
         let c0 = from.pos() + self.out.unwrap_or(third);
@@ -1033,7 +1047,7 @@ impl Draft {
             .normalized(MIN_SIZE_MM)
             .unwrap_or(Vec2::new(1.0, 0.0));
         let at = Node::New(from.pos() + dir * value);
-        let mut plan = Plan::new(doc_next_id, self.layer);
+        let mut plan = Plan::new(doc_next_id, self.layer, self.style);
         match self.tool {
             // A typed length keeps the inferred direction and its constraint.
             Tool::Line => self.segment(from, at, plan, Some(value), cursor.line),

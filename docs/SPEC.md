@@ -33,6 +33,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Plugin API | WIT package `locus:plugin@1.0.0` (draft until the M3 host): one world per plugin kind, none importing anything (deny by default), exporters get the same validated export model as built-in writers ([ADR-0009](adr/0009-plugin-api.md), 2026-11-05). Text ships in core, not as a plugin (§9). |
 | Recipes | Mirror/patterns/offset are recipes in the document; instances are real driven entities, mirror solved by `Symmetric` constraints, patterns regenerated after the solve; instance IDs stay with the recipe ([ADR-0011](adr/0011-associative-recipes.md), 2026-11-10). |
 | Offsets | Exact line/arc offsets (areas and open chains, round or miter joins) owned by `locus-region` as a Minkowski sum/difference through the ADR 0008 booleans; `cavalier_contours` measured and not chosen (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)). |
+| Object style (M5) | **Decided** (#287, #284): each entity stores its own style (stroke colour or "by layer", stroke width, pen number, fill, opacity); `Operation::Draw` has no parameters any more. File format **v13** moves each Draw layer's pen onto that layer's entities; a default style is not written. Edits go through one `SetStyle` command per user action (a whole multi-selection is one undo step). Export: Draw layers write each object's own style; the machine layers (Cut, Score, Engrave, Drag-knife) write the machine profile's colour and hairline, because LightBurn and Cricut read colour as the operation. Owner decisions 2026-11-13, [ADR 0017](adr/0017-fusion-style-ui.md). |
 | UI (M5) | Fusion-style sketch UI: ribbon grouped Create / Modify / Constrain / Inspect / Insert / Select, browser, sketch palette, context inspector, right-click marking menu (pan on middle-drag / Space+drag), Fusion's sketch keys, one pick → drag/type → Enter/Esc → editable-dimension tool model; built on an action registry and a tool trait. Style (stroke colour, width, pen number, fill, opacity) belongs to each object, not the layer; placed text stays re-editable. Owner decisions 2026-11-13, #293, [ADR 0017](adr/0017-fusion-style-ui.md). |
 
 ---
@@ -238,7 +239,7 @@ Layer `operation` enum:
 | Cut | kerf width, inside/outside/none compensation, pass count (metadata) |
 | Score | — |
 | Engrave (fill) | hatch spacing, hatch angle, crosshatch (holes respected; outlines kept) |
-| Draw (plotter) | pen number, pen width (drives hatch spacing + stroke-edge preview). **M5:** these move to each object's style (owner decision 2026-11-13, #287, [ADR 0017](adr/0017-fusion-style-ui.md)); the layer keeps only the operation. |
+| Draw (plotter) | — **M5 (format v13):** pen number and pen width are each object's style (§4), not layer parameters (owner decision 2026-11-13, #287, [ADR 0017](adr/0017-fusion-style-ui.md)). An object's pen width drives its stroke-edge preview and stroke-edge dimensions (ADR 0014) and its exported stroke width. |
 | Drag-knife (vinyl) | blade offset (swivel arcs at turns over 10°) |
 | Reference | never exported |
 
@@ -291,6 +292,7 @@ Export is always one-way. Native file is the source of truth.
 - Extension: `.locus`.
 - Human-readable **RON** for clean git diffs and easy debugging ([ADR-0004](adr/0004-file-format.md); JSON only as an export view).
 - Top-level: `format_version`, `units`, `next_id` (ID counter, [ADR-0003](adr/0003-entity-ids.md)), `parameters`, `layers`, `entities`, `constraints`, `booleans` (boolean recipes over region keys, format v3, #123; regions themselves are derived and not stored), `view` (optional, can be ignored by diff tools).
+- Entities carry their style (format v13, #287): omitted while it is the default, so points and unstyled curves add nothing to the file.
 - Text entities (format v9, #179) store content, a font reference and the laid-out geometry, so a file opens and exports without the font ([ADR-0012](adr/0012-text-entity.md)).
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
 - Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.

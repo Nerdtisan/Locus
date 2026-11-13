@@ -12,9 +12,15 @@
 //! ignores group-level presentation attributes and imported a design with a
 //! large black outline as blank (#134). Per-shape attributes are valid SVG 1.1
 //! and read the same in LightBurn and Inkscape.
+//!
+//! What each shape carries depends on its layer (SPEC §7, #284): a Draw
+//! object writes its own style (colour, width, fill, opacity and its pen as
+//! `data-pen`); Cut, Score, Engrave and Drag-knife shapes write the layer's
+//! (profile) colour and the profile's hairline, since the machine software
+//! reads colour as the operation.
 
 use crate::order::order;
-use crate::pipeline::{ExportModel, PathSeg, Shape, collect};
+use crate::pipeline::{ExportModel, Paint, PathSeg, Shape, collect};
 use locus_doc::Document;
 use locus_geom::Vec2;
 use std::f64::consts::PI;
@@ -71,14 +77,9 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
             name = escape(&layer.name),
             op = layer.operation.kind(),
         );
-        // On every shape, not the group (see the module docs: Cricut).
-        let style = format!(
-            "fill=\"none\" stroke=\"#{r:02x}{g:02x}{b:02x}\" stroke-width=\"0.1\"",
-            r = layer.colour[0],
-            g = layer.colour[1],
-            b = layer.colour[2],
-        );
         for p in &layer.paths {
+            // On every shape, not the group (see the module docs: Cricut).
+            let style = paint_attrs(&layer.paint(p));
             if let [seg] = p.segs.as_slice()
                 && let Shape::Circle(c) = seg.shape
             {
@@ -112,6 +113,25 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
 ",
     );
     out.into_bytes()
+}
+
+/// Presentation attributes for one shape (SPEC §7, #284): a Draw layer's
+/// object style, or a machine layer's colour and hairline.
+fn paint_attrs(p: &Paint) -> String {
+    let hex = |[r, g, b]: [u8; 3]| format!("#{r:02x}{g:02x}{b:02x}");
+    let mut s = format!(
+        "fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\"",
+        p.fill.map_or_else(|| "none".to_owned(), hex),
+        hex(p.stroke),
+        num(p.width)
+    );
+    if p.opacity < 1.0 {
+        let _ = write!(s, " opacity=\"{}\"", num(p.opacity));
+    }
+    if let Some(pen) = p.pen {
+        let _ = write!(s, " data-pen=\"{pen}\"");
+    }
+    s
 }
 
 fn write_seg(d: &mut String, s: &PathSeg, map: &impl Fn(Vec2) -> Vec2) {
@@ -210,6 +230,7 @@ mod tests {
             ed.apply(&Command::AddEntity {
                 layer,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Point {
                     pos: Vec2::new(x, y),
                 },
@@ -229,6 +250,7 @@ mod tests {
             ed.apply(&Command::AddEntity {
                 layer,
                 construction: false,
+                style: Default::default(),
                 geom,
             })
             .unwrap();

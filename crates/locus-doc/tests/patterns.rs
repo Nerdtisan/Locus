@@ -15,6 +15,7 @@ fn pt(s: &mut Sketcher, x: f64, y: f64) -> EntityId {
     s.apply(&Command::AddEntity {
         layer: L,
         construction: false,
+        style: Default::default(),
         geom: Geom::Point {
             pos: Vec2::new(x, y),
         },

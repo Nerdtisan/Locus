@@ -18,7 +18,7 @@ use crate::document::{Document, EntityStore, Layer, Parameter, View};
 use crate::entity::{Entity, Geom};
 use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID, RecipeId};
-use crate::operation::{CutParams, DrawParams, EngraveParams, Operation};
+use crate::operation::{CutParams, DragKnifeParams, EngraveParams, Operation};
 use crate::recipe::Recipe;
 use locus_geom::Unit;
 use ron::ser::PrettyConfig;
@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 12;
+pub const CURRENT_VERSION: u32 = 13;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -82,17 +82,79 @@ struct LayerV1 {
     export_enabled: bool,
 }
 
-impl From<LayerV1> for Layer {
-    /// v1 → v2: layers get the default parameters of their operation (SPEC §7).
-    fn from(l: LayerV1) -> Self {
+/// v2–v12 pen-plotter parameters, on the layer. Frozen.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+struct DrawParamsV2 {
+    pen_number: u32,
+    pen_width: f64,
+}
+
+impl Default for DrawParamsV2 {
+    fn default() -> Self {
+        Self {
+            pen_number: 1,
+            pen_width: crate::style::DEFAULT_WIDTH,
+        }
+    }
+}
+
+/// v2–v12 operation: Draw carries the pen. Frozen.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+enum OperationV2 {
+    Cut(CutParams),
+    Score,
+    Engrave(EngraveParams),
+    Draw(DrawParamsV2),
+    DragKnife(DragKnifeParams),
+    Reference,
+}
+
+/// v2–v12 layer. Frozen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct LayerV2 {
+    name: String,
+    colour: [u8; 3],
+    operation: OperationV2,
+    export_order: u32,
+    visible: bool,
+    locked: bool,
+    export_enabled: bool,
+}
+
+impl From<LayerV2> for Layer {
+    /// v12 → v13: the pen leaves the layer (SPEC §7, #287); the migration
+    /// copies it onto the layer's entities first ([`FileV13`]).
+    fn from(l: LayerV2) -> Self {
         Layer {
             name: l.name,
             colour: l.colour,
             operation: match l.operation {
-                OperationV1::Cut => Operation::Cut(CutParams::default()),
-                OperationV1::Score => Operation::Score,
-                OperationV1::Engrave => Operation::Engrave(EngraveParams::default()),
-                OperationV1::Draw => Operation::Draw(DrawParams::default()),
+                OperationV2::Cut(p) => Operation::Cut(p),
+                OperationV2::Score => Operation::Score,
+                OperationV2::Engrave(p) => Operation::Engrave(p),
+                OperationV2::Draw(_) => Operation::Draw,
+                OperationV2::DragKnife(p) => Operation::DragKnife(p),
+                OperationV2::Reference => Operation::Reference,
+            },
+            export_order: l.export_order,
+            visible: l.visible,
+            locked: l.locked,
+            export_enabled: l.export_enabled,
+        }
+    }
+}
+
+impl From<LayerV1> for LayerV2 {
+    /// v1 → v2: layers get the default parameters of their operation (SPEC §7).
+    fn from(l: LayerV1) -> Self {
+        LayerV2 {
+            name: l.name,
+            colour: l.colour,
+            operation: match l.operation {
+                OperationV1::Cut => OperationV2::Cut(CutParams::default()),
+                OperationV1::Score => OperationV2::Score,
+                OperationV1::Engrave => OperationV2::Engrave(EngraveParams::default()),
+                OperationV1::Draw => OperationV2::Draw(DrawParamsV2::default()),
             },
             export_order: l.export_order,
             visible: l.visible,
@@ -138,7 +200,7 @@ struct FileV2 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     #[serde(default)]
@@ -169,7 +231,7 @@ struct FileV3 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -202,7 +264,7 @@ struct FileV4 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -235,7 +297,7 @@ struct FileV5 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -270,7 +332,7 @@ struct FileV6 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -307,7 +369,7 @@ struct FileV7 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -344,7 +406,7 @@ struct FileV8 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -362,7 +424,7 @@ struct FileV9 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -398,7 +460,7 @@ struct FileV10 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -434,7 +496,7 @@ struct FileV11 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -474,7 +536,7 @@ struct FileV12 {
     units: Unit,
     next_id: u64,
     parameters: BTreeMap<String, Parameter>,
-    layers: BTreeMap<LayerId, Layer>,
+    layers: BTreeMap<LayerId, LayerV2>,
     entities: BTreeMap<EntityId, Entity>,
     constraints: BTreeMap<ConstraintId, Constraint>,
     booleans: BTreeMap<BooleanId, Boolean>,
@@ -505,8 +567,69 @@ impl From<FileV11> for FileV12 {
     }
 }
 
-/// The newest on-disk shape. When adding v13, point this at `FileV13`.
-type Latest = FileV12;
+/// Version 13: style belongs to each entity, not its layer (SPEC §4, §7,
+/// #287, ADR 0017). `Operation::Draw` loses its pen; the migration copies each
+/// Draw layer's pen number and width onto that layer's entities. Default
+/// styles are not written, so a file whose pens were never changed migrates
+/// to the same entities.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV13 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+}
+
+impl From<FileV12> for FileV13 {
+    fn from(f: FileV12) -> Self {
+        let pens: BTreeMap<LayerId, DrawParamsV2> = f
+            .layers
+            .iter()
+            .filter_map(|(id, l)| match l.operation {
+                OperationV2::Draw(p) => Some((*id, p)),
+                _ => None,
+            })
+            .collect();
+        let entities = f
+            .entities
+            .into_iter()
+            .map(|(id, mut e)| {
+                if let Some(p) = pens.get(&e.layer) {
+                    e.style.width = p.pen_width;
+                    e.style.pen = p.pen_number;
+                }
+                (id, e)
+            })
+            .collect();
+        FileV13 {
+            format_version: 13,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers.into_iter().map(|(i, l)| (i, l.into())).collect(),
+            entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v14, point this at `FileV14`.
+type Latest = FileV13;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -525,7 +648,7 @@ fn finite(v: f64, what: &str) -> Result<(), FileError> {
 
 /// v9 → latest (and on to newer versions as they are added).
 fn v9_to_latest(f: FileV9) -> Latest {
-    FileV12::from(FileV11::from(FileV10::from(f)))
+    FileV13::from(FileV12::from(FileV11::from(FileV10::from(f))))
 }
 
 /// Serialise to `.locus` text.
@@ -589,9 +712,10 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         7 => v9_to_latest(FileV9::from(FileV8::from(parse::<FileV7>(text)?))),
         8 => v9_to_latest(FileV9::from(parse::<FileV8>(text)?)),
         9 => v9_to_latest(parse::<FileV9>(text)?),
-        10 => FileV12::from(FileV11::from(parse::<FileV10>(text)?)),
-        11 => FileV12::from(parse::<FileV11>(text)?),
-        12 => parse::<FileV12>(text)?,
+        10 => FileV13::from(FileV12::from(FileV11::from(parse::<FileV10>(text)?))),
+        11 => FileV13::from(FileV12::from(parse::<FileV11>(text)?)),
+        12 => FileV13::from(parse::<FileV12>(text)?),
+        13 => parse::<FileV13>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -753,6 +877,7 @@ mod tests {
             ed.apply(&Command::AddEntity {
                 layer: L,
                 construction,
+                style: Default::default(),
                 geom,
             })
             .unwrap()
@@ -907,10 +1032,7 @@ mod tests {
                 hatch_angle: 45.0,
                 crosshatch: false,
             }),
-            Operation::Draw(DrawParams {
-                pen_number: 3,
-                pen_width: 0.7,
-            }),
+            Operation::Draw,
             Operation::DragKnife(DragKnifeParams { blade_offset: 0.5 }),
             Operation::Reference,
         ];
@@ -979,6 +1101,7 @@ mod tests {
             ed.apply(&Command::AddEntity {
                 layer: L,
                 construction: false,
+                style: Default::default(),
                 geom,
             })
             .unwrap()
@@ -1091,6 +1214,7 @@ mod tests {
             ed.apply(&Command::AddEntity {
                 layer: L,
                 construction: false,
+                style: Default::default(),
                 geom: Geom::Point {
                     pos: Vec2::new(x, y),
                 },
@@ -1111,6 +1235,7 @@ mod tests {
         ed.apply(&Command::AddEntity {
             layer: L,
             construction: false,
+            style: Default::default(),
             geom: Geom::Text {
                 anchor,
                 dir,
@@ -1197,7 +1322,7 @@ mod tests {
         assert!(text.contains("Text("));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v9());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     /// The v10 fixture is frozen; it migrates to v11 with no profile.
@@ -1213,7 +1338,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v10());
         assert_eq!(doc.profile(), None);
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     /// The v11 fixture is frozen; it migrates to v12 (no stroke edges).
@@ -1229,29 +1354,112 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v11());
         let out = save(&doc).unwrap();
-        assert!(out.contains("format_version: 12"));
+        assert!(out.contains("format_version: 13"));
         assert!(!out.contains("edge:"), "centreline edges are not written");
     }
 
+    /// The v12 fixture is frozen; it migrates to v13 (its Draw layer holds
+    /// no geometry, so only the layer changes).
     #[test]
-    fn v12_fixture_is_current_and_loads() {
+    fn v12_fixture_migrates_to_v13() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v12/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v12()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 12"));
-        assert!(text.contains("edge: Outside"));
-        assert_eq!(load(&text).unwrap(), sample_v12());
+        assert!(text.contains("pen_width: 0.7"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v12());
+        let out = save(&doc).unwrap();
+        assert!(out.contains("format_version: 13"));
+        assert!(!out.contains("pen_width"), "the pen left the layer");
+    }
+
+    /// v12 → v13 copies each Draw layer's pen onto its entities (#287). The
+    /// default pen migrates to the default style, which is not written.
+    #[test]
+    fn v12_pens_move_onto_their_entities() {
+        use crate::style::Style;
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/v12/pens.locus");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 12"));
+        let doc = load(&text).unwrap();
+        let style = |id: u64| doc.entity(EntityId::new(id)).unwrap().style;
+        for id in [4, 5, 6] {
+            assert_eq!((style(id).width, style(id).pen), (0.7, 3), "entity {id}");
+        }
+        for id in [7, 8, 9, 10, 11, 12] {
+            assert_eq!(style(id), Style::default(), "entity {id}");
+        }
+        for l in doc.layers().values() {
+            l.operation.validate().unwrap();
+        }
+        assert_eq!(doc.stroke_width(EntityId::new(6)), 0.7);
+        let out = save(&doc).unwrap();
+        assert!(out.contains("format_version: 13"));
         assert_eq!(
-            save(&sample_v12()).unwrap(),
+            out.matches("width: 0.7").count(),
+            3,
+            "three styled entities"
+        );
+        // Save → load → save is byte-identical (SPEC §14).
+        assert_eq!(save(&load(&out).unwrap()).unwrap(), out);
+    }
+
+    /// The v13 sample: `sample_v12()` with a styled line (SPEC §4, #287).
+    pub(crate) fn sample_v13() -> Document {
+        use crate::style::{Fill, Stroke, StylePatch};
+        let mut ed = Editor::new(sample_v12());
+        ed.apply(&Command::SetStyle {
+            entities: vec![EntityId::new(6)],
+            patch: StylePatch {
+                stroke: Some(Stroke::Colour([200, 10, 10])),
+                width: Some(0.5),
+                pen: Some(2),
+                fill: Some(Fill::Colour([0, 0, 255])),
+                opacity: Some(0.5),
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v13_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v13/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v13()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 13"));
+        assert!(text.contains("edge: Outside"));
+        assert!(text.contains("style: ("));
+        assert_eq!(load(&text).unwrap(), sample_v13());
+        assert_eq!(
+            save(&sample_v13()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    /// A hostile style is refused on load, not stored (CLAUDE.md: untrusted input).
+    #[test]
+    fn bad_styles_are_refused_on_load() {
+        let good = save(&sample_v13()).unwrap();
+        for (from, to) in [
+            ("width: 0.5", "width: -1.0"),
+            ("pen: 2", "pen: 0"),
+            ("opacity: 0.5", "opacity: 2.0"),
+        ] {
+            assert!(good.contains(from), "{from}");
+            let bad = good.replacen(from, to, 1);
+            assert!(matches!(load(&bad), Err(FileError::Invalid(_))), "{to}");
+        }
     }
 
     /// Selecting a profile is one undoable step; bad ids are refused (SPEC §7, #236).
@@ -1368,7 +1576,7 @@ mod tests {
         assert!(text.contains("format_version: 8"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v8());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     /// The v7 fixture is frozen; it migrates to v9.
@@ -1379,7 +1587,7 @@ mod tests {
         assert!(text.contains("format_version: 7"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v7());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     /// The v6 fixture is frozen; it migrates to v7 with crosshatch off.
@@ -1390,7 +1598,7 @@ mod tests {
         assert!(text.contains("format_version: 6"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v6());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     /// The v5 fixture is frozen; it migrates to v6 with no expressions.
@@ -1401,7 +1609,7 @@ mod tests {
         assert!(text.contains("format_version: 5"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v5());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     /// The v4 fixture is frozen; it migrates to v5 with no recipes.
@@ -1413,7 +1621,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v4());
         assert!(doc.recipes().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     /// The v3 fixture is frozen; it migrates to v4 unchanged.
@@ -1424,7 +1632,7 @@ mod tests {
         assert!(text.contains("format_version: 3"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v3());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     #[test]
@@ -1462,7 +1670,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     #[test]
@@ -1488,7 +1696,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 12"));
+        assert!(save(&doc).unwrap().contains("format_version: 13"));
     }
 
     #[test]
@@ -1510,13 +1718,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 12", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 13", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(13)),
+            load(&v(14)),
             Err(FileError::FutureVersion {
-                found: 13,
-                supported: 12
+                found: 14,
+                supported: 13
             })
         );
         // Dangling reference: a line pointing at a missing point.

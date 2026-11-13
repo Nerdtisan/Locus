@@ -104,6 +104,7 @@ pub fn import_shapes_command(
                 commands.push(Command::AddEntity {
                     layer,
                     construction: false,
+                    style: Default::default(),
                     geom: Geom::Point { pos: p },
                 });
                 EntityId::new(alloc())
@@ -140,6 +141,7 @@ pub fn import_shapes_command(
         commands.push(Command::AddEntity {
             layer,
             construction: false,
+            style: Default::default(),
             geom,
         });
         alloc();

@@ -1,5 +1,5 @@
 *.locus text eol=lf
 # PDF xref offsets are byte positions: never rewrite line endings.
-crates/*/tests/fixtures/*.pdf binary
+crates/*/tests/fixtures/**/*.pdf binary
 # Shell scripts run in the Linux dev container, even from a Windows checkout.
 *.sh text eol=lf

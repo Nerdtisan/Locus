@@ -13,7 +13,7 @@
 //! and never panics). A document stores only the profile *id* (SPEC §10).
 
 use crate::pipeline::ExportModel;
-use locus_doc::{Operation, OperationKind, check_profile_id};
+use locus_doc::{Operation, OperationKind, Style, check_profile_id};
 use locus_geom::{Aabb, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -146,14 +146,21 @@ impl Defaults {
                     p.blade_offset = b;
                 }
             }
-            Operation::Draw(p) => {
-                if let Some(w) = self.pen_width_mm {
-                    p.pen_width = w;
-                }
-            }
             _ => {}
         }
         op
+    }
+
+    /// The style this profile suggests for new objects: its pen width, if it
+    /// sets one. The pen is each object's own since M5 (SPEC §4, §7, #287), so
+    /// it seeds the app's current style instead of a Draw layer.
+    #[must_use]
+    pub fn style(&self) -> Style {
+        let mut s = Style::default();
+        if let Some(w) = self.pen_width_mm {
+            s.width = w;
+        }
+        s
     }
 
     fn validate(&self) -> Result<(), ProfileError> {
@@ -189,6 +196,11 @@ pub struct MachineProfile {
     pub bed: Option<Bed>,
     #[serde(default)]
     pub defaults: Defaults,
+    /// Exported stroke width per machine operation, mm (#284). Operations not
+    /// listed use [`DEFAULT_HAIRLINE_MM`](crate::pipeline::DEFAULT_HAIRLINE_MM).
+    /// Draw layers export each object's own width instead (SPEC §7).
+    #[serde(default)]
+    pub hairlines: BTreeMap<OperationKind, f64>,
 }
 
 impl MachineProfile {
@@ -213,6 +225,17 @@ impl MachineProfile {
         if let Some(b) = &self.bed {
             b.validate()?;
         }
+        for (op, w) in &self.hairlines {
+            if matches!(op, OperationKind::Draw | OperationKind::Reference) {
+                return Err(ProfileError::Invalid(format!(
+                    "{} layers have no hairline",
+                    op.name()
+                )));
+            }
+            if !(w.is_finite() && *w > 0.0 && *w <= MAX_DEFAULT_MM) {
+                return Err(ProfileError::Invalid("hairline out of range".into()));
+            }
+        }
         self.defaults.validate()
     }
 
@@ -235,11 +258,15 @@ impl MachineProfile {
         serde_json::to_string_pretty(self).ok()
     }
 
-    /// Apply the colour mapping to an export model (before the writer runs).
+    /// Apply the colour and hairline mapping to an export model (before the
+    /// writer runs).
     pub fn apply(&self, model: &mut ExportModel) {
         for layer in &mut model.layers {
             if let Some(c) = self.colours.get(&layer.operation.kind()) {
                 layer.colour = *c;
+            }
+            if let Some(w) = self.hairlines.get(&layer.operation.kind()) {
+                layer.hairline = *w;
             }
         }
     }
@@ -279,6 +306,7 @@ fn preset(
         colours: colours.iter().copied().collect(),
         bed,
         defaults: Defaults::default(),
+        hairlines: BTreeMap::new(),
     }
 }
 
@@ -480,9 +508,9 @@ mod tests {
         assert!(
             matches!(d.operation(OperationKind::DragKnife), Operation::DragKnife(p) if p.blade_offset == 0.5)
         );
-        assert!(
-            matches!(d.operation(OperationKind::Draw), Operation::Draw(p) if p.pen_width == 0.7)
-        );
+        assert!(matches!(d.operation(OperationKind::Draw), Operation::Draw));
+        assert_eq!(d.style().width, 0.7);
+        assert_eq!(Defaults::default().style(), Style::default());
         assert!(matches!(
             Defaults::default().operation(OperationKind::Score),
             Operation::Score

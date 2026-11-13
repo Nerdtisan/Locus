@@ -30,6 +30,7 @@ pub mod recipe;
 pub mod reference;
 pub mod regions;
 pub mod solve;
+pub mod style;
 pub mod text;
 pub mod transform;
 
@@ -48,8 +49,9 @@ pub use explode::Exploded;
 pub use file::FileError;
 pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 pub use operation::{
-    Compensation, CutParams, DragKnifeParams, DrawParams, EngraveParams, Operation, OperationKind,
+    Compensation, CutParams, DragKnifeParams, EngraveParams, Operation, OperationKind,
 };
 pub use recipe::{Axis, LinearDir, MAX_INSTANCE_ENTITIES, MAX_INSTANCES, Recipe, RecipeKind};
 pub use solve::{ConstraintGroup, DragFrame, LockReport, Sketcher, SolveState, Status};
+pub use style::{Fill, Stroke, Style, StylePatch};
 pub use text::TextData;

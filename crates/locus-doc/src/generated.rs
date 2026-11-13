@@ -309,7 +309,7 @@ pub(crate) fn regenerate(
         .first()
         .and_then(|s| doc.entity(*s).map(|e| e.layer))
         .unwrap_or_else(Document::default_layer);
-    crate::offset::write_flat(doc, rid, r, layer, &out, patches)
+    crate::offset::write_flat(doc, rid, r, layer, crate::Style::default(), &out, patches)
 }
 
 /// The frame sources: exactly two distinct points (origin, direction).

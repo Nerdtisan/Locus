@@ -22,6 +22,7 @@ use crate::entity::{Entity, Geom};
 use crate::error::DocError;
 use crate::ids::{EntityId, RecipeId};
 use crate::recipe::{MAX_INSTANCE_ENTITIES, RecipeKind};
+use crate::style::Style;
 use core::f64::consts::TAU;
 use locus_geom::{EXPORT_TOL, Piece, SOLVER_TOL, Vec2};
 use locus_region::{Area, Edge, Join, Loop, Seg};
@@ -337,12 +338,12 @@ pub(crate) fn regenerate(
     } else {
         Vec::new()
     };
-    let layer = r
+    let (layer, style) = r
         .sources
         .iter()
-        .find_map(|s| doc.entity(*s).map(|e| e.layer))
-        .unwrap_or_else(Document::default_layer);
-    write_flat(doc, rid, r, layer, &out, patches)
+        .find_map(|s| doc.entity(*s).map(|e| (e.layer, e.style)))
+        .unwrap_or_else(|| (Document::default_layer(), Style::default()));
+    write_flat(doc, rid, r, layer, style, &out, patches)
 }
 
 /// Writes a flat recipe's instances (an offset, or a plugin object) from
@@ -353,6 +354,7 @@ pub(crate) fn write_flat(
     rid: RecipeId,
     r: crate::recipe::Recipe,
     layer: crate::ids::LayerId,
+    style: Style,
     out: &[Out],
     patches: &mut Vec<Patch>,
 ) -> Result<(), DocError> {
@@ -378,10 +380,13 @@ pub(crate) fn write_flat(
                 radius,
             },
         };
+        // An instance keeps a style it was given; a new one takes the source's.
+        let style = doc.entity(pool[i]).map_or(style, |e| e.style);
         let e = Entity {
             layer,
             construction: false,
             geom,
+            style,
         };
         if doc.entity(pool[i]) != Some(&e) {
             let before = doc.entity(pool[i]).cloned();

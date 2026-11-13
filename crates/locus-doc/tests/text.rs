@@ -28,6 +28,7 @@ fn pt(x: f64, y: f64) -> Command {
     Command::AddEntity {
         layer: L,
         construction: false,
+        style: Default::default(),
         geom: Geom::Point {
             pos: Vec2::new(x, y),
         },
@@ -43,6 +44,7 @@ fn place(ed: &mut Editor) -> (EntityId, EntityId, EntityId) {
         .apply(&Command::AddEntity {
             layer: L,
             construction: false,
+            style: Default::default(),
             geom: Geom::Text {
                 anchor: a,
                 dir: d,
@@ -111,6 +113,7 @@ fn invalid_text_is_refused() {
     let r = ed.apply(&Command::AddEntity {
         layer: L,
         construction: false,
+        style: Default::default(),
         geom: Geom::Text {
             anchor: a,
             dir: d,
@@ -122,6 +125,7 @@ fn invalid_text_is_refused() {
     let r = ed.apply(&Command::AddEntity {
         layer: L,
         construction: false,
+        style: Default::default(),
         geom: Geom::Text {
             anchor: a,
             dir: a,
@@ -140,6 +144,7 @@ fn anchor_and_baseline_are_constrainable() {
         .apply(&Command::AddEntity {
             layer: L,
             construction: true,
+            style: Default::default(),
             geom: Geom::Line { start: a, end: d },
         })
         .unwrap()
@@ -148,6 +153,7 @@ fn anchor_and_baseline_are_constrainable() {
         .apply(&Command::AddEntity {
             layer: L,
             construction: false,
+            style: Default::default(),
             geom: Geom::Text {
                 anchor: a,
                 dir: d,

@@ -254,6 +254,7 @@ fn kerf_doc() -> PathBuf {
         .apply(&C::AddEntity {
             layer,
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: locus_geom::Vec2::new(5.0, 5.0),
             },
@@ -263,6 +264,7 @@ fn kerf_doc() -> PathBuf {
     ed.apply(&C::AddEntity {
         layer,
         construction: false,
+        style: Default::default(),
         geom: Geom::Circle {
             center,
             radius: 0.1,

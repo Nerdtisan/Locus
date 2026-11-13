@@ -1054,6 +1054,10 @@ fn profile_picker(
         if let Err(e) = canvas.apply(&Command::SetProfile { id: Some(id) }) {
             *error = Some(format!("Could not select the profile: {e}."));
         }
+        // A profile's pen width seeds the style new geometry gets (#287).
+        if let Some(w) = p.defaults.pen_width_mm {
+            canvas.doc.current_style.width = w;
+        }
         panel.format.clone_from(&p.format);
         panel.prepared = locus_export::prepare_for(canvas.document(), panel.fixed, Some(&p));
         panel.profile = Some(p);
@@ -1209,6 +1213,7 @@ mod tests {
         ed.apply(&Command::AddEntity {
             layer: Document::default_layer(),
             construction: false,
+            style: Default::default(),
             geom: Geom::Point {
                 pos: Vec2::new(1.5, 2.5),
             },

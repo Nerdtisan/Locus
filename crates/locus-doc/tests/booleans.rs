@@ -13,6 +13,7 @@ fn add(s: &mut Sketcher, geom: Geom) -> EntityId {
     s.apply(&Command::AddEntity {
         layer: Document::default_layer(),
         construction: false,
+        style: Default::default(),
         geom,
     })
     .unwrap()

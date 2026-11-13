@@ -60,6 +60,8 @@ pub struct ToolState {
     pub(crate) fonts: FontCatalog,
     /// The selected text being edited: its id and the not-yet-committed settings.
     pub(crate) text_edit: Option<(EntityId, TextSettings)>,
+    /// The Style eyedropper is waiting for a click on an object (design §6.2).
+    pub(crate) eyedropper: bool,
 }
 
 impl Default for ToolState {
@@ -77,6 +79,7 @@ impl Default for ToolState {
             text_settings: TextSettings::default(),
             fonts: FontCatalog::headless(),
             text_edit: None,
+            eyedropper: false,
         }
     }
 }

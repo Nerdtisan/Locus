@@ -6,7 +6,7 @@
 //! anything that would need a document edit is left for the user to do.
 
 use crate::overlap::{Overlap, overlap};
-use crate::pipeline::{ExportModel, PathSeg, chain};
+use crate::pipeline::{ExportModel, PathSeg};
 use locus_doc::{EntityId, LayerId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +49,7 @@ pub fn autofix(model: &mut ExportModel) -> Vec<Fix> {
             for s in &mut segs {
                 s.reversed = false;
             }
-            layer.paths = chain(segs);
+            layer.paths = layer.chain(segs);
         }
     }
     fixes

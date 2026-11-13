@@ -17,7 +17,7 @@ use crate::modify_tool::{CornerSettings, Modify};
 use crate::scene::{Scene, Shape};
 use crate::settings::Units;
 use crate::tools::{Draft, Outcome, Pick, Tool as DrawKind};
-use locus_doc::{Command, Document, EntityId, LayerId, TextData};
+use locus_doc::{Command, Document, EntityId, LayerId, Style, TextData};
 use locus_geom::Vec2;
 use std::borrow::Cow;
 
@@ -85,6 +85,8 @@ pub struct ToolCx<'a> {
     pub units: Units,
     /// The layer new geometry goes on (#118).
     pub layer: LayerId,
+    /// The style new geometry gets (design §6.2; #287).
+    pub style: Style,
     pub selection: Vec<EntityId>,
     /// The curve under the pointer, if any.
     pub hover: Option<EntityId>,
@@ -239,6 +241,7 @@ impl Tool for DrawTool {
 
     fn event(&mut self, ev: ToolEvent, cx: &mut ToolCx<'_>) -> Flow {
         self.draft.set_layer(cx.layer);
+        self.draft.set_style(cx.style);
         let next = cx.doc.next_id();
         match ev {
             ToolEvent::Click(pick) => {
@@ -614,6 +617,7 @@ mod tests {
             tol: 1.0,
             units: Units::Mm,
             layer: Document::default_layer(),
+            style: Style::default(),
             selection: Vec::new(),
             hover: None,
             text: None,
