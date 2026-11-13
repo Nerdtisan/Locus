@@ -6,6 +6,7 @@ use crate::app::Status;
 use crate::grid;
 use crate::hit::{self, BoxMode, Mods};
 use crate::infer;
+use crate::modify_tool::Modify;
 use crate::render::{Emphasis, Frame, Palette};
 use crate::settings::{Settings, Units};
 use crate::state::AppState;
@@ -21,12 +22,14 @@ mod corner_dialog;
 mod dialog;
 mod machine;
 mod manipulator;
+mod offset_tool;
 mod offsets;
 mod pattern_labels;
 pub mod plugin_objects;
 mod regions;
 
 pub(crate) use machine::MachinePath;
+pub(crate) use offset_tool::OffsetDraft;
 pub(crate) use regions::RegionUi;
 
 /// Pick radius while a finger drives the pointer (#251): a fingertip covers
@@ -242,7 +245,12 @@ impl AppState {
         } else if let Some(mode) = self.transform_mode() {
             self.transform_input(ui, &resp, rect, settings.units, mode);
         } else if self.modify().is_some() {
-            self.modify_input(ui, &resp, rect, settings.units);
+            if !(self.modify() == Some(Modify::Offset)
+                && self.offset_pointer(ui, &resp, rect, settings.units))
+            {
+                self.modify_input(ui, &resp, rect, settings.units);
+            }
+            self.refresh_offset_preview(settings.units);
         } else if self.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect, settings.units, true);
         } else {
@@ -292,6 +300,7 @@ impl AppState {
         if let Some(m) = self.modify().filter(|m| m.takes_two()) {
             self.draw_corner_preview(&frame, m);
         }
+        self.draw_offset_draft(&frame);
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -305,6 +314,9 @@ impl AppState {
         }
         if let Some(m) = self.modify().filter(|m| m.takes_two()) {
             self.corner_dialog(ui, rect, m, settings.units);
+        }
+        if self.modify() == Some(Modify::Offset) {
+            self.offset_dialog(ui, rect, settings.units);
         }
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));
@@ -428,8 +440,9 @@ impl AppState {
                 egui::CursorIcon::Default
             });
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                // Esc drops a picked corner first, then leaves the tool.
-                if !self.corner_esc() {
+                // Esc drops a picked corner or offset first, then leaves
+                // the tool.
+                if !self.corner_esc() && !self.offset_esc() {
                     self.tool_event(ToolEvent::Esc, None, units);
                 }
                 return;
@@ -438,6 +451,10 @@ impl AppState {
                 if let Some(m) = self.modify() {
                     self.corner_ok(m, units);
                 }
+                return;
+            }
+            if self.tools.offset_draft.is_some() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.offset_ok(units);
                 return;
             }
         }
@@ -772,6 +789,14 @@ impl AppState {
             }
         }
     }
+}
+
+/// Where the primary press that this frame's click or drag belongs to
+/// happened. egui clears `press_origin` on release, so on a click's frame
+/// the pointer's own position stands in (a click doesn't move).
+pub(crate) fn press_pos(ui: &egui::Ui, resp: &egui::Response) -> Option<Pos2> {
+    ui.input(|i| i.pointer.press_origin())
+        .or_else(|| resp.interact_pointer_pos())
 }
 
 /// Window boxes are solid blue, crossing boxes dashed green (Fusion style).

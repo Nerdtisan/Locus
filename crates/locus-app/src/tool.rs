@@ -99,8 +99,8 @@ pub struct ToolCx<'a> {
     pub notice: Option<Option<String>>,
     /// Replace the selection.
     pub select: Option<Vec<EntityId>>,
-    /// An offset click: pick or create an offset on this curve (#164).
-    pub offset: Option<EntityId>,
+    /// An offset click on this curve, at this point (#164, #218).
+    pub offset: Option<(EntityId, Vec2)>,
     /// A fillet or chamfer corner was picked: the two curves, for the
     /// command dialog to size and commit (#217).
     pub corner_pick: Option<(EntityId, EntityId)>,
@@ -412,7 +412,7 @@ impl Tool for ModifyTool {
             return Flow::Continue;
         }
         if self.m == Modify::Offset {
-            cx.offset = cx.hover;
+            cx.offset = cx.hover.map(|h| (h, at));
             return Flow::Continue;
         }
         let doc = cx.doc;

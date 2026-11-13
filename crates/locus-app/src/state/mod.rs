@@ -91,6 +91,7 @@ impl AppState {
         self.tools.host.set_draw(tool, layer);
         self.tools.typed.clear();
         self.tools.corner_pick = None;
+        self.tools.offset_draft = None;
         self.doc.notice = None;
     }
 
@@ -182,8 +183,8 @@ impl AppState {
         if let Some(ids) = select {
             self.selection.items.set_all(ids);
         }
-        if let Some(id) = offset {
-            self.offset_click(id, units);
+        if let Some((id, at)) = offset {
+            self.offset_click(id, at, units);
         }
         match flow {
             Flow::Commit => self.commit_tool(),

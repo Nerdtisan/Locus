@@ -148,6 +148,8 @@ pub struct CornerSettings {
     pub offset: f64,
     /// New offsets keep sharp corners (Fusion's default) or round them.
     pub sharp: bool,
+    /// New offsets take the whole chain through the picked curve (#218).
+    pub offset_chain: bool,
     /// What the dialog's fields hold: numbers in display units, or
     /// expressions over parameters (SPEC §5).
     pub text: CornerText,
@@ -160,6 +162,8 @@ pub struct CornerText {
     pub d1: String,
     pub d2: String,
     pub angle: String,
+    /// The Offset tool's distance (#218).
+    pub offset: String,
 }
 
 impl Default for CornerText {
@@ -169,6 +173,7 @@ impl Default for CornerText {
             d1: "2".to_owned(),
             d2: "2".to_owned(),
             angle: "45".to_owned(),
+            offset: "2".to_owned(),
         }
     }
 }
@@ -183,6 +188,7 @@ impl Default for CornerSettings {
             angle_deg: 45.0,
             offset: 2.0,
             sharp: true,
+            offset_chain: true,
             text: CornerText::default(),
         }
     }

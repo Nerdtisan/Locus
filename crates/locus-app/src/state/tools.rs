@@ -7,6 +7,7 @@ use crate::constrain::DimSpec;
 use crate::modify_tool::{CornerSettings, TransformSettings};
 use crate::tool::ToolHost;
 use crate::tools::Pick;
+use crate::views::canvas::OffsetDraft;
 use crate::views::text_ui::{FontCatalog, TextSettings};
 use locus_doc::{ConstraintId, EntityId, RecipeId};
 use locus_geom::Vec2;
@@ -51,6 +52,8 @@ pub struct ToolState {
     pub(crate) dragging: bool,
     /// The offset picked with the Offset tool (#164).
     pub(crate) offset_pick: Option<RecipeId>,
+    /// An offset being set up with the Offset tool, before Enter (#218).
+    pub(crate) offset_draft: Option<OffsetDraft>,
     /// Fillet radius and chamfer sizes, edited in the command dialog.
     pub(crate) corner: CornerSettings,
     /// The corner picked for a fillet or chamfer, waiting for OK / Enter
@@ -80,6 +83,7 @@ impl Default for ToolState {
             dim_edit: None,
             dragging: false,
             offset_pick: None,
+            offset_draft: None,
             corner: CornerSettings::default(),
             corner_pick: None,
             corner_focus: false,

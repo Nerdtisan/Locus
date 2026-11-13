@@ -9,7 +9,7 @@ use crate::settings::Units;
 use crate::state::{AppState, DimEdit, DimTarget};
 use egui::{Align2, FontId, Painter, Rect, Stroke};
 use locus_doc::recipe::RecipeKind;
-use locus_doc::{Command, EntityId, Geom, RecipeId};
+use locus_doc::{Command, Geom, RecipeId};
 use locus_geom::Vec2;
 
 impl AppState {
@@ -20,46 +20,7 @@ impl AppState {
             .filter(|r| self.doc.sketcher.document().recipe(*r).is_some())
     }
 
-    /// A click with the Offset tool: on an offset's own curve, pick that
-    /// offset (and open its distance); on any other curve, offset its chain.
-    pub(crate) fn offset_click(&mut self, id: EntityId, units: Units) {
-        let doc = self.doc.sketcher.document();
-        if let Some(rid) = doc.driven_by(id)
-            && matches!(
-                doc.recipe(rid).map(|r| &r.kind),
-                Some(RecipeKind::Offset { .. })
-            )
-        {
-            self.tools.offset_pick = Some(rid);
-            self.edit_offset(rid, units);
-            return;
-        }
-        let chain = locus_doc::offset::chain_through(doc, id);
-        if chain.is_empty() {
-            self.doc.notice = Some("That curve can't be offset".to_owned());
-            return;
-        }
-        let cmd = Command::AddRecipe {
-            kind: RecipeKind::Offset {
-                distance: self.tools.corner.offset,
-                sharp: self.tools.corner.sharp,
-                expr: None,
-            },
-            sources: chain,
-        };
-        if self.apply_reporting(&cmd) {
-            self.tools.offset_pick = self
-                .doc
-                .sketcher
-                .document()
-                .recipes()
-                .keys()
-                .last()
-                .copied();
-        }
-    }
-
-    /// Change the picked offset's distance (or corners) from the tool strip.
+    /// Change the picked offset's distance (or corners) from its dialog.
     pub fn set_offset_params(&mut self, rid: RecipeId, distance: f64, sharp: bool) {
         let Some(RecipeKind::Offset { expr, .. }) = self
             .doc
