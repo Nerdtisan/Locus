@@ -403,6 +403,7 @@ Today `app.rs` stores `DockState<Tab>` as JSON under `locus.layout.v1`, and fall
   3. Otherwise use the default layout.
 - The migrated layout is written as v2. **v1 is left in place**, so an older build still opens with its own layout.
 - Tests (in #294): v1 default → v2 expected; v1 with every tab moved → no tab lost; corrupt v1 or v2 → default; unknown future version → default, with a warning and no crash. The loader never panics on stored data (CLAUDE.md, untrusted input).
+- **As built in #294 (#307):** v2 is the versioned envelope and loader above, with a frozen `v1::Tab` enum. Because #294 changes no behaviour, `migrate_tab` currently maps each v1 tab to the same tab. The new tabs (Browser, Inspector, Palette, Shortcuts) come with the layout ticket. That ticket changes `migrate_tab` to the mapping above and bumps the format to **v3**, using this loader and its tests (`crates/locus-app/src/layout.rs`). The loader also reads unset (`null`) pane rectangles as zero, so a layout saved before a pane was drawn is no longer silently replaced by the default.
 
 ## 8. Phase C tickets mapped to this design
 
