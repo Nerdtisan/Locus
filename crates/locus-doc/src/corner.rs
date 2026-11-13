@@ -14,6 +14,7 @@
 //! dimensions to the corner survive and nothing is dropped (SPEC §4 rule 5).
 //! A corner point nothing refers to is deleted.
 
+use crate::command::Command;
 use crate::constraint::{Constraint, Dimension};
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
@@ -411,6 +412,35 @@ pub fn chamfer(
     Ok(bld.finish("Chamfer", Vec::new()))
 }
 
+/// Gives a fillet's or chamfer's dimensions expressions (SPEC §5, #217),
+/// in the order the plan creates them: a fillet's radius; a chamfer's first
+/// set-back, then its second set-back or its angle (angles in degrees, as
+/// every dimension expression). `None` keeps that dimension a plain number.
+/// The result is still one command: one undo step (SPEC §11).
+#[must_use]
+pub fn with_exprs(plan: Plan, exprs: &[Option<String>]) -> Plan {
+    let Command::Compound { label, commands } = plan.command else {
+        return plan;
+    };
+    let mut next = exprs.iter();
+    let commands = commands
+        .into_iter()
+        .map(|cmd| match cmd {
+            Command::AddConstraint { constraint } if constraint.dimension().is_some() => {
+                match next.next().cloned().flatten() {
+                    Some(expr) => Command::AddDimensionExpr { constraint, expr },
+                    None => Command::AddConstraint { constraint },
+                }
+            }
+            other => other,
+        })
+        .collect();
+    Plan {
+        command: Command::Compound { label, commands },
+        dropped: plan.dropped,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,6 +631,49 @@ mod tests {
             doc.constraints()
                 .values()
                 .any(|c| matches!(c, Constraint::Angle { .. }))
+        );
+    }
+
+    #[test]
+    fn chamfer_sizes_can_be_expressions_that_follow_a_parameter() {
+        let (d, a, b, o) = corner_doc();
+        let mut sk = Sketcher::new(d.clone());
+        sk.apply(&Command::SetParameter {
+            name: "bevel".to_owned(),
+            expr: "2".to_owned(),
+        })
+        .unwrap();
+        let doc = sk.document().clone();
+        let plan = chamfer(&doc, a, b, ChamferSize::Equal(2.0)).unwrap();
+        let plan = with_exprs(plan, &[Some("bevel".to_owned()), Some("bevel".to_owned())]);
+        sk.apply(&plan.command).unwrap();
+        let exprs = sk
+            .document()
+            .constraints()
+            .keys()
+            .filter(|c| sk.document().dimension_expr(**c) == Some("bevel"))
+            .count();
+        assert_eq!(exprs, 2, "both set-backs follow the parameter");
+        // Changing the parameter moves both set-backs, in one step.
+        sk.apply(&Command::SetParameter {
+            name: "bevel".to_owned(),
+            expr: "3".to_owned(),
+        })
+        .unwrap();
+        let doc = sk.document();
+        // The sketch is free to turn, so measure the set-backs from the corner.
+        let corner = doc.point_pos(o).unwrap();
+        assert!((doc.line(a).unwrap().a.distance(corner) - 3.0).abs() < 1e-6);
+        assert!((doc.line(b).unwrap().b.distance(corner) - 3.0).abs() < 1e-6);
+        // `None` keeps a plain number; a fillet's radius is its one dimension.
+        let plan = with_exprs(fillet(&d, a, b, 2.0).unwrap(), &[None]);
+        let Command::Compound { commands, .. } = &plan.command else {
+            panic!("a compound");
+        };
+        assert!(
+            !commands
+                .iter()
+                .any(|c| matches!(c, Command::AddDimensionExpr { .. }))
         );
     }
 

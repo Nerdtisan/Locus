@@ -51,8 +51,12 @@ pub struct ToolState {
     pub(crate) dragging: bool,
     /// The offset picked with the Offset tool (#164).
     pub(crate) offset_pick: Option<RecipeId>,
-    /// Fillet radius and chamfer sizes, edited in the tool options.
+    /// Fillet radius and chamfer sizes, edited in the command dialog.
     pub(crate) corner: CornerSettings,
+    /// The corner picked for a fillet or chamfer, waiting for OK / Enter
+    /// (#217), and whether its size field should take focus.
+    pub(crate) corner_pick: Option<(EntityId, EntityId)>,
+    pub(crate) corner_focus: bool,
     /// Move/rotate/scale values, edited in the tool options.
     pub(crate) transform: TransformSettings,
     /// Settings for the next text the Text tool places, and the fonts it can use (#180).
@@ -77,6 +81,8 @@ impl Default for ToolState {
             dragging: false,
             offset_pick: None,
             corner: CornerSettings::default(),
+            corner_pick: None,
+            corner_focus: false,
             transform: TransformSettings::default(),
             text_settings: TextSettings::default(),
             fonts: FontCatalog::headless(),

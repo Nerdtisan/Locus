@@ -134,8 +134,10 @@ impl ChamferMode {
     }
 }
 
-/// Sizes for the fillet and chamfer tools, in mm and degrees.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Sizes for the fillet and chamfer tools, in mm and degrees. The dialog
+/// edits them as text, so a size can be an expression (#217); see
+/// [`CornerText`].
+#[derive(Clone, Debug, PartialEq)]
 pub struct CornerSettings {
     pub radius: f64,
     pub mode: ChamferMode,
@@ -146,6 +148,29 @@ pub struct CornerSettings {
     pub offset: f64,
     /// New offsets keep sharp corners (Fusion's default) or round them.
     pub sharp: bool,
+    /// What the dialog's fields hold: numbers in display units, or
+    /// expressions over parameters (SPEC §5).
+    pub text: CornerText,
+}
+
+/// The fillet and chamfer fields as typed (#217).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CornerText {
+    pub radius: String,
+    pub d1: String,
+    pub d2: String,
+    pub angle: String,
+}
+
+impl Default for CornerText {
+    fn default() -> Self {
+        Self {
+            radius: "2".to_owned(),
+            d1: "2".to_owned(),
+            d2: "2".to_owned(),
+            angle: "45".to_owned(),
+        }
+    }
 }
 
 impl Default for CornerSettings {
@@ -158,6 +183,7 @@ impl Default for CornerSettings {
             angle_deg: 45.0,
             offset: 2.0,
             sharp: true,
+            text: CornerText::default(),
         }
     }
 }
