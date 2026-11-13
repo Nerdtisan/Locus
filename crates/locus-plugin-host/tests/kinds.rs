@@ -257,14 +257,12 @@ fn validator_failures_never_hide_other_findings() {
         .load(&Fixture::validator().with_generate("unreachable").build())
         .unwrap();
     let export = locus_export::ExportModel {
-        layers: vec![locus_export::ExportLayer {
-            id: locus_doc::LayerId::new(1),
-            name: "Score".into(),
-            colour: [0, 0, 255],
-            operation: locus_doc::Operation::Score,
-            paths: Vec::new(),
-            degenerate: Vec::new(),
-        }],
+        layers: vec![locus_export::ExportLayer::new(
+            locus_doc::LayerId::new(1),
+            "Score".into(),
+            [0, 0, 255],
+            locus_doc::Operation::Score,
+        )],
         frame: None,
     };
     let found = validators::run(&[&bad, &good], &export);

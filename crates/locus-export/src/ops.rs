@@ -462,14 +462,9 @@ mod tests {
                 reversed: false,
             })
             .collect();
-        ExportLayer {
-            id: LayerId::new(1),
-            name: "L".to_owned(),
-            colour: [0, 0, 0],
-            operation: op,
-            paths: chain(segs),
-            degenerate: Vec::new(),
-        }
+        let mut l = ExportLayer::new(LayerId::new(1), "L".to_owned(), [0, 0, 0], op);
+        l.paths = chain(segs);
+        l
     }
 
     pub(super) fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<Shape> {

@@ -196,6 +196,11 @@ pub struct MachineProfile {
     pub bed: Option<Bed>,
     #[serde(default)]
     pub defaults: Defaults,
+    /// Exported stroke width per machine operation, mm (#284). Operations not
+    /// listed use [`DEFAULT_HAIRLINE_MM`](crate::pipeline::DEFAULT_HAIRLINE_MM).
+    /// Draw layers export each object's own width instead (SPEC §7).
+    #[serde(default)]
+    pub hairlines: BTreeMap<OperationKind, f64>,
 }
 
 impl MachineProfile {
@@ -220,6 +225,17 @@ impl MachineProfile {
         if let Some(b) = &self.bed {
             b.validate()?;
         }
+        for (op, w) in &self.hairlines {
+            if matches!(op, OperationKind::Draw | OperationKind::Reference) {
+                return Err(ProfileError::Invalid(format!(
+                    "{} layers have no hairline",
+                    op.name()
+                )));
+            }
+            if !(w.is_finite() && *w > 0.0 && *w <= MAX_DEFAULT_MM) {
+                return Err(ProfileError::Invalid("hairline out of range".into()));
+            }
+        }
         self.defaults.validate()
     }
 
@@ -242,11 +258,15 @@ impl MachineProfile {
         serde_json::to_string_pretty(self).ok()
     }
 
-    /// Apply the colour mapping to an export model (before the writer runs).
+    /// Apply the colour and hairline mapping to an export model (before the
+    /// writer runs).
     pub fn apply(&self, model: &mut ExportModel) {
         for layer in &mut model.layers {
             if let Some(c) = self.colours.get(&layer.operation.kind()) {
                 layer.colour = *c;
+            }
+            if let Some(w) = self.hairlines.get(&layer.operation.kind()) {
+                layer.hairline = *w;
             }
         }
     }
@@ -286,6 +306,7 @@ fn preset(
         colours: colours.iter().copied().collect(),
         bed,
         defaults: Defaults::default(),
+        hairlines: BTreeMap::new(),
     }
 }
 

@@ -7,9 +7,29 @@
 //! later stage (validation, auto-fix, ordering, writers) reads or edits this
 //! model and never the [`Document`] (SPEC §11).
 
-use locus_doc::{Document, EntityId, Geom, LayerId, Operation};
+use locus_doc::{Document, EntityId, Fill, Geom, LayerId, Operation, Stroke, Style};
 use locus_geom::{Aabb, Arc, Circle, Cubic, EXPORT_TOL, Line, Piece, Vec2};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+
+/// The stroke width machine layers export with when the profile sets none,
+/// mm: the hairline LightBurn and the vinyl-cutter apps read as a cut line
+/// (SPEC §7, #284).
+pub const DEFAULT_HAIRLINE_MM: f64 = 0.1;
+
+/// How one path is written (SPEC §7, §8; #284): resolved from the object's
+/// style on a Draw layer, or the layer colour and hairline on a machine layer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paint {
+    pub stroke: [u8; 3],
+    /// Stroke width, mm.
+    pub width: f64,
+    /// Only for closed paths on Draw layers.
+    pub fill: Option<[u8; 3]>,
+    /// `0..=1`.
+    pub opacity: f64,
+    /// The plotter pen, on Draw layers.
+    pub pen: Option<u32>,
+}
 
 /// One drawable primitive, in document millimetres (Y-up).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -191,9 +211,94 @@ pub struct ExportLayer {
     pub paths: Vec<ExportPath>,
     /// Zero-length entities set aside during collection; never written.
     pub degenerate: Vec<EntityId>,
+    /// Stroke width of a machine layer, mm: the profile's hairline, or
+    /// [`DEFAULT_HAIRLINE_MM`] (SPEC §7, #284).
+    pub hairline: f64,
+    /// Each exported entity's own style (SPEC §4, #287); used on Draw layers.
+    pub styles: BTreeMap<EntityId, Style>,
 }
 
 impl ExportLayer {
+    /// A layer with nothing in it yet, default hairline and no styles.
+    #[must_use]
+    pub fn new(id: LayerId, name: String, colour: [u8; 3], operation: Operation) -> Self {
+        Self {
+            id,
+            name,
+            colour,
+            operation,
+            paths: Vec::new(),
+            degenerate: Vec::new(),
+            hairline: DEFAULT_HAIRLINE_MM,
+            styles: BTreeMap::new(),
+        }
+    }
+
+    /// Does this layer write each object's own style? Only Draw does; the
+    /// machine layers write the profile's colour and hairline, because
+    /// LightBurn and the vinyl-cutter apps read colour as the operation
+    /// (SPEC §7, owner decision 2026-11-13, #284).
+    #[must_use]
+    pub fn uses_object_style(&self) -> bool {
+        matches!(self.operation, Operation::Draw)
+    }
+
+    fn style_of(&self, entity: EntityId) -> Style {
+        self.styles.get(&entity).copied().unwrap_or_default()
+    }
+
+    /// How `path` is written. A path is chained from segments of one style
+    /// ([`ExportLayer::chain`]), so its first segment speaks for it.
+    #[must_use]
+    pub fn paint(&self, path: &ExportPath) -> Paint {
+        if !self.uses_object_style() {
+            return Paint {
+                stroke: self.colour,
+                width: self.hairline,
+                fill: None,
+                opacity: 1.0,
+                pen: None,
+            };
+        }
+        let s = path
+            .segs
+            .first()
+            .map_or_else(Style::default, |seg| self.style_of(seg.entity));
+        Paint {
+            stroke: match s.stroke {
+                Stroke::ByLayer => self.colour,
+                Stroke::Colour(c) => c,
+            },
+            width: s.width,
+            fill: match s.fill {
+                Fill::Colour(c) if path.closed => Some(c),
+                _ => None,
+            },
+            opacity: s.opacity,
+            pen: Some(s.pen),
+        }
+    }
+
+    /// Chain segments into paths, never joining two objects whose styles
+    /// differ on a layer that writes object styles (they would be written
+    /// as one path, in one style). Elsewhere this is plain [`chain`].
+    #[must_use]
+    pub fn chain(&self, segs: Vec<PathSeg>) -> Vec<ExportPath> {
+        if !self.uses_object_style() {
+            return chain(segs);
+        }
+        // Group by style in first-seen order, so the output stays deterministic.
+        let mut groups: Vec<(Style, Vec<PathSeg>)> = Vec::new();
+        for s in segs {
+            let st = self.style_of(s.entity);
+            match groups.iter_mut().find(|(g, _)| *g == st) {
+                Some((_, v)) => v.push(s),
+                None => groups.push((st, vec![s])),
+            }
+        }
+        groups.into_iter().flat_map(|(_, v)| chain(v)).collect()
+    }
+
     /// Rebuild `paths` from the current segments (after an edit).
     pub fn rechain(&mut self) {
         let segs: Vec<PathSeg> = self
@@ -205,7 +310,7 @@ impl ExportLayer {
                 s
             })
             .collect();
-        self.paths = chain(segs);
+        self.paths = self.chain(segs);
     }
 }
 
@@ -257,14 +362,7 @@ pub fn collect(doc: &Document) -> ExportModel {
         .filter(|(_, l)| layer_exported(l))
         .map(|(id, l)| {
             (
-                ExportLayer {
-                    id: *id,
-                    name: l.name.clone(),
-                    colour: l.colour,
-                    operation: l.operation,
-                    paths: Vec::new(),
-                    degenerate: Vec::new(),
-                },
+                ExportLayer::new(*id, l.name.clone(), l.colour, l.operation),
                 Vec::new(),
             )
         })
@@ -278,6 +376,12 @@ pub fn collect(doc: &Document) -> ExportModel {
     for (eid, e) in doc.entities().iter() {
         if e.construction {
             continue;
+        }
+        if !matches!(e.geom, Geom::Point { .. })
+            && !e.style.is_default()
+            && let Some((layer, _)) = layers.iter_mut().find(|(l, _)| l.id == e.layer)
+        {
+            layer.styles.insert(eid, e.style);
         }
         if matches!(e.geom, Geom::Text { .. }) {
             // Text exports as the geometry cached in the document (SPEC §9,
@@ -321,7 +425,7 @@ pub fn collect(doc: &Document) -> ExportModel {
         layers: layers
             .into_iter()
             .filter_map(|(mut l, segs)| {
-                l.paths = chain(segs);
+                l.paths = l.chain(segs);
                 let id = l.id;
                 l.paths.extend(
                     text_paths
@@ -458,14 +562,14 @@ pub(crate) mod testutil {
     }
 
     pub fn layer(op: locus_doc::OperationKind, segs: Vec<PathSeg>) -> ExportLayer {
-        ExportLayer {
-            id: LayerId::new(1),
-            name: "L".into(),
-            colour: [0, 0, 0],
-            operation: op.default_operation(),
-            paths: chain(segs),
-            degenerate: Vec::new(),
-        }
+        let mut l = ExportLayer::new(
+            LayerId::new(1),
+            "L".into(),
+            [0, 0, 0],
+            op.default_operation(),
+        );
+        l.paths = chain(segs);
+        l
     }
 
     /// Axis-aligned rectangle as four lines with ids `base..base+4`.

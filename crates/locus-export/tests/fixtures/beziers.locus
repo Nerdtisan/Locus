@@ -1,5 +1,5 @@
 (
-  format_version: 12,
+  format_version: 13,
   units: Mm,
   next_id: 17,
   parameters: {},
@@ -7,10 +7,7 @@
     1: (
       name: "Layer 1",
       colour: (0, 0, 0),
-      operation: Draw((
-        pen_number: 1,
-        pen_width: 0.4,
-      )),
+      operation: Draw,
       export_order: 0,
       visible: true,
       locked: false,
@@ -19,10 +16,7 @@
     8: (
       name: "Pen",
       colour: (0, 0, 200),
-      operation: Draw((
-        pen_number: 1,
-        pen_width: 0.4,
-      )),
+      operation: Draw,
       export_order: 1,
       visible: true,
       locked: false,

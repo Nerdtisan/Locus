@@ -13,7 +13,7 @@
 //! origin at the bounds' lower-left; PDF is Y-up like the document.
 
 use crate::order::order;
-use crate::pipeline::{ExportModel, PathSeg, Shape, collect};
+use crate::pipeline::{DEFAULT_HAIRLINE_MM, ExportModel, PathSeg, Shape, collect};
 use crate::svg::num;
 use locus_doc::Document;
 use locus_geom::{Arc, Vec2};
@@ -23,8 +23,6 @@ use std::fmt::Write as _;
 const PT_PER_MM: f64 = 72.0 / 25.4;
 /// Minimum page edge, mm, so an empty or one-line drawing still has a valid page.
 const MIN_PAGE_MM: f64 = 1.0;
-/// Stroke width, mm (matches the SVG writer).
-const STROKE_MM: f64 = 0.1;
 
 /// Document → PDF bytes: collect, order, write. No validation (see `validate`).
 #[must_use]
@@ -53,22 +51,74 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
     // Object numbers: 1 catalog, 2 pages, 3 page, 4 content, then one OCG per layer.
     let ocg = |i: usize| 5 + i;
 
-    let mut content = String::new();
-    let _ = writeln!(content, "{} w 1 J 1 j", num(STROKE_MM * PT_PER_MM));
-    for (i, l) in layers.iter().enumerate() {
-        let [r, g, b] = l.colour.map(|c| f64::from(c) / 255.0);
-        let _ = writeln!(content, "/OC /L{i} BDC");
-        let _ = writeln!(content, "{} {} {} RG", num(r), num(g), num(b));
+    // Opacities other than 1 need a graphics state each (and 1 to go back).
+    let mut alphas: Vec<f64> = Vec::new();
+    for l in &layers {
         for p in &l.paths {
+            let a = l.paint(p).opacity;
+            if a < 1.0 && !alphas.contains(&a) {
+                alphas.push(a);
+            }
+        }
+    }
+    if !alphas.is_empty() {
+        alphas.insert(0, 1.0);
+    }
+    let rgb = |c: [u8; 3]| {
+        let [r, g, b] = c.map(|v| num(f64::from(v) / 255.0));
+        format!("{r} {g} {b}")
+    };
+
+    let mut content = String::new();
+    let mut width = DEFAULT_HAIRLINE_MM;
+    let _ = writeln!(content, "{} w 1 J 1 j", num(width * PT_PER_MM));
+    let mut alpha = 1.0;
+    for (i, l) in layers.iter().enumerate() {
+        let _ = writeln!(content, "/OC /L{i} BDC");
+        let _ = writeln!(content, "{} RG", rgb(l.colour));
+        let mut stroke = l.colour;
+        for p in &l.paths {
+            // Only what changes is written (SPEC §8: per-object style, #284).
+            let paint = l.paint(p);
+            if paint.width != width {
+                width = paint.width;
+                let _ = writeln!(content, "{} w", num(width * PT_PER_MM));
+            }
+            if paint.stroke != stroke {
+                stroke = paint.stroke;
+                let _ = writeln!(content, "{} RG", rgb(stroke));
+            }
+            if paint.opacity != alpha
+                && let Some(k) = alphas.iter().position(|a| *a == paint.opacity)
+            {
+                alpha = paint.opacity;
+                let _ = writeln!(content, "/GS{k} gs");
+            }
+            if let Some(f) = paint.fill {
+                let _ = writeln!(content, "{} rg", rgb(f));
+            }
             let s = map(p.start());
             let _ = writeln!(content, "{} {} m", num(s.x), num(s.y));
             for seg in &p.segs {
                 write_seg(&mut content, seg, &map);
             }
-            content.push_str(if p.closed { "h S\n" } else { "S\n" });
+            content.push_str(match (p.closed, paint.fill.is_some()) {
+                (true, true) => "b\n",
+                (true, false) => "h S\n",
+                (false, _) => "S\n",
+            });
         }
         content.push_str("EMC\n");
     }
+    let gs_obj = |k: usize| 5 + layers.len() + k;
+    let ext_g_state = if alphas.is_empty() {
+        String::new()
+    } else {
+        let refs: String = (0..alphas.len())
+            .map(|k| format!("/GS{k} {} 0 R ", gs_obj(k)))
+            .collect();
+        format!("/ExtGState << {refs}>> ")
+    };
 
     let ids: Vec<String> = (0..layers.len())
         .map(|i| format!("{} 0 R", ocg(i)))
@@ -84,7 +134,7 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
         ),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
         format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R /Resources << /Properties << {props}>> >> >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R /Resources << /Properties << {props}>> {ext_g_state}>> >>",
             num(w * PT_PER_MM),
             num(h * PT_PER_MM)
         ),
@@ -97,6 +147,12 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
         objs.push(format!(
             "<< /Type /OCG /Name {} >>",
             pdf_string(&format!("{} ({})", l.name, l.operation.kind().name()))
+        ));
+    }
+    for a in &alphas {
+        objs.push(format!(
+            "<< /Type /ExtGState /CA {a} /ca {a} >>",
+            a = num(*a)
         ));
     }
 

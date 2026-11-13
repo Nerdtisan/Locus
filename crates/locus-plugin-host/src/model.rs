@@ -45,7 +45,7 @@ pub fn to_model(m: &locus_export::ExportModel) -> ExportModel {
             .map(|l| Layer {
                 name: l.name.clone(),
                 colour: u32::from_be_bytes([0, l.colour[0], l.colour[1], l.colour[2]]),
-                operation: operation(&l.operation),
+                operation: operation(l),
                 paths: l
                     .paths
                     .iter()
@@ -75,9 +75,9 @@ pub fn to_model(m: &locus_export::ExportModel) -> ExportModel {
     }
 }
 
-fn operation(o: &locus_doc::Operation) -> Operation {
+fn operation(l: &locus_export::ExportLayer) -> Operation {
     use locus_doc::Operation as D;
-    match o {
+    match &l.operation {
         D::Cut(c) => Operation::Cut {
             kerf_width: c.kerf_width,
             compensation: match c.compensation {
@@ -94,12 +94,13 @@ fn operation(o: &locus_doc::Operation) -> Operation {
         },
         // The pen is each object's own since M5 (SPEC §4, #287); the plugin
         // API (`locus:plugin@1.0.0`) still has one pen per layer, so the layer
-        // reports the default pen.
+        // reports its first path's pen (the default pen when it has none).
         D::Draw => {
+            let paint = l.paths.first().map(|p| l.paint(p));
             let pen = locus_doc::Style::default();
             Operation::Draw {
-                pen_number: pen.pen,
-                pen_width: pen.width,
+                pen_number: paint.and_then(|p| p.pen).unwrap_or(pen.pen),
+                pen_width: paint.map_or(pen.width, |p| p.width),
             }
         }
         D::DragKnife(k) => Operation::DragKnife {

@@ -305,7 +305,7 @@ mod tests {
 
     fn line(c: &mut AppState, y: f64, style: Style) -> EntityId {
         let layer = c.active_layer();
-        let mut pt = |c: &mut AppState, x: f64| {
+        let pt = |c: &mut AppState, x: f64| {
             c.apply_reporting(&Command::AddEntity {
                 layer,
                 construction: false,

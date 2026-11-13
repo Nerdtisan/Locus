@@ -94,6 +94,10 @@ pub fn to_dxf_model(model: &ExportModel) -> Vec<u8> {
     pair(&mut o, 2, "ENTITIES");
     for (l, name) in layers.iter().zip(&names) {
         for p in &l.paths {
+            // R12 has no line width; a Draw object's own colour is kept as
+            // the entity colour where it differs from its layer's (#284).
+            let own = aci(l.paint(p).stroke);
+            let colour = (own != aci(l.colour)).then_some(own);
             for s in &p.segs {
                 // R12 has no splines: a Bézier becomes a chain of lines and
                 // arcs within the export tolerance (SPEC §8), in travel order.
@@ -117,12 +121,12 @@ pub fn to_dxf_model(model: &ExportModel) -> Vec<u8> {
                             } else {
                                 (s.start(), s.end())
                             };
-                            entity(&mut o, "LINE", name);
+                            entity(&mut o, "LINE", name, colour);
                             point(&mut o, 10, a);
                             point(&mut o, 11, b);
                         }
                         Shape::Arc(a) => {
-                            entity(&mut o, "ARC", name);
+                            entity(&mut o, "ARC", name, colour);
                             point(&mut o, 10, a.center);
                             pair(&mut o, 40, &num(a.radius()));
                             pair(
@@ -137,7 +141,7 @@ pub fn to_dxf_model(model: &ExportModel) -> Vec<u8> {
                             );
                         }
                         Shape::Circle(c) => {
-                            entity(&mut o, "CIRCLE", name);
+                            entity(&mut o, "CIRCLE", name, colour);
                             point(&mut o, 10, c.center);
                             pair(&mut o, 40, &num(c.radius));
                         }
@@ -155,9 +159,12 @@ fn pair(o: &mut String, code: i32, value: &str) {
     let _ = write!(o, "{code:>3}\n{value}\n");
 }
 
-fn entity(o: &mut String, kind: &str, layer: &str) {
+fn entity(o: &mut String, kind: &str, layer: &str, colour: Option<u8>) {
     pair(o, 0, kind);
     pair(o, 8, layer);
+    if let Some(c) = colour {
+        pair(o, 62, &c.to_string());
+    }
 }
 
 /// Group codes `code`, `code+10` and `code+20` for X, Y and Z (always 0).
