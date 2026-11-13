@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The active tool's options in the tool strip: fillet radius, chamfer,
-//! offset, move/rotate/scale values, polygon sides and text settings.
+//! offset, polygon sides and text settings. Move, Rotate and Scale have
+//! their own command dialog on the canvas (design §6.7).
 
-use crate::modify_tool::{ChamferMode, Modify, TransformMode};
-use crate::settings::Units;
+use crate::modify_tool::{ChamferMode, Modify};
 use crate::state::AppState;
 use crate::tools::Tool;
 use crate::views::text_ui;
 
 impl AppState {
     /// The active tool's options, after the tool strip's buttons.
-    pub fn tool_options_ui(&mut self, ui: &mut egui::Ui, units: Units) {
-        self.corner_sizes(ui, units);
+    pub fn tool_options_ui(&mut self, ui: &mut egui::Ui) {
+        self.corner_sizes(ui);
         if self.tool() == Tool::Text {
             self.text_tool_ui(ui);
             ui.separator();
@@ -21,7 +21,7 @@ impl AppState {
 
     /// Fillet radius and chamfer size, while those tools are active (mm and
     /// degrees; SPEC §6.2).
-    pub(crate) fn corner_sizes(&mut self, ui: &mut egui::Ui, units: Units) {
+    pub(crate) fn corner_sizes(&mut self, ui: &mut egui::Ui) {
         fn len(v: &mut f64) -> egui::DragValue<'_> {
             egui::DragValue::new(v)
                 .range(0.001..=10_000.0)
@@ -92,49 +92,6 @@ impl AppState {
                     if ui.button("Remove").clicked() {
                         self.finish_offset(rid, false);
                     }
-                }
-                ui.separator();
-            }
-            Some(Modify::Transform) => {
-                let t = &mut self.tools.transform;
-                egui::ComboBox::from_id_salt("transform-mode")
-                    .selected_text(t.mode.label())
-                    .show_ui(ui, |ui| {
-                        for m in TransformMode::ALL {
-                            ui.selectable_value(&mut t.mode, m, m.label());
-                        }
-                    });
-                match t.mode {
-                    TransformMode::Move => {
-                        ui.label("dx");
-                        ui.add(egui::DragValue::new(&mut t.dx).speed(0.1).suffix(" mm"));
-                        ui.label("dy");
-                        ui.add(egui::DragValue::new(&mut t.dy).speed(0.1).suffix(" mm"));
-                    }
-                    TransformMode::Rotate => {
-                        ui.add(
-                            egui::DragValue::new(&mut t.angle_deg)
-                                .speed(1.0)
-                                .suffix("°"),
-                        );
-                    }
-                    TransformMode::Scale => {
-                        ui.add(
-                            egui::DragValue::new(&mut t.factor)
-                                .range(0.001..=1000.0)
-                                .speed(0.01)
-                                .prefix("×"),
-                        );
-                    }
-                }
-                ui.checkbox(&mut t.copy, "Copy");
-                let ok = self.can_transform();
-                if ui
-                    .add_enabled(ok, egui::Button::new("Apply"))
-                    .on_disabled_hover_text("Select geometry first")
-                    .clicked()
-                {
-                    self.apply_transform(units);
                 }
                 ui.separator();
             }

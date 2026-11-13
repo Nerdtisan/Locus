@@ -43,7 +43,9 @@ pub enum Transform {
 }
 
 impl Transform {
-    fn point(&self, p: Vec2) -> Vec2 {
+    /// Where `t` takes the point `p`.
+    #[must_use]
+    pub fn point(&self, p: Vec2) -> Vec2 {
         match *self {
             Transform::Move(d) => p + d,
             Transform::Rotate { center, angle } => {
@@ -55,7 +57,9 @@ impl Transform {
         }
     }
 
-    fn length(&self, l: f64) -> f64 {
+    /// What `t` makes of a length `l`.
+    #[must_use]
+    pub fn length(&self, l: f64) -> f64 {
         match *self {
             Transform::Scale { factor, .. } => l * factor,
             _ => l,
@@ -153,9 +157,21 @@ fn in_place(doc: &Document, all: &BTreeSet<EntityId>, t: Transform) -> Result<Pl
     if !fixed.is_empty() {
         return Err(ModifyError::Blocked(fixed));
     }
+    // Constraints wholly inside the selection that the transform itself
+    // changes (#219): a rotation turns or breaks horizontal / vertical ones,
+    // a scale scales dimensions. These go first, in the same command.
+    let (adjust, dropped) = adjusted(doc, all, &t);
     // Scratch: move the selection, pin it, solve.
     let mut ed = Editor::new(doc.clone());
-    let first_temp = doc.next_id();
+    if !adjust.is_empty() {
+        ed.apply(&Command::Compound {
+            label: "adjust".to_owned(),
+            commands: adjust.clone(),
+        })
+        .map_err(|_| ModifyError::Blocked(Vec::new()))?;
+    }
+    // Constraints added from here on are scratch pins, not the user's.
+    let first_temp = ed.document().next_id();
     let mut cmds: Vec<Command> = all
         .iter()
         .filter_map(|&id| moved(doc, id, &t).map(|geom| Command::ModifyEntity { id, geom }))
@@ -197,6 +213,7 @@ fn in_place(doc: &Document, all: &BTreeSet<EntityId>, t: Transform) -> Result<Pl
     // the solve put them).
     let solved = sk.document();
     let mut b = Builder::new(doc, *all.iter().next().ok_or(ModifyError::EmptySelection)?);
+    b.commands.extend(adjust);
     for (id, e) in doc.entities().iter() {
         let Some(now) = solved.entity(id) else {
             continue;
@@ -213,7 +230,82 @@ fn in_place(doc: &Document, all: &BTreeSet<EntityId>, t: Transform) -> Result<Pl
             });
         }
     }
-    Ok(b.finish(t.label(false), Vec::new()))
+    Ok(b.finish(t.label(false), dropped))
+}
+
+/// A rotation by a whole number of quarter turns: `Some(true)` for an odd
+/// number (horizontal becomes vertical), `Some(false)` for an even one.
+fn quarter_turns(angle: f64) -> Option<bool> {
+    let q = angle / core::f64::consts::FRAC_PI_2;
+    let n = q.round();
+    // An angle tolerance of the solver's order: a typed 90° is exact.
+    ((q - n).abs() < 1e-9).then(|| (n as i64).rem_euclid(2) == 1)
+}
+
+/// Commands that keep the selection's own constraints true after `t`, and
+/// the constraints they remove, for the UI to name (SPEC §4 rule 5).
+///
+/// - Rotate by an odd number of quarter turns: horizontal and vertical swap;
+///   by any other angle but a half turn they can no longer hold and go,
+///   together with horizontal / vertical distances.
+/// - Scale: driving dimensions (not angles, not expressions) scale with it,
+///   as Fusion's Sketch Scale does.
+///
+/// Constraints a recipe owns are left alone: the recipe re-derives them.
+fn adjusted(
+    doc: &Document,
+    all: &BTreeSet<EntityId>,
+    t: &Transform,
+) -> (Vec<Command>, Vec<ConstraintId>) {
+    let mut cmds = Vec::new();
+    let mut dropped = Vec::new();
+    for (&id, c) in doc.constraints() {
+        if doc.constraint_owner(id).is_some() || !c.references().iter().all(|r| all.contains(r)) {
+            continue;
+        }
+        match *t {
+            Transform::Move(_) => {}
+            Transform::Rotate { angle, .. } => {
+                let turns = quarter_turns(angle);
+                let swapped = match (c, turns) {
+                    (_, Some(false)) => continue,
+                    (Constraint::Horizontal { line }, Some(true)) => {
+                        Some(Constraint::Vertical { line: *line })
+                    }
+                    (Constraint::Vertical { line }, Some(true)) => {
+                        Some(Constraint::Horizontal { line: *line })
+                    }
+                    (
+                        Constraint::Horizontal { .. }
+                        | Constraint::Vertical { .. }
+                        | Constraint::HorizontalDistance { .. }
+                        | Constraint::VerticalDistance { .. },
+                        _,
+                    ) => None,
+                    _ => continue,
+                };
+                cmds.push(Command::RemoveConstraint { id });
+                match swapped {
+                    Some(constraint) => cmds.push(Command::AddConstraint { constraint }),
+                    None => dropped.push(id),
+                }
+            }
+            Transform::Scale { factor, .. } => {
+                if matches!(c, Constraint::Angle { .. }) || doc.dimension_expr(id).is_some() {
+                    continue;
+                }
+                if let Some(dim) = c.dimension()
+                    && !dim.driven
+                {
+                    cmds.push(Command::SetDimension {
+                        id,
+                        value: dim.value * factor,
+                    });
+                }
+            }
+        }
+    }
+    (cmds, dropped)
 }
 
 /// Constraints that still hold on a transformed copy, adjusted to it.
@@ -362,20 +454,124 @@ mod tests {
         assert_eq!(fixes, 2);
     }
 
+    /// The four lines of a 2-point rectangle as the Rectangle tool makes it:
+    /// shared corners, top and bottom horizontal, sides vertical.
+    fn rectangle(d: &mut Document) -> ([EntityId; 4], [ConstraintId; 4]) {
+        let p = [
+            pt(d, 0.0, 0.0),
+            pt(d, 20.0, 0.0),
+            pt(d, 20.0, 10.0),
+            pt(d, 0.0, 10.0),
+        ];
+        let l = [
+            line(d, p[0], p[1]),
+            line(d, p[1], p[2]),
+            line(d, p[2], p[3]),
+            line(d, p[3], p[0]),
+        ];
+        let c = [
+            con(d, Constraint::Horizontal { line: l[0] }),
+            con(d, Constraint::Vertical { line: l[1] }),
+            con(d, Constraint::Horizontal { line: l[2] }),
+            con(d, Constraint::Vertical { line: l[3] }),
+        ];
+        (l, c)
+    }
+
+    /// Regression (#219): rotating a rectangle in place was always refused,
+    /// because its own horizontal / vertical constraints held it. They are
+    /// dropped (and reported) by a free angle, in the same undo step.
     #[test]
-    fn rotate_refuses_against_horizontal_and_copies_without_it() {
+    fn rotating_a_rectangle_drops_its_own_horizontal_and_vertical() {
         let mut d = Document::new();
-        let (a, b) = (pt(&mut d, 0.0, 0.0), pt(&mut d, 10.0, 0.0));
-        let l = line(&mut d, a, b);
-        let hz = con(&mut d, Constraint::Horizontal { line: l });
+        let (l, hv) = rectangle(&mut d);
+        let rot = Transform::Rotate {
+            center: v(10.0, 5.0),
+            angle: 30f64.to_radians(),
+        };
+        let plan = transform(&d, &l, rot, false).expect("rotate is allowed");
+        let mut want = hv.to_vec();
+        want.sort_unstable();
+        assert_eq!(plan.dropped, want);
+        let mut sk = Sketcher::new(d);
+        sk.apply(&plan.command).unwrap();
+        assert!(sk.state().converged);
+        let bottom = sk.document().line(l[0]).unwrap();
+        let dir = bottom.b - bottom.a;
+        assert!((dir.y.atan2(dir.x) - 30f64.to_radians()).abs() < 1e-6);
+        assert!((dir.length() - 20.0).abs() < 1e-6);
+        assert!(sk.document().constraints().is_empty());
+        // One undo step brings the rectangle and its constraints back.
+        sk.undo().unwrap();
+        assert_eq!(sk.document().constraints().len(), 4);
+        assert!(
+            sk.document()
+                .line(l[0])
+                .unwrap()
+                .b
+                .approx_eq(v(20.0, 0.0), 1e-9)
+        );
+    }
+
+    #[test]
+    fn a_quarter_turn_swaps_horizontal_and_vertical() {
+        let mut d = Document::new();
+        let (l, _) = rectangle(&mut d);
         let rot = Transform::Rotate {
             center: v(0.0, 0.0),
             angle: FRAC_PI_2,
         };
-        assert_eq!(
+        let plan = transform(&d, &l, rot, false).unwrap();
+        assert!(plan.dropped.is_empty());
+        let mut sk = Sketcher::new(d);
+        sk.apply(&plan.command).unwrap();
+        let doc = sk.document();
+        assert!(doc.line(l[0]).unwrap().b.approx_eq(v(0.0, 20.0), 1e-6));
+        let vertical = |line| {
+            doc.constraints()
+                .values()
+                .any(|c| *c == Constraint::Vertical { line })
+        };
+        assert!(vertical(l[0]) && vertical(l[2]));
+        assert_eq!(doc.constraints().len(), 4);
+        // A half turn keeps them as they are.
+        let half = Transform::Rotate {
+            center: v(0.0, 0.0),
+            angle: core::f64::consts::PI,
+        };
+        let plan = transform(doc, &l, half, false).unwrap();
+        assert!(plan.dropped.is_empty());
+    }
+
+    #[test]
+    fn rotate_is_blocked_by_outside_constraints_and_copies_without_hv() {
+        let mut d = Document::new();
+        let (a, b) = (pt(&mut d, 0.0, 0.0), pt(&mut d, 10.0, 0.0));
+        let l = line(&mut d, a, b);
+        // A fixed line elsewhere, parallel to this one, holds it.
+        let (c, e) = (pt(&mut d, 0.0, 5.0), pt(&mut d, 10.0, 5.0));
+        let other = line(&mut d, c, e);
+        con(&mut d, Constraint::Fix { point: c });
+        con(&mut d, Constraint::Fix { point: e });
+        let par = con(&mut d, Constraint::Parallel { a: l, b: other });
+        let rot = Transform::Rotate {
+            center: v(0.0, 0.0),
+            angle: 0.3,
+        };
+        assert!(matches!(
             transform(&d, &[l], rot, false),
-            Err(ModifyError::Blocked(vec![hz]))
-        );
+            Err(ModifyError::Blocked(cs)) if cs.contains(&par)
+        ));
+        // A copy of a horizontal line rotated a quarter turn has no
+        // horizontal constraint.
+        let mut d = Document::new();
+        let (a, b) = (pt(&mut d, 0.0, 0.0), pt(&mut d, 10.0, 0.0));
+        let l = line(&mut d, a, b);
+        con(&mut d, Constraint::Horizontal { line: l });
+        let rot = Transform::Rotate {
+            center: v(0.0, 0.0),
+            angle: FRAC_PI_2,
+        };
         let plan = transform(&d, &[l], rot, true).unwrap();
         let mut sk = Sketcher::new(d);
         let applied = sk.apply(&plan.command).unwrap();
@@ -386,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn scale_scales_radii_and_copied_dimensions() {
+    fn scale_scales_radii_and_dimensions() {
         let mut d = Document::new();
         let c0 = pt(&mut d, 10.0, 0.0);
         let circ = add(
@@ -405,25 +601,31 @@ mod tests {
         sk.apply(&plan.command).unwrap();
         let c = sk.document().circle(circ).unwrap();
         assert!(c.center.approx_eq(v(20.0, 0.0), 1e-6) && (c.radius - 4.0).abs() < 1e-6);
-        // A radius dimension blocks scaling in place but scales on a copy.
-        let r = con(
+        // A radius dimension scales with it, in place and on a copy.
+        con(
             &mut d,
             Constraint::Radius {
                 curve: circ,
                 dim: Dimension::driving(2.0),
             },
         );
-        assert_eq!(
-            transform(&d, &[circ], s, false),
-            Err(ModifyError::Blocked(vec![r]))
-        );
+        let radius_is = |doc: &Document, r: f64| {
+            doc.constraints().values().any(|c| {
+                matches!(
+                    c,
+                    Constraint::Radius { dim, .. } if (dim.value - r).abs() < 1e-12
+                )
+            })
+        };
+        let plan = transform(&d, &[circ], s, false).unwrap();
+        let mut sk = Sketcher::new(d.clone());
+        sk.apply(&plan.command).unwrap();
+        assert!(radius_is(sk.document(), 4.0));
+        assert!((sk.document().circle(circ).unwrap().radius - 4.0).abs() < 1e-6);
         let plan = transform(&d, &[circ], s, true).unwrap();
         let mut sk = Sketcher::new(d);
         sk.apply(&plan.command).unwrap();
-        assert!(sk.document().constraints().values().any(|c| matches!(
-            c,
-            Constraint::Radius { dim, .. } if (dim.value - 4.0).abs() < 1e-12
-        )));
+        assert!(radius_is(sk.document(), 4.0) && radius_is(sk.document(), 2.0));
     }
 
     #[test]
