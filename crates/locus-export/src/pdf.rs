@@ -252,6 +252,7 @@ mod tests {
         segs.extend(rect(5, 10.0, 10.0, 20.0, 20.0));
         let m = ExportModel {
             layers: vec![layer(OperationKind::Cut, segs)],
+            ..Default::default()
         };
         let t = text(&to_pdf_model(&m));
         assert!(t.starts_with("%PDF-1.5"));
@@ -266,6 +267,7 @@ mod tests {
     fn xref_offsets_point_at_objects() {
         let m = ExportModel {
             layers: vec![layer(OperationKind::Draw, rect(1, 0.0, 0.0, 10.0, 10.0))],
+            ..Default::default()
         };
         let b = to_pdf_model(&m);
         let t = text(&b);

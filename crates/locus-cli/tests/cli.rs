@@ -334,3 +334,47 @@ fn profile_file_is_validated() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("bad.json"), "no paths in messages");
 }
+
+/// #291: `export --per-layer --out <dir>` writes one file per exported layer,
+/// named `<document>-<layer>.<ext>`, byte-identical to the library's
+/// per-layer goldens (same canvas in every file).
+#[test]
+fn export_per_layer_writes_one_file_per_exported_layer() {
+    let dir = scratch("per-layer-out");
+    let _ = std::fs::remove_dir_all(&dir);
+    let f = fixture("layers.locus");
+    let out = cli(&[
+        s("export"),
+        f.as_os_str(),
+        s("--format"),
+        s("svg"),
+        s("--per-layer"),
+        s("--force"), // the fixture's lone line is an open path on a Cut layer
+        s("--out"),
+        dir.as_os_str(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["layers-Layer 1.svg", "layers-Score.svg", "layers-Vinyl.svg"]
+    );
+    let golden =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../locus-export/tests/fixtures/per-layer");
+    for n in &names {
+        let norm = |b: Vec<u8>| String::from_utf8_lossy(&b).replace("\r\n", "\n");
+        assert_eq!(
+            norm(std::fs::read(dir.join(n)).unwrap()),
+            norm(std::fs::read(golden.join(n)).unwrap()),
+            "{n}"
+        );
+    }
+}

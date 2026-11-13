@@ -18,7 +18,7 @@ usage:
   locus-cli info <file.locus>
   locus-cli validate <file.locus> [--fix] [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli profiles
-  locus-cli export <file.locus> (--format <id> | --profile <id> | --profile-file <profile.json>)
+  locus-cli export <file.locus> (--format <id> | --profile <id> | --profile-file <profile.json>) [--per-layer]
                    --out <file> [--fix] [--force]
                    [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli plugin pack --manifest <plugin.toml> --wasm <file.wasm> --out <file.locusplugin>
@@ -152,6 +152,28 @@ fn run(args: &[String]) -> Result<(), CliError> {
             let exported = exporter
                 .export(&prepared.model)
                 .map_err(|e| anyhow::anyhow!("export failed: {e}"))?;
+            if opts.per_layer {
+                let files = locus_export::split_layers(&prepared.model);
+                if files.is_empty() {
+                    return Err(CliError::Failed(anyhow::anyhow!(
+                        "nothing to export: no layer has exportable geometry"
+                    )));
+                }
+                let stem = opts
+                    .input
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("design");
+                let names = locus_export::file_names(stem, &files, &exported.extension);
+                std::fs::create_dir_all(&opts.out).context("cannot create the output folder")?;
+                for (file, name) in files.iter().zip(&names) {
+                    let one = exporter
+                        .export(&file.model)
+                        .map_err(|e| anyhow::anyhow!("export failed: {e}"))?;
+                    write_file(&opts.out.join(name), &one.bytes)?;
+                }
+                return Ok(());
+            }
             write_file(&opts.out, &exported.bytes)?;
             Ok(())
         }
@@ -209,6 +231,7 @@ struct ExportOpts {
     profile_file: Option<PathBuf>,
     fix: bool,
     force: bool,
+    per_layer: bool,
     plugin_files: Vec<PathBuf>,
     plugins_dir: Option<PathBuf>,
 }
@@ -219,7 +242,7 @@ impl ExportOpts {
         let mut out = None;
         let mut format = None;
         let (mut profile, mut profile_file) = (None, None);
-        let (mut fix, mut force) = (false, false);
+        let (mut fix, mut force, mut per_layer) = (false, false, false);
         let (mut plugin_files, mut plugins_dir) = (Vec::new(), None);
         let mut it = args.iter();
         while let Some(a) = it.next() {
@@ -240,6 +263,7 @@ impl ExportOpts {
                 "--out" => out = Some(PathBuf::from(it.next().ok_or("--out needs a value")?)),
                 "--fix" => fix = true,
                 "--force" => force = true,
+                "--per-layer" => per_layer = true,
                 s if s.starts_with("--") => return Err(format!("unknown option `{s}`")),
                 s => {
                     if input.replace(PathBuf::from(s)).is_some() {
@@ -259,6 +283,7 @@ impl ExportOpts {
             profile_file,
             fix,
             force,
+            per_layer,
             plugin_files,
             plugins_dir,
         })
