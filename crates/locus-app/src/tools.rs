@@ -380,12 +380,6 @@ impl Draft {
         self.tool
     }
 
-    /// Switch tools, dropping any half-drawn shape.
-    pub fn set_tool(&mut self, tool: Tool) {
-        self.tool = tool;
-        self.cancel();
-    }
-
     /// The start of the line being drawn, for inference (#69).
     pub fn line_anchor(&self) -> Option<(Vec2, Option<EntityId>)> {
         match (self.tool, self.nodes.first()) {
