@@ -449,7 +449,7 @@ mod web {
     use std::sync::mpsc::{Receiver, Sender, channel};
     use wasm_bindgen::prelude::*;
 
-    #[wasm_bindgen(module = "/src/canvas/text_web.js")]
+    #[wasm_bindgen(module = "/src/views/text_web.js")]
     extern "C" {
         #[wasm_bindgen(catch)]
         async fn pick_font() -> Result<JsValue, JsValue>;

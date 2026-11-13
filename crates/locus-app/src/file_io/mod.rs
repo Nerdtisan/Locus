@@ -3,7 +3,7 @@
 //! File handling for the GUI shell: Open / Save / Save As / Export (SVG, PDF, DXF via the pre-export panel), the
 //! unsaved-changes guard and recent files (SPEC §10, M1 #74).
 //!
-//! The document is only ever replaced through [`Canvas::load`], which starts
+//! The document is only ever replaced through [`AppState::load`], which starts
 //! a fresh command history (SPEC §11). Error messages shown to the user never
 //! contain file names or document contents, and nothing here logs either
 //! (CLAUDE.md, Secure Coding).
@@ -12,8 +12,8 @@ mod profiles;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
-use crate::canvas::Canvas;
 use crate::settings::Settings;
+use crate::state::AppState;
 use locus_doc::{Command, Document, EntityId};
 use locus_export::MachineProfile;
 use locus_export::{Prepared, Severity};
@@ -147,7 +147,7 @@ impl FileIo {
         }
     }
 
-    fn dirty(&self, canvas: &Canvas) -> bool {
+    fn dirty(&self, canvas: &AppState) -> bool {
         canvas.document() != &self.baseline
     }
 
@@ -155,17 +155,17 @@ impl FileIo {
     /// double-click, packaging #245). Nothing is open yet, so no guard is
     /// needed; a bad file shows the usual error dialog.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn open_startup_path(&mut self, canvas: &mut Canvas, path: PathBuf) {
+    pub fn open_startup_path(&mut self, canvas: &mut AppState, path: PathBuf) {
         self.open_path(canvas, path);
     }
 
     /// Replace the open document with a built-in sample (guarded).
-    pub fn open_sample(&mut self, ctx: &egui::Context, canvas: &mut Canvas, doc: Document) {
+    pub fn open_sample(&mut self, ctx: &egui::Context, canvas: &mut AppState, doc: Document) {
         self.request(ctx, canvas, Action::Replace(Box::new(doc)));
     }
 
     /// Per-frame work: shortcuts, the close guard, window title and dialogs.
-    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
+    pub fn update(&mut self, ctx: &egui::Context, canvas: &mut AppState, settings: &mut Settings) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         if !self.started {
             self.started = true;
@@ -205,7 +205,7 @@ impl FileIo {
         self.dialogs(ctx, canvas, settings);
     }
 
-    fn sync_title(&mut self, ctx: &egui::Context, canvas: &Canvas) {
+    fn sync_title(&mut self, ctx: &egui::Context, canvas: &AppState) {
         let name = self.name.as_deref().unwrap_or("Untitled");
         let title = format!(
             "{}{name} — Locus",
@@ -218,7 +218,7 @@ impl FileIo {
     }
 
     /// The File menu entries up to (not including) Samples / Quit.
-    pub fn file_menu(&mut self, ui: &mut egui::Ui, canvas: &mut Canvas, settings: &Settings) {
+    pub fn file_menu(&mut self, ui: &mut egui::Ui, canvas: &mut AppState, settings: &Settings) {
         let ctx = ui.ctx().clone();
         if ui.button("New").clicked() {
             self.request(&ctx, canvas, Action::New);
@@ -305,7 +305,7 @@ impl FileIo {
 
     // ── Actions ──────────────────────────────────────────────────────────
 
-    fn request(&mut self, ctx: &egui::Context, canvas: &mut Canvas, action: Action) {
+    fn request(&mut self, ctx: &egui::Context, canvas: &mut AppState, action: Action) {
         if self.dirty(canvas) {
             self.pending = Some(action);
         } else {
@@ -313,7 +313,7 @@ impl FileIo {
         }
     }
 
-    fn perform(&mut self, ctx: &egui::Context, canvas: &mut Canvas, action: Action) {
+    fn perform(&mut self, ctx: &egui::Context, canvas: &mut AppState, action: Action) {
         match action {
             Action::New => self.replace(canvas, Document::new(), None, None),
             Action::Replace(doc) => self.replace(canvas, *doc, None, None),
@@ -329,7 +329,7 @@ impl FileIo {
 
     fn replace(
         &mut self,
-        canvas: &mut Canvas,
+        canvas: &mut AppState,
         doc: Document,
         path: Option<PathBuf>,
         name: Option<String>,
@@ -341,14 +341,14 @@ impl FileIo {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn begin_open(&mut self, canvas: &mut Canvas) {
+    fn begin_open(&mut self, canvas: &mut AppState) {
         if let Some(path) = pick_open() {
             self.open_path(canvas, path);
         }
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn begin_open(&mut self, _canvas: &mut Canvas) {
+    fn begin_open(&mut self, _canvas: &mut AppState) {
         self.web.pick();
     }
 
@@ -356,7 +356,7 @@ impl FileIo {
     /// new locked Reference layer. It doesn't replace the document, so the
     /// unsaved-changes guard doesn't apply; it is one undo step.
     #[cfg(not(target_arch = "wasm32"))]
-    fn begin_import_reference(&mut self, canvas: &mut Canvas) {
+    fn begin_import_reference(&mut self, canvas: &mut AppState) {
         use std::io::Read;
         let Some(path) = rfd::FileDialog::new()
             .add_filter("SVG or DXF", &["svg", "dxf"])
@@ -381,13 +381,13 @@ impl FileIo {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn begin_import_reference(&mut self, _canvas: &mut Canvas) {
+    fn begin_import_reference(&mut self, _canvas: &mut AppState) {
         self.web.pick_reference();
     }
 
     /// Parses `bytes` and applies the import as one undo step. Failures are
     /// shown and change nothing; messages never contain the file name.
-    fn add_reference(&mut self, canvas: &mut Canvas, name: &str, bytes: &[u8]) {
+    fn add_reference(&mut self, canvas: &mut AppState, name: &str, bytes: &[u8]) {
         match locus_import::reference_command(canvas.document(), name, bytes) {
             Ok((cmd, warnings)) => match canvas.apply(&cmd) {
                 Ok(()) => {
@@ -407,7 +407,7 @@ impl FileIo {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn open_path(&mut self, canvas: &mut Canvas, path: PathBuf) {
+    fn open_path(&mut self, canvas: &mut AppState, path: PathBuf) {
         match read_document(&path) {
             Ok(doc) => {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
@@ -423,7 +423,7 @@ impl FileIo {
 
     /// Browser: save is a download (the browser decides where it goes).
     #[cfg(target_arch = "wasm32")]
-    fn save(&mut self, canvas: &Canvas, _force_dialog: bool) -> bool {
+    fn save(&mut self, canvas: &AppState, _force_dialog: bool) -> bool {
         let text = match locus_doc::file::save(canvas.document()) {
             Ok(t) => t,
             Err(e) => {
@@ -443,7 +443,7 @@ impl FileIo {
 
     /// Save to the current path, or ask for one. Returns whether it saved.
     #[cfg(not(target_arch = "wasm32"))]
-    fn save(&mut self, canvas: &Canvas, force_dialog: bool) -> bool {
+    fn save(&mut self, canvas: &AppState, force_dialog: bool) -> bool {
         let path = match (&self.path, force_dialog) {
             (Some(p), false) => p.clone(),
             _ => {
@@ -471,7 +471,7 @@ impl FileIo {
 
     /// Validate, then either write straight away (nothing to report) or open
     /// the pre-export panel. Export always goes through validation (#128, #133).
-    fn begin_export(&mut self, format: &str, canvas: &Canvas) {
+    fn begin_export(&mut self, format: &str, canvas: &AppState) {
         let prepared = locus_export::prepare(canvas.document(), false);
         let extra = self.extra(&prepared);
         if prepared.report.issues.is_empty() && extra.is_empty() {
@@ -491,7 +491,7 @@ impl FileIo {
 
     /// Open the export panel with the machine-profile picker (SPEC §7, #238).
     /// The document's remembered profile is preselected; otherwise generic SVG.
-    fn begin_profile_export(&mut self, canvas: &Canvas, settings: &Settings) {
+    fn begin_profile_export(&mut self, canvas: &AppState, settings: &Settings) {
         let profile = canvas
             .document()
             .profile()
@@ -569,7 +569,12 @@ impl FileIo {
 
     /// The pre-export panel: fixes applied, errors (which block export) and
     /// warnings, each selectable to highlight its entities on the canvas.
-    fn export_panel(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
+    fn export_panel(
+        &mut self,
+        ctx: &egui::Context,
+        canvas: &mut AppState,
+        settings: &mut Settings,
+    ) {
         let checks = self.checks.clone();
         let Some(panel) = self.export.as_mut() else {
             return;
@@ -736,7 +741,7 @@ impl FileIo {
 
     /// Browser: pick results, restore and debounced autosave.
     #[cfg(target_arch = "wasm32")]
-    fn web_update(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    fn web_update(&mut self, ctx: &egui::Context, canvas: &mut AppState) {
         let now = ctx.input(|i| i.time);
         for msg in self.web.poll(now) {
             match msg {
@@ -775,7 +780,7 @@ impl FileIo {
         self.web.tick_autosave(now, canvas.document());
     }
 
-    fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut Canvas, settings: &mut Settings) {
+    fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut AppState, settings: &mut Settings) {
         self.export_panel(ctx, canvas, settings);
         if self.pending.is_some() {
             let mut choice = None;
@@ -868,7 +873,7 @@ struct ExportPanel {
 fn profile_picker(
     ui: &mut egui::Ui,
     panel: &mut ExportPanel,
-    canvas: &mut Canvas,
+    canvas: &mut AppState,
     settings: &mut Settings,
     exporters: &locus_export::Registry,
     error: &mut Option<String>,

@@ -3,7 +3,7 @@
 //! finding the one the selection belongs to, and describing it. Running plugins is
 //! `crate::plugins` on desktop and `crate::web_plugins` in the browser.
 
-use super::Canvas;
+use crate::state::AppState;
 use locus_doc::generated::{PluginRef, PluginValue};
 use locus_doc::{EntityId, LayerId, RecipeId, RecipeKind};
 use locus_geom::Vec2;
@@ -22,10 +22,10 @@ pub fn show_value(v: &PluginValue) -> String {
     }
 }
 
-impl Canvas {
+impl AppState {
     /// Where a newly inserted plugin object goes: the middle of the view.
     pub fn insert_point(&self) -> Vec2 {
-        self.view.center
+        self.view.camera.center
     }
 
     /// The layer new geometry goes on.
@@ -40,14 +40,15 @@ impl Canvas {
         &mut self,
         runner: Option<std::sync::Arc<dyn locus_doc::generated::PluginRunner>>,
     ) {
-        self.plugin_runner = runner.clone();
-        self.sketcher.set_plugin_runner(runner);
+        self.doc.plugin_runner = runner.clone();
+        self.doc.sketcher.set_plugin_runner(runner);
     }
 
     /// The selected curves a modifier can take (lines, arcs, circles).
     pub fn selected_curves(&self) -> Vec<EntityId> {
-        let doc = self.sketcher.document();
+        let doc = self.doc.sketcher.document();
         self.selection
+            .items
             .iter()
             .filter(|id| {
                 doc.line(*id).is_some() || doc.arc(*id).is_some() || doc.circle(*id).is_some()
@@ -58,20 +59,20 @@ impl Canvas {
     /// Whether a modifier object's output was made from older source
     /// geometry (its plugin is missing or failed).
     pub fn plugin_object_stale(&self, rid: RecipeId) -> bool {
-        locus_doc::generated::is_stale(self.sketcher.document(), rid)
+        locus_doc::generated::is_stale(self.doc.sketcher.document(), rid)
     }
 
     /// The plugin object the selection belongs to: an instance it drew, one
     /// of a generator object's frame points, or a modifier object's source.
     /// The flag is true for a modifier.
     pub fn selected_plugin_object(&self) -> Option<(RecipeId, PluginRef, bool)> {
-        let doc = self.sketcher.document();
+        let doc = self.doc.sketcher.document();
         let generated = |rid: RecipeId| match doc.recipe(rid).map(|r| &r.kind) {
             Some(RecipeKind::Generated { plugin, .. }) => Some((rid, plugin.clone(), false)),
             Some(RecipeKind::Modified { plugin, .. }) => Some((rid, plugin.clone(), true)),
             _ => None,
         };
-        self.selection.iter().find_map(|id| {
+        self.selection.items.iter().find_map(|id| {
             doc.driven_by(id).and_then(generated).or_else(|| {
                 doc.recipes()
                     .iter()
@@ -84,7 +85,7 @@ impl Canvas {
     /// Explodes a plugin object, keeping the plugin's constraints that still
     /// fit (#213). One undo step; returns how many were dropped.
     pub fn explode_plugin_object(&mut self, rid: RecipeId) -> Result<usize, locus_doc::DocError> {
-        let out = self.sketcher.explode_plugin_object(rid)?;
+        let out = self.doc.sketcher.explode_plugin_object(rid)?;
         self.rebuild();
         Ok(out.dropped)
     }

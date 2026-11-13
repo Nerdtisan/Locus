@@ -5,8 +5,8 @@
 //! it. Every action is one `Sketcher` command, so one undo step. Text is held
 //! in a draft while a box has focus and committed when focus leaves it.
 
-use super::{Canvas, to_display, to_stored};
 use crate::settings::Units;
+use crate::state::{AppState, to_display, to_stored};
 use egui::{TextEdit, Ui};
 use locus_doc::{Axis, Command, EntityId, LinearDir, RecipeId, RecipeKind};
 use std::collections::BTreeMap;
@@ -17,7 +17,7 @@ const SHOWN_COPIES: usize = 48;
 
 /// Transient panel state (never part of the document, SPEC §11).
 #[derive(Debug)]
-pub(super) struct PatternUi {
+pub struct PatternsView {
     circular: bool,
     second: bool,
     axis1: Axis,
@@ -34,7 +34,7 @@ pub(super) struct PatternUi {
     drafts: BTreeMap<(RecipeId, u8), String>,
 }
 
-impl Default for PatternUi {
+impl Default for PatternsView {
     fn default() -> Self {
         Self {
             circular: false,
@@ -85,7 +85,7 @@ fn fields(kind: &RecipeKind) -> Vec<(&'static str, String)> {
 }
 
 /// `kind` with expression box `idx` (as numbered by [`fields`]) set to `text`.
-pub(super) fn with_field(kind: &RecipeKind, idx: usize, text: String) -> RecipeKind {
+pub(crate) fn with_field(kind: &RecipeKind, idx: usize, text: String) -> RecipeKind {
     let mut k = kind.clone();
     match &mut k {
         RecipeKind::Linear { dir1, dir2 } => match idx {
@@ -137,13 +137,14 @@ fn text(ui: &mut Ui, s: &mut String, w: f32) {
     ui.add(TextEdit::singleline(s).desired_width(w));
 }
 
-impl Canvas {
-    pub fn patterns_ui(&mut self, ui: &mut Ui, units: Units) {
+impl PatternsView {
+    /// Draw the pane. Transient state is dropped when another document loads.
+    pub fn ui(&mut self, ui: &mut Ui, app: &mut AppState, units: Units) {
         let mut cmds: Vec<Command> = Vec::new();
-        let selection: Vec<EntityId> = self.selected();
+        let selection: Vec<EntityId> = app.selected();
         {
-            let doc = self.sketcher.document();
-            let st = &mut self.pattern_ui;
+            let doc = app.doc.sketcher.document();
+            let st = &mut *self;
             ui.label(
                 "Copies of the selection, updating with it. Counts and spacing take parameters.",
             );
@@ -329,7 +330,7 @@ impl Canvas {
             }
         }
         for cmd in &cmds {
-            self.apply_reporting(cmd);
+            app.apply_reporting(cmd);
         }
     }
 }

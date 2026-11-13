@@ -60,12 +60,12 @@ use locus_plugin_host::validators;
 use locus_plugin_host::{Host, Plugin};
 
 use crate::actions::{self, plugin_actions};
-use crate::canvas::Canvas;
 use crate::file_io::{ExtraChecks, ExtraFinding, FileIo};
 use crate::plugin_job::{Job, Poll};
 use crate::plugin_ui::{
     Done, Panel, PanelAction, Placement, Target, command, doc_parameters, show_panel,
 };
+use crate::state::AppState;
 
 /// The app's plugin folder, next to its settings.
 pub(crate) fn plugin_dir() -> Option<PathBuf> {
@@ -168,7 +168,7 @@ impl Plugins {
 
     /// Connects the plugins to the sketch (modifier re-runs) and to File ▸
     /// Export (exporter plugins). Called once at start-up.
-    pub fn attach(&mut self, canvas: &mut Canvas, files: &mut FileIo) {
+    pub fn attach(&mut self, canvas: &mut AppState, files: &mut FileIo) {
         if let Ok(reg) = Self::registry() {
             let runner = Arc::new(RegistryRunner::new(reg));
             canvas.set_plugin_runner(Some(runner.clone()));
@@ -305,7 +305,7 @@ impl Plugins {
         )
     }
 
-    pub fn menu(&mut self, ui: &mut Ui, reg: &mut actions::Registry, canvas: &Canvas) {
+    pub fn menu(&mut self, ui: &mut Ui, reg: &mut actions::Registry, canvas: &AppState) {
         if !self.listed {
             self.refresh();
         }
@@ -363,7 +363,7 @@ impl Plugins {
         ui: &mut Ui,
         reg: &actions::Registry,
         kind: actions::PluginKind,
-        canvas: &Canvas,
+        canvas: &AppState,
     ) {
         for a in reg.plugin_actions(kind) {
             let on = reg.enabled(a, canvas);
@@ -409,7 +409,7 @@ impl Plugins {
     /// Asks for a file the importer accepts, reads it (the plugin gets bytes,
     /// never a path, §15.4) and adds its geometry as one undo step. Any
     /// failure is shown and changes nothing.
-    fn import(&mut self, canvas: &mut Canvas, id: &str) {
+    fn import(&mut self, canvas: &mut AppState, id: &str) {
         let exts = match self.plugin(id).and_then(|p| {
             let exts = p.import_extensions().map_err(|e| e.to_string())?;
             Ok((p.info().name.clone(), exts))
@@ -483,7 +483,7 @@ impl Plugins {
     /// nothing started and nothing changed.
     fn start(
         &mut self,
-        canvas: &Canvas,
+        canvas: &AppState,
         id: &str,
         values: Vec<Param>,
         target: Target,
@@ -523,7 +523,7 @@ impl Plugins {
     /// Applies a finished call as one command (one undo step); `Err` changes
     /// nothing. The document may have changed while the call ran: an object
     /// that's gone makes the command fail cleanly.
-    fn finish(canvas: &mut Canvas, r: Running, done: Done) -> Result<(), String> {
+    fn finish(canvas: &mut AppState, r: Running, done: Done) -> Result<(), String> {
         let place = Placement {
             target: r.target,
             sources: r.sources,
@@ -535,7 +535,7 @@ impl Plugins {
     }
 
     /// Checks the running call once a frame and applies its result.
-    fn poll_running(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    fn poll_running(&mut self, ctx: &egui::Context, canvas: &mut AppState) {
         let Some(r) = &self.running else {
             return;
         };
@@ -570,7 +570,7 @@ impl Plugins {
         }
     }
 
-    pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut Canvas, files: &mut FileIo) {
+    pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut AppState, files: &mut FileIo) {
         if self.exporters_dirty {
             self.update_exporters(files);
         }
@@ -598,7 +598,7 @@ impl Plugins {
         }
     }
 
-    fn panel_window(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    fn panel_window(&mut self, ctx: &egui::Context, canvas: &mut AppState) {
         let Some(panel) = self.panel.as_mut() else {
             return;
         };
@@ -792,7 +792,7 @@ impl Plugins {
     // ── Properties ──────────────────────────────────────────────────────────
 
     /// The selected plugin object's section of the Properties panel.
-    pub fn properties_ui(&mut self, ui: &mut Ui, canvas: &mut Canvas) {
+    pub fn properties_ui(&mut self, ui: &mut Ui, canvas: &mut AppState) {
         let Some((rid, pref, modifier)) = canvas.selected_plugin_object() else {
             return;
         };
@@ -897,7 +897,7 @@ impl Plugins {
 }
 
 impl actions::PluginHost for Plugins {
-    fn run_action(&mut self, plugin: &str, kind: actions::PluginKind, canvas: &Canvas) {
+    fn run_action(&mut self, plugin: &str, kind: actions::PluginKind, canvas: &AppState) {
         match kind {
             actions::PluginKind::Generator => self.open(plugin, Target::Insert, None),
             actions::PluginKind::Modifier => {

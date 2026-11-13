@@ -9,8 +9,8 @@
 //! results are drawn filled and outlined in their own colour, and the Regions
 //! panel lists recipes to edit or delete.
 
-use super::Canvas;
 use crate::hit::Mods;
+use crate::state::AppState;
 use crate::view::View;
 use egui::{Color32, Mesh, Painter, Pos2, Rect, Stroke, Ui};
 use locus_doc::{Boolean, BooleanId, Command};
@@ -23,7 +23,7 @@ const FLAT_PT: f64 = 0.25;
 
 /// A combine in progress: targets fixed, tools being picked.
 #[derive(Debug, Clone)]
-pub(super) struct Combine {
+pub(crate) struct Combine {
     pub op: BoolOp,
     pub targets: Vec<RegionKey>,
     pub tools: BTreeSet<RegionKey>,
@@ -33,7 +33,7 @@ pub(super) struct Combine {
 
 /// Region selection and boolean tool state. UI only, never in the document.
 #[derive(Debug, Default)]
-pub(super) struct RegionUi {
+pub(crate) struct RegionUi {
     pub selected: BTreeSet<RegionKey>,
     pub hover: Option<RegionKey>,
     pub combine: Option<Combine>,
@@ -64,7 +64,7 @@ impl RegionUi {
 }
 
 /// The op's name for buttons and labels.
-pub(super) fn op_name(op: BoolOp) -> &'static str {
+pub(crate) fn op_name(op: BoolOp) -> &'static str {
     match op {
         BoolOp::Union => "Union",
         BoolOp::Subtract => "Subtract",
@@ -184,28 +184,28 @@ fn region_loops(r: &Region) -> Vec<Loop> {
     v
 }
 
-impl Canvas {
-    pub(super) fn regions(&self) -> &[Region] {
-        self.sketcher.regions()
+impl AppState {
+    pub(crate) fn regions(&self) -> &[Region] {
+        self.doc.sketcher.regions()
     }
 
     /// The region under a world point (faces are disjoint: at most one).
-    pub(super) fn region_at(&self, w: Vec2) -> Option<RegionKey> {
+    pub(crate) fn region_at(&self, w: Vec2) -> Option<RegionKey> {
         self.regions()
             .iter()
             .find(|r| r.contains(w))
             .map(|r| r.key.clone())
     }
 
-    fn region(&self, k: &RegionKey) -> Option<&Region> {
+    pub(crate) fn region(&self, k: &RegionKey) -> Option<&Region> {
         let rs = self.regions();
         rs.binary_search_by(|r| r.key.cmp(k)).ok().map(|i| &rs[i])
     }
 
     /// Drop selected or picked regions that no longer exist.
-    pub(super) fn retain_regions(&mut self) {
+    pub(crate) fn retain_regions(&mut self) {
         let keys: BTreeSet<RegionKey> = self.regions().iter().map(|r| r.key.clone()).collect();
-        let ui = &mut self.region_ui;
+        let ui = &mut self.selection.regions;
         ui.selected.retain(|k| keys.contains(k));
         if ui.hover.as_ref().is_some_and(|k| !keys.contains(k)) {
             ui.hover = None;
@@ -215,15 +215,15 @@ impl Canvas {
         }
         if ui
             .focus
-            .is_some_and(|id| self.sketcher.document().boolean(id).is_none())
+            .is_some_and(|id| self.doc.sketcher.document().boolean(id).is_none())
         {
             ui.focus = None;
         }
     }
 
     /// A click on the canvas in combine mode: toggle a tool region.
-    pub(super) fn combine_click(&mut self, hit: Option<RegionKey>) {
-        if let (Some(c), Some(k)) = (&mut self.region_ui.combine, hit)
+    pub(crate) fn combine_click(&mut self, hit: Option<RegionKey>) {
+        if let (Some(c), Some(k)) = (&mut self.selection.regions.combine, hit)
             && !c.tools.remove(&k)
         {
             c.tools.insert(k);
@@ -232,10 +232,10 @@ impl Canvas {
 
     /// Start a boolean from the selected regions. A union with no further
     /// picks applies straight away; subtract and intersect wait for tools.
-    pub(super) fn start_combine(&mut self, op: BoolOp) {
-        let targets: Vec<RegionKey> = self.region_ui.selected.iter().cloned().collect();
+    pub(crate) fn start_combine(&mut self, op: BoolOp) {
+        let targets: Vec<RegionKey> = self.selection.regions.selected.iter().cloned().collect();
         if targets.is_empty() {
-            self.notice = Some("Select one or more regions first".to_owned());
+            self.doc.notice = Some("Select one or more regions first".to_owned());
             return;
         }
         if op == BoolOp::Union {
@@ -249,19 +249,19 @@ impl Canvas {
             );
             return;
         }
-        self.region_ui.combine = Some(Combine {
+        self.selection.regions.combine = Some(Combine {
             op,
             targets,
             tools: BTreeSet::new(),
             editing: None,
         });
-        self.region_ui.selected.clear();
+        self.selection.regions.selected.clear();
     }
 
     /// Re-open a recipe in combine mode (Enter applies the edit).
-    fn edit_recipe(&mut self, id: BooleanId) {
-        if let Some(b) = self.sketcher.document().boolean(id) {
-            self.region_ui.combine = Some(Combine {
+    pub(crate) fn edit_recipe(&mut self, id: BooleanId) {
+        if let Some(b) = self.doc.sketcher.document().boolean(id) {
+            self.selection.regions.combine = Some(Combine {
                 op: b.op,
                 targets: b.targets.clone(),
                 tools: b.tools.iter().cloned().collect(),
@@ -271,8 +271,8 @@ impl Canvas {
     }
 
     /// The recipe the current combine would create.
-    fn combine_recipe(&self) -> Option<(Option<BooleanId>, Boolean)> {
-        let c = self.region_ui.combine.as_ref()?;
+    pub(crate) fn combine_recipe(&self) -> Option<(Option<BooleanId>, Boolean)> {
+        let c = self.selection.regions.combine.as_ref()?;
         Some((
             c.editing,
             Boolean {
@@ -283,56 +283,56 @@ impl Canvas {
         ))
     }
 
-    pub(super) fn finish_combine(&mut self) {
+    pub(crate) fn finish_combine(&mut self) {
         if let Some((editing, b)) = self.combine_recipe() {
             if b.validate().is_err() {
-                self.notice = Some(format!(
+                self.doc.notice = Some(format!(
                     "{}: click the regions to take away or keep",
                     op_name(b.op)
                 ));
                 return;
             }
-            self.region_ui.combine = None;
+            self.selection.regions.combine = None;
             self.apply_boolean(editing, b);
         }
     }
 
-    pub(super) fn cancel_combine(&mut self) {
-        self.region_ui.combine = None;
+    pub(crate) fn cancel_combine(&mut self) {
+        self.selection.regions.combine = None;
     }
 
-    fn apply_boolean(&mut self, editing: Option<BooleanId>, boolean: Boolean) {
+    pub(crate) fn apply_boolean(&mut self, editing: Option<BooleanId>, boolean: Boolean) {
         let cmd = match editing {
             Some(id) => Command::EditBoolean { id, boolean },
             None => Command::AddBoolean { boolean },
         };
-        match self.sketcher.apply(&cmd) {
+        match self.doc.sketcher.apply(&cmd) {
             Ok(applied) => {
-                self.region_ui.focus = applied.booleans.first().copied().or(editing);
-                self.region_ui.selected.clear();
-                self.notice = None;
+                self.selection.regions.focus = applied.booleans.first().copied().or(editing);
+                self.selection.regions.selected.clear();
+                self.doc.notice = None;
                 self.rebuild();
             }
-            Err(e) => self.notice = Some(e.to_string()),
+            Err(e) => self.doc.notice = Some(e.to_string()),
         }
     }
 
     /// Region shading, the combine preview and recipe results, under the
     /// geometry. Hidden while dragging: regions update when the drag ends.
-    pub(super) fn draw_regions(&self, painter: &Painter, rect: Rect, dark: bool) {
-        if self.dragging {
+    pub(crate) fn draw_regions(&self, painter: &Painter, rect: Rect, dark: bool) {
+        if self.tools.dragging {
             return;
         }
         let t = Tints::new(dark);
-        let view = &self.view;
+        let view = &self.view.camera;
         let shade = |k: &RegionKey, c: Color32| {
             if let Some(r) = self.region(k) {
                 fill(painter, view, rect, &region_loops(r), c);
             }
         };
-        for (id, res) in self.sketcher.boolean_results() {
+        for (id, res) in self.doc.sketcher.boolean_results() {
             if let Ok(area) = res {
-                let focused = self.region_ui.focus == Some(*id);
+                let focused = self.selection.regions.focus == Some(*id);
                 fill(
                     painter,
                     view,
@@ -344,7 +344,7 @@ impl Canvas {
                 outline(painter, view, rect, &area.loops, Stroke::new(w, t.result));
             }
         }
-        if let Some(c) = &self.region_ui.combine {
+        if let Some(c) = &self.selection.regions.combine {
             for k in &c.targets {
                 shade(k, with_alpha(t.target, 70));
             }
@@ -358,11 +358,11 @@ impl Canvas {
                 draw_preview(painter, view, rect, &area, t.result);
             }
         } else {
-            for k in &self.region_ui.selected {
+            for k in &self.selection.regions.selected {
                 shade(k, with_alpha(t.selected, 80));
             }
         }
-        if let Some(k) = &self.region_ui.hover {
+        if let Some(k) = &self.selection.regions.hover {
             shade(k, with_alpha(t.hover, 50));
         }
     }
@@ -371,9 +371,9 @@ impl Canvas {
     /// recipe list with edit and delete.
     pub fn regions_ui(&mut self, ui: &mut Ui) {
         let n = self.regions().len();
-        let selected = self.region_ui.selected.len();
+        let selected = self.selection.regions.selected.len();
         ui.label(format!("{n} regions · {selected} selected"));
-        if let Some(c) = &self.region_ui.combine {
+        if let Some(c) = &self.selection.regions.combine {
             let (op, picked) = (c.op, c.tools.len());
             let verb = if c.editing.is_some() {
                 "Editing"
@@ -417,6 +417,7 @@ impl Canvas {
         ui.separator();
         ui.strong("Booleans");
         let rows: Vec<(BooleanId, String, Option<String>)> = self
+            .doc
             .sketcher
             .document()
             .booleans()
@@ -428,7 +429,7 @@ impl Canvas {
                     b.targets.len(),
                     b.tools.len()
                 );
-                let err = match self.sketcher.boolean_results().get(id) {
+                let err = match self.doc.sketcher.boolean_results().get(id) {
                     Some(Err(e)) => Some(e.to_string()),
                     _ => None,
                 };
@@ -441,9 +442,9 @@ impl Canvas {
         let mut want: Option<(BooleanId, bool)> = None;
         for (id, label, err) in rows {
             ui.horizontal(|ui| {
-                let focused = self.region_ui.focus == Some(id);
+                let focused = self.selection.regions.focus == Some(id);
                 if ui.selectable_label(focused, label).clicked() {
-                    self.region_ui.focus = if focused { None } else { Some(id) };
+                    self.selection.regions.focus = if focused { None } else { Some(id) };
                 }
                 if ui.small_button("Edit").clicked() {
                     want = Some((id, false));
@@ -458,8 +459,8 @@ impl Canvas {
         }
         match want {
             Some((id, true)) => {
-                if let Err(e) = self.sketcher.apply(&Command::RemoveBoolean { id }) {
-                    self.notice = Some(e.to_string());
+                if let Err(e) = self.doc.sketcher.apply(&Command::RemoveBoolean { id }) {
+                    self.doc.notice = Some(e.to_string());
                 }
                 self.rebuild();
             }
@@ -469,12 +470,13 @@ impl Canvas {
     }
 
     /// Lines for the Properties panel when regions are selected.
-    pub(super) fn region_summary(&self) -> Option<String> {
-        if self.region_ui.selected.is_empty() {
+    pub(crate) fn region_summary(&self) -> Option<String> {
+        if self.selection.regions.selected.is_empty() {
             return None;
         }
         let area: f64 = self
-            .region_ui
+            .selection
+            .regions
             .selected
             .iter()
             .filter_map(|k| self.region(k))
@@ -482,7 +484,7 @@ impl Canvas {
             .sum();
         Some(format!(
             "{} region(s) · area {area:.3} mm²",
-            self.region_ui.selected.len()
+            self.selection.regions.selected.len()
         ))
     }
 }
@@ -521,7 +523,7 @@ mod tests {
     }
 
     /// Headless frames of the Regions panel.
-    fn panel(c: &mut Canvas, n: usize) {
+    fn panel(c: &mut AppState, n: usize) {
         let ctx = egui::Context::default();
         for _ in 0..n {
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| c.regions_ui(ui));
@@ -531,20 +533,20 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn combine_flow_is_one_undo_step_and_previews() {
-        let mut c = Canvas::default();
+        let mut c = AppState::default();
         let rs: Vec<RegionKey> = c.regions().iter().map(|r| r.key.clone()).collect();
         assert!(rs.len() >= 2, "the demo sketch has regions");
         panel(&mut c, 1);
         // Subtract: target = the first region, tool = the second.
-        c.region_ui.click(Some(&rs[0]), Mods::default());
+        c.selection.regions.click(Some(&rs[0]), Mods::default());
         c.start_combine(BoolOp::Subtract);
-        assert!(c.region_ui.combine.is_some() && c.region_ui.selected.is_empty());
+        assert!(c.selection.regions.combine.is_some() && c.selection.regions.selected.is_empty());
         c.finish_combine(); // no tools yet: refused with a hint, still open
-        assert!(c.region_ui.combine.is_some() && c.notice.is_some());
+        assert!(c.selection.regions.combine.is_some() && c.doc.notice.is_some());
         c.combine_click(Some(rs[1].clone()));
         panel(&mut c, 1);
         c.finish_combine();
-        assert!(c.region_ui.combine.is_none());
+        assert!(c.selection.regions.combine.is_none());
         let (id, b) = c
             .document()
             .booleans()
@@ -556,15 +558,15 @@ mod tests {
             (b.op, b.targets.len(), b.tools.len()),
             (BoolOp::Subtract, 1, 1)
         );
-        assert_eq!(c.region_ui.focus, Some(id));
-        assert!(c.sketcher.boolean_results().get(&id).unwrap().is_ok());
+        assert_eq!(c.selection.regions.focus, Some(id));
+        assert!(c.doc.sketcher.boolean_results().get(&id).unwrap().is_ok());
         panel(&mut c, 1);
         assert_eq!(c.undo().as_deref(), Some("Add boolean"));
         assert!(c.document().booleans().is_empty());
-        assert_eq!(c.region_ui.focus, None);
+        assert_eq!(c.selection.regions.focus, None);
         // Union applies straight from the selection.
-        c.region_ui.click(Some(&rs[0]), Mods::default());
-        c.region_ui.click(
+        c.selection.regions.click(Some(&rs[0]), Mods::default());
+        c.selection.regions.click(
             Some(&rs[1]),
             Mods {
                 add: true,

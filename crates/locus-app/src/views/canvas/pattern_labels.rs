@@ -5,10 +5,10 @@
 //! same inline box as an offset's distance, taking `count, spacing` (or
 //! `count, angle`) as numbers or expressions over the parameters.
 
-use super::patterns_panel::with_field;
-use super::{Canvas, DimEdit, DimTarget, to_display, to_stored};
 use crate::render::Palette;
 use crate::settings::Units;
+use crate::state::{AppState, DimEdit, DimTarget, to_display, to_stored};
+use crate::views::patterns::with_field;
 use egui::{Align2, FontId, Painter, Rect, Stroke};
 use locus_doc::{Command, Document, RecipeId, RecipeKind};
 use locus_geom::Vec2;
@@ -62,27 +62,27 @@ fn anchor(doc: &Document, rid: RecipeId) -> Option<Vec2> {
         })
 }
 
-impl Canvas {
+impl AppState {
     /// Draw each pattern's label; remembered (with the offsets') for
     /// double-click editing.
-    pub(super) fn draw_pattern_labels(
+    pub(crate) fn draw_pattern_labels(
         &mut self,
         painter: &Painter,
         rect: Rect,
         dark: bool,
         units: Units,
     ) {
-        if self.dragging {
+        if self.tools.dragging {
             return;
         }
         let pal = Palette::new(dark);
-        let doc = self.sketcher.document();
+        let doc = self.doc.sketcher.document();
         let mut hits = Vec::new();
         for (rid, r) in doc.recipes() {
             let (Some(text), Some(at)) = (label_text(&r.kind, units), anchor(doc, *rid)) else {
                 continue;
             };
-            let p = self.view.to_screen(at, rect) + egui::vec2(0.0, -16.0);
+            let p = self.view.camera.to_screen(at, rect) + egui::vec2(0.0, -16.0);
             let galley = painter.layout_no_wrap(text, FontId::proportional(12.0), pal.dim);
             let r = Align2::CENTER_CENTER
                 .anchor_size(p, galley.size())
@@ -97,12 +97,12 @@ impl Canvas {
             painter.galley(r.shrink(3.0).min, galley, pal.dim);
             hits.push((*rid, r));
         }
-        self.offset_rects.extend(hits);
+        self.view.offset_rects.extend(hits);
     }
 
     /// Open the inline box on a pattern: `count, spacing` (or `count, angle`).
-    pub(super) fn edit_pattern(&mut self, rid: RecipeId, units: Units) {
-        let doc = self.sketcher.document();
+    pub(crate) fn edit_pattern(&mut self, rid: RecipeId, units: Units) {
+        let doc = self.doc.sketcher.document();
         let Some(r) = doc.recipe(rid) else {
             return;
         };
@@ -111,7 +111,7 @@ impl Canvas {
         else {
             return;
         };
-        self.dim_edit = Some(DimEdit {
+        self.tools.dim_edit = Some(DimEdit {
             target: DimTarget::Pattern(rid),
             what: if matches!(r.kind, RecipeKind::Linear { .. }) {
                 "count, spacing"
@@ -126,13 +126,14 @@ impl Canvas {
     }
 
     /// The command for an edited pattern label.
-    pub(super) fn pattern_command(
+    pub(crate) fn pattern_command(
         &self,
         rid: RecipeId,
         text: &str,
         units: Units,
     ) -> Result<Command, String> {
         let r = self
+            .doc
             .sketcher
             .document()
             .recipe(rid)

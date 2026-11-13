@@ -34,10 +34,10 @@ use locus_plugin_host::manifest::{Manifest, api_major};
 use locus_plugin_host::types::{FormatInfo, Kind, Param, ParamSpec};
 use wasm_bindgen::prelude::*;
 
-use crate::canvas::Canvas;
 use crate::plugin_ui::{
     Done, Panel, PanelAction, Placement, Target, command, doc_parameters, show_panel,
 };
+use crate::state::AppState;
 
 #[wasm_bindgen(module = "/src/web_plugins/web.js")]
 extern "C" {
@@ -219,7 +219,7 @@ impl WebPlugins {
         actions::plugin_actions(self.installed.iter().map(|p| &p.manifest))
     }
 
-    pub fn menu(&mut self, ui: &mut Ui, reg: &mut actions::Registry, canvas: &Canvas) {
+    pub fn menu(&mut self, ui: &mut Ui, reg: &mut actions::Registry, canvas: &AppState) {
         reg.sync_plugins(self.plugin_actions());
         if ui.button("Install plugin…").clicked() {
             ui.close();
@@ -306,7 +306,7 @@ impl WebPlugins {
         );
     }
 
-    fn export(&mut self, id: &str, canvas: &Canvas) {
+    fn export(&mut self, id: &str, canvas: &AppState) {
         let Some(p) = self.get(id) else {
             return;
         };
@@ -330,7 +330,7 @@ impl WebPlugins {
 
     // ── Results ─────────────────────────────────────────────────────────────
 
-    fn poll(&mut self, canvas: &mut Canvas) {
+    fn poll(&mut self, canvas: &mut AppState) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Listed(found, bad) => {
@@ -391,7 +391,7 @@ impl WebPlugins {
         }
     }
 
-    fn finish(&mut self, canvas: &mut Canvas, pending: Pending, reply: Result<Reply, String>) {
+    fn finish(&mut self, canvas: &mut AppState, pending: Pending, reply: Result<Reply, String>) {
         let reply = match reply {
             Ok(r) => r,
             Err(e) => {
@@ -517,7 +517,7 @@ impl WebPlugins {
 
     // ── Windows ─────────────────────────────────────────────────────────────
 
-    pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    pub fn windows(&mut self, ctx: &egui::Context, canvas: &mut AppState) {
         self.poll(canvas);
         if self.pending.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -538,7 +538,7 @@ impl WebPlugins {
         }
     }
 
-    fn panel_window(&mut self, ctx: &egui::Context, canvas: &mut Canvas) {
+    fn panel_window(&mut self, ctx: &egui::Context, canvas: &mut AppState) {
         let running = self
             .pending
             .as_ref()
@@ -572,7 +572,7 @@ impl WebPlugins {
 
     fn run(
         &mut self,
-        canvas: &Canvas,
+        canvas: &AppState,
         id: &str,
         schema: &[ParamSpec],
         values: &[Param],
@@ -683,7 +683,7 @@ impl WebPlugins {
     // ── Properties ──────────────────────────────────────────────────────────
 
     /// The selected plugin object's section of the Properties panel.
-    pub fn properties_ui(&mut self, ui: &mut Ui, canvas: &mut Canvas) {
+    pub fn properties_ui(&mut self, ui: &mut Ui, canvas: &mut AppState) {
         let Some((rid, pref, modifier)) = canvas.selected_plugin_object() else {
             return;
         };
@@ -731,7 +731,7 @@ impl WebPlugins {
     }
 }
 
-fn explode_button(ui: &mut Ui, canvas: &mut Canvas, rid: RecipeId, message: &mut Option<String>) {
+fn explode_button(ui: &mut Ui, canvas: &mut AppState, rid: RecipeId, message: &mut Option<String>) {
     if ui
         .button("Explode")
         .on_hover_text(
@@ -753,7 +753,7 @@ fn explode_button(ui: &mut Ui, canvas: &mut Canvas, rid: RecipeId, message: &mut
 }
 
 impl actions::PluginHost for WebPlugins {
-    fn run_action(&mut self, plugin: &str, kind: actions::PluginKind, canvas: &Canvas) {
+    fn run_action(&mut self, plugin: &str, kind: actions::PluginKind, canvas: &AppState) {
         match kind {
             actions::PluginKind::Generator => self.open(plugin, Target::Insert, None),
             actions::PluginKind::Modifier => {

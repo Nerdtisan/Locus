@@ -14,7 +14,7 @@ use locus_plugin_host::types::{
     Generated, Param, ParamKind, ParamSpec, ParamValue, Path, PluginInfo,
 };
 
-use crate::canvas::Canvas;
+use crate::state::AppState;
 
 #[derive(Debug, Clone)]
 pub enum Target {
@@ -70,7 +70,7 @@ pub enum PanelAction {
 }
 
 /// The document's parameters, for `doc-parameter` bindings (§5).
-pub fn doc_parameters(canvas: &Canvas) -> Vec<(String, f64)> {
+pub fn doc_parameters(canvas: &AppState) -> Vec<(String, f64)> {
     canvas
         .document()
         .parameters()
