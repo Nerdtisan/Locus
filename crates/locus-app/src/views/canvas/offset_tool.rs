@@ -20,7 +20,7 @@ use crate::settings::Units;
 use crate::state::AppState;
 use egui::{Align2, FontId, PointerButton, Pos2, Rect, Stroke, Vec2 as EVec2};
 use locus_doc::recipe::RecipeKind;
-use locus_doc::{Command, Document, Editor, EntityId, Geom};
+use locus_doc::{Command, Document, EntityId};
 use locus_geom::Vec2;
 
 /// Screen length of the arrow at zero distance, and its grab radius.
@@ -62,8 +62,6 @@ fn closest(s: &Shape, p: Vec2) -> Vec2 {
 /// The curves an offset recipe over `sources` would make, from a scratch
 /// copy of the document (nothing is committed).
 fn offset_shapes(doc: &Document, sources: &[EntityId], distance: f64, sharp: bool) -> Vec<Shape> {
-    let first_new = doc.next_id();
-    let mut ed = Editor::new(doc.clone());
     let cmd = Command::AddRecipe {
         kind: RecipeKind::Offset {
             distance,
@@ -72,22 +70,7 @@ fn offset_shapes(doc: &Document, sources: &[EntityId], distance: f64, sharp: boo
         },
         sources: sources.to_vec(),
     };
-    if ed.apply(&cmd).is_err() {
-        return Vec::new();
-    }
-    let after = ed.document();
-    after
-        .entities()
-        .iter()
-        .filter(|(id, _)| id.get() >= first_new)
-        .filter_map(|(id, e)| match e.geom {
-            Geom::Line { .. } => after.line(id).map(Shape::Line),
-            Geom::Arc { .. } => after.arc(id).map(Shape::Arc),
-            Geom::Circle { .. } => after.circle(id).map(Shape::Circle),
-            Geom::Bezier { .. } => after.cubic(id).map(Shape::Cubic),
-            _ => None,
-        })
-        .collect()
+    super::pattern_tool::recipe_preview(doc, &cmd)
 }
 
 /// Which way a positive distance goes at `base`: towards the offset made

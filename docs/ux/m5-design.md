@@ -269,6 +269,18 @@ There is one Pattern dialog with Rectangular and Circular tabs. Rectangular: obj
 
 The dialog and the handles are two views of the same values: dragging updates the fields live and typing moves the handles. After commit, the parameters are dimensions on the canvas (§6.2.1). The bug where an offset profile couldn't be patterned is fixed and tested in #221.
 
+**As built (#221):**
+- **Root cause of the bug:** a recipe refused any source that was another recipe's instance (`DocError::Driven`), and an offset's curves always are.
+- **What a pattern may copy now:** the output of an older unsolved recipe: an offset, a pattern or a plugin object. Two things make this safe:
+  - Regenerating in ID order writes the source recipe first, and no cycle can form.
+  - A pattern that copies any of an offset's curves copies the whole current offset. The offset's curves change in number and kind as it regenerates (round corners add arcs), and the copies are rebuilt when they do.
+- **Still not allowed:** a mirror of offset curves. Its copies are solved, and offset curves aren't solver variables.
+- **Removing an offset that a pattern copies** is refused (`RecipeInUse`). Exploding it keeps its curves, so the pattern keeps working.
+- **Tools:** Rectangular Pattern and Circular Pattern are separate Create tools that share one dialog with Rectangular | Circular tabs. Each direction can be X, Y or a picked line.
+- **Not built yet:**
+  - The knob for direction 1's free angle. It needs an `Axis` that isn't a line, which is a `.locus` format change, so a picked line stands in for now.
+  - The suppress dots on each instance. Suppressing still works from the Patterns panel after the pattern is committed.
+
 ### 6.9 Mirror (#215)
 
 Select the objects, then a line or construction line as the mirror line. Merge on mirror line is on by default to avoid double cuts. The copies are tied by Symmetric constraints (ADR 0011), so they follow the source and the line.

@@ -14,6 +14,7 @@ use crate::entity::{Entity, EntityKind};
 use crate::error::DocError;
 use crate::ids::{EntityId, RecipeId};
 use crate::recipe::{self, MAX_INSTANCE_ENTITIES, MAX_INSTANCES, Recipe};
+use std::collections::BTreeSet;
 
 /// Bring recipe `rid`'s copies in line with the document: right number of
 /// copies, right IDs, right positions. A pattern whose expressions don't
@@ -30,10 +31,43 @@ pub(crate) fn regenerate(
     if !r.kind.is_pattern() {
         return Ok(());
     }
-    let Ok(slots) = recipe::slots(doc, &r.kind, &r.sources) else {
+    let mut next = r.clone();
+    next.sources = effective_sources(doc, rid, &r.sources);
+    // Nothing left to copy (an offset that makes no curves now): the
+    // pattern goes with its copies.
+    if next.sources.is_empty() {
+        for k in 0..r.pool.len() {
+            if r.is_live(k) {
+                remove_copy(doc, &r.pool[k], patches)?;
+            }
+        }
+        record(
+            doc,
+            patches,
+            Patch::Recipe {
+                id: rid,
+                before: Some(r),
+                after: None,
+            },
+        );
+        return Ok(());
+    }
+    let Ok(slots) = recipe::slots(doc, &next.kind, &next.sources) else {
         return Ok(());
     };
-    let cl: Vec<EntityId> = recipe::closure(doc, &r.sources).into_iter().collect();
+    let cl: Vec<EntityId> = recipe::closure(doc, &next.sources).into_iter().collect();
+    // Each copy maps the closure by position, so when its size changes (an
+    // offset's output changed shape) the old copies can't be reused: remove
+    // them and start a fresh pool. Plain sources never change size.
+    if next.pool.first().is_some_and(|set| set.len() != cl.len()) {
+        for k in 0..r.pool.len() {
+            if r.is_live(k) {
+                remove_copy(doc, &r.pool[k], patches)?;
+            }
+        }
+        next.pool.clear();
+        next.active = 0;
+    }
     let n = slots.len();
     if n > MAX_INSTANCES || n.saturating_mul(cl.len()) > MAX_INSTANCE_ENTITIES {
         return Err(DocError::InstanceLimit {
@@ -41,7 +75,6 @@ pub(crate) fn regenerate(
             limit: MAX_INSTANCES,
         });
     }
-    let mut next = r.clone();
     // The recipe keeps every ID it ever allocated; only grow the pool.
     while next.pool.len() < n {
         let mut set = Vec::with_capacity(cl.len());
@@ -59,7 +92,7 @@ pub(crate) fn regenerate(
             .map_or(1, |e| u8::from(e.geom.kind() != EntityKind::Point))
     });
     #[allow(clippy::needless_range_loop)]
-    for k in 0..next.pool.len().max(r.active) {
+    for k in 0..next.pool.len().max(next.active) {
         let set = &next.pool[k];
         let want = next.is_live(k);
         let have = set.first().is_some_and(|id| doc.entity(*id).is_some());
@@ -120,6 +153,38 @@ pub(crate) fn regenerate(
 }
 
 /// Delete one copy, unless something outside it still refers to it.
+/// The sources a pattern copies now (#221). Plain sources stay as they
+/// are. A source that is another recipe's instance (an offset curve) stands
+/// for that recipe's whole current output: an offset's curves change in
+/// number and kind as it regenerates (round corners add arcs), so the
+/// pattern copies all of them rather than the IDs that existed when it was
+/// made. Sources that no longer exist are dropped.
+fn effective_sources(doc: &Document, rid: RecipeId, sources: &[EntityId]) -> Vec<EntityId> {
+    let driven = doc.driven_entities();
+    let mut out: BTreeSet<EntityId> = BTreeSet::new();
+    let mut from: BTreeSet<RecipeId> = BTreeSet::new();
+    for s in sources {
+        match driven.get(s) {
+            Some(r) if *r != rid => {
+                from.insert(*r);
+            }
+            _ if doc.entity(*s).is_some() => {
+                out.insert(*s);
+            }
+            _ => {}
+        }
+    }
+    for r in from {
+        if let Some(rec) = doc.recipe(r) {
+            out.extend(rec.instances().filter(|e| {
+                doc.entity(*e)
+                    .is_some_and(|x| x.geom.kind() != EntityKind::Point)
+            }));
+        }
+    }
+    out.into_iter().collect()
+}
+
 fn remove_copy(
     doc: &mut Document,
     set: &[EntityId],

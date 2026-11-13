@@ -22,11 +22,14 @@ pub enum Modify {
     Transform(TransformMode),
     /// Live offset of a chain (#164).
     Offset,
+    /// Rectangular (false) or circular (true) pattern of the selection
+    /// (#221, design §6.8): one dialog with two tabs and canvas handles.
+    Pattern(bool),
 }
 
 impl Modify {
     #[cfg(test)]
-    pub const ALL: [Modify; 9] = [
+    pub const ALL: [Modify; 11] = [
         Modify::Trim,
         Modify::Extend,
         Modify::Break,
@@ -36,6 +39,8 @@ impl Modify {
         Modify::Transform(TransformMode::Move),
         Modify::Transform(TransformMode::Rotate),
         Modify::Transform(TransformMode::Scale),
+        Modify::Pattern(false),
+        Modify::Pattern(true),
     ];
 
     pub const fn label(self) -> &'static str {
@@ -47,6 +52,8 @@ impl Modify {
             Modify::Chamfer => "Chamfer",
             Modify::Transform(m) => m.tool_label(),
             Modify::Offset => "Offset",
+            Modify::Pattern(false) => "Rectangular Pattern",
+            Modify::Pattern(true) => "Circular Pattern",
         }
     }
 
@@ -70,6 +77,12 @@ impl Modify {
             (Modify::Offset, _) => {
                 "Offset: click a curve to offset its chain, or an offset to edit it (+ grows / goes left)"
             }
+            (Modify::Pattern(false), _) => {
+                "Rectangular Pattern: select objects, then drag the arrow for spacing, click − / + for the count, or type; Enter applies"
+            }
+            (Modify::Pattern(true), _) => {
+                "Circular Pattern: select objects, pick a centre point, then drag the knob for the angle, − / + for the count; Enter applies"
+            }
             (Modify::Transform(TransformMode::Move), _) => {
                 "Move: select geometry, then drag an arrow or the centre, or type a distance; Enter applies"
             }
@@ -88,9 +101,11 @@ impl Modify {
             Modify::Trim => modify::trim(doc, id, at),
             Modify::Extend => modify::extend(doc, id, at),
             Modify::Break => modify::split(doc, id, at),
-            Modify::Fillet | Modify::Chamfer | Modify::Transform(_) | Modify::Offset => {
-                Err(ModifyError::NoCorner)
-            }
+            Modify::Fillet
+            | Modify::Chamfer
+            | Modify::Transform(_)
+            | Modify::Offset
+            | Modify::Pattern(_) => Err(ModifyError::NoCorner),
         }
     }
 

@@ -460,6 +460,22 @@ pub static BUILTIN: &[Action] = &[
         &[key(Key::O)],
         Modify::Offset,
     ),
+    // Patterns create geometry, so they sit in Create as in Fusion (design
+    // §2, §6.8, #221).
+    modify(
+        "sketch.pattern_rect",
+        Group::Create,
+        "⣿",
+        &[],
+        Modify::Pattern(false),
+    ),
+    modify(
+        "sketch.pattern_circ",
+        Group::Create,
+        "❂",
+        &[],
+        Modify::Pattern(true),
+    ),
     // ── Modify ──
     modify(
         "modify.trim",
@@ -729,7 +745,7 @@ pub const SKETCH_MENU: &[Item] =
     &concat::<17>(&[&DRAWING, &[Sep, A("sketch.linetype_construction")]]);
 
 /// The tool strip: Select, the drawing tools, then the modify tools.
-pub const TOOL_STRIP: &[Item] = &concat::<27>(&[
+pub const TOOL_STRIP: &[Item] = &concat::<29>(&[
     &[A("select.select")],
     &DRAWING,
     &[
@@ -740,6 +756,8 @@ pub const TOOL_STRIP: &[Item] = &concat::<27>(&[
         A("modify.fillet"),
         A("modify.chamfer"),
         A("modify.offset"),
+        A("sketch.pattern_rect"),
+        A("sketch.pattern_circ"),
         A("modify.move"),
         A("modify.rotate"),
         A("modify.scale"),

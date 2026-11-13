@@ -553,3 +553,186 @@ fn a_follower_tracks_a_circular_pattern_instance() {
     let at = s.document().point_pos(inst).unwrap();
     assert!(near(s.document().point_pos(q).unwrap(), at.x, at.y));
 }
+
+// ── Patterning a shape that has an offset (#221) ──
+
+/// A 20 × 10 rectangle of lines and an offset of it, 2 mm outward. Returns
+/// the rectangle's lines and the offset recipe.
+fn offset_rectangle(s: &mut Sketcher) -> (Vec<EntityId>, RecipeId) {
+    let p = [
+        pt(s, 0.0, 0.0),
+        pt(s, 20.0, 0.0),
+        pt(s, 20.0, 10.0),
+        pt(s, 0.0, 10.0),
+    ];
+    let mut lines = Vec::new();
+    for i in 0..4 {
+        let a = s
+            .apply(&Command::AddEntity {
+                layer: L,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Line {
+                    start: p[i],
+                    end: p[(i + 1) % 4],
+                },
+            })
+            .unwrap();
+        lines.push(a.entities[0]);
+    }
+    let off = add(
+        s,
+        RecipeKind::Offset {
+            distance: 2.0,
+            sharp: true,
+            expr: None,
+        },
+        &lines,
+    )
+    .unwrap();
+    (lines, off)
+}
+
+/// The offset's lines (its instances also include their end points).
+fn offset_lines(s: &Sketcher, off: RecipeId) -> Vec<EntityId> {
+    let doc = s.document();
+    doc.recipe(off)
+        .unwrap()
+        .instances()
+        .filter(|e| doc.line(*e).is_some())
+        .collect()
+}
+
+/// Every curve of a recipe's copies, as their points' x range.
+fn copy_xs(s: &Sketcher, r: RecipeId) -> Vec<f64> {
+    let doc = s.document();
+    doc.recipe(r)
+        .unwrap()
+        .instances()
+        .filter_map(|e| doc.point_pos(e))
+        .map(|p| p.x)
+        .collect()
+}
+
+/// Regression (#221): selecting a profile and its offset and patterning
+/// them was refused, because the offset's curves are another recipe's
+/// instances (`DocError::Driven`). A pattern may now copy an offset's
+/// output; it follows the offset, undoes in one step and round-trips.
+#[test]
+fn a_profile_and_its_offset_can_be_patterned() {
+    let mut s = Sketcher::new(Document::new());
+    let (lines, off) = offset_rectangle(&mut s);
+    let offset_curves = offset_lines(&s, off);
+    assert_eq!(offset_curves.len(), 4);
+    let mut sources = lines.clone();
+    sources.extend(&offset_curves);
+    let r = add(
+        &mut s,
+        RecipeKind::Linear {
+            dir1: dir(Axis::X, "3", "40"),
+            dir2: None,
+        },
+        &sources,
+    )
+    .expect("a pattern may copy an offset's curves");
+    // Two copies of 8 lines and their 8 points.
+    assert_eq!(s.document().recipe(r).unwrap().instances().count(), 2 * 16);
+    let xs = copy_xs(&s, r);
+    // The offset reaches x = -2 and 22; its copies 38 … 62 and 78 … 102.
+    assert!(xs.iter().any(|x| (x - 38.0).abs() < 1e-6), "{xs:?}");
+    assert!(xs.iter().any(|x| (x - 102.0).abs() < 1e-6), "{xs:?}");
+    // Changing the offset distance moves the copies of the offset.
+    s.apply(&Command::EditRecipe {
+        id: off,
+        kind: RecipeKind::Offset {
+            distance: 3.0,
+            sharp: true,
+            expr: None,
+        },
+    })
+    .unwrap();
+    let xs = copy_xs(&s, r);
+    assert!(xs.iter().any(|x| (x - 37.0).abs() < 1e-6), "{xs:?}");
+    assert!(!xs.iter().any(|x| (x - 38.0).abs() < 1e-6), "{xs:?}");
+    // Round corners change the offset's shape (arcs join the lines): the
+    // copies are rebuilt to match, and the file still validates.
+    let before = s.document().recipe(r).unwrap().instances().count();
+    s.apply(&Command::EditRecipe {
+        id: off,
+        kind: RecipeKind::Offset {
+            distance: 3.0,
+            sharp: false,
+            expr: None,
+        },
+    })
+    .unwrap();
+    let after = s.document().recipe(r).unwrap().instances().count();
+    assert!(after > before, "{before} → {after}");
+    let arcs = s
+        .document()
+        .recipe(r)
+        .unwrap()
+        .instances()
+        .filter(|e| s.document().arc(*e).is_some())
+        .count();
+    assert_eq!(arcs, 2 * 4, "each copy has the offset's four corner arcs");
+    // Save → load → save is byte-identical.
+    let text = locus_doc::file::save(s.document()).unwrap();
+    let back = locus_doc::file::load(&text).unwrap();
+    assert_eq!(&back, s.document());
+    assert_eq!(locus_doc::file::save(&back).unwrap(), text);
+    // Undo steps back through both edits, then removes the pattern.
+    s.undo().unwrap();
+    s.undo().unwrap();
+    s.undo().unwrap();
+    assert!(s.document().recipe(r).is_none());
+    assert!(s.document().recipe(off).is_some());
+}
+
+#[test]
+fn an_offset_used_by_a_pattern_cannot_be_removed_but_can_be_exploded() {
+    let mut s = Sketcher::new(Document::new());
+    let (_, off) = offset_rectangle(&mut s);
+    let curves = offset_lines(&s, off);
+    let r = add(
+        &mut s,
+        RecipeKind::Linear {
+            dir1: dir(Axis::Y, "2", "30"),
+            dir2: None,
+        },
+        &curves,
+    )
+    .unwrap();
+    // Removing the offset would leave the pattern with nothing to copy.
+    assert!(matches!(
+        s.apply(&Command::RemoveRecipe { id: off }),
+        Err(DocError::RecipeInUse { .. })
+    ));
+    // Exploding it keeps its curves, so the pattern keeps working.
+    s.apply(&Command::ExplodeRecipe { id: off }).unwrap();
+    assert!(s.document().recipe(r).is_some());
+    assert_eq!(s.document().recipe(r).unwrap().instances().count(), 8);
+}
+
+#[test]
+fn a_mirror_still_refuses_offset_curves() {
+    // A mirror's copies are solved, and offset curves aren't solver
+    // variables, so a mirror of them could never hold.
+    let mut s = Sketcher::new(Document::new());
+    let (_, off) = offset_rectangle(&mut s);
+    let curves = offset_lines(&s, off);
+    let (a, b) = (pt(&mut s, -10.0, 0.0), pt(&mut s, -10.0, 10.0));
+    let axis = s
+        .apply(&Command::AddEntity {
+            layer: L,
+            construction: true,
+            style: Default::default(),
+            geom: Geom::Line { start: a, end: b },
+        })
+        .unwrap()
+        .entities[0];
+    assert!(matches!(
+        add(&mut s, RecipeKind::Mirror { axis }, &curves),
+        Err(DocError::Driven { .. })
+    ));
+}
