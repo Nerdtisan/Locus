@@ -5,8 +5,8 @@
 //! The shell never mutates a document directly; once `locus-doc` lands every
 //! edit goes through its command API (SPEC §11).
 
+use crate::actions::{self, Cx, Registry, Style};
 use crate::canvas::Canvas;
-use crate::constrain::Kind;
 use crate::file_io::FileIo;
 use crate::modify_tool::{ChamferMode, Modify, TransformMode};
 use crate::settings::{Settings, Theme, Units};
@@ -86,8 +86,22 @@ pub struct Status {
     pub frame_ms: f32,
 }
 
+/// The registry's view of the app, borrowing the fields actions act on
+/// (disjoint from `registry`, so both can be used at once).
+macro_rules! cx {
+    ($app:expr) => {
+        Cx {
+            canvas: &mut $app.canvas,
+            settings: &mut $app.settings,
+            plugins: Some(&mut $app.plugins),
+        }
+    };
+}
+
 pub struct App {
     dock: DockState<Tab>,
+    /// Every command the UI offers (#294, design §7.1).
+    registry: Registry,
     settings: Settings,
     canvas: Canvas,
     status: Status,
@@ -112,6 +126,7 @@ impl App {
         #[allow(unused_mut)] // mutated only on desktop
         let mut app = Self {
             dock,
+            registry: Registry::default(),
             settings,
             canvas: {
                 let mut c = Canvas::default();
@@ -182,62 +197,13 @@ impl App {
                 }
             });
             ui.menu_button("Edit", |ui| {
-                let undo = history_label("Undo", self.canvas.undo_label());
-                if ui
-                    .add_enabled(
-                        self.canvas.undo_label().is_some(),
-                        egui::Button::new(undo).shortcut_text(ui.ctx().format_shortcut(&UNDO)),
-                    )
-                    .clicked()
-                {
-                    self.canvas.undo();
-                    ui.close();
-                }
-                let redo = history_label("Redo", self.canvas.redo_label());
-                if ui
-                    .add_enabled(
-                        self.canvas.redo_label().is_some(),
-                        egui::Button::new(redo).shortcut_text(ui.ctx().format_shortcut(&REDO)),
-                    )
-                    .clicked()
-                {
-                    self.canvas.redo();
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("Select all").clicked() {
-                    self.canvas.select_all();
-                    ui.close();
-                }
-                if ui.button("Deselect").clicked() {
-                    self.canvas.clear_selection();
-                    ui.close();
-                }
+                let mut cx = cx!(self);
+                actions::show(ui, &self.registry, &mut cx, actions::EDIT_MENU, Style::Menu);
             });
             ui.menu_button("View", |ui| {
-                if ui.button("Fit to content").clicked() {
-                    self.canvas.request_fit();
-                    ui.close();
-                }
-                let mut machine = self.canvas.machine_preview();
-                if ui
-                    .checkbox(&mut machine, "Machine preview")
-                    .on_hover_text(
-                        "Show kerf- and blade-compensated paths and hatch fills, as they will be exported",
-                    )
-                    .changed()
                 {
-                    self.canvas.set_machine_preview(machine);
-                }
-                let mut stroke = self.canvas.stroke_preview();
-                if ui
-                    .checkbox(&mut stroke, "Stroke width")
-                    .on_hover_text(
-                        "Draw the pen width of Draw layers and the kerf of Cut layers at true                          scale, so the edges a dimension can measure to are visible",
-                    )
-                    .changed()
-                {
-                    self.canvas.set_stroke_preview(stroke);
+                    let mut cx = cx!(self);
+                    actions::show(ui, &self.registry, &mut cx, actions::VIEW_MENU, Style::Menu);
                 }
                 ui.separator();
                 for tab in [
@@ -277,51 +243,27 @@ impl App {
                 });
             });
             ui.menu_button("Sketch", |ui| {
-                for tool in Tool::DRAWING {
-                    let label = match tool.key() {
-                        Some(k) => format!("{}  ({k})", tool.label()),
-                        None => tool.label().to_owned(),
-                    };
-                    if ui
-                        .selectable_label(self.canvas.tool() == tool, label)
-                        .clicked()
-                    {
-                        self.canvas.set_tool(tool);
-                        ui.close();
-                    }
-                }
+                let mut cx = cx!(self);
+                actions::show(
+                    ui,
+                    &self.registry,
+                    &mut cx,
+                    actions::SKETCH_MENU,
+                    Style::Menu,
+                );
             });
             ui.menu_button("Constrain", |ui| {
-                for kind in Kind::ALL {
-                    let enabled = self.canvas.can_constrain(kind);
-                    let b = egui::Button::new(kind.label()).shortcut_text(kind.key().to_string());
-                    if ui
-                        .add_enabled(enabled, b)
-                        .on_disabled_hover_text(format!("Select {}", kind.needs()))
-                        .clicked()
-                    {
-                        self.canvas.constrain(kind);
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                let b = egui::Button::new("Dimension").shortcut_text("D");
-                if ui
-                    .add_enabled(self.canvas.can_dimension(), b)
-                    .on_disabled_hover_text("Select a line, two points, a circle or arc…")
-                    .clicked()
-                {
-                    self.canvas.start_dimension(self.settings.units);
-                    ui.close();
-                }
-                ui.separator();
-                ui.checkbox(
-                    &mut self.settings.auto_constrain,
-                    "Auto-constrain while drawing (hold Alt to suppress)",
+                let mut cx = cx!(self);
+                actions::show(
+                    ui,
+                    &self.registry,
+                    &mut cx,
+                    actions::CONSTRAIN_MENU,
+                    Style::Menu,
                 );
             });
             ui.menu_button("Plugins", |ui| {
-                self.plugins.menu(ui, &self.canvas);
+                self.plugins.menu(ui, &mut self.registry, &self.canvas);
             });
             ui.menu_button("Help", |ui| {
                 ui.hyperlink_to("Locus on GitHub", "https://github.com/Nerdtisan/Locus");
@@ -333,26 +275,15 @@ impl App {
     /// The tool strip under the menu (#68): Select plus the drawing tools.
     fn tool_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            for tool in [Tool::Select].into_iter().chain(Tool::DRAWING) {
-                let text = match tool.key() {
-                    Some(k) => format!("{} ({k})", tool.label()),
-                    None => tool.label().to_owned(),
-                };
-                if ui
-                    .selectable_label(self.canvas.tool() == tool, text)
-                    .clicked()
-                {
-                    self.canvas.set_tool(tool);
-                }
-            }
-            ui.separator();
-            for m in Modify::ALL {
-                if ui
-                    .selectable_label(self.canvas.modify() == Some(m), m.label())
-                    .clicked()
-                {
-                    self.canvas.set_modify(m);
-                }
+            {
+                let mut cx = cx!(self);
+                actions::show(
+                    ui,
+                    &self.registry,
+                    &mut cx,
+                    actions::TOOL_STRIP,
+                    Style::Strip,
+                );
             }
             ui.separator();
             self.corner_sizes(ui);
@@ -505,40 +436,26 @@ impl App {
     /// One button per constraint, enabled when the selection supports it (#70).
     fn constraint_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            for kind in Kind::ALL {
-                let enabled = self.canvas.can_constrain(kind);
-                let b = ui.add_enabled(enabled, egui::Button::new(kind.label()));
-                let tip = format!("{} ({}): {}", kind.label(), kind.key(), kind.needs());
-                if b.on_hover_text(tip).clicked() {
-                    self.canvas.constrain(kind);
-                }
-            }
-            ui.separator();
-            let b = ui.add_enabled(self.canvas.can_dimension(), egui::Button::new("Dimension"));
-            if b.on_hover_text("Dimension (D)").clicked() {
-                self.canvas.start_dimension(self.settings.units);
+            {
+                let mut cx = cx!(self);
+                actions::show(
+                    ui,
+                    &self.registry,
+                    &mut cx,
+                    actions::CONSTRAINT_BAR,
+                    Style::Strip,
+                );
             }
             self.canvas.touch_modifiers_ui(ui);
         });
     }
 
-    /// Not while a text field has focus: it owns its own undo.
-    fn history_shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
-            return;
-        }
-        // The shift variant first: a plain-Z match ignores extra shift.
-        let (redo, undo) = ctx.input_mut(|i| {
-            (
-                i.consume_shortcut(&REDO) || i.consume_shortcut(&REDO_ALT),
-                i.consume_shortcut(&UNDO),
-            )
-        });
-        if redo {
-            self.canvas.redo();
-        } else if undo {
-            self.canvas.undo();
-        }
+    /// Every shortcut, from the registry's key map (design §7.1). Plain
+    /// keys act while the pointer was over the canvas last frame.
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        let over = self.canvas.pointer_over();
+        let mut cx = cx!(self);
+        self.registry.dispatch_keys(ctx, &mut cx, over);
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -578,21 +495,6 @@ impl App {
             });
         });
     }
-}
-
-/// Undo (Cmd/Ctrl+Z) and redo (Cmd+Shift+Z, Ctrl+Y) shortcuts (#73).
-const UNDO: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
-const REDO: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
-    egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
-    egui::Key::Z,
-);
-const REDO_ALT: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
-
-/// "Undo Add Line" / plain "Undo" when there is nothing to undo.
-fn history_label(verb: &str, label: Option<&str>) -> String {
-    label.map_or_else(|| verb.to_owned(), |l| format!("{verb} {l}"))
 }
 
 struct Viewer<'a> {
@@ -651,7 +553,8 @@ impl eframe::App for App {
                 self.status.frame_ms * 0.9 + ms * 0.1
             };
         }
-        self.history_shortcuts(ui.ctx());
+        self.registry.sync_plugins(self.plugins.plugin_actions());
+        self.shortcuts(ui.ctx());
         self.files
             .update(ui.ctx(), &mut self.canvas, &mut self.settings);
         #[cfg(not(target_arch = "wasm32"))]
@@ -674,6 +577,9 @@ impl eframe::App for App {
         DockArea::new(&mut self.dock)
             .show_leaf_collapse_buttons(false)
             .show_inside(ui, &mut viewer);
+        let ctx = ui.ctx().clone();
+        let mut cx = cx!(self);
+        actions::touch_menu(&ctx, &self.registry, &mut cx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -690,12 +596,6 @@ impl eframe::App for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn history_labels() {
-        assert_eq!(history_label("Undo", None), "Undo");
-        assert_eq!(history_label("Redo", Some("Add Line")), "Redo Add Line");
-    }
 
     #[test]
     fn layout_round_trips() {

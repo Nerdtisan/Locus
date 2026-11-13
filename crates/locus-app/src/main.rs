@@ -3,6 +3,7 @@
 //! Desktop + web GUI shell (SPEC §3), on eframe + egui_dock + wgpu (ADR 0001).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod actions;
 mod app;
 mod canvas;
 mod constrain;
