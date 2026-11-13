@@ -12,7 +12,8 @@ use crate::demo;
 use crate::modify_tool::Modify;
 use crate::scene::Scene;
 use crate::settings::Units;
-use crate::tools::{Outcome, Tool};
+use crate::tool::{ConstrainTool, Flow, ModifyTool, ToolCx, ToolEvent, ToolKind};
+use crate::tools::Tool;
 use crate::views::text_ui::FontCatalog;
 use egui::Pos2;
 use locus_doc::{Command, ConstraintId, DocError, Document, EntityId, Geom, Sketcher};
@@ -69,10 +70,9 @@ impl AppState {
         self.doc.generation += 1;
         self.selection.regions = crate::views::canvas::RegionUi::default();
         self.doc.active_layer = self.active_layer();
-        self.tools.draft.set_layer(self.doc.active_layer);
         self.tools.dragging = false;
         self.selection.items.clear();
-        self.tools.draft.cancel();
+        self.tools.host.tool_mut().reset();
         self.tools.typed.clear();
         self.doc.notice = None;
         self.tools.dim_edit = None;
@@ -81,30 +81,21 @@ impl AppState {
         self.request_fit();
     }
 
+    /// The drawing tool in use (Select while a modify tool is active).
     pub fn tool(&self) -> Tool {
-        self.tools.draft.tool()
-    }
-
-    /// Sides and kind of the polygon tool (#157).
-    pub fn polygon(&self) -> (usize, bool) {
-        self.tools.draft.polygon()
-    }
-
-    pub fn set_polygon(&mut self, sides: usize, circumscribed: bool) {
-        self.tools.draft.set_polygon(sides, circumscribed);
+        self.tools.host.draw_kind()
     }
 
     pub fn set_tool(&mut self, tool: Tool) {
-        self.tools.draft.set_tool(tool);
+        let layer = self.active_layer();
+        self.tools.host.set_draw(tool, layer);
         self.tools.typed.clear();
         self.doc.notice = None;
-        self.tools.modify = None;
-        self.tools.corner_first = None;
     }
 
     /// The active modify tool (SPEC §6.2), if any.
     pub fn modify(&self) -> Option<Modify> {
-        self.tools.modify
+        self.tools.host.modify()
     }
 
     pub fn set_modify(&mut self, m: Modify) {
@@ -113,7 +104,95 @@ impl AppState {
         if m != Modify::Transform {
             self.selection.items.clear();
         }
-        self.tools.modify = Some(m);
+        self.tools.host.set(Box::new(ModifyTool::new(m)));
+    }
+
+    /// Hand an event to the active tool and carry out what it asks
+    /// (design §7.2): notices, selection, and a commit as one command
+    /// (SPEC §11). `hover` is the curve under the pointer.
+    pub(crate) fn tool_event(
+        &mut self,
+        ev: ToolEvent,
+        hover: Option<EntityId>,
+        units: Units,
+    ) -> Flow {
+        let text = if self.tool() == Tool::Text && matches!(ev, ToolEvent::Click(_)) {
+            match self.tools.text_settings.to_data(&self.tools.fonts.library) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    self.doc.notice = Some(e.to_string());
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let layer = self.active_layer();
+        let selection = self.selected();
+        let mut cx = ToolCx {
+            doc: self.doc.sketcher.document(),
+            scene: &self.doc.scene,
+            tol: self.view.tol_pt / self.view.camera.pt_per_mm,
+            units,
+            layer,
+            selection,
+            hover,
+            text,
+            corner: &self.tools.corner,
+            notice: None,
+            select: None,
+            offset: None,
+        };
+        let flow = self.tools.host.tool_mut().event(ev, &mut cx);
+        let (notice, select, offset) = (cx.notice, cx.select, cx.offset);
+        if let Some(n) = notice {
+            self.doc.notice = n;
+        }
+        if let Some(ids) = select {
+            self.selection.items.set_all(ids);
+        }
+        if let Some(id) = offset {
+            self.offset_click(id, units);
+        }
+        match flow {
+            Flow::Commit => self.commit_tool(),
+            Flow::Done if !matches!(self.tools.host.kind(), ToolKind::Constrain(_)) => {
+                self.set_tool(Tool::Select);
+            }
+            _ => {}
+        }
+        flow
+    }
+
+    /// Run the active tool's command. Drawing tools report a failure in the
+    /// status bar; the rest also highlight a refusal (#72).
+    fn commit_tool(&mut self) {
+        let Some(cmd) = self.tools.host.tool_mut().commit() else {
+            return;
+        };
+        let ok = match self.tools.host.kind() {
+            ToolKind::Draw(_) => match self.apply(&cmd) {
+                Ok(()) => {
+                    self.doc.notice = None;
+                    true
+                }
+                Err(e) => {
+                    self.doc.notice = Some(e.to_string());
+                    false
+                }
+            },
+            _ => self.apply_reporting(&cmd),
+        };
+        let after = self.tools.host.tool_mut().committed(ok);
+        if let Some(id) = after.select {
+            self.selection.items.set_all([id]);
+        }
+        if self.doc.notice.is_none() {
+            self.doc.notice = after.notice;
+        }
+        if ok && self.modify().is_some() {
+            self.selection.hover = None;
+        }
     }
 
     /// True when the selection has something to move, rotate or scale.
@@ -170,15 +249,9 @@ impl AppState {
 
     /// What to tell the user: the last problem, else the tool's next step.
     pub fn hint(&self) -> String {
-        match (&self.doc.notice, self.tools.modify) {
-            (Some(n), _) => n.clone(),
-            (None, Some(m)) => m.prompt(self.tools.corner_first.is_some()).to_owned(),
-            (None, None) => self
-                .tools
-                .draft
-                .tool()
-                .prompt(self.tools.draft.clicks())
-                .to_owned(),
+        match &self.doc.notice {
+            Some(n) => n.clone(),
+            None => self.tools.host.tool().prompt().into_owned(),
         }
     }
 
@@ -228,12 +301,11 @@ impl AppState {
     /// selection, or the solver's conflict pre-check) is explained in the
     /// status bar.
     pub fn constrain(&mut self, kind: Kind) {
-        match constrain::plan(kind, self.doc.sketcher.document(), &self.selected()) {
-            Ok(cmd) => {
-                self.apply_reporting(&cmd);
-            }
-            Err(why) => self.doc.notice = Some(why),
-        }
+        // A constraint is a tool whose needs the selection meets, so it
+        // commits as soon as it is picked; the active tool stays (design §3).
+        let prev = self.tools.host.swap(Box::new(ConstrainTool::new(kind)));
+        self.tool_event(ToolEvent::Activate, None, Units::Mm);
+        self.tools.host.swap(prev);
     }
 
     pub fn can_dimension(&self) -> bool {
@@ -405,7 +477,7 @@ impl AppState {
 
     /// True while a drawing tool has clicks pending.
     pub fn is_drawing(&self) -> bool {
-        self.tools.draft.is_drawing()
+        matches!(self.tools.host.kind(), ToolKind::Draw(_)) && self.tools.host.tool().busy()
     }
 
     /// Whether the pointer was over the canvas last frame: plain-letter
@@ -426,27 +498,6 @@ impl AppState {
         }
     }
 
-    /// Run a tool outcome through the command API (SPEC §11).
-    pub(crate) fn run(&mut self, outcome: Outcome) {
-        match outcome {
-            Outcome::Pending => {}
-            Outcome::Rejected(why) => self.doc.notice = Some(why.to_owned()),
-            Outcome::Commit(cmd) => match self.apply(&cmd) {
-                Ok(()) => {
-                    self.doc.notice = None;
-                    if let Some(id) = self.tools.draft.take_placed() {
-                        self.selection.items.set_all([id]);
-                    }
-                }
-                Err(e) => {
-                    // The draft's predicted IDs are void after a failure.
-                    self.tools.draft.cancel();
-                    self.doc.notice = Some(e.to_string());
-                }
-            },
-        }
-    }
-
     /// The document as it stands (read-only; changes go through commands).
     pub fn document(&self) -> &Document {
         self.doc.sketcher.document()
@@ -463,14 +514,14 @@ impl AppState {
     /// Undo the last step (SPEC §11); returns its label.
     pub fn undo(&mut self) -> Option<String> {
         // A half-drawn shape may refer to what was just undone.
-        self.tools.draft.cancel();
+        self.tools.host.tool_mut().reset();
         let label = self.doc.sketcher.undo().ok()?;
         self.rebuild();
         Some(label)
     }
 
     pub fn redo(&mut self) -> Option<String> {
-        self.tools.draft.cancel();
+        self.tools.host.tool_mut().reset();
         let label = self.doc.sketcher.redo().ok()?;
         self.rebuild();
         Some(label)
@@ -1389,6 +1440,53 @@ mod tests {
             c.solve_summary(),
             format!("Under-constrained · DOF {}", st.dof)
         );
+    }
+
+    /// The tool host (design §7.2): a drawing tool commits one command per
+    /// segment, and Esc cancels the step, then a
+    /// second Esc returns to Select.
+    #[test]
+    fn the_tool_host_draws_a_line_and_esc_steps_back_to_select() {
+        use crate::tool::{Flow, ToolEvent};
+        use crate::tools::Pick;
+        let mut c = AppState::default();
+        let n = c.document().entities().len();
+        c.set_tool(Tool::Line);
+        let click = |c: &mut AppState, x: f64| {
+            c.tool_event(
+                ToolEvent::Click(Pick::free(Vec2::new(x, 300.0))),
+                None,
+                Units::Mm,
+            )
+        };
+        assert_eq!(click(&mut c, 0.0), Flow::Continue);
+        assert!(c.is_drawing());
+        assert_eq!(click(&mut c, 40.0), Flow::Commit);
+        assert!(c.document().entities().len() > n);
+        assert!(c.undo_label().is_some());
+        assert_eq!(c.tool_event(ToolEvent::Esc, None, Units::Mm), Flow::Cancel);
+        assert_eq!(c.tool(), Tool::Line);
+        assert_eq!(c.tool_event(ToolEvent::Esc, None, Units::Mm), Flow::Done);
+        assert_eq!(c.tool(), Tool::Select);
+    }
+
+    /// Modify tools go through the same host; Esc leaves them for Select
+    /// with the selection cleared, as before (SPEC §6.2).
+    #[test]
+    fn a_modify_tool_is_left_with_esc_and_keeps_polygon_options() {
+        use crate::tool::ToolEvent;
+        let mut c = AppState::default();
+        c.set_tool(Tool::Polygon);
+        c.tools.host.tool_mut().dialog_set_polygon_for_test(7, true);
+        c.set_modify(Modify::Fillet);
+        assert_eq!(c.modify(), Some(Modify::Fillet));
+        assert_eq!(c.tool(), Tool::Select);
+        c.select_all();
+        c.tool_event(ToolEvent::Esc, None, Units::Mm);
+        assert_eq!(c.modify(), None);
+        assert!(c.selection.items.is_empty());
+        c.set_tool(Tool::Polygon);
+        assert_eq!(c.tools.host.tool().polygon(), Some((7, true)));
     }
 
     #[test]
