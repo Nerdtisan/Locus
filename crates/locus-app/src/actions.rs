@@ -125,6 +125,8 @@ pub enum Op {
     ToggleConstruction,
     /// Run the last tool or command again (marking menu N slot, design §4).
     Repeat,
+    /// Grow the selection to the chains of its curves (#220).
+    SelectChain,
     Fit,
     Toggle(Flag),
     /// A plugin command (SPEC §15), run by the [`PluginHost`].
@@ -161,6 +163,7 @@ impl Action {
             | Op::Redo
             | Op::Repeat
             | Op::SelectAll
+            | Op::SelectChain
             | Op::Deselect
             | Op::Fit
             | Op::Toggle(_) => false,
@@ -579,6 +582,17 @@ pub static BUILTIN: &[Action] = &[
         Op::Redo,
     ),
     a(
+        "select.chain",
+        "Select chain",
+        Group::Select,
+        "⛓",
+        &["connected", "loop", "contour", "profile"],
+        "Select curves, then add every curve joined end to end with them (or double-click a curve)",
+        &[],
+        KeyScope::Global,
+        Op::SelectChain,
+    ),
+    a(
         "edit.select_all",
         "Select all",
         Group::Select,
@@ -747,6 +761,7 @@ pub const MARKING_RING: [&str; 8] = [
 pub fn marking_list(selected: bool) -> &'static [Item] {
     if selected {
         &[
+            A("select.chain"),
             A("modify.construction"),
             A("edit.delete"),
             Sep,
@@ -942,6 +957,7 @@ impl Registry {
                 Some(last) => self.enabled(last, canvas),
                 None => Enabled::No("Nothing to repeat yet".into()),
             },
+            Op::SelectChain => Enabled::when(!canvas.selection.items.is_empty(), a.hint.clone()),
             Op::ToggleConstruction => {
                 Enabled::when(canvas.construction_toggle().is_some(), a.hint.clone())
             }
@@ -1004,6 +1020,7 @@ impl Registry {
                 canvas.redo();
             }
             Op::SelectAll => canvas.select_all(),
+            Op::SelectChain => canvas.select_chains(),
             Op::Deselect => canvas.clear_selection(),
             Op::Delete => {
                 if self.enabled(a, canvas).yes() {

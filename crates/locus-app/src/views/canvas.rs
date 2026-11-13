@@ -624,7 +624,11 @@ impl AppState {
 
         if self.tools.dragging {
             self.drag_frame(ui, resp, rect);
-            return;
+            // A press on a curve starts a (still motionless) drag; its
+            // release may complete a double-click, which selects the chain.
+            if self.tools.dragging || !resp.double_clicked_by(PointerButton::Primary) {
+                return;
+            }
         }
         if resp.drag_started_by(PointerButton::Primary) {
             // The press, not where the drag threshold was crossed.
@@ -672,6 +676,16 @@ impl AppState {
             && let Some(&(id, _)) = self.view.dim_rects.iter().find(|(_, r)| r.contains(p))
         {
             self.edit_existing_dimension(id, units);
+        } else if resp.double_clicked_by(PointerButton::Primary)
+            && self.selection.regions.combine.is_none()
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some(id) = pick_at(self, p)
+        {
+            // Double-click a curve: select its chain (design §3.1, #220).
+            let chain = crate::chain::chain(self.doc.sketcher.document(), id);
+            if !chain.is_empty() {
+                self.selection.items.apply_chain(&chain, id, mods);
+            }
         } else if resp.clicked_by(PointerButton::Primary)
             && let Some(p) = resp.interact_pointer_pos()
         {
@@ -749,5 +763,75 @@ fn draw_rubber_band(painter: &egui::Painter, start: Pos2, now: Pos2) {
             r.left_top(),
         ];
         painter.extend(egui::Shape::dashed_line(&path, stroke, 6.0, 4.0));
+    }
+}
+
+#[cfg(test)]
+mod chain_tests {
+    use super::*;
+    use crate::app::Status;
+    use egui::{Event, PointerButton, RawInput, pos2, vec2};
+
+    fn frame(c: &mut AppState, ctx: &egui::Context, t: f64, events: Vec<Event>) {
+        let input = RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                pos2(0.0, 0.0),
+                vec2(800.0, 600.0),
+            )),
+            time: Some(t),
+            events,
+            ..RawInput::default()
+        };
+        let settings = Settings::default();
+        let mut status = Status::default();
+        let _ = ctx.run_ui(input, |ui| c.canvas_ui(ui, &settings, &mut status));
+    }
+
+    fn press(p: egui::Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos: p,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Double-clicking a curve selects its chain (design §3.1, #220).
+    #[test]
+    fn double_click_selects_the_chain() {
+        let ctx = egui::Context::default();
+        let mut c = AppState::default();
+        frame(&mut c, &ctx, 0.0, Vec::new());
+        // The demo's top edge.
+        let doc = c.document();
+        let top = doc
+            .entities()
+            .iter()
+            .find(|(id, e)| {
+                matches!(e.geom, locus_doc::Geom::Line { .. })
+                    && !e.construction
+                    && doc
+                        .line(*id)
+                        .is_some_and(|l| l.a.y > 100.0 && l.b.y > 100.0)
+            })
+            .map(|(id, _)| id)
+            .expect("a top edge");
+        let l = c.document().line(top).expect("line");
+        let p = c.view.camera.to_screen((l.a + l.b) * 0.5, c.view.rect);
+        let mut t = 0.1;
+        let mut step = |c: &mut AppState, ev: Vec<Event>| {
+            frame(c, &ctx, t, ev);
+            t += 0.02;
+        };
+        step(&mut c, vec![Event::PointerMoved(p)]);
+        for _ in 0..2 {
+            step(&mut c, vec![press(p, true)]);
+            // Held for a few frames, as a real click is.
+            step(&mut c, Vec::new());
+            step(&mut c, Vec::new());
+            step(&mut c, vec![press(p, false)]);
+        }
+        step(&mut c, Vec::new());
+        assert_eq!(c.selection.items.len(), 4, "{:?}", c.selection.items);
     }
 }

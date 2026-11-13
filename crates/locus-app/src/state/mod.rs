@@ -639,6 +639,24 @@ impl AppState {
         self.view.fit_size = egui::Vec2::ZERO;
     }
 
+    /// Select chain (#220): add the chain of every selected curve.
+    pub fn select_chains(&mut self) {
+        let doc = self.doc.sketcher.document();
+        let chains: Vec<EntityId> = self
+            .selection
+            .items
+            .iter()
+            .flat_map(|c| crate::chain::chain(doc, c))
+            .collect();
+        self.selection.items.set_all(
+            self.selection
+                .items
+                .iter()
+                .chain(chains)
+                .collect::<Vec<_>>(),
+        );
+    }
+
     pub fn select_all(&mut self) {
         self.selection
             .items
@@ -1372,6 +1390,60 @@ mod tests {
             .last()
             .map(|(_, e)| e.construction);
         assert_eq!(last, Some(true));
+    }
+
+    /// Select chain (#220) grows the selection to whole chains; points
+    /// alone add nothing.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn select_chain_grows_the_selection_to_whole_chains() {
+        let mut c = AppState::default();
+        let layer = c.active_layer();
+        let add = |c: &mut AppState, geom| {
+            c.apply_reporting(&Command::AddEntity {
+                layer,
+                construction: false,
+                style: Default::default(),
+                geom,
+            });
+            c.document()
+                .entities()
+                .iter()
+                .map(|(i, _)| i)
+                .last()
+                .unwrap()
+        };
+        let p: Vec<EntityId> = [(500.0, 500.0), (510.0, 500.0), (520.0, 510.0)]
+            .iter()
+            .map(|&(x, y)| {
+                add(
+                    &mut c,
+                    Geom::Point {
+                        pos: Vec2::new(x, y),
+                    },
+                )
+            })
+            .collect();
+        let l1 = add(
+            &mut c,
+            Geom::Line {
+                start: p[0],
+                end: p[1],
+            },
+        );
+        let l2 = add(
+            &mut c,
+            Geom::Line {
+                start: p[1],
+                end: p[2],
+            },
+        );
+        c.selection.items.set_all([l1]);
+        c.select_chains();
+        assert!(c.selection.items.contains(l2));
+        c.selection.items.set_all([p[0]]);
+        c.select_chains();
+        assert_eq!(c.selection.items.len(), 1);
     }
 
     /// The design's shortcut map (§5): tool letters pick tools; constraints

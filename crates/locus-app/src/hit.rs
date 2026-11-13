@@ -236,6 +236,27 @@ impl Selection {
         }
     }
 
+    /// A double-click's chain (design §3.1, #220): plain replaces the
+    /// selection with the chain, Shift adds it, Ctrl toggles it. The first
+    /// click of the double-click already toggled `clicked`, so with Ctrl the
+    /// chain follows `clicked`: in if it is now in, out if it is now out.
+    pub fn apply_chain(&mut self, chain: &[EntityId], clicked: EntityId, mods: Mods) {
+        if mods.toggle {
+            if self.0.contains(&clicked) {
+                self.0.extend(chain.iter().copied());
+            } else {
+                for id in chain {
+                    self.0.remove(id);
+                }
+            }
+        } else {
+            if !mods.add {
+                self.0.clear();
+            }
+            self.0.extend(chain.iter().copied());
+        }
+    }
+
     /// A box result: plain replaces, shift adds, ctrl toggles each hit.
     pub fn apply_box(&mut self, hits: &[EntityId], mods: Mods) {
         if mods.toggle {
@@ -256,6 +277,36 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chains_replace_add_or_toggle() {
+        let id = EntityId::new;
+        let chain = [id(1), id(2), id(3)];
+        let plain = Mods::default();
+        let add = Mods {
+            add: true,
+            toggle: false,
+        };
+        let toggle = Mods {
+            add: false,
+            toggle: true,
+        };
+        let mut s = Selection::default();
+        s.set_all([id(9)]);
+        s.apply_chain(&chain, id(1), plain);
+        assert_eq!(s.iter().collect::<Vec<_>>(), chain);
+        s.set_all([id(9)]);
+        s.apply_chain(&chain, id(1), add);
+        assert_eq!(s.len(), 4);
+        // Ctrl: the first click put 1 in, so the chain goes in…
+        s.set_all([id(1)]);
+        s.apply_chain(&chain, id(1), toggle);
+        assert_eq!(s.len(), 3);
+        // …and when it took 1 out, the chain comes out.
+        s.set_all([id(2), id(3), id(9)]);
+        s.apply_chain(&chain, id(1), toggle);
+        assert_eq!(s.iter().collect::<Vec<_>>(), [id(9)]);
+    }
     use locus_geom::{Arc, Circle};
 
     fn item(id: u64, shape: Shape) -> Item {
