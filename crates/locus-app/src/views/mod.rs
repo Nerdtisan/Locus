@@ -7,11 +7,14 @@
 
 pub mod canvas;
 pub mod constraints;
+pub mod icons;
 pub mod layers;
 pub mod marking_menu;
 pub mod parameters;
 pub mod patterns;
 pub mod properties;
+pub mod ribbon;
+pub mod shortcuts;
 pub mod style;
 pub mod text_ui;
 pub mod tool_options;

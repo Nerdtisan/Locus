@@ -10,9 +10,11 @@ use crate::file_io::FileIo;
 use crate::layout::{self, Tab, default_layout};
 use crate::settings::{Settings, Theme, Units};
 use crate::state::AppState;
+use crate::toolbar::{self, Toolbar};
 use crate::views::layers::LayersView;
 use crate::views::parameters::ParametersView;
 use crate::views::patterns::PatternsView;
+use crate::views::shortcuts::ShortcutsView;
 use egui_dock::{DockArea, DockState, TabViewer};
 use locus_geom::Vec2;
 
@@ -45,12 +47,15 @@ struct Panes {
     layers: LayersView,
     parameters: ParametersView,
     patterns: PatternsView,
+    shortcuts: ShortcutsView,
 }
 
 pub struct App {
     dock: DockState<Tab>,
     /// Every command the UI offers (#294, design §7.1).
     registry: Registry,
+    /// The ribbon's pinned actions (#299, design §2.3).
+    toolbar: Toolbar,
     settings: Settings,
     /// The one mutable state (design §7.3).
     state: AppState,
@@ -77,10 +82,18 @@ impl App {
                 s.get_string(layout::LAYOUT_V1_KEY).as_deref(),
             )
         });
+        let registry = Registry::default();
+        let toolbar = Toolbar::load(
+            cc.storage
+                .and_then(|s| s.get_string(toolbar::TOOLBAR_KEY))
+                .as_deref(),
+            |id| registry.get(id).is_some(),
+        );
         #[allow(unused_mut)] // mutated only on desktop
         let mut app = Self {
             dock,
-            registry: Registry::default(),
+            registry,
+            toolbar,
             panes: Panes::default(),
             settings,
             state: {
@@ -119,6 +132,18 @@ impl App {
     fn toggle_tab(&mut self, tab: Tab) {
         if let Some(loc) = self.dock.find_tab(&tab) {
             self.dock.remove_tab(loc);
+        } else if tab == Tab::Shortcuts {
+            // By default under the side panes (design §5.1).
+            match self.dock.find_tab(&Tab::Constraints) {
+                Some(at) => {
+                    self.dock.set_focused_node_and_surface(egui_dock::NodePath {
+                        surface: at.surface,
+                        node: at.node,
+                    });
+                    self.dock.push_to_focused_leaf(tab);
+                }
+                None => self.dock.push_to_first_leaf(tab),
+            }
         } else {
             self.dock.push_to_focused_leaf(tab);
         }
@@ -168,6 +193,7 @@ impl App {
                     Tab::Parameters,
                     Tab::Patterns,
                     Tab::Constraints,
+                    Tab::Shortcuts,
                 ] {
                     let mut shown = self.dock.find_tab(&tab).is_some();
                     if ui.checkbox(&mut shown, tab.title()).changed() {
@@ -221,44 +247,29 @@ impl App {
                 self.plugins.menu(ui, &mut self.registry, &self.state);
             });
             ui.menu_button("Help", |ui| {
+                {
+                    let mut cx = cx!(self);
+                    actions::show(ui, &self.registry, &mut cx, actions::HELP_MENU, Style::Menu);
+                }
+                ui.separator();
                 ui.hyperlink_to("Locus on GitHub", "https://github.com/Nerdtisan/Locus");
                 ui.label(format!("Locus v{}", env!("CARGO_PKG_VERSION")));
             });
         });
     }
 
-    /// The tool strip under the menu (#68): Select plus the drawing tools.
-    fn tool_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            {
-                let mut cx = cx!(self);
-                actions::show(
-                    ui,
-                    &self.registry,
-                    &mut cx,
-                    actions::TOOL_STRIP,
-                    Style::Strip,
-                );
-            }
-            ui.separator();
-            self.state.tool_options_ui(ui);
-            ui.weak(self.state.hint());
-        });
+    /// The SKETCH ribbon with the user's pinned tools (#299, design §2.3).
+    fn ribbon(&mut self, ui: &mut egui::Ui) {
+        // eframe stores the pins with the other settings (`save`).
+        let mut cx = cx!(self);
+        crate::views::ribbon::show(ui, &self.registry, &mut cx, &mut self.toolbar);
     }
 
-    /// One button per constraint, enabled when the selection supports it (#70).
-    fn constraint_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            {
-                let mut cx = cx!(self);
-                actions::show(
-                    ui,
-                    &self.registry,
-                    &mut cx,
-                    actions::CONSTRAINT_BAR,
-                    Style::Strip,
-                );
-            }
+    /// The active tool's options and the next click's prompt.
+    fn options_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            self.state.tool_options_ui(ui);
+            ui.weak(self.state.hint());
             self.state.touch_modifiers_ui(ui);
         });
     }
@@ -311,6 +322,7 @@ impl App {
 }
 
 struct Viewer<'a> {
+    registry: &'a Registry,
     state: &'a mut AppState,
     panes: &'a mut Panes,
     settings: &'a Settings,
@@ -340,6 +352,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Regions => self.state.regions_ui(ui),
             Tab::Parameters => self.panes.parameters.ui(ui, self.state),
             Tab::Patterns => self.panes.patterns.ui(ui, self.state, self.settings.units),
+            Tab::Shortcuts => self.panes.shortcuts.ui(ui, self.registry),
         }
     }
 
@@ -379,10 +392,14 @@ impl eframe::App for App {
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp.update(ui.ctx(), &mut self.state);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
-        egui::Panel::top("constraints").show(ui, |ui| self.constraint_bar(ui));
+        egui::Panel::top("ribbon").show(ui, |ui| self.ribbon(ui));
+        egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
+        if std::mem::take(&mut self.state.view.toggle_shortcuts) {
+            self.toggle_tab(Tab::Shortcuts);
+        }
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
+            registry: &self.registry,
             state: &mut self.state,
             panes: &mut self.panes,
             settings: &self.settings,
@@ -400,6 +417,9 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.save(storage);
         self.files.save_state(storage);
+        if let Some(json) = self.toolbar.save() {
+            storage.set_string(toolbar::TOOLBAR_KEY, json);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp.save(storage);
         // v1 is left in place for older builds (design §7.4).

@@ -37,7 +37,7 @@ impl ActionId {
 }
 
 /// The ribbon group an action belongs to, in Fusion's naming (design §2).
-#[allow(dead_code)] // Output and File fill in with the ribbon (#299)
+#[allow(dead_code)] // Output and File fill in with the OUTPUT ribbon tab
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Group {
     Create,
@@ -128,6 +128,9 @@ pub enum Op {
     /// Grow the selection to the chains of its curves (#220).
     SelectChain,
     Fit,
+    /// Show or hide the shortcuts pane (design §5.1, #299); the shell
+    /// owns the dock, so this only asks it to.
+    ToggleShortcuts,
     Toggle(Flag),
     /// A plugin command (SPEC §15), run by the [`PluginHost`].
     Plugin {
@@ -166,6 +169,7 @@ impl Action {
             | Op::SelectChain
             | Op::Deselect
             | Op::Fit
+            | Op::ToggleShortcuts
             | Op::Toggle(_) => false,
         }
     }
@@ -192,14 +196,14 @@ pub enum Source {
 pub struct Action {
     pub id: ActionId,
     pub label: Cow<'static, str>,
-    #[allow(dead_code)] // first reader: the ribbon groups (#299)
     pub group: Group,
-    /// A symbol for the ribbon and marking menu (#299, #290); the
-    /// constraint symbols mark constraints on the canvas too (design §2).
-    #[allow(dead_code)] // first reader: the ribbon (#299)
+    /// A text symbol. The ribbon and shortcuts pane paint vector icons
+    /// instead (`views::icons`, #299): the bundled fonts lack most of these
+    /// glyphs.
+    #[allow(dead_code)] // superseded by views::icons; drop with the next registry change
     pub icon: &'static str,
     /// Extra words tool search matches (#299).
-    #[allow(dead_code)] // first reader: tool search (#299)
+    #[allow(dead_code)] // first reader: tool search
     pub keywords: &'static [&'static str],
     /// Hover text: what it does or what it needs.
     pub hint: Cow<'static, str>,
@@ -207,7 +211,6 @@ pub struct Action {
     pub keys: &'static [KeyboardShortcut],
     pub scope: KeyScope,
     pub op: Op,
-    #[allow(dead_code)] // first reader: the PLUGIN tag in the ribbon menus (#299)
     pub source: Source,
 }
 
@@ -679,6 +682,17 @@ pub static BUILTIN: &[Action] = &[
         KeyScope::Global,
         Op::Toggle(Flag::StrokeWidth),
     ),
+    a(
+        "view.shortcuts",
+        "Keyboard shortcuts",
+        Group::View,
+        "⌨",
+        &["keys", "help", "shortcut map"],
+        "Show or hide the shortcut map pane",
+        &[key(Key::Questionmark)],
+        KeyScope::Global,
+        Op::ToggleShortcuts,
+    ),
 ];
 
 /// One entry in a menu or strip laid out from the registry.
@@ -744,36 +758,11 @@ const fn concat<const N: usize>(parts: &[&[Item]]) -> [Item; N] {
 pub const SKETCH_MENU: &[Item] =
     &concat::<17>(&[&DRAWING, &[Sep, A("sketch.linetype_construction")]]);
 
-/// The tool strip: Select, the drawing tools, then the modify tools.
-pub const TOOL_STRIP: &[Item] = &concat::<29>(&[
-    &[A("select.select")],
-    &DRAWING,
-    &[
-        Sep,
-        A("modify.trim"),
-        A("modify.extend"),
-        A("modify.break"),
-        A("modify.fillet"),
-        A("modify.chamfer"),
-        A("modify.offset"),
-        A("sketch.pattern_rect"),
-        A("sketch.pattern_circ"),
-        A("modify.move"),
-        A("modify.rotate"),
-        A("modify.scale"),
-        A("modify.construction"),
-    ],
-]);
-
 /// Constrain menu.
 pub const CONSTRAIN_MENU: &[Item] = &concat::<16>(&[
     &CONSTRAINTS,
     &[Sep, A("constrain.dimension"), Sep, A("constrain.auto")],
 ]);
-
-/// The constraint bar under the tool strip (#70).
-pub const CONSTRAINT_BAR: &[Item] =
-    &concat::<14>(&[&CONSTRAINTS, &[Sep, A("constrain.dimension")]]);
 
 /// The marking menu's ring (design §4, #290), clockwise from the top:
 /// N, NE, E, SE, S, SW, W, NW. It never changes with context, so a flick
@@ -837,6 +826,9 @@ pub const VIEW_MENU: &[Item] = &[
     A("view.machine_preview"),
     A("view.stroke_width"),
 ];
+
+/// Help menu: the shortcut map (design §5.1).
+pub const HELP_MENU: &[Item] = &[A("view.shortcuts")];
 
 /// Every action, built-in and plugin, plus the key map.
 pub struct Registry {
@@ -905,7 +897,6 @@ impl Registry {
             .sort_by_key(|(k, _)| std::cmp::Reverse(weight(k.modifiers)));
     }
 
-    #[allow(dead_code)] // first reader: tool search (#299)
     pub fn actions(&self) -> &[Action] {
         &self.actions
     }
@@ -1069,6 +1060,7 @@ impl Registry {
                 None => canvas.doc.notice = Some(a.hint.to_string()),
             },
             Op::Fit => canvas.request_fit(),
+            Op::ToggleShortcuts => canvas.view.toggle_shortcuts = true,
             Op::Toggle(f) => {
                 let on = !self.is_on(a, canvas, cx.settings);
                 match f {
@@ -1124,14 +1116,26 @@ fn pressed(ctx: &egui::Context, sc: KeyboardShortcut) -> bool {
     })
 }
 
+/// A shortcut as menus and the shortcuts pane show it. Punctuation reads
+/// as itself ("?", not egui's "Questionmark"); egui's arrow symbols are not
+/// in the bundled fonts, so other keys keep their names.
+pub fn key_text(ctx: &egui::Context, sc: &KeyboardShortcut) -> String {
+    let full = ctx.format_shortcut(sc);
+    let sym = sc.logical_key.symbol_or_name();
+    if sym.chars().all(|c| c.is_ascii_punctuation())
+        && let Some(mods) = full.strip_suffix(sc.logical_key.name())
+    {
+        return format!("{mods}{sym}");
+    }
+    full
+}
+
 /// How a laid-out list is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
     /// A drop-down menu: tools as selectable rows, commands as buttons with
     /// their key, toggles as checkboxes. Closes the menu on use.
     Menu,
-    /// The tool strip and constraint bar: compact, key in the label.
-    Strip,
 }
 
 /// Draw `items` from the registry. Returns true when an action ran.
@@ -1166,7 +1170,7 @@ pub fn show_one(
     a: &Action,
     style: Style,
 ) -> bool {
-    let key = reg.shortcut(a).map(|k| ui.ctx().format_shortcut(&k));
+    let key = reg.shortcut(a).map(|k| key_text(ui.ctx(), &k));
     let label = reg.label(a, cx.state);
     let clicked = match (a.op.kind(), style) {
         (ActionKind::Toggle, _) => {
@@ -1180,9 +1184,8 @@ pub fn show_one(
             r.changed()
         }
         (ActionKind::Tool, _) => {
-            let sep = if style == Style::Menu { "  " } else { " " };
             let text = match &key {
-                Some(k) => format!("{label}{sep}({k})"),
+                Some(k) => format!("{label}  ({k})"),
                 None => label.into_owned(),
             };
             ui.selectable_label(reg.is_on(a, cx.state, cx.settings), text)
@@ -1191,26 +1194,13 @@ pub fn show_one(
         (ActionKind::Command, _) => {
             let enabled = reg.enabled(a, cx.state);
             let mut b = egui::Button::new(label.as_ref());
-            if style == Style::Menu
-                && let Some(k) = &key
-            {
+            if let Some(k) = &key {
                 b = b.shortcut_text(k.as_str());
             }
             let r = ui.add_enabled(enabled.yes(), b);
-            let r = match (&enabled, style) {
-                (Enabled::No(why), Style::Menu | Style::Strip) => {
-                    r.on_disabled_hover_text(why.as_ref())
-                }
-                _ => r,
-            };
-            let r = if style == Style::Strip && !a.hint.is_empty() {
-                let tip = match &key {
-                    Some(k) => format!("{} ({k}): {}", a.label, a.hint),
-                    None => format!("{}: {}", a.label, a.hint),
-                };
-                r.on_hover_text(tip)
-            } else {
-                r
+            let r = match &enabled {
+                Enabled::No(why) => r.on_disabled_hover_text(why.as_ref()),
+                Enabled::Yes => r,
             };
             r.clicked()
         }
@@ -1295,9 +1285,7 @@ mod tests {
         let r = Registry::default();
         for list in [
             SKETCH_MENU,
-            TOOL_STRIP,
             CONSTRAIN_MENU,
-            CONSTRAINT_BAR,
             marking_list(true),
             marking_list(false),
             &MARKING_RING.map(Item::Action),

@@ -41,6 +41,9 @@ pub struct ViewState {
     pub(crate) touch_toggle: bool,
     /// The open marking menu (design §4, #290).
     pub(crate) marking: Option<Marking>,
+    /// `view.shortcuts` ran: the shell shows or hides the shortcuts pane
+    /// (design §5.1); it owns the dock, so it takes this each frame.
+    pub(crate) toggle_shortcuts: bool,
 }
 
 /// A marking menu opened by right-click or a long press (design §4).
@@ -75,6 +78,7 @@ impl Default for ViewState {
             touch_add: false,
             touch_toggle: false,
             marking: None,
+            toggle_shortcuts: false,
         }
     }
 }
