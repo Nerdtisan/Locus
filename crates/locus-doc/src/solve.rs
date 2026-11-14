@@ -985,24 +985,50 @@ fn analyse(solver: &mut ls::LmSolver, doc: &Document) -> SolveState {
             .collect(),
         entities: entities(s),
     };
+    let redundant: Vec<ConstraintGroup> = a
+        .redundant
+        .iter()
+        .filter(|s| !has_lock(s))
+        .map(group)
+        .filter(|g| !recipe_owned(doc, g))
+        .collect();
+    let conflicts: Vec<ConstraintGroup> = a
+        .conflicts
+        .iter()
+        .map(group)
+        .filter(|g| !g.constraints.is_empty())
+        .collect();
+    // With only those redundancies dropped, the sketch isn't over-constrained.
+    let status = match a.status {
+        Status::OverConstrained if redundant.is_empty() && conflicts.is_empty() => {
+            if a.dof == 0 {
+                Status::FullyConstrained
+            } else {
+                Status::UnderConstrained
+            }
+        }
+        s => s,
+    };
     SolveState {
         converged: a.converged,
         dof: a.dof,
-        status: a.status,
+        status,
         fully_constrained,
-        redundant: a
-            .redundant
-            .iter()
-            .filter(|s| !has_lock(s))
-            .map(group)
-            .collect(),
-        conflicts: a
-            .conflicts
-            .iter()
-            .map(group)
-            .filter(|g| !g.constraints.is_empty())
-            .collect(),
+        redundant,
+        conflicts,
     }
+}
+
+/// A redundancy made only of constraints a recipe owns, which it generated
+/// consistent by construction (#215). A mirrored arc is the case: a
+/// Symmetric constraint on each of its three points says again what the
+/// copy's own arc rule (its end on its circle) already says. A group with
+/// any constraint of the user's still shows.
+fn recipe_owned(doc: &Document, g: &ConstraintGroup) -> bool {
+    !g.constraints.is_empty()
+        && g.constraints
+            .iter()
+            .all(|c| doc.constraint_owner(*c).is_some())
 }
 
 /// The existing constraints of a pre-check set (the probe itself excluded).

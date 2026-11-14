@@ -22,6 +22,7 @@ mod corner_dialog;
 mod dialog;
 mod machine;
 mod manipulator;
+mod mirror_tool;
 mod offset_tool;
 mod offsets;
 mod pattern_labels;
@@ -30,6 +31,7 @@ pub mod plugin_objects;
 mod regions;
 
 pub(crate) use machine::MachinePath;
+pub(crate) use mirror_tool::MirrorDraft;
 pub(crate) use offset_tool::OffsetDraft;
 pub(crate) use pattern_tool::PatternDraft;
 pub(crate) use regions::RegionUi;
@@ -249,6 +251,9 @@ impl AppState {
         } else if let Some(circular) = self.pattern_kind() {
             self.pattern_input(ui, &resp, rect, settings.units, circular);
             self.refresh_pattern_preview(circular, settings.units);
+        } else if self.modify() == Some(Modify::Mirror) {
+            self.mirror_input(ui, &resp, rect, settings.units);
+            self.refresh_mirror_preview();
         } else if self.modify().is_some() {
             if !(self.modify() == Some(Modify::Offset)
                 && self.offset_pointer(ui, &resp, rect, settings.units))
@@ -309,6 +314,9 @@ impl AppState {
         if let Some(circular) = self.pattern_kind() {
             self.draw_pattern_draft(&frame, circular);
         }
+        if self.modify() == Some(Modify::Mirror) {
+            self.draw_mirror_draft(&frame);
+        }
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -328,6 +336,9 @@ impl AppState {
         }
         if let Some(circular) = self.pattern_kind() {
             self.pattern_dialog(ui, rect, circular, settings.units);
+        }
+        if self.modify() == Some(Modify::Mirror) {
+            self.mirror_dialog(ui, rect);
         }
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));

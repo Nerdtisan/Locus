@@ -25,11 +25,13 @@ pub enum Modify {
     /// Rectangular (false) or circular (true) pattern of the selection
     /// (#221, design §6.8): one dialog with two tabs and canvas handles.
     Pattern(bool),
+    /// Mirror the selection about a picked line (#215, design §6.9).
+    Mirror,
 }
 
 impl Modify {
     #[cfg(test)]
-    pub const ALL: [Modify; 11] = [
+    pub const ALL: [Modify; 12] = [
         Modify::Trim,
         Modify::Extend,
         Modify::Break,
@@ -41,6 +43,7 @@ impl Modify {
         Modify::Transform(TransformMode::Scale),
         Modify::Pattern(false),
         Modify::Pattern(true),
+        Modify::Mirror,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -54,6 +57,7 @@ impl Modify {
             Modify::Offset => "Offset",
             Modify::Pattern(false) => "Rectangular Pattern",
             Modify::Pattern(true) => "Circular Pattern",
+            Modify::Mirror => "Mirror",
         }
     }
 
@@ -76,6 +80,9 @@ impl Modify {
             (Modify::Fillet | Modify::Chamfer, true) => "Click the second curve at the corner",
             (Modify::Offset, _) => {
                 "Offset: click a curve to offset its chain, or an offset to edit it (+ grows / goes left)"
+            }
+            (Modify::Mirror, _) => {
+                "Mirror: select objects, pick the mirror line, then Enter (copies follow the source and the line)"
             }
             (Modify::Pattern(false), _) => {
                 "Rectangular Pattern: select objects, then drag the arrow for spacing, click − / + for the count, or type; Enter applies"
@@ -105,7 +112,8 @@ impl Modify {
             | Modify::Chamfer
             | Modify::Transform(_)
             | Modify::Offset
-            | Modify::Pattern(_) => Err(ModifyError::NoCorner),
+            | Modify::Pattern(_)
+            | Modify::Mirror => Err(ModifyError::NoCorner),
         }
     }
 
