@@ -38,7 +38,8 @@ impl ActionId {
 
 /// The ribbon group an action belongs to, in Fusion's naming (design §2).
 /// SKETCH has Create … Select; OUTPUT has Preview and Export; UTILITIES has
-/// Plugins and Automation (#325). Edit and View live only in the menus.
+/// Plugins and Automation (#325). File, Edit and View live only in the
+/// menus and tool search.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Group {
     Create,
@@ -51,6 +52,7 @@ pub enum Group {
     Export,
     Plugins,
     Automation,
+    File,
     Edit,
     View,
 }
@@ -160,6 +162,10 @@ pub enum Shell {
     PluginManager,
     /// The MCP server window (desktop only, SPEC §16).
     Mcp,
+    /// Save the document (the app bar's Save, #324).
+    Save,
+    /// Open tool search at the pointer (S, design §6.1, #324).
+    ToolSearch,
 }
 
 /// The three kinds of action in the design (§7.1).
@@ -718,6 +724,30 @@ pub static BUILTIN: &[Action] = &[
         KeyScope::Global,
         Op::Shell(Shell::ToggleShortcuts),
     ),
+    // ── App bar (#324, design §2, §6.1) ──
+    a(
+        "file.save",
+        "Save",
+        Group::File,
+        "💾",
+        &["write", "store"],
+        "Save the sketch (Ctrl+S)",
+        // Ctrl+S is handled with the other file keys (`file_io`).
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::Save),
+    ),
+    a(
+        "view.tool_search",
+        "Tool search",
+        Group::View,
+        "🔍",
+        &["find", "command", "shortcut box"],
+        "Find any tool or command by name",
+        &[key(Key::S)],
+        KeyScope::Canvas,
+        Op::Shell(Shell::ToolSearch),
+    ),
     // ── OUTPUT (#325, design §2) ──
     a(
         "output.validate",
@@ -819,24 +849,6 @@ pub enum Item {
 
 use Item::{Action as A, Separator as Sep};
 
-const DRAWING: [Item; 15] = [
-    A("sketch.point"),
-    A("sketch.line"),
-    A("sketch.rect_2pt"),
-    A("sketch.rect_centre"),
-    A("sketch.rect_3pt"),
-    A("sketch.circle_centre"),
-    A("sketch.circle_2pt"),
-    A("sketch.circle_3pt"),
-    A("sketch.arc_3pt"),
-    A("sketch.arc_centre"),
-    A("sketch.arc_tangent"),
-    A("sketch.polygon"),
-    A("sketch.slot"),
-    A("sketch.pen"),
-    A("sketch.text"),
-];
-
 const CONSTRAINTS: [Item; 12] = [
     A("constrain.coincident"),
     A("constrain.horizontal"),
@@ -851,33 +863,6 @@ const CONSTRAINTS: [Item; 12] = [
     A("constrain.midpoint"),
     A("constrain.fix"),
 ];
-
-const fn concat<const N: usize>(parts: &[&[Item]]) -> [Item; N] {
-    let mut out = [Sep; N];
-    let mut n = 0;
-    let mut p = 0;
-    while p < parts.len() {
-        let mut i = 0;
-        while i < parts[p].len() {
-            out[n] = parts[p][i];
-            n += 1;
-            i += 1;
-        }
-        p += 1;
-    }
-    assert!(n == N, "layout length mismatch");
-    out
-}
-
-/// Sketch menu: the drawing tools, then the linetype for new geometry.
-pub const SKETCH_MENU: &[Item] =
-    &concat::<17>(&[&DRAWING, &[Sep, A("sketch.linetype_construction")]]);
-
-/// Constrain menu.
-pub const CONSTRAIN_MENU: &[Item] = &concat::<16>(&[
-    &CONSTRAINTS,
-    &[Sep, A("constrain.dimension"), Sep, A("constrain.auto")],
-]);
 
 /// The marking menu's ring (design §4, #290), clockwise from the top:
 /// N, NE, E, SE, S, SW, W, NW. It never changes with context, so a flick
@@ -1359,7 +1344,8 @@ mod tests {
                     "edit",
                     "view",
                     "output",
-                    "util"
+                    "util",
+                    "file"
                 ]
                 .contains(&ns),
                 "{}",
@@ -1408,6 +1394,7 @@ mod tests {
             ("edit.delete", Key::Delete),
             ("modify.construction", Key::X),
             ("output.export", Key::E),
+            ("view.tool_search", Key::S),
         ] {
             assert_eq!(bound(id), Some(k), "{id}");
         }
@@ -1419,8 +1406,6 @@ mod tests {
     fn every_layout_names_a_registered_action() {
         let r = Registry::default();
         for list in [
-            SKETCH_MENU,
-            CONSTRAIN_MENU,
             marking_list(true),
             marking_list(false),
             &MARKING_RING.map(Item::Action),

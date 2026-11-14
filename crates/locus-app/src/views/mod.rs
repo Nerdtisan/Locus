@@ -20,3 +20,4 @@ pub mod shortcuts;
 pub mod style;
 pub mod text_ui;
 pub mod tool_options;
+pub mod tool_search;

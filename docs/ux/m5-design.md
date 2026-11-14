@@ -203,6 +203,8 @@ Every key is a property of an action in the registry (§7.1), so the ribbon tool
 
 S opens a search box at the cursor (Fusion's shortcut box). It shows recent and pinned actions before you type. Typing filters every registry action by label and keywords, shows each one's key and group, and shows disabled actions with the reason ("select two lines"). Enter runs the top match; ↑↓ choose another. Select, previously S, is Esc.
 
+**As built (#324).** Tool search is the registry action `view.tool_search` (S over the canvas; Search in the app bar opens it under the button). The S that opens it is not typed into the box. Matches rank label prefixes, then word prefixes, then substrings, then keywords and ids; recent picks are remembered for the session. An action that can't run stays listed, dimmed, with its reason; picking it shows the reason and keeps the box open. The app bar is LOCUS, File · Edit · View · Plugins · Help, Save · Undo · Redo (registry actions `file.save`, `edit.undo`, `edit.redo`), the document name with its machine profile and units centred, then Search S and ?. The Sketch and Constrain menus are gone: the mockup has none, and the ribbon's group menus list every tool.
+
 ### 6.2 Style panel and eyedropper (#287)
 
 - The Inspector's Style section edits the selection: stroke colour, stroke width, pen number, fill (none or a colour), opacity, and a dash pattern where the export formats support one. Fill applies to closed shapes; on Engrave layers it still means hatch (§7).

@@ -161,6 +161,7 @@ impl Group {
             Group::Export => "export",
             Group::Plugins => "plugins",
             Group::Automation => "automation",
+            Group::File => "file",
             Group::Edit => "edit",
             Group::View => "view",
         }
@@ -179,6 +180,7 @@ impl Group {
             Group::Export => "EXPORT",
             Group::Plugins => "PLUGINS",
             Group::Automation => "AUTOMATION",
+            Group::File => "FILE",
             Group::Edit => "EDIT",
             Group::View => "VIEW",
         }
@@ -226,6 +228,13 @@ impl Toolbar {
         self.groups
             .iter_mut()
             .filter(move |(g, _)| tab.groups().contains(g))
+    }
+
+    /// Every pin, tab by tab, left to right (tool search lists them, §2.3).
+    pub fn all_pins(&self) -> impl Iterator<Item = &str> {
+        RIBBON
+            .iter()
+            .flat_map(|g| self.pinned(*g).iter().map(String::as_str))
     }
 
     pub fn is_pinned(&self, id: &str, tab: RibbonTab) -> bool {
