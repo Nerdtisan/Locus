@@ -14,6 +14,7 @@ pub mod error;
 pub mod geometry;
 pub mod library;
 pub mod outline;
+mod overlap;
 pub mod stroke;
 
 use locus_geom::Vec2;
@@ -51,6 +52,10 @@ pub struct TextStyle {
     pub align: Align,
     /// Multiplier on the font's natural line pitch.
     pub line_spacing: f64,
+    /// Letter spacing (tracking), mm added after every character but the
+    /// last of a line; negative tightens (#222).
+    #[serde(default)]
+    pub tracking: f64,
 }
 
 impl Default for TextStyle {
@@ -59,6 +64,7 @@ impl Default for TextStyle {
             size: 10.0,
             align: Align::Left,
             line_spacing: 1.0,
+            tracking: 0.0,
         }
     }
 }
@@ -108,6 +114,11 @@ impl Font {
         } else {
             1.0
         };
+        let tracking = if style.tracking.is_finite() {
+            style.tracking
+        } else {
+            0.0
+        };
         let (scale, ascent, descent, pitch) = match self {
             Font::Stroke(f) => {
                 let s = size / f.units_per_em;
@@ -131,8 +142,8 @@ impl Font {
         for (i, line) in lines.iter().enumerate() {
             let baseline = -(i as f64) * pitch * spacing;
             let width = match self {
-                Font::Stroke(f) => stroke_width(f, line, scale),
-                Font::Outline(f) => f.line_width(line, scale)?,
+                Font::Stroke(f) => stroke_width(f, line, scale, tracking),
+                Font::Outline(f) => f.line_width(line, scale, tracking)?,
             };
             let x0 = match style.align {
                 Align::Left => 0.0,
@@ -141,9 +152,14 @@ impl Font {
             };
             let origin = Vec2::new(x0, baseline);
             match self {
-                Font::Stroke(f) => stroke_line(f, line, scale, origin, &mut geom.contours),
+                Font::Stroke(f) => {
+                    stroke_line(f, line, scale, tracking, origin, &mut geom.contours);
+                }
                 Font::Outline(f) => {
-                    f.layout_line(line, scale, origin, &mut geom.contours)?;
+                    let from = geom.contours.len();
+                    f.layout_line(line, scale, tracking, origin, &mut geom.contours)?;
+                    // Overlapping contours would be cut through (#222).
+                    overlap::merge_overlaps(&mut geom.contours, from, size);
                 }
             }
             geom.width = geom.width.max(width);
@@ -153,7 +169,12 @@ impl Font {
     }
 }
 
-fn stroke_width(f: &StrokeFont, line: &str, scale: f64) -> f64 {
+/// The extra advance tracking adds to a line of `n` characters, mm.
+pub(crate) fn tracked(n: usize, tracking: f64) -> f64 {
+    n.saturating_sub(1) as f64 * tracking
+}
+
+fn stroke_width(f: &StrokeFont, line: &str, scale: f64, tracking: f64) -> f64 {
     line.chars()
         .map(|c| {
             f.glyph_or_missing(c)
@@ -161,13 +182,24 @@ fn stroke_width(f: &StrokeFont, line: &str, scale: f64) -> f64 {
         })
         .sum::<f64>()
         * scale
+        + tracked(line.chars().count(), tracking)
 }
 
-fn stroke_line(f: &StrokeFont, line: &str, scale: f64, origin: Vec2, out: &mut Vec<Contour>) {
+fn stroke_line(
+    f: &StrokeFont,
+    line: &str,
+    scale: f64,
+    tracking: f64,
+    origin: Vec2,
+    out: &mut Vec<Contour>,
+) {
     let mut x = 0.0;
+    // Tracking is in mm; `x` runs in font units.
+    let extra = if scale > 0.0 { tracking / scale } else { 0.0 };
     for c in line.chars() {
         let Some(g) = f.glyph_or_missing(c) else {
             x += f.space_advance();
+            x += extra;
             continue;
         };
         for stroke in &g.strokes {
@@ -181,7 +213,7 @@ fn stroke_line(f: &StrokeFont, line: &str, scale: f64, origin: Vec2, out: &mut V
             }
             out.push(contour);
         }
-        x += g.advance;
+        x += g.advance + extra;
     }
 }
 

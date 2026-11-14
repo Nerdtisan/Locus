@@ -4,6 +4,7 @@ use super::*;
 
 fn style(size: f64) -> TextStyle {
     TextStyle {
+        tracking: 0.0,
         size,
         ..TextStyle::default()
     }
@@ -166,4 +167,39 @@ fn whitespace_only_outline_text_has_no_contours_but_has_width() {
     let g = f.layout("   ", &style(10.0)).unwrap();
     assert!(g.contours.is_empty());
     assert!(g.width > 0.0);
+}
+
+/// Letter spacing (#222): `tracking` mm after every character but the last,
+/// for single-line and outline fonts alike; negative tightens.
+#[test]
+fn tracking_spaces_the_letters() {
+    for f in [BundledFont::HersheySans, BundledFont::Figtree] {
+        let font = load(f);
+        let plain = font.layout("ABCD", &style(10.0)).unwrap();
+        let wide = font
+            .layout(
+                "ABCD",
+                &TextStyle {
+                    tracking: 2.0,
+                    ..style(10.0)
+                },
+            )
+            .unwrap();
+        assert!((wide.width - plain.width - 6.0).abs() < 1e-9, "{f:?}");
+        let (a, b) = (plain.bbox().unwrap(), wide.bbox().unwrap());
+        assert!(
+            (b.max.x - a.max.x - 6.0).abs() < 1e-6,
+            "{f:?}: the last glyph moved 3 gaps"
+        );
+        let tight = font
+            .layout(
+                "ABCD",
+                &TextStyle {
+                    tracking: -0.5,
+                    ..style(10.0)
+                },
+            )
+            .unwrap();
+        assert!((plain.width - tight.width - 1.5).abs() < 1e-9, "{f:?}");
+    }
 }

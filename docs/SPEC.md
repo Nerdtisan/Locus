@@ -284,6 +284,7 @@ Export is always one-way. Native file is the source of truth.
 - Text entity has a constrained baseline/anchor (can be constrained like any entity, e.g. centred on a region).
 - Bundle only fonts with compatible licences (OFL/public domain).
 - Representation, caching and font references: [ADR-0012](adr/0012-text-entity.md). Documents store the font *reference* and the cached geometry, never the font file; user fonts and (desktop only) system fonts are resolved by the app shell.
+- Outline glyphs whose contours overlap (common in variable fonts) are unioned into one outline when laid out, so a cutter never cuts through a letter (#222).
 
 ---
 
@@ -294,6 +295,7 @@ Export is always one-way. Native file is the source of truth.
 - Top-level: `format_version`, `units`, `next_id` (ID counter, [ADR-0003](adr/0003-entity-ids.md)), `parameters`, `layers`, `entities`, `constraints`, `booleans` (boolean recipes over region keys, format v3, #123; regions themselves are derived and not stored), `view` (optional, can be ignored by diff tools).
 - Entities carry their style (format v13, #287): omitted while it is the default, so points and unstyled curves add nothing to the file.
 - Text entities (format v9, #179) store content, a font reference and the laid-out geometry, so a file opens and exports without the font ([ADR-0012](adr/0012-text-entity.md)).
+- Text letter spacing (`tracking`, mm; format v14, #222) is omitted while zero, so older files load unchanged.
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
 - Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.
 - Deterministic serialisation (stable ordering) so unchanged documents produce identical files.
