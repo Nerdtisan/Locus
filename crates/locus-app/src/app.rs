@@ -533,8 +533,6 @@ impl App {
             if !palette {
                 self.state.tool_options_ui(ui);
             }
-            ui.weak(self.state.hint());
-            self.state.touch_modifiers_ui(ui);
         });
     }
 
@@ -546,42 +544,82 @@ impl App {
         self.registry.dispatch_keys(ctx, &mut cx, over);
     }
 
+    /// The status bar (M5 design §2, #331), as the mockup: the next
+    /// click's prompt on the left; sketch DOF, selection, cursor, snap,
+    /// auto-constrain and units on the right. View extent, grid step and
+    /// frame time sit in the cursor's hover text.
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let u = self.settings.units;
-            match self.status.cursor {
-                Some(p) => {
-                    let (x, y) = match u {
-                        Units::Mm => (format!("{:.3}", p.x), format!("{:.3}", p.y)),
-                        Units::Inch => (format!("{:.4}", p.x / 25.4), format!("{:.4}", p.y / 25.4)),
-                    };
-                    ui.monospace(format!("X {x}  Y {y} {}", u.label()));
-                }
-                None => {
-                    ui.monospace("X –  Y –");
-                }
-            }
-            ui.separator();
-            ui.label(format!("View {}", u.format_len(self.status.extent_mm)));
-            ui.separator();
-            ui.label(format!("Grid {}", self.status.grid));
-            ui.separator();
-            ui.label(self.state.summary());
-            ui.separator();
-            ui.label(format!("CPU {:.1} ms/frame", self.status.frame_ms));
-            ui.separator();
-            ui.label(self.state.solve_summary());
+            ui.label(egui::RichText::new(self.state.hint()).strong())
+                .on_hover_text("What the next click does");
+            self.state.touch_modifiers_ui(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
                 // Always visible while the MCP server runs (SPEC §16.4).
                 #[cfg(not(target_arch = "wasm32"))]
                 self.mcp.status(ui);
-                ui.label(if self.settings.auto_constrain {
-                    "Auto-constrain on"
+                let u = self.settings.units;
+                ui.monospace(u.label());
+                let onoff = |on: bool| if on { "on" } else { "off" };
+                // Right to left: the tick is drawn before its label.
+                status_tick(ui, self.settings.auto_constrain);
+                ui.label("Auto-constrain");
+                let d = self.settings.display;
+                status_tick(ui, d.snap_grid || d.snap_geometry);
+                ui.label("Snap").on_hover_text(format!(
+                    "Snap to grid {} · snap to geometry {}",
+                    onoff(d.snap_grid),
+                    onoff(d.snap_geometry)
+                ));
+                let cursor = match self.status.cursor {
+                    Some(p) => {
+                        let (x, y) = match u {
+                            Units::Mm => (format!("{:.2}", p.x), format!("{:.2}", p.y)),
+                            Units::Inch => {
+                                (format!("{:.3}", p.x / 25.4), format!("{:.3}", p.y / 25.4))
+                            }
+                        };
+                        format!("x {x}  y {y} {}", u.label())
+                    }
+                    None => format!("x –  y – {}", u.label()),
+                };
+                ui.monospace(cursor).on_hover_text(format!(
+                    "View {} · grid {} · {} · CPU {:.1} ms/frame",
+                    u.format_len(self.status.extent_mm),
+                    self.status.grid,
+                    self.state.summary(),
+                    self.status.frame_ms
+                ));
+                let n = self.state.selection.items.len();
+                ui.label(if n == 0 {
+                    "Nothing selected".to_owned()
                 } else {
-                    "Auto-constrain off"
+                    format!("{n} selected")
                 });
+                crate::views::properties::solve_pill(ui, &self.state);
             });
         });
+    }
+}
+
+/// A painted tick or cross after a status-bar label (mockup "Snap ✓"):
+/// the bundled fonts have no glyph for either.
+fn status_tick(ui: &mut egui::Ui, on: bool) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+    let ink = if on {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let s = egui::Stroke::new(1.5, ink);
+    let p = ui.painter();
+    if on {
+        p.line_segment([r.left_center(), r.center_bottom()], s);
+        p.line_segment([r.center_bottom(), r.right_top()], s);
+    } else {
+        let k = r.shrink(1.5);
+        p.line_segment([k.left_top(), k.right_bottom()], s);
+        p.line_segment([k.right_top(), k.left_bottom()], s);
     }
 }
 
@@ -709,7 +747,9 @@ impl eframe::App for App {
         self.mcp.update(ui.ctx(), &mut self.state);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("ribbon").show(ui, |ui| self.ribbon(ui));
-        egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
+        if !self.is_shown(Tab::Palette) {
+            egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
+        }
         self.shell_requests();
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
