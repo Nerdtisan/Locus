@@ -88,7 +88,10 @@ impl AppState {
             });
         let regions = !self.selection.regions.selected.is_empty();
         if self.selection.items.is_empty() {
-            if !regions {
+            if let Some(layer) = self.view.browser_layer.filter(|_| !regions) {
+                // A layer picked in the Browser (design §2.1, #326).
+                self.layer_section(ui, layer);
+            } else if !regions {
                 self.document_section(ui, settings);
                 ui.separator();
                 self.style_ui(ui);
@@ -154,6 +157,50 @@ impl AppState {
         self.constraints_section(ui, settings.units);
     }
 
+    /// A layer picked in the Browser (design §2.1): name, operation,
+    /// export and order. Export is one undoable command (SPEC §11); the
+    /// operation's parameters are edited from the layer's row menu.
+    fn layer_section(&mut self, ui: &mut egui::Ui, id: locus_doc::LayerId) {
+        use crate::views::canvas::dialog::row;
+        let Some(l) = self.doc.sketcher.document().layer(id).cloned() else {
+            // Deleted or undone away.
+            self.view.browser_layer = None;
+            return;
+        };
+        section(ui, "Layer", |_| {});
+        row(ui, "Name", |ui| {
+            swatch(ui, l.colour);
+            ui.label(&l.name);
+        });
+        row(ui, "Operation", |ui| ui.label(l.operation.kind().name()));
+        let mut export = l.export_enabled;
+        let toggled = row(ui, "Export", |ui| {
+            ui.checkbox(&mut export, "Include in export").changed()
+        });
+        if toggled {
+            self.apply_reporting(&Command::SetLayerProps {
+                id,
+                props: locus_doc::LayerProps {
+                    export_enabled: Some(export),
+                    ..locus_doc::LayerProps::default()
+                },
+            });
+        }
+        row(ui, "Order", |ui| {
+            ui.monospace((l.export_order + 1).to_string())
+        });
+        let state = match (l.visible, l.locked) {
+            (true, false) => "Visible",
+            (true, true) => "Visible, locked",
+            (false, false) => "Hidden",
+            (false, true) => "Hidden, locked",
+        };
+        row(ui, "State", |ui| ui.label(state));
+        ui.weak(
+            "Operation settings: right-click the layer in the Browser, then Operation settings…",
+        );
+    }
+
     /// Nothing selected (design §2.1): sketch status, the document's
     /// machine profile, the active layer and the display units.
     fn document_section(&mut self, ui: &mut egui::Ui, settings: &mut Settings) {
@@ -167,7 +214,7 @@ impl AppState {
             .map_or_else(|| "Chosen at export".to_owned(), |p| p.name);
         row(ui, "Profile", |ui| {
             ui.label(profile)
-                .on_hover_text("The machine profile this document exports with (File ▸ Export…)")
+                .on_hover_text("The machine profile this document exports with (File, Export…)")
         });
         let layer = doc
             .layer(self.doc.active_layer)
@@ -491,6 +538,11 @@ mod tests {
         frame(&mut state, &mut settings);
         state.selection.items.set_all(ids.iter().copied());
         frame(&mut state, &mut settings);
+        // A layer picked in the Browser is the subject when nothing is selected.
+        state.clear_selection();
+        state.view.browser_layer = Some(state.doc.active_layer);
+        frame(&mut state, &mut settings);
+        assert!(state.view.browser_layer.is_some());
         assert_eq!(settings.units, Units::Mm);
     }
 
