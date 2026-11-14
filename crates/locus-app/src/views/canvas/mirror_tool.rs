@@ -218,44 +218,60 @@ impl AppState {
         let selected = self.mirror_sources().len();
         let error = self.mirror_command().err();
         let (mut ok, mut cancel) = (false, false);
-        super::dialog::command_dialog(ui, rect, Modify::Mirror.label(), |ui| {
-            ui.label(if selected == 0 {
-                "Objects: select geometry".to_owned()
-            } else {
-                format!("Objects: {selected} selected")
-            });
-            let d = &mut self.tools.mirror;
-            ui.horizontal(|ui| {
-                ui.label("Mirror line");
-                ui.label(match d.axis {
-                    Some(id) => format!("line #{id}"),
-                    None => "—".to_owned(),
+        let mut clear = false;
+        let header = super::dialog::Header::new("sketch.mirror", Modify::Mirror.label());
+        super::dialog::command_dialog(
+            ui,
+            rect,
+            header,
+            |_| {},
+            |ui| {
+                use super::dialog::{row, selection};
+                let d = &mut self.tools.mirror;
+                row(ui, "Objects", |ui| {
+                    let text = if selected == 0 {
+                        "Select geometry".to_owned()
+                    } else {
+                        super::dialog::count(selected, "curve", "curves")
+                    };
+                    let (pick, x) = selection(ui, &text, selected > 0, !d.picking);
+                    if pick {
+                        d.picking = false;
+                    }
+                    clear = x;
                 });
-                if ui
-                    .selectable_label(d.picking, "Pick")
-                    .on_hover_text("Click a line or construction line on the canvas")
-                    .clicked()
-                {
-                    d.picking = !d.picking;
+                row(ui, "Mirror line", |ui| {
+                    let (text, filled) = match d.axis {
+                        Some(_) => ("1 line", true),
+                        None => ("Pick a line", false),
+                    };
+                    let (pick, x) = selection(ui, text, filled, d.picking);
+                    if pick {
+                        d.picking = !d.picking;
+                    }
+                    if x {
+                        d.axis = None;
+                        d.picking = true;
+                    }
+                });
+                row(ui, "", |ui| {
+                    ui.checkbox(&mut d.merge, "Merge on mirror line")
+                        .on_hover_text(
+                            "Leave out curves that lie on the mirror line, so nothing is cut twice",
+                        )
+                });
+                if d.picking {
+                    ui.weak("Click the mirror line on the canvas (Esc to select objects)");
                 }
-            });
-            ui.checkbox(&mut d.merge, "Merge on mirror line")
-                .on_hover_text(
-                    "Leave out curves that lie on the mirror line, so nothing is cut twice",
-                );
-            if d.picking {
-                ui.weak("Click the mirror line on the canvas (Esc to select objects)");
-            }
-            if let Some(why) = &error {
-                ui.colored_label(ui.visuals().error_fg_color, why);
-            }
-            ui.horizontal(|ui| {
-                ok = ui
-                    .add_enabled(error.is_none(), egui::Button::new("OK"))
-                    .clicked();
-                cancel = ui.button("Cancel").clicked();
-            });
-        });
+                if let Some(why) = &error {
+                    ui.colored_label(ui.visuals().error_fg_color, why);
+                }
+                (ok, cancel) = super::dialog::footer(ui, error.as_deref().map_or(Ok(()), Err));
+            },
+        );
+        if clear {
+            self.clear_selection();
+        }
         if ok {
             self.mirror_ok();
         } else if cancel {

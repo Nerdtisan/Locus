@@ -162,71 +162,92 @@ impl AppState {
         let preview = self.corner_plan(m, units).err().filter(|_| picked);
         let (mut ok, mut cancel) = (false, false);
         let unit = units.label();
-        super::dialog::command_dialog(ui, rect, m.label(), |ui| {
-            ui.label(if picked {
-                "Corner: picked"
-            } else {
-                "Corner: click two curves, or the point they share"
-            });
-            let c = &mut self.tools.corner;
-            if m == Modify::Chamfer {
-                egui::ComboBox::from_id_salt("chamfer-mode")
-                    .selected_text(c.mode.label())
-                    .show_ui(ui, |ui| {
-                        for mode in ChamferMode::ALL {
-                            ui.selectable_value(&mut c.mode, mode, mode.label());
-                        }
-                    });
-            }
-            let mut first = true;
-            egui::Grid::new("corner-fields")
-                .num_columns(3)
-                .show(ui, |ui| {
-                    let mut row =
-                        |ui: &mut egui::Ui, name: &str, text: &mut String, suffix: &str| {
-                            ui.label(name);
-                            let out = egui::TextEdit::singleline(text)
-                                .desired_width(90.0)
-                                .show(ui);
-                            let r = out.response.response.clone();
-                            if first && focus {
-                                focus_all(ui, &r, out.state, text);
-                            }
-                            first = false;
-                            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                ok = true;
-                            }
-                            r.on_hover_text(
-                                "A number, or an expression over parameters (e.g. bevel * 2)",
-                            );
-                            ui.weak(suffix);
-                            ui.end_row();
-                        };
-                    let t = &mut c.text;
-                    match (m, c.mode) {
-                        (Modify::Fillet, _) => row(ui, "Radius", &mut t.radius, unit),
-                        (_, ChamferMode::Equal) => row(ui, "Distance", &mut t.d1, unit),
-                        (_, ChamferMode::TwoDistances) => {
-                            row(ui, "Distance 1", &mut t.d1, unit);
-                            row(ui, "Distance 2", &mut t.d2, unit);
-                        }
-                        (_, ChamferMode::DistanceAngle) => {
-                            row(ui, "Distance", &mut t.d1, unit);
-                            row(ui, "Angle", &mut t.angle, "°");
-                        }
-                    }
+        let icon = if m == Modify::Chamfer {
+            "modify.chamfer"
+        } else {
+            "modify.fillet"
+        };
+        let mut repick = false;
+        let header = super::dialog::Header::new(icon, m.label());
+        super::dialog::command_dialog(
+            ui,
+            rect,
+            header,
+            |_| {},
+            |ui| {
+                use super::dialog::row;
+                row(ui, "Corner", |ui| {
+                    let text = if picked {
+                        "1 corner"
+                    } else {
+                        "Click two curves or their point"
+                    };
+                    let (_, cleared) = super::dialog::selection(ui, text, picked, !picked);
+                    repick = cleared;
                 });
-            if let Some(why) = &preview {
-                ui.colored_label(ui.visuals().error_fg_color, why);
-            }
-            ui.horizontal(|ui| {
-                ok |= ui
-                    .add_enabled(picked, egui::Button::new("OK"))
-                    .on_disabled_hover_text("Pick a corner first")
-                    .clicked();
-                cancel = ui.button("Cancel").clicked();
-            });
-        });
+                let c = &mut self.tools.corner;
+                if m == Modify::Chamfer {
+                    row(ui, "Type", |ui| {
+                        egui::ComboBox::from_id_salt("chamfer-mode")
+                            .selected_text(c.mode.label())
+                            .show_ui(ui, |ui| {
+                                for mode in ChamferMode::ALL {
+                                    ui.selectable_value(&mut c.mode, mode, mode.label());
+                                }
+                            });
+                    });
+                }
+                let mut first = true;
+                let mut field = |ui: &mut egui::Ui, name: &str, text: &mut String, suffix: &str| {
+                    row(ui, name, |ui| {
+                        let out = egui::TextEdit::singleline(text)
+                            .desired_width(90.0)
+                            .show(ui);
+                        let r = out.response.response.clone();
+                        if first && focus {
+                            focus_all(ui, &r, out.state, text);
+                        }
+                        first = false;
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            ok = true;
+                        }
+                        r.on_hover_text(
+                            "A number, or an expression over parameters (e.g. bevel * 2)",
+                        );
+                        ui.weak(suffix);
+                    });
+                };
+                let t = &mut c.text;
+                match (m, c.mode) {
+                    (Modify::Fillet, _) => field(ui, "Radius", &mut t.radius, unit),
+                    (_, ChamferMode::Equal) => field(ui, "Distance", &mut t.d1, unit),
+                    (_, ChamferMode::TwoDistances) => {
+                        field(ui, "Distance 1", &mut t.d1, unit);
+                        field(ui, "Distance 2", &mut t.d2, unit);
+                    }
+                    (_, ChamferMode::DistanceAngle) => {
+                        field(ui, "Distance", &mut t.d1, unit);
+                        field(ui, "Angle", &mut t.angle, "°");
+                    }
+                }
+                if let Some(why) = &preview {
+                    ui.colored_label(ui.visuals().error_fg_color, why);
+                }
+                let (o, c) = super::dialog::footer(
+                    ui,
+                    if picked {
+                        Ok(())
+                    } else {
+                        Err("Pick a corner first")
+                    },
+                );
+                ok |= o;
+                cancel = c;
+            },
+        );
+        if repick {
+            self.corner_esc();
+        }
         if ok && picked {
             self.corner_ok(m, units);
         } else if cancel && !self.corner_esc() {
