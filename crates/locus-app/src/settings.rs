@@ -71,7 +71,10 @@ pub struct Settings {
     pub theme: Theme,
     /// Infer coincident / horizontal / vertical constraints while drawing (§5).
     pub auto_constrain: bool,
-    /// User machine profiles (SPEC §7, #236); presets are compiled in.
+    /// User machine profiles (SPEC §7, #236, #286); presets are compiled
+    /// in. Read leniently: a bad stored profile is dropped on its own
+    /// rather than resetting every setting.
+    #[serde(deserialize_with = "lenient_profiles")]
     pub profiles: Vec<locus_export::MachineProfile>,
 }
 
@@ -84,6 +87,40 @@ impl Default for Settings {
             profiles: Vec::new(),
         }
     }
+}
+
+/// Most user profiles kept (and loaded).
+pub const MAX_USER_PROFILES: usize = 64;
+
+/// Each stored profile is validated as an imported one would be (they are
+/// untrusted: settings files can be hand-edited). Invalid ones, built-in
+/// ids, duplicates and any beyond [`MAX_USER_PROFILES`] are dropped.
+fn lenient_profiles<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<locus_export::MachineProfile>, D::Error> {
+    use locus_export::profile::is_builtin;
+    let raw = match Vec::<serde_json::Value>::deserialize(d) {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::warn!("stored machine profiles unreadable, ignoring them");
+            return Ok(Vec::new());
+        }
+    };
+    let mut out: Vec<locus_export::MachineProfile> = Vec::new();
+    for v in raw {
+        let p = serde_json::from_value::<locus_export::MachineProfile>(v)
+            .ok()
+            .filter(|p| p.validate().is_ok());
+        match p {
+            Some(p) if !is_builtin(&p.id) && !out.iter().any(|q| q.id == p.id) => {
+                if out.len() < MAX_USER_PROFILES {
+                    out.push(p);
+                }
+            }
+            _ => tracing::warn!("dropped an invalid stored machine profile"),
+        }
+    }
+    Ok(out)
 }
 
 impl Settings {
@@ -123,9 +160,14 @@ mod tests {
             units: Units::Inch,
             theme: Theme::Dark,
             auto_constrain: false,
+            // A user profile: a preset's id would be dropped on load.
             profiles: locus_export::profile::presets()
                 .into_iter()
                 .take(1)
+                .map(|mut p| {
+                    p.id = "mine".into();
+                    p
+                })
                 .collect(),
         };
         assert_eq!(Settings::from_json(&s.to_json().unwrap_or_default()), s);
@@ -143,6 +185,30 @@ mod tests {
         ] {
             assert_eq!(Settings::from_json(bad), Settings::default(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_bad_profile_is_dropped_alone() {
+        let mut good = locus_export::profile::presets()[0].clone();
+        good.id = "mine".into();
+        let good = serde_json::to_value(&good).unwrap_or_default();
+        let mut bad_bed = good.clone();
+        bad_bed["id"] = "bed".into();
+        bad_bed["bed"] =
+            serde_json::json!({"width_mm": -5.0, "height_mm": 1.0, "origin": "TopLeft"});
+        let preset = serde_json::to_value(&locus_export::profile::presets()[0]).unwrap_or_default();
+        let json = serde_json::json!({
+            "units": "Inch",
+            "profiles": [good, {"id": 1}, bad_bed, preset, good, "junk"],
+        });
+        let s = Settings::from_json(&json.to_string());
+        assert_eq!(s.units, Units::Inch, "other settings survive");
+        assert_eq!(s.profiles.len(), 1);
+        assert_eq!(s.profiles[0].id, "mine");
+        // Not even a list: no profiles, settings kept.
+        let s = Settings::from_json("{\"units\":\"Inch\",\"profiles\":7}");
+        assert_eq!(s.units, Units::Inch);
+        assert!(s.profiles.is_empty());
     }
 
     #[test]

@@ -89,6 +89,8 @@ pub struct FileIo {
     /// File ▸ Export ▸ "Each layer as a separate file" (#291).
     export_each_layer: bool,
     exporters: locus_export::Registry,
+    /// The machine profile manager (#286, design §6.4).
+    profiles: profiles::Manager,
     checks: Option<ExtraChecks>,
     allow_close: bool,
     last_title: String,
@@ -116,6 +118,7 @@ impl FileIo {
             export: None,
             export_each_layer: false,
             exporters: locus_export::Registry::builtin(),
+            profiles: profiles::Manager::default(),
             checks: None,
             allow_close: false,
             last_title: String::new(),
@@ -202,7 +205,7 @@ impl FileIo {
         }
 
         #[cfg(target_arch = "wasm32")]
-        self.web_update(ctx, canvas);
+        self.web_update(ctx, canvas, settings);
 
         self.sync_title(ctx, canvas);
         self.dialogs(ctx, canvas, settings);
@@ -217,6 +220,49 @@ impl FileIo {
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.last_title = title;
+        }
+    }
+
+    /// The profile manager window and what it asks for (#286).
+    fn profile_manager(
+        &mut self,
+        ctx: &egui::Context,
+        canvas: &mut AppState,
+        settings: &mut Settings,
+    ) {
+        for req in self.profiles.window(ctx, settings, &self.exporters) {
+            match req {
+                profiles::Request::Import => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    match import_profile_dialog(settings) {
+                        Ok(Some(id)) => self.profiles.imported(id),
+                        Ok(None) => {}
+                        Err(e) => self.profiles.error(e),
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    self.web.pick_profile();
+                }
+                profiles::Request::Export(p) => {
+                    if let Err(e) = save_profile_dialog(&p) {
+                        self.profiles.error(e);
+                    }
+                }
+                profiles::Request::Changed(id) => {
+                    // An open export panel showing it picks up the edit.
+                    if let Some(panel) = &mut self.export
+                        && panel.profile.as_ref().is_some_and(|p| p.id == id)
+                    {
+                        let p = locus_export::profile::find(&id, &settings.profiles);
+                        panel.prepared =
+                            locus_export::prepare_for(canvas.document(), panel.fixed, p.as_ref());
+                        if let Some(p) = &p {
+                            panel.format.clone_from(&p.format);
+                        }
+                        panel.profile = p;
+                        panel.profile_changed = true;
+                    }
+                }
+            }
         }
     }
 
@@ -269,6 +315,14 @@ impl FileIo {
         }
         if ui.button("Save As…").clicked() {
             self.save(canvas, true);
+            ui.close();
+        }
+        if ui
+            .button("Machine profiles…")
+            .on_hover_text("Add, edit, duplicate and delete machine profiles")
+            .clicked()
+        {
+            self.profiles.open(None);
             ui.close();
         }
         ui.menu_button("Export", |ui| {
@@ -713,6 +767,7 @@ impl FileIo {
                         settings,
                         &self.exporters,
                         &mut picked_error,
+                        &mut self.profiles,
                     );
                     // A new profile re-prepared the model: re-run the plugin checks.
                     if panel.profile_changed {
@@ -851,7 +906,7 @@ impl FileIo {
 
     /// Browser: pick results, restore and debounced autosave.
     #[cfg(target_arch = "wasm32")]
-    fn web_update(&mut self, ctx: &egui::Context, canvas: &mut AppState) {
+    fn web_update(&mut self, ctx: &egui::Context, canvas: &mut AppState, settings: &mut Settings) {
         let now = ctx.input(|i| i.time);
         for msg in self.web.poll(now) {
             match msg {
@@ -865,6 +920,14 @@ impl FileIo {
                     self.add_reference(canvas, &name, text.as_bytes());
                 }
                 web::Msg::PickedReference(Ok(None)) => {}
+                web::Msg::PickedProfile(Ok(Some((_, text)))) => {
+                    match profiles::import(&text, settings) {
+                        Ok(id) => self.profiles.imported(id),
+                        Err(e) => self.profiles.error(e),
+                    }
+                }
+                web::Msg::PickedProfile(Ok(None)) => {}
+                web::Msg::PickedProfile(Err(msg)) => self.profiles.error(msg),
                 web::Msg::PickedReference(Err(msg)) => self.error = Some(msg),
                 web::Msg::Restore(text) => {
                     // Only if the user has not started on something else yet.
@@ -892,6 +955,7 @@ impl FileIo {
 
     fn dialogs(&mut self, ctx: &egui::Context, canvas: &mut AppState, settings: &mut Settings) {
         self.export_panel(ctx, canvas, settings);
+        self.profile_manager(ctx, canvas, settings);
         if self.pending.is_some() {
             let mut choice = None;
             egui::Window::new("Unsaved changes")
@@ -982,6 +1046,7 @@ struct ExportPanel {
 
 /// The profile combo, import / save buttons and a one-line summary. A change
 /// is remembered in the document (one undoable `SetProfile`, SPEC §7, #238).
+#[allow(clippy::too_many_arguments)]
 fn profile_picker(
     ui: &mut egui::Ui,
     panel: &mut ExportPanel,
@@ -989,6 +1054,7 @@ fn profile_picker(
     settings: &mut Settings,
     exporters: &locus_export::Registry,
     error: &mut Option<String>,
+    manager: &mut profiles::Manager,
 ) {
     let all = profiles::all(settings);
     let mut chosen: Option<String> = None;
@@ -1037,6 +1103,9 @@ fn profile_picker(
                 Ok(None) => {}
                 Err(msg) => *error = Some(msg),
             }
+        }
+        if ui.button("Manage…").clicked() {
+            manager.open(panel.profile.as_ref().map(|p| p.id.as_str()));
         }
         if ui
             .add_enabled(panel.profile.is_some(), egui::Button::new("Save profile…"))
@@ -1091,11 +1160,11 @@ fn save_profile_dialog(p: &MachineProfile) -> Result<(), String> {
     write_atomic(&path, text.as_bytes())
 }
 
-// The browser has no synchronous file picker; profile import there is not
-// available yet (a profile can still be saved as a download).
+// The browser has no synchronous file picker: the export panel's import
+// says so; the profile manager imports asynchronously (`Web::pick_profile`).
 #[cfg(target_arch = "wasm32")]
 fn import_profile_dialog(_: &mut Settings) -> Result<Option<String>, String> {
-    Err("Importing a profile file is not available in the browser yet.".to_owned())
+    Err("In the browser, import a profile from File ▸ Machine profiles….".to_owned())
 }
 
 #[cfg(target_arch = "wasm32")]
