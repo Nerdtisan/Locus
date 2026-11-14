@@ -34,6 +34,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Recipes | Mirror/patterns/offset are recipes in the document; instances are real driven entities, mirror solved by `Symmetric` constraints, patterns regenerated after the solve; instance IDs stay with the recipe ([ADR-0011](adr/0011-associative-recipes.md), 2026-11-10). |
 | Offsets | Exact line/arc offsets (areas and open chains, round or miter joins) owned by `locus-region` as a Minkowski sum/difference through the ADR 0008 booleans; `cavalier_contours` measured and not chosen (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)). |
 | Object style (M5) | **Decided** (#287, #284): each entity stores its own style (stroke colour or "by layer", stroke width, pen number, fill, opacity); `Operation::Draw` has no parameters any more. File format **v13** moves each Draw layer's pen onto that layer's entities; a default style is not written. Edits go through one `SetStyle` command per user action (a whole multi-selection is one undo step). Export: Draw layers write each object's own style; the machine layers (Cut, Score, Engrave, Drag-knife) write the machine profile's colour and hairline, because LightBurn and Cricut read colour as the operation. Owner decisions 2026-11-13, [ADR 0017](adr/0017-fusion-style-ui.md). |
+| Raster export (M5) | PNG joins SVG, PDF and DXF as a built-in export format, in the export dialog, the OUTPUT ribbon tab and `locus-cli` (§8 Formats). Rasteriser `tiny-skia` (BSD-3-Clause) with its `png` encoder, pure Rust without SIMD so the core crates still build for wasm32. Owner request 2026-11-14, #332. |
 | UI (M5) | Fusion-style sketch UI: ribbon grouped Create / Modify / Constrain / Inspect / Insert / Select, browser, sketch palette, context inspector, right-click marking menu (pan on middle-drag / Space+drag), Fusion's sketch keys, one pick → drag/type → Enter/Esc → editable-dimension tool model; built on an action registry and a tool trait. Style (stroke colour, width, pen number, fill, opacity) belongs to each object, not the layer; placed text stays re-editable. Owner decisions 2026-11-13, #293, [ADR 0017](adr/0017-fusion-style-ui.md). |
 
 ---
@@ -271,6 +272,7 @@ Document → Solve → Collect exportable geometry (exclude construction, refere
 - **PDF** — vector, true scale, one optional content group per layer.
 - **DXF** — **R12** default for compatibility (LINE, ARC, CIRCLE, LWPOLYLINE-free path where needed), layers preserved, units = mm. Optional newer DXF later.
 - **HPGL** — v2 / optional.
+- **PNG** — raster image of the export geometry (#332): resolution as DPI (default 300) or pixel width, transparent or white background, the whole sketch or the selection, one file per layer like the vector formats. Same paint as SVG (§7); strokes under a pixel draw one pixel wide. Rasterised in `locus-export` with `tiny-skia` (no SIMD, so wasm32 builds); image size bounded (20 000 px a side, 100 MP). Also `locus-cli export --format png [--dpi n | --width-px n] [--background transparent|white]`.
 
 Export is always one-way. Native file is the source of truth.
 

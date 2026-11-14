@@ -88,6 +88,10 @@ pub struct FileIo {
     export: Option<ExportPanel>,
     /// File ▸ Export ▸ "Each layer as a separate file" (#291).
     export_each_layer: bool,
+    /// PNG settings (#332), kept for the session.
+    png: locus_export::PngOptions,
+    /// Export only the selection as PNG.
+    png_selection: bool,
     exporters: locus_export::Registry,
     /// The machine profile manager (#286, design §6.4).
     profiles: profiles::Manager,
@@ -117,6 +121,8 @@ impl FileIo {
             pending: None,
             export: None,
             export_each_layer: false,
+            png: locus_export::PngOptions::default(),
+            png_selection: false,
             exporters: locus_export::Registry::builtin(),
             profiles: profiles::Manager::default(),
             checks: None,
@@ -220,6 +226,11 @@ impl FileIo {
     /// The app bar's Save (#324): as File ▸ Save.
     pub fn save_now(&mut self, canvas: &AppState) {
         self.save(canvas, false);
+    }
+
+    /// OUTPUT ▸ Export PNG… and File ▸ Export ▸ PNG image… (#332).
+    pub fn open_export_png(&mut self, canvas: &AppState) {
+        self.begin_export("png", canvas);
     }
 
     /// OUTPUT ▸ Machine profiles… (#325, #286).
@@ -558,7 +569,8 @@ impl FileIo {
     fn begin_export(&mut self, format: &str, canvas: &AppState) {
         let prepared = locus_export::prepare(canvas.document(), false);
         let extra = self.extra(&prepared);
-        if prepared.report.issues.is_empty() && extra.is_empty() {
+        // A PNG always asks for its resolution and background first (#332).
+        if prepared.report.issues.is_empty() && extra.is_empty() && format != "png" {
             if self.export_each_layer {
                 self.write_export_per_layer(format, &prepared);
             } else {
@@ -846,6 +858,15 @@ impl FileIo {
                         "Errors block export. Fix them in the sketch or apply the auto-fixes.",
                     );
                 }
+                if panel.format == "png" {
+                    png_options(
+                        ui,
+                        &mut self.png,
+                        &mut self.png_selection,
+                        &panel.prepared.model,
+                        canvas.selected().len(),
+                    );
+                }
                 ui.checkbox(&mut panel.per_layer, "Export each layer as a separate file")
                     .on_hover_text(if cfg!(target_arch = "wasm32") {
                         "One file per layer on the same canvas, downloaded as a .zip."
@@ -900,6 +921,16 @@ impl FileIo {
                 let extra = extra_for(&prepared);
                 let format = panel.format.clone();
                 let per_layer = panel.per_layer;
+                let mut prepared = prepared;
+                if format == "png" {
+                    // The writers look the format up: give them these settings.
+                    self.exporters
+                        .register(Box::new(locus_export::PngExporter { options: self.png }));
+                    if self.png_selection {
+                        let keep = canvas.selected().into_iter().collect();
+                        prepared.model = prepared.model.only(&keep);
+                    }
+                }
                 if blocked(&prepared, &extra) {
                     panel.prepared = prepared;
                     panel.extra = extra;
@@ -1063,6 +1094,86 @@ struct ExportPanel {
     extra: Vec<ExtraFinding>,
     /// Write one file per layer instead of one file (#291).
     per_layer: bool,
+}
+
+/// PNG settings in the export dialog (#332): resolution as DPI or pixel
+/// width, background, selection only, and the size that results.
+fn png_options(
+    ui: &mut egui::Ui,
+    png: &mut locus_export::PngOptions,
+    selection_only: &mut bool,
+    model: &locus_export::ExportModel,
+    selected: usize,
+) {
+    use locus_export::{Background, Resolution};
+    ui.separator();
+    ui.strong("PNG image");
+    egui::Grid::new("png-options")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Resolution");
+            ui.horizontal(|ui| {
+                let mut by_dpi = matches!(png.resolution, Resolution::Dpi(_));
+                if ui.radio_value(&mut by_dpi, true, "DPI").clicked() {
+                    png.resolution = Resolution::Dpi(locus_export::png::DEFAULT_DPI);
+                }
+                if ui.radio_value(&mut by_dpi, false, "Width").clicked()
+                    && !matches!(png.resolution, Resolution::Width(_))
+                {
+                    png.resolution = Resolution::Width(2000);
+                }
+                match &mut png.resolution {
+                    Resolution::Dpi(d) => {
+                        ui.add(
+                            egui::DragValue::new(d)
+                                .range(10.0..=4800.0)
+                                .speed(1.0)
+                                .suffix(" dpi"),
+                        );
+                    }
+                    Resolution::Width(w) => {
+                        ui.add(
+                            egui::DragValue::new(w)
+                                .range(1..=locus_export::png::MAX_SIDE)
+                                .suffix(" px"),
+                        );
+                    }
+                }
+            });
+            ui.end_row();
+            ui.label("Background");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut png.background, Background::Transparent, "Transparent");
+                ui.radio_value(&mut png.background, Background::White, "White");
+            });
+            ui.end_row();
+        });
+    if selected == 0 {
+        *selection_only = false;
+    }
+    ui.add_enabled(
+        selected > 0,
+        egui::Checkbox::new(
+            selection_only,
+            format!("Selection only ({selected} selected)"),
+        ),
+    )
+    .on_disabled_hover_text("Select something to export just that");
+    // The image size, or why it can't be made (the Export button explains too).
+    if let Some(b) = model.bounds() {
+        let m = 2.0 * locus_export::png::MARGIN_MM;
+        match png.size(b.width() + m, b.height() + m) {
+            Ok((w, h)) if !*selection_only => {
+                ui.weak(format!("{w} × {h} px"));
+            }
+            Ok(_) => {
+                ui.weak("Size follows the selection");
+            }
+            Err(e) => {
+                ui.colored_label(ui.visuals().error_fg_color, e.to_string());
+            }
+        }
+    }
 }
 
 /// The profile combo, import / save buttons and a one-line summary. A change

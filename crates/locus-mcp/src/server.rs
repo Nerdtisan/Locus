@@ -323,7 +323,7 @@ impl LocusServer {
             ),
             Tool::new(
                 "export",
-                "Export the document (svg, pdf, dxf or a plugin format) and return the file contents. Never writes a file.",
+                "Export the document (svg, pdf, dxf, png or a plugin format) and return the file contents. Never writes a file.",
                 schema_for_type::<dto::ExportArgs>(),
             )
             .annotate(

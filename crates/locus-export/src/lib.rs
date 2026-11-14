@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Export pipeline and SVG/PDF/DXF writers (SPEC §8). Core crate: returns
+//! Export pipeline and SVG/PDF/DXF/PNG writers (SPEC §8). Core crate: returns
 //! bytes, never touches the filesystem; must build for wasm32.
 //!
 //! Stages, each a plain function over [`ExportModel`] so every writer shares
@@ -19,6 +19,7 @@ pub mod order;
 pub mod overlap;
 pub mod pdf;
 pub mod pipeline;
+pub mod png;
 pub mod prepare;
 pub mod profile;
 pub mod svg;
@@ -35,6 +36,7 @@ pub use ops::apply_operations;
 pub use order::{order, travel_length};
 pub use pdf::{to_pdf, to_pdf_model};
 pub use pipeline::{ExportLayer, ExportModel, ExportPath, PathSeg, Shape, chain, collect};
+pub use png::{Background, PngExporter, PngOptions, Resolution, to_png_model};
 pub use prepare::{Prepared, prepare, prepare_for};
 pub use profile::{Bed, Defaults, MachineProfile, Origin, ProfileError, ProfileUnits};
 pub use svg::{to_svg, to_svg_model};
