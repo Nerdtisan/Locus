@@ -85,10 +85,10 @@ impl Modify {
                 "Mirror: select objects, pick the mirror line, then Enter (copies follow the source and the line)"
             }
             (Modify::Pattern(false), _) => {
-                "Rectangular Pattern: select objects, then drag the arrow for spacing, click − / + for the count, or type; Enter applies"
+                "Rectangular Pattern: select objects, then drag the arrow for spacing and the ring for the count (or − / +), click a handle to type; Enter applies"
             }
             (Modify::Pattern(true), _) => {
-                "Circular Pattern: select objects, pick a centre point, then drag the knob for the angle, − / + for the count; Enter applies"
+                "Circular Pattern: select objects, pick a centre point, then drag the knob for the angle and the ring on the second copy for the count (or − / +); Enter applies"
             }
             (Modify::Transform(TransformMode::Move), _) => {
                 "Move: select geometry, then drag an arrow or the centre, or type a distance; Enter applies"
