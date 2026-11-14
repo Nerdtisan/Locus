@@ -196,7 +196,7 @@ impl LayersView {
             Dialog::Delete { layer, .. } => ("Delete layer", *layer),
         };
         let name = doc.layer(layer).map_or("?", |l| l.name.as_str()).to_owned();
-        egui::Window::new(title)
+        crate::dialog::Dialog::new(title)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])

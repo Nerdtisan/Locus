@@ -754,7 +754,7 @@ impl FileIo {
             .exporters
             .get(&panel.format)
             .map_or_else(|| "Export".to_owned(), |e| e.name().to_owned());
-        egui::Window::new(format!("Export {title}"))
+        crate::dialog::Dialog::new(format!("Export {title}"))
             .collapsible(false)
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -958,7 +958,7 @@ impl FileIo {
         self.profile_manager(ctx, canvas, settings);
         if self.pending.is_some() {
             let mut choice = None;
-            egui::Window::new("Unsaved changes")
+            crate::dialog::Dialog::new("Unsaved changes")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -985,7 +985,7 @@ impl FileIo {
             }
         }
         if let Some(msg) = self.notice.clone() {
-            egui::Window::new("Restored")
+            crate::dialog::Dialog::new("Restored")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -998,7 +998,7 @@ impl FileIo {
                 });
         }
         if let Some(msg) = self.reference_notice.clone() {
-            egui::Window::new("Reference imported")
+            crate::dialog::Dialog::new("Reference imported")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -1010,7 +1010,7 @@ impl FileIo {
                 });
         }
         if let Some(msg) = self.error.clone() {
-            egui::Window::new("Error")
+            crate::dialog::Dialog::new("Error")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)

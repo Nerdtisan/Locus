@@ -418,7 +418,7 @@ impl Mcp {
             return;
         };
         let mut answer = None;
-        egui::Window::new("Allow the AI client?")
+        crate::dialog::Dialog::new("Allow the AI client?")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
@@ -451,7 +451,7 @@ impl Mcp {
             return;
         }
         let (mut yes, mut no) = (false, false);
-        egui::Window::new("Turn on the MCP server?")
+        crate::dialog::Dialog::new("Turn on the MCP server?")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -516,7 +516,7 @@ impl Mcp {
         let mut grants = self.saved.grants;
         let mut keep = self.saved.keep_token;
         let mut regen = false;
-        egui::Window::new("MCP server")
+        crate::dialog::Dialog::new("MCP server")
             .open(&mut open)
             .resizable(true)
             .default_width(460.0)

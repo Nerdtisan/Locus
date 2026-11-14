@@ -210,7 +210,7 @@ impl Manager {
             return out;
         }
         let mut open = true;
-        egui::Window::new("Machine profiles")
+        crate::dialog::Dialog::new("Machine profiles")
             .open(&mut open)
             .collapsible(false)
             .resizable(true)

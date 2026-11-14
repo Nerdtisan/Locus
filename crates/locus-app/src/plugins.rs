@@ -585,7 +585,7 @@ impl Plugins {
         self.panel_window(ctx, canvas);
         self.manage_window(ctx);
         if let Some(msg) = self.message.clone() {
-            egui::Window::new("Plugins")
+            crate::dialog::Dialog::new("Plugins")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -632,7 +632,7 @@ impl Plugins {
         let mut uninstall = None;
         let mut toggle: Option<(String, bool)> = None;
         let mut readme: Option<String> = None;
-        egui::Window::new("Plugin manager")
+        crate::dialog::Dialog::new("Plugin manager")
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -775,7 +775,7 @@ impl Plugins {
             return;
         };
         let mut open = true;
-        egui::Window::new(format!("{name}: README"))
+        crate::dialog::Dialog::new(format!("{name}: README"))
             .open(&mut open)
             .resizable(true)
             .default_width(520.0)

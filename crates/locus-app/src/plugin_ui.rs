@@ -92,7 +92,7 @@ pub fn show_panel(
         Target::Insert | Target::Modify(_) => "Insert",
         Target::Edit(_) | Target::EditModifier(_) => "Apply",
     };
-    egui::Window::new(&panel.name)
+    crate::dialog::Dialog::new(&panel.name)
         .collapsible(false)
         .resizable(true)
         .show(ctx, |ui| {
