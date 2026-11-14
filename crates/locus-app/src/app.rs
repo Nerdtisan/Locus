@@ -5,7 +5,7 @@
 //! The shell never mutates a document directly; once `locus-doc` lands every
 //! edit goes through its command API (SPEC §11).
 
-use crate::actions::{self, Cx, Registry, Style};
+use crate::actions::{self, Cx, Registry, Shell, Style};
 use crate::file_io::FileIo;
 use crate::layout::{self, Tab, default_layout};
 use crate::settings::{Settings, Theme, Units};
@@ -102,9 +102,10 @@ impl App {
         let settings = Settings::load(cc.storage);
         cc.egui_ctx.set_theme(settings.theme.preference());
         let layout = cc.storage.map_or_else(
-            || layout::load(None, None, None),
+            || layout::load(None, None, None, None),
             |s| {
                 layout::load(
+                    s.get_string(layout::LAYOUT_V4_KEY).as_deref(),
                     s.get_string(layout::LAYOUT_V3_KEY).as_deref(),
                     s.get_string(layout::LAYOUT_V2_KEY).as_deref(),
                     s.get_string(layout::LAYOUT_V1_KEY).as_deref(),
@@ -166,8 +167,8 @@ impl App {
         self.dock.find_tab(&tab).is_some() || self.windows.iter().any(|w| w.saved.tab == tab)
     }
 
-    /// Show or hide a pane. A hidden pane comes back docked beside its
-    /// neighbour (design §5.1: Shortcuts under the Inspector's stack).
+    /// Show or hide a pane. A hidden pane comes back docked at its home
+    /// (design §5.1: Shortcuts under the Inspector).
     fn toggle_tab(&mut self, tab: Tab) {
         if let Some(loc) = self.dock.find_tab(&tab) {
             self.dock.remove_tab(loc);
@@ -292,6 +293,19 @@ impl App {
             layout::redock(&mut self.dock, w.saved.tab);
         }
         self.windows = windows;
+    }
+
+    /// Carry out what registry actions asked of the shell this frame.
+    fn shell_requests(&mut self) {
+        for req in std::mem::take(&mut self.state.view.shell) {
+            match req {
+                Shell::ToggleShortcuts => self.toggle_tab(Tab::Shortcuts),
+                Shell::ResetLayout => {
+                    self.dock = default_layout();
+                    self.windows.clear();
+                }
+            }
+        }
     }
 
     /// Every pane window back into the dock.
@@ -436,10 +450,15 @@ impl App {
                     self.dock_all();
                     ui.close();
                 }
-                if ui.button("Reset layout").clicked() {
-                    self.dock = default_layout();
-                    self.windows.clear();
-                    ui.close();
+                {
+                    let mut cx = cx!(self);
+                    actions::show(
+                        ui,
+                        &self.registry,
+                        &mut cx,
+                        actions::LAYOUT_MENU,
+                        Style::Menu,
+                    );
                 }
                 ui.separator();
                 ui.menu_button("Theme", |ui| {
@@ -679,9 +698,7 @@ impl eframe::App for App {
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("ribbon").show(ui, |ui| self.ribbon(ui));
         egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
-        if std::mem::take(&mut self.state.view.toggle_shortcuts) {
-            self.toggle_tab(Tab::Shortcuts);
-        }
+        self.shell_requests();
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
             registry: &self.registry,
@@ -712,6 +729,11 @@ impl eframe::App for App {
         self.pane_windows(&ctx);
         let mut cx = cx!(self);
         crate::views::marking_menu::show(&ctx, &self.registry, &mut cx);
+        // A pane or the marking menu asked the shell for something after
+        // it drained the requests: act on it next frame, not next input.
+        if !self.state.view.shell.is_empty() {
+            ctx.request_repaint();
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -722,10 +744,10 @@ impl eframe::App for App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp.save(storage);
-        // v1 and v2 are left in place for older builds (design §7.4).
+        // v1 to v3 are left in place for older builds (design §7.4).
         let windows: Vec<_> = self.windows.iter().map(|w| w.saved.clone()).collect();
         if let Some(json) = layout::save(&self.dock, &windows) {
-            storage.set_string(layout::LAYOUT_V3_KEY, json);
+            storage.set_string(layout::LAYOUT_V4_KEY, json);
         }
     }
 }
