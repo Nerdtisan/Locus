@@ -7,13 +7,26 @@
 //! are flattened with a screen-space tolerance, so cost follows what is on
 //! screen rather than the document size.
 
-use crate::scene::{Annot, DimKind, Item, Scene, Shape};
+use crate::scene::{Annot, DimKind, Item, Scene, Shape, Symbol};
 use crate::settings::Units;
 use crate::view::View;
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape as EShape, Stroke, Vec2 as EVec2};
 use locus_doc::{ConstraintId, Edge, EntityId};
 use locus_geom::{Aabb, Arc, Circle, Cubic, Vec2};
 use std::collections::BTreeSet;
+
+/// A constraint symbol's badge size, its offset from the anchor and the
+/// spacing of several symbols on one anchor (screen points; mockup: 16).
+const GLYPH_SIZE: f32 = 16.0;
+const GLYPH_GAP: f32 = 12.0;
+const GLYPH_PITCH: f32 = 18.0;
+
+/// Where the annotations landed this frame (screen points).
+#[derive(Debug, Default)]
+pub struct AnnotRects {
+    pub dims: Vec<(ConstraintId, Rect)>,
+    pub glyphs: Vec<(ConstraintId, Symbol, Rect)>,
+}
 
 /// Colours for one theme. Fusion convention: under-constrained geometry in
 /// blue, fully constrained in the text colour, construction dashed.
@@ -28,6 +41,8 @@ pub struct Palette {
     pub dim: Color32,
     pub dim_driven: Color32,
     pub glyph_fill: Color32,
+    /// Outline of a constraint symbol's badge (#329).
+    pub glyph_line: Color32,
     pub glyph_text: Color32,
     /// Constraints and geometry the solver reports as conflicting (#72).
     pub conflict: Color32,
@@ -45,8 +60,10 @@ impl Palette {
                 selected: Color32::from_rgb(255, 150, 40),
                 dim: Color32::from_rgb(120, 200, 140),
                 dim_driven: Color32::from_gray(140),
-                glyph_fill: Color32::from_rgb(44, 52, 66),
-                glyph_text: Color32::from_rgb(190, 215, 255),
+                // The mockup's panel, line and muted ink (M5 design §2, #329).
+                glyph_fill: Color32::from_rgb(42, 47, 56),
+                glyph_line: Color32::from_rgb(62, 69, 82),
+                glyph_text: Color32::from_rgb(154, 163, 179),
                 conflict: Color32::from_rgb(255, 85, 85),
             }
         } else {
@@ -59,8 +76,9 @@ impl Palette {
                 selected: Color32::from_rgb(230, 100, 0),
                 dim: Color32::from_rgb(20, 130, 60),
                 dim_driven: Color32::from_gray(120),
-                glyph_fill: Color32::from_rgb(225, 232, 245),
-                glyph_text: Color32::from_rgb(30, 60, 120),
+                glyph_fill: Color32::from_rgb(246, 247, 249),
+                glyph_line: Color32::from_rgb(201, 207, 216),
+                glyph_text: Color32::from_rgb(95, 104, 120),
                 conflict: Color32::from_rgb(210, 30, 30),
             }
         }
@@ -269,8 +287,9 @@ impl Frame<'_> {
         }
     }
 
-    /// A small constraint glyph beside the cursor: what inference will add.
-    pub fn draw_hint(&self, at: Vec2, label: &str) {
+    /// A small constraint symbol beside the cursor: what inference will add
+    /// (#69). Drawn with the CONSTRAIN group's icon, like the canvas glyphs.
+    pub fn draw_hint(&self, at: Vec2, symbol: Symbol) {
         let c = self.s(at) + EVec2::new(-14.0, -14.0);
         let r = Rect::from_center_size(c, EVec2::splat(16.0));
         self.painter.rect_filled(r, 3.0, self.pal.glyph_fill);
@@ -280,11 +299,11 @@ impl Frame<'_> {
             Stroke::new(1.0, self.pal.hover),
             egui::StrokeKind::Inside,
         );
-        self.painter.text(
-            c,
-            Align2::CENTER_CENTER,
-            label,
-            FontId::monospace(11.0),
+        crate::views::icons::paint(
+            self.painter,
+            r.shrink(2.0),
+            symbol.action,
+            symbol.name,
             self.pal.glyph_text,
         );
     }
@@ -305,25 +324,31 @@ impl Frame<'_> {
 
     // ── Annotations ──────────────────────────────────────────────────────
 
-    /// Draw glyphs and dimensions. Returns each dimension's label rectangle
-    /// (screen points) so the canvas can hit-test it for editing (#70).
+    /// Draw constraint symbols and dimensions. Returns where each dimension
+    /// label and each symbol landed (screen points) so the canvas can
+    /// hit-test them: editing a dimension (#70), naming or deleting a
+    /// constraint from its symbol (#329). `hot` is the symbol under the
+    /// pointer, drawn highlighted.
     pub fn draw_annotations(
         &self,
         scene: &Scene,
         flagged: &BTreeSet<ConstraintId>,
-    ) -> Vec<(ConstraintId, Rect)> {
+        hot: Option<ConstraintId>,
+    ) -> AnnotRects {
         let (lo, hi) = self.visible(80.0);
-        let mut labels = Vec::new();
+        let mut out = AnnotRects::default();
         for a in &scene.annots {
             match a {
                 Annot::Glyph {
                     id,
                     at,
                     slot,
-                    label,
+                    symbol,
                 } => {
                     if intersects(&Aabb::from_point(*at), lo, hi) {
-                        self.glyph(*at, *slot, label, flagged.contains(id));
+                        let r =
+                            self.glyph(*at, *slot, *symbol, flagged.contains(id), hot == Some(*id));
+                        out.glyphs.push((*id, *symbol, r));
                     }
                 }
                 Annot::Dim {
@@ -335,12 +360,12 @@ impl Frame<'_> {
                 } => {
                     let bad = flagged.contains(id);
                     if let Some(r) = self.dimension(*kind, *value, *driven, *edge, bad, lo, hi) {
-                        labels.push((*id, r));
+                        out.dims.push((*id, r));
                     }
                 }
             }
         }
-        labels
+        out
     }
 
     fn label(&self, at: Pos2, text: &str, colour: Color32) -> Rect {
@@ -354,28 +379,34 @@ impl Frame<'_> {
         rect
     }
 
-    fn glyph(&self, at: Vec2, slot: u8, label: &str, bad: bool) {
+    /// One constraint symbol (#329): a 16-point badge in the mockup's panel
+    /// colours with the CONSTRAIN group's icon, beside its anchor.
+    fn glyph(&self, at: Vec2, slot: u8, symbol: Symbol, bad: bool, hot: bool) -> Rect {
         let ink = if bad {
             self.pal.conflict
+        } else if hot {
+            self.pal.hover
         } else {
             self.pal.glyph_text
         };
-        let c = self.s(at) + EVec2::new(10.0 + f32::from(slot) * 20.0, -12.0);
-        let rect = Rect::from_center_size(c, EVec2::new(18.0, 15.0));
+        let line = if bad || hot { ink } else { self.pal.glyph_line };
+        let c = self.s(at) + EVec2::new(GLYPH_GAP + f32::from(slot) * GLYPH_PITCH, -GLYPH_GAP);
+        let rect = Rect::from_center_size(c, EVec2::splat(GLYPH_SIZE));
         self.painter.rect(
             rect,
             3.0,
             self.pal.glyph_fill,
-            Stroke::new(if bad { 1.6 } else { 1.0 }, ink),
+            Stroke::new(if bad || hot { 1.6 } else { 1.0 }, line),
             egui::StrokeKind::Inside,
         );
-        self.painter.text(
-            c,
-            Align2::CENTER_CENTER,
-            label,
-            FontId::monospace(10.0),
+        crate::views::icons::paint(
+            self.painter,
+            rect.shrink(2.0),
+            symbol.action,
+            symbol.name,
             ink,
         );
+        rect
     }
 
     #[allow(clippy::too_many_arguments)]

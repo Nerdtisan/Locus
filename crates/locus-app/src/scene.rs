@@ -77,12 +77,12 @@ pub enum DimKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Annot {
-    /// Constraint glyph badge. `slot` spaces several glyphs on one anchor.
+    /// Constraint symbol badge (#329). `slot` spaces several on one anchor.
     Glyph {
         id: ConstraintId,
         at: Vec2,
         slot: u8,
-        label: &'static str,
+        symbol: Symbol,
     },
     Dim {
         id: ConstraintId,
@@ -101,22 +101,52 @@ pub struct Scene {
     pub bounds: Option<Aabb>,
 }
 
-fn glyph_label(c: &Constraint) -> Option<&'static str> {
+/// The symbol a constraint shows on the canvas (#329): the CONSTRAIN
+/// group's icon (`action`, drawn by `views::icons`) and its name for the
+/// hover text. Constraints have no letters (M5 design §2, owner decision).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Symbol {
+    pub action: &'static str,
+    pub name: &'static str,
+}
+
+impl Symbol {
+    pub const COINCIDENT: Symbol = Symbol {
+        action: "constrain.coincident",
+        name: "Coincident",
+    };
+    pub const HORIZONTAL: Symbol = Symbol {
+        action: "constrain.horizontal",
+        name: "Horizontal",
+    };
+    pub const VERTICAL: Symbol = Symbol {
+        action: "constrain.vertical",
+        name: "Vertical",
+    };
+    pub const TANGENT: Symbol = Symbol {
+        action: "constrain.tangent",
+        name: "Tangent",
+    };
+}
+
+pub fn glyph_symbol(c: &Constraint) -> Option<Symbol> {
+    let s = |action, name| Symbol { action, name };
     Some(match c {
         // Coincident points share identity in the model; no badge needed.
         Constraint::Coincident { .. } => return None,
-        Constraint::PointOnCurve { .. } => "o",
-        Constraint::Horizontal { .. } => "H",
-        Constraint::Vertical { .. } => "V",
-        Constraint::Parallel { .. } => "//",
-        Constraint::Perpendicular { .. } => "L",
-        Constraint::Tangent { .. } => "T",
-        Constraint::Collinear { .. } => "C",
-        Constraint::Concentric { .. } => "(o)",
-        Constraint::Equal { .. } => "=",
-        Constraint::Symmetric { .. } => "S",
-        Constraint::Midpoint { .. } => "M",
-        Constraint::Fix { .. } => "F",
+        // Fusion shows a point on a curve with the coincident symbol.
+        Constraint::PointOnCurve { .. } => Symbol::COINCIDENT,
+        Constraint::Horizontal { .. } => Symbol::HORIZONTAL,
+        Constraint::Vertical { .. } => Symbol::VERTICAL,
+        Constraint::Parallel { .. } => s("constrain.parallel", "Parallel"),
+        Constraint::Perpendicular { .. } => s("constrain.perpendicular", "Perpendicular"),
+        Constraint::Tangent { .. } => Symbol::TANGENT,
+        Constraint::Collinear { .. } => s("constrain.collinear", "Collinear"),
+        Constraint::Concentric { .. } => s("constrain.concentric", "Concentric"),
+        Constraint::Equal { .. } => s("constrain.equal", "Equal"),
+        Constraint::Symmetric { .. } => s("constrain.symmetric", "Symmetric"),
+        Constraint::Midpoint { .. } => s("constrain.midpoint", "Midpoint"),
+        Constraint::Fix { .. } => s("constrain.fix", "Fix"),
         _ => return None,
     })
 }
@@ -245,7 +275,7 @@ impl Scene {
         let mut annots = Vec::new();
         let mut slots: HashMap<EntityId, u8> = HashMap::new();
         for (&cid, c) in doc.constraints() {
-            if let Some(label) = glyph_label(c) {
+            if let Some(symbol) = glyph_symbol(c) {
                 if let Some(&first) = c.references().first()
                     && let Some(at) = Self::anchor(doc, first)
                 {
@@ -254,7 +284,7 @@ impl Scene {
                         id: cid,
                         at,
                         slot: *slot,
-                        label,
+                        symbol,
                     });
                     *slot = slot.saturating_add(1);
                 }
@@ -481,5 +511,30 @@ mod tests {
             (shown - (centre_r + 0.5)).abs() < 1e-9,
             "{shown} vs {centre_r}"
         );
+    }
+
+    /// Constraints show the CONSTRAIN group's symbols, never letters
+    /// (#329, owner decision): every glyph names a drawn ribbon icon.
+    #[test]
+    fn glyphs_are_symbols_with_icons() {
+        let scene = Scene::build(&demo::sketch(), &BTreeSet::new(), &BTreeSet::new());
+        let mut n = 0;
+        for a in &scene.annots {
+            if let Annot::Glyph { symbol, .. } = a {
+                n += 1;
+                assert!(symbol.action.starts_with("constrain."), "{symbol:?}");
+                assert!(symbol.name.len() > 2, "a name, not a letter: {symbol:?}");
+                assert!(crate::views::icons::has_icon(symbol.action), "{symbol:?}");
+            }
+        }
+        assert!(n > 0);
+        for s in [
+            Symbol::COINCIDENT,
+            Symbol::HORIZONTAL,
+            Symbol::VERTICAL,
+            Symbol::TANGENT,
+        ] {
+            assert!(crate::views::icons::has_icon(s.action), "{s:?}");
+        }
     }
 }

@@ -91,7 +91,7 @@ impl Pen<'_> {
 
 /// Whether `id` has a drawn icon (otherwise the initial is shown).
 #[cfg(test)]
-fn has_icon(id: &str) -> bool {
+pub(crate) fn has_icon(id: &str) -> bool {
     let p = egui::Painter::new(
         egui::Context::default(),
         egui::LayerId::background(),

@@ -30,6 +30,10 @@ pub struct ViewState {
     pub(crate) stroke_on: bool,
     /// Screen rectangles of the dimension labels drawn last frame.
     pub(crate) dim_rects: Vec<(ConstraintId, egui::Rect)>,
+    /// Screen rectangles of the constraint symbols drawn last frame (#329).
+    pub(crate) glyph_rects: Vec<(ConstraintId, crate::scene::Symbol, egui::Rect)>,
+    /// A constraint symbol's right-click menu: which constraint, and where.
+    pub(crate) glyph_menu: Option<(ConstraintId, Pos2)>,
     /// Screen rectangles of the offset / pattern labels drawn last frame (#164).
     pub(crate) offset_rects: Vec<(RecipeId, egui::Rect)>,
     /// Screen position where a rubber-band box started.
@@ -72,6 +76,8 @@ impl Default for ViewState {
             machine: Vec::new(),
             stroke_on: false,
             dim_rects: Vec::new(),
+            glyph_rects: Vec::new(),
+            glyph_menu: None,
             offset_rects: Vec::new(),
             rubber: None,
             touches: crate::touch::Touches::default(),

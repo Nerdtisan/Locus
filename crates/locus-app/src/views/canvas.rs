@@ -193,7 +193,8 @@ impl AppState {
         if let Some(p) = step.long_press {
             self.open_marking(p, rect, false, now);
         }
-        // Right-click opens the marking menu (design §3.1, §4, #290).
+        // Right-click opens the marking menu (design §3.1, §4, #290), or a
+        // constraint symbol's own menu when it lands on one (#329).
         if !suppress
             && resp.hovered()
             && let Some(p) = ui.input(|i| {
@@ -203,7 +204,10 @@ impl AppState {
                     .flatten()
             })
         {
-            self.open_marking(p, rect, true, now);
+            match self.glyph_at(p) {
+                Some((id, _)) => self.view.glyph_menu = Some((id, p)),
+                None => self.open_marking(p, rect, true, now),
+            }
         }
         let gesture = if self.view.touches.gesture_allowed() {
             ui.input(|i| i.multi_touch())
@@ -303,7 +307,19 @@ impl AppState {
             .flat_map(|c| [(c.p0, c.c0), (c.p1, c.c1)])
             .collect();
         frame.draw_handle_guides(&guides);
-        self.view.dim_rects = frame.draw_annotations(&self.doc.scene, &flag_constraints);
+        let hot = hover
+            .filter(|_| self.view.marking.is_none())
+            .and_then(|p| self.glyph_at(p));
+        let annots = frame.draw_annotations(&self.doc.scene, &flag_constraints, hot.map(|g| g.0));
+        self.view.dim_rects = annots.dims;
+        self.view.glyph_rects = annots.glyphs;
+        // Hovering a symbol names it, like the CONSTRAIN group (#329).
+        if let Some((_, symbol)) = hot
+            && self.view.glyph_menu.is_none()
+        {
+            resp.clone()
+                .on_hover_text_at_pointer(format!("{} constraint", symbol.name));
+        }
         self.draw_tool_overlay(&frame, &painter);
         if let Some(mode) = self.transform_mode() {
             self.draw_manipulator(&frame, mode);
@@ -342,10 +358,68 @@ impl AppState {
             self.mirror_dialog(ui, rect);
         }
         self.text_dialog(ui, rect);
+        self.glyph_menu(ui);
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));
         status.extent_mm = self.view.camera.extent_mm(rect);
         status.grid = grid::label(grid::minor_step(self.view.camera.pt_per_mm).0);
+    }
+
+    /// The constraint symbol under screen point `p`, as drawn last frame.
+    fn glyph_at(&self, p: Pos2) -> Option<(locus_doc::ConstraintId, crate::scene::Symbol)> {
+        self.view
+            .glyph_rects
+            .iter()
+            .rev()
+            .find(|(_, _, r)| r.contains(p))
+            .map(|&(id, symbol, _)| (id, symbol))
+    }
+
+    /// A constraint symbol's right-click menu (#329, Fusion: Delete). The
+    /// deletion goes through the command API as one undo step (SPEC §11).
+    fn glyph_menu(&mut self, ui: &egui::Ui) {
+        let Some((id, at)) = self.view.glyph_menu else {
+            return;
+        };
+        let Some(symbol) = self
+            .doc
+            .sketcher
+            .document()
+            .constraints()
+            .get(&id)
+            .and_then(crate::scene::glyph_symbol)
+        else {
+            // Gone (undone, or deleted elsewhere): nothing to offer.
+            self.view.glyph_menu = None;
+            return;
+        };
+        let mut delete = false;
+        let area = egui::Area::new(egui::Id::new("glyph_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(at)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.weak(format!("{} constraint", symbol.name));
+                    ui.separator();
+                    delete = ui.button("Delete").clicked();
+                });
+            });
+        let pressed_elsewhere = ui.input(|i| {
+            i.pointer.any_pressed()
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| !area.response.rect.contains(p))
+        });
+        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        if delete {
+            self.apply_reporting(&locus_doc::Command::RemoveConstraint { id });
+        }
+        // The press that opened the menu is this frame's own; keep it.
+        let opening = ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary))
+            && ui.input(|i| i.pointer.press_origin()) == Some(at);
+        if delete || escape || (pressed_elsewhere && !opening) {
+            self.view.glyph_menu = None;
+        }
     }
 
     /// Right-click or long press (design §3.1, §4; #251, #290): in Select,
@@ -594,8 +668,9 @@ impl AppState {
         // Inference hint glyph (#69): what the shape will be constrained to.
         let badge = match (pick.line, pick.on_curve) {
             (Some(h), _) => Some(h.badge()),
-            (None, Some(_)) => Some("o"),
-            (None, None) => pick.point.map(|_| "•"),
+            // A point on a curve, or a snap onto a point: coincident.
+            (None, Some(_)) => Some(crate::scene::Symbol::COINCIDENT),
+            (None, None) => pick.point.map(|_| crate::scene::Symbol::COINCIDENT),
         };
         if let Some(b) = badge {
             frame.draw_hint(pick.pos, b);
@@ -925,5 +1000,47 @@ mod chain_tests {
         }
         step(&mut c, Vec::new());
         assert_eq!(c.selection.items.len(), 4, "{:?}", c.selection.items);
+    }
+
+    /// Constraint symbols are hit-tested from the last frame; right-clicking
+    /// one opens its own menu (Delete), not the marking menu, and Esc
+    /// closes it (#329).
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn right_click_on_a_symbol_opens_its_menu() {
+        let ctx = egui::Context::default();
+        let mut c = AppState::default();
+        frame(&mut c, &ctx, 0.0, Vec::new());
+        let &(id, symbol, r) = c
+            .view
+            .glyph_rects
+            .first()
+            .expect("the demo shows constraint symbols");
+        assert!(symbol.action.starts_with("constrain."));
+        let p = r.center();
+        assert_eq!(c.glyph_at(p), Some((id, symbol)));
+        let right = |pressed| Event::PointerButton {
+            pos: p,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut c, &ctx, 0.1, vec![Event::PointerMoved(p)]);
+        frame(&mut c, &ctx, 0.12, vec![right(true)]);
+        frame(&mut c, &ctx, 0.14, vec![right(false)]);
+        assert_eq!(c.view.glyph_menu.map(|m| m.0), Some(id));
+        assert!(c.view.marking.is_none(), "no marking menu over a symbol");
+        let esc = Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut c, &ctx, 0.16, vec![esc]);
+        assert!(c.view.glyph_menu.is_none());
+        // Away from any symbol, right-click is the marking menu as before.
+        let away = egui::pos2(5.0, 5.0);
+        assert!(c.glyph_at(away).is_none());
     }
 }
