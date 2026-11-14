@@ -50,9 +50,9 @@ pub struct ViewState {
     pub(crate) display: crate::settings::Display,
     /// The navigation bar's Pan is on: a left drag pans (Esc ends it).
     pub(crate) pan_mode: bool,
-    /// `view.shortcuts` ran: the shell shows or hides the shortcuts pane
-    /// (design §5.1); it owns the dock, so it takes this each frame.
-    pub(crate) toggle_shortcuts: bool,
+    /// Requests for the shell (show the shortcuts pane, reset the layout):
+    /// it owns the dock, so it takes these each frame.
+    pub(crate) shell: Vec<crate::actions::Shell>,
 }
 
 /// A marking menu opened by right-click or a long press (design §4).
@@ -91,7 +91,7 @@ impl Default for ViewState {
             marking: None,
             display: crate::settings::Display::default(),
             pan_mode: false,
-            toggle_shortcuts: false,
+            shell: Vec::new(),
         }
     }
 }

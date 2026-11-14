@@ -175,15 +175,25 @@ pub enum Op {
     SelectChain,
     Fit,
     Zoom(Zoom),
-    /// Show or hide the shortcuts pane (design §5.1, #299); the shell
-    /// owns the dock, so this only asks it to.
-    ToggleShortcuts,
+    /// Something only the shell can do, because it owns the dock, its
+    /// windows and dialogs; this only asks it to (see [`Shell`]).
+    Shell(Shell),
     Toggle(Flag),
     /// A plugin command (SPEC §15), run by the [`PluginHost`].
     Plugin {
         plugin: String,
         kind: PluginKind,
     },
+}
+
+/// A request the registry passes to the shell, which drains them from
+/// `ViewState::shell` each frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shell {
+    /// Show or hide the shortcuts pane (design §5.1, #299).
+    ToggleShortcuts,
+    /// Put every pane back where the default layout has it (#327, design §2.4).
+    ResetLayout,
 }
 
 /// The three kinds of action in the design (§7.1).
@@ -217,7 +227,7 @@ impl Action {
             | Op::Deselect
             | Op::Fit
             | Op::Zoom(_)
-            | Op::ToggleShortcuts
+            | Op::Shell(_)
             | Op::Toggle(_) => false,
         }
     }
@@ -857,7 +867,18 @@ pub static BUILTIN: &[Action] = &[
         "Show or hide the shortcut map pane",
         &[key(Key::Questionmark)],
         KeyScope::Global,
-        Op::ToggleShortcuts,
+        Op::Shell(Shell::ToggleShortcuts),
+    ),
+    a(
+        "view.reset_layout",
+        "Reset layout",
+        Group::View,
+        "⟲",
+        &["panes", "dock", "default", "windows"],
+        "Put every pane back where it starts: Browser left, Sketch palette over Inspector right",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::ResetLayout),
     ),
 ];
 
@@ -1026,6 +1047,9 @@ pub const DISPLAY_MENU: &[Item] = &[
     A("view.stroke_width"),
     A("view.machine_preview"),
 ];
+
+/// The View menu's layout part, after the panes.
+pub const LAYOUT_MENU: &[Item] = &[A("view.reset_layout")];
 
 /// Help menu: the shortcut map (design §5.1).
 pub const HELP_MENU: &[Item] = &[A("view.shortcuts")];
@@ -1267,7 +1291,7 @@ impl Registry {
             Op::Zoom(Zoom::Selection) => {
                 canvas.zoom_to_selection();
             }
-            Op::ToggleShortcuts => canvas.view.toggle_shortcuts = true,
+            Op::Shell(req) => canvas.view.shell.push(*req),
             Op::Toggle(f) => {
                 let on = !self.is_on(a, canvas, cx.settings);
                 match f {
@@ -1503,6 +1527,7 @@ mod tests {
             &MARKING_RING.map(Item::Action),
             EDIT_MENU,
             VIEW_MENU,
+            LAYOUT_MENU,
         ] {
             for item in list {
                 if let Item::Action(id) = item {
@@ -1592,6 +1617,28 @@ mod tests {
         }
         assert!(canvas.stroke_preview());
         assert_eq!(settings.auto_constrain, !before);
+    }
+
+    /// Shell actions only queue a request; the shell owns the dock (#327).
+    #[test]
+    fn shell_actions_queue_a_request() {
+        let r = Registry::default();
+        let mut canvas = AppState::default();
+        let mut settings = Settings::default();
+        let mut cx = Cx {
+            state: &mut canvas,
+            settings: &mut settings,
+            plugins: None,
+        };
+        for id in ["view.reset_layout", "view.shortcuts"] {
+            if let Some(a) = r.get(id) {
+                r.run(a, &mut cx);
+            }
+        }
+        assert_eq!(
+            canvas.view.shell,
+            vec![Shell::ResetLayout, Shell::ToggleShortcuts]
+        );
     }
 
     /// Repeat (marking menu N slot) runs the last tool or command; undo,
