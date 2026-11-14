@@ -113,10 +113,12 @@ impl Tool {
             (Tool::ArcCentre, _) => "Arc: click the end angle",
             (Tool::RectCorner, 0) => "Rectangle: click a corner",
             (Tool::RectCorner, _) => {
-                "Rectangle: click the opposite corner, or type width, then height"
+                "Rectangle: click the opposite corner, or type the width, Tab, the height, Enter"
             }
             (Tool::RectCentre, 0) => "Rectangle: click the centre",
-            (Tool::RectCentre, _) => "Rectangle: click a corner, or type width, then height",
+            (Tool::RectCentre, _) => {
+                "Rectangle: click a corner, or type the width, Tab, the height, Enter"
+            }
             (Tool::RectThree, 0) => "Rectangle: click the first edge's start",
             (Tool::RectThree, 1) => "Rectangle: click the edge's end, or type its length",
             (Tool::RectThree, _) => "Rectangle: click a point on the far edge, or type the height",
@@ -326,6 +328,17 @@ impl Plan {
     }
 }
 
+/// One heads-up field while sizing a shape (#334).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Field {
+    pub name: &'static str,
+    /// The locked value, or what the cursor gives now (mm).
+    pub mm: f64,
+    pub locked: bool,
+    /// Typing goes here.
+    pub active: bool,
+}
+
 /// The clicks so far of the active drawing tool.
 #[derive(Clone, Debug)]
 pub struct Draft {
@@ -335,8 +348,12 @@ pub struct Draft {
     chain_first: Option<EntityId>,
     /// Layer new geometry goes on (the active layer, SPEC §4).
     layer: LayerId,
-    /// Dimensions typed so far for the current shape (width, then height).
+    /// Dimensions typed so far for the current shape (width, height),
+    /// each locked until the shape is placed (#334).
     dims: [Option<f64>; 2],
+    /// The heads-up field typing goes into: 0 width, 1 height (Tab
+    /// switches, design §3 step 2).
+    field: usize,
     /// The curve a tangent arc continues.
     host: Option<Host>,
     sides: usize,
@@ -363,6 +380,7 @@ impl Draft {
             chain_first: None,
             layer: Document::default_layer(),
             dims: [None, None],
+            field: 0,
             host: None,
             sides: 6,
             circumscribed: false,
@@ -442,6 +460,7 @@ impl Draft {
         self.nodes.clear();
         self.chain_first = None;
         self.dims = [None, None];
+        self.field = 0;
         self.host = None;
         self.out = None;
         self.last_curve = None;
@@ -729,11 +748,10 @@ impl Draft {
             self.dims[1] = Some(value);
             return self.commit_rect3(a + u.perp() * (side * value), plan);
         }
-        let slot = usize::from(self.dims[0].is_some());
-        self.dims[slot] = Some(value);
-        if slot == 0 {
-            return Outcome::Pending;
-        }
+        // Enter with a value (#334, Fusion): it locks the field being
+        // typed in, and the rectangle is placed with the mouse setting any
+        // side still free. Tab locks a field without placing.
+        self.dims[self.field] = Some(value);
         let second = Node::New(self.rect_corner(cursor.pos));
         self.commit_rect(second, plan)
     }
@@ -1091,6 +1109,47 @@ impl Draft {
         }
     }
 
+    /// A shape with two heads-up fields (width and height) is being sized.
+    fn two_fields(&self) -> bool {
+        matches!(self.tool, Tool::RectCorner | Tool::RectCentre) && self.nodes.len() == 1
+    }
+
+    /// Tab while sizing (#334, design §3 step 2): a typed `value` locks the
+    /// field it was typed in, then the other field takes the typing.
+    /// Returns false when the shape has a single field.
+    pub fn tab(&mut self, value: Option<f64>) -> bool {
+        if !self.two_fields() {
+            return false;
+        }
+        if let Some(v) = value.filter(|v| v.is_finite() && *v > MIN_SIZE_MM) {
+            self.dims[self.field] = Some(v);
+        }
+        self.field = 1 - self.field;
+        true
+    }
+
+    /// The heads-up fields while sizing a two-field shape: name, value at
+    /// the cursor (or the locked value), locked, and which takes typing.
+    pub fn fields(&self, cursor: Vec2) -> Option<[Field; 2]> {
+        if !self.two_fields() {
+            return None;
+        }
+        let d = cursor - self.nodes[0].pos();
+        // A centred rectangle's sides are twice the cursor's offset.
+        let k = if self.tool == Tool::RectCentre {
+            2.0
+        } else {
+            1.0
+        };
+        let f = |i: usize, name, live: f64| Field {
+            name,
+            mm: self.dims[i].unwrap_or(live * k),
+            locked: self.dims[i].is_some(),
+            active: self.field == i,
+        };
+        Some([f(0, "Width", d.x.abs()), f(1, "Height", d.y.abs())])
+    }
+
     /// The numeric value a typed entry would set, for the on-canvas readout:
     /// `(what, value in mm)`.
     pub fn readout(&self, cursor: Vec2) -> Option<(&'static str, f64)> {
@@ -1102,12 +1161,9 @@ impl Draft {
             }
             (Tool::Circle2, _) => Some(("Diameter", from.distance(cursor))),
             (Tool::RectCorner | Tool::RectCentre, _) => {
-                let d = cursor - from;
-                Some(if self.dims[0].is_none() {
-                    ("Width", d.x.abs())
-                } else {
-                    ("Height", d.y.abs())
-                })
+                let f = self.fields(cursor)?;
+                let a = &f[self.field];
+                Some((a.name, a.mm))
             }
             (Tool::RectThree, 1) => Some(("Length", from.distance(cursor))),
             (Tool::RectThree, _) => {
@@ -1680,10 +1736,11 @@ mod tests {
         let mut s = Sketcher::new(Document::new());
         let mut d = Draft::new(Tool::RectCorner);
         click(&mut d, &mut s, at(0.0, 0.0));
-        assert!(matches!(
-            d.typed(40.0, at(5.0, 5.0), s.document().next_id()),
-            Outcome::Pending
-        ));
+        // Width, Tab, height, Enter (#334): nothing is placed until Enter.
+        assert!(d.tab(Some(40.0)));
+        let f = d.fields(Vec2::new(5.0, 5.0)).expect("two fields");
+        assert!(f[0].locked && (f[0].mm - 40.0).abs() < 1e-9 && f[1].active);
+        assert!((f[1].mm - 5.0).abs() < 1e-9, "the mouse sets the height");
         let out = d.typed(25.0, at(5.0, 5.0), s.document().next_id());
         run(&mut s, out);
         assert_rectangle(&s);
@@ -1996,5 +2053,38 @@ mod tests {
         run(&mut s, out);
         assert_eq!(beziers(&s).len(), 3);
         assert!(!d.is_drawing());
+    }
+
+    /// #334 (Fusion): a value typed then Enter locks the field being typed
+    /// in and places the rectangle, the mouse setting the other side; Tab
+    /// switches fields without placing; a centred rectangle's fields read
+    /// its full sides; other tools have no Tab.
+    #[test]
+    fn tab_switches_fields_and_enter_places_with_the_mouse_for_the_rest() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::RectCorner);
+        click(&mut d, &mut s, at(0.0, 0.0));
+        assert!(d.tab(None), "Tab with nothing typed just switches");
+        assert!(d.fields(Vec2::new(1.0, 1.0)).expect("fields")[1].active);
+        let out = d.typed(12.0, at(30.0, 8.0), s.document().next_id());
+        run(&mut s, out);
+        assert_rectangle(&s);
+        let l = lines(&s);
+        let w = l.iter().map(|l| l.length()).fold(0.0, f64::max);
+        let h = l.iter().map(|l| l.length()).fold(f64::MAX, f64::min);
+        assert!(
+            (w - 30.0).abs() < 1e-6 && (h - 12.0).abs() < 1e-6,
+            "{w} {h}"
+        );
+
+        let mut c = Draft::new(Tool::RectCentre);
+        c.nodes.push(Node::New(Vec2::ZERO));
+        let f = c.fields(Vec2::new(3.0, -2.0)).expect("fields");
+        assert!((f[0].mm - 6.0).abs() < 1e-9 && (f[1].mm - 4.0).abs() < 1e-9);
+
+        let mut line = Draft::new(Tool::Line);
+        line.nodes.push(Node::New(Vec2::ZERO));
+        assert!(!line.tab(Some(5.0)));
+        assert!(line.fields(Vec2::new(1.0, 0.0)).is_none());
     }
 }
