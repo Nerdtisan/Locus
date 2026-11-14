@@ -184,12 +184,16 @@ mod tests {
     #[test]
     fn punctuation_keys_read_as_themselves() {
         use egui::{Key, KeyboardShortcut, Modifiers};
+        // On macOS formatting reads the fonts, which exist only during a pass.
         let ctx = egui::Context::default();
-        let k = |m, k| crate::actions::key_text(&ctx, &KeyboardShortcut::new(m, k));
-        assert_eq!(k(Modifiers::NONE, Key::Questionmark), "?");
-        assert_eq!(k(Modifiers::NONE, Key::L), "L");
-        assert_eq!(k(Modifiers::NONE, Key::Delete), "Delete");
-        assert!(k(Modifiers::COMMAND, Key::Z).ends_with('Z'));
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let ctx = ui.ctx();
+            let k = |m, k| crate::actions::key_text(ctx, &KeyboardShortcut::new(m, k));
+            assert_eq!(k(Modifiers::NONE, Key::Questionmark), "?");
+            assert_eq!(k(Modifiers::NONE, Key::L), "L");
+            assert_eq!(k(Modifiers::NONE, Key::Delete), "Delete");
+            assert!(k(Modifiers::COMMAND, Key::Z).ends_with('Z'));
+        });
     }
 
     #[test]
