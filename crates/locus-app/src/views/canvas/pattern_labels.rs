@@ -8,7 +8,7 @@
 use crate::render::Palette;
 use crate::settings::Units;
 use crate::state::{AppState, DimEdit, DimTarget, to_display, to_stored};
-use crate::views::patterns::with_field;
+use crate::views::recipes::with_field;
 use egui::{Align2, FontId, Painter, Rect, Stroke};
 use locus_doc::{Command, Document, RecipeId, RecipeKind};
 use locus_geom::Vec2;

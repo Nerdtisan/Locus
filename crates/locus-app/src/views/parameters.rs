@@ -19,7 +19,7 @@ pub struct ParametersView {
     drafts: BTreeMap<(String, u8), String>,
 }
 
-fn trimmed(v: f64) -> String {
+pub(crate) fn trimmed(v: f64) -> String {
     let s = format!("{v:.4}");
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }

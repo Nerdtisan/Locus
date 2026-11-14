@@ -211,8 +211,13 @@ impl FileIo {
         self.dialogs(ctx, canvas, settings);
     }
 
+    /// The open document's file name, or "Untitled" (the Browser root, #326).
+    pub fn doc_name(&self) -> &str {
+        self.name.as_deref().unwrap_or("Untitled")
+    }
+
     fn sync_title(&mut self, ctx: &egui::Context, canvas: &AppState) {
-        let name = self.name.as_deref().unwrap_or("Untitled");
+        let name = self.doc_name().to_owned();
         let title = format!(
             "{}{name} — Locus",
             if self.dirty(canvas) { "● " } else { "" }

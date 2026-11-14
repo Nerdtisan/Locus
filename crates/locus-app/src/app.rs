@@ -11,9 +11,8 @@ use crate::layout::{self, Tab, default_layout};
 use crate::settings::{Settings, Theme, Units};
 use crate::state::AppState;
 use crate::toolbar::{self, Toolbar};
-use crate::views::layers::LayersView;
+use crate::views::browser::BrowserView;
 use crate::views::parameters::ParametersView;
-use crate::views::patterns::PatternsView;
 use crate::views::shortcuts::ShortcutsView;
 use egui_dock::{DockArea, DockState, TabViewer};
 use locus_geom::Vec2;
@@ -44,9 +43,8 @@ macro_rules! cx {
 /// Per-pane widget state, kept across frames; never part of the document.
 #[derive(Default)]
 struct Panes {
-    layers: LayersView,
+    browser: BrowserView,
     parameters: ParametersView,
-    patterns: PatternsView,
     shortcuts: ShortcutsView,
 }
 
@@ -212,6 +210,7 @@ impl App {
                 panes: &mut self.panes,
                 settings: &mut self.settings,
                 status: &mut self.status,
+                doc_name: self.files.doc_name(),
                 plugins: &mut self.plugins,
                 undock: Vec::new(),
                 dragged: None,
@@ -303,6 +302,11 @@ impl App {
                 Shell::ResetLayout => {
                     self.dock = default_layout();
                     self.windows.clear();
+                }
+                Shell::ShowPane(tab) => {
+                    if !self.is_shown(tab) {
+                        self.toggle_tab(tab);
+                    }
                 }
             }
         }
@@ -587,6 +591,8 @@ struct Viewer<'a> {
     panes: &'a mut Panes,
     settings: &'a mut Settings,
     status: &'a mut Status,
+    /// The open file's name, for the Browser's root.
+    doc_name: &'a str,
     /// Tabs whose context menu asked for their own window (#285).
     undock: Vec<Tab>,
     /// The tab being dragged this frame, if any (#285).
@@ -608,14 +614,10 @@ impl TabViewer for Viewer<'_> {
         match tab {
             Tab::Canvas => self.state.canvas_ui(ui, self.settings, self.status),
             Tab::Browser => {
-                // One tree (design §2): layers, recipes and regions.
-                egui::CollapsingHeader::new("Layers")
-                    .default_open(true)
-                    .show(ui, |ui| self.panes.layers.ui(ui, self.state, self.settings));
-                egui::CollapsingHeader::new("Recipes").show(ui, |ui| {
-                    self.panes.patterns.ui(ui, self.state, self.settings.units);
-                });
-                egui::CollapsingHeader::new("Regions").show(ui, |ui| self.state.regions_ui(ui));
+                // One tree (design §2, #326).
+                self.panes
+                    .browser
+                    .ui(ui, self.state, self.settings, self.doc_name);
             }
             Tab::Inspector => {
                 self.plugins.properties_ui(ui, self.state);
@@ -706,6 +708,7 @@ impl eframe::App for App {
             panes: &mut self.panes,
             settings: &mut self.settings,
             status: &mut self.status,
+            doc_name: self.files.doc_name(),
             plugins: &mut self.plugins,
             undock: Vec::new(),
             dragged: None,

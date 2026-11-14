@@ -48,6 +48,10 @@ pub struct ViewState {
     /// Requests for the shell (show the shortcuts pane, reset the layout):
     /// it owns the dock, so it takes these each frame.
     pub(crate) shell: Vec<crate::actions::Shell>,
+    /// The layer last picked in the Browser (#326), the Inspector's subject
+    /// while nothing on the canvas is selected (design §2.1). Cleared when
+    /// the canvas selection changes.
+    pub browser_layer: Option<locus_doc::LayerId>,
 }
 
 /// A marking menu opened by right-click or a long press (design §4).
@@ -85,6 +89,7 @@ impl Default for ViewState {
             touch_toggle: false,
             marking: None,
             shell: Vec::new(),
+            browser_layer: None,
         }
     }
 }
