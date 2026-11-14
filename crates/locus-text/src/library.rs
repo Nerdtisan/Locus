@@ -154,6 +154,12 @@ impl FontLibrary {
         self.user.insert(name.to_owned(), font);
         Ok(r)
     }
+
+    /// Forgets a user font (the picker's remove). Texts set in it keep their
+    /// cached geometry and show as "font missing" until edited (ADR 0012).
+    pub fn remove_user_font(&mut self, name: &str) -> bool {
+        self.user.remove(name).is_some()
+    }
 }
 
 impl FontProvider for FontLibrary {

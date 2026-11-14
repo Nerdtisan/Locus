@@ -29,6 +29,7 @@ mod pattern_labels;
 mod pattern_tool;
 pub mod plugin_objects;
 mod regions;
+mod text_dialog;
 
 pub(crate) use machine::MachinePath;
 pub(crate) use mirror_tool::MirrorDraft;
@@ -340,6 +341,7 @@ impl AppState {
         if self.modify() == Some(Modify::Mirror) {
             self.mirror_dialog(ui, rect);
         }
+        self.text_dialog(ui, rect);
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));
         status.extent_mm = self.view.camera.extent_mm(rect);
@@ -749,6 +751,13 @@ impl AppState {
         {
             self.edit_existing_dimension(id, units);
         } else if resp.double_clicked_by(PointerButton::Primary)
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some(id) =
+                pick_at(self, p).filter(|id| self.doc.sketcher.document().text(*id).is_some())
+        {
+            // Double-click placed text: edit it (design §3.1, §6.5; #222).
+            self.open_text_dialog(id, true);
+        } else if resp.double_clicked_by(PointerButton::Primary)
             && self.selection.regions.combine.is_none()
             && let Some(p) = resp.interact_pointer_pos()
             && let Some(id) = pick_at(self, p)
@@ -802,6 +811,8 @@ impl AppState {
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if esc && self.selection.regions.combine.is_some() {
                 self.cancel_combine();
+            } else if esc && self.close_text_dialog() {
+                // Esc closes the Text dialog first.
             } else if esc {
                 self.doc.refusal = None;
                 self.clear_selection();

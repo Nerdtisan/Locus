@@ -223,9 +223,15 @@ impl AppState {
             },
             _ => self.apply_reporting(&cmd),
         };
+        let placed_text = self.tool() == Tool::Text;
         let after = self.tools.host.tool_mut().committed(ok);
         if let Some(id) = after.select {
             self.selection.items.set_all([id]);
+            if placed_text {
+                // Placed: open it for typing straight away (design §6.5).
+                self.set_tool(Tool::Select);
+                self.open_text_dialog(id, true);
+            }
         }
         if self.doc.notice.is_none() {
             self.doc.notice = after.notice;

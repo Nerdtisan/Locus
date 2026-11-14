@@ -24,6 +24,9 @@ pub(crate) fn command_dialog<R>(
             egui::Frame::window(ui.style())
                 .show(ui, |ui| {
                     ui.set_min_width(220.0);
+                    // Keep it a dialog, not a pane: wide content (the font
+                    // list) fills this, not the whole canvas.
+                    ui.set_max_width(320.0);
                     ui.label(RichText::new(title.to_uppercase()).strong());
                     ui.separator();
                     add(ui)

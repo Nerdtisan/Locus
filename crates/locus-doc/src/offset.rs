@@ -152,18 +152,21 @@ fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> {
         Some(Geom::Bezier { .. }) => doc
             .cubic(id)
             .map(|c| {
-                c.to_pieces(EXPORT_TOL)
+                c.to_pieces_oriented(EXPORT_TOL)
                     .into_iter()
-                    .map(|p| match p {
+                    .map(|(p, back)| match p {
                         Piece::Line(l) => Seg::Line { a: l.a, b: l.b },
                         // Biarc pieces are stored CCW: orient them along the
-                        // curve (from the piece nearer the curve's start).
-                        Piece::Arc(a) => Seg::Arc {
-                            center: a.center,
-                            radius: a.radius(),
-                            start: a.start_angle(),
-                            sweep: a.sweep(),
-                        },
+                        // curve, so the chain joins end to end (#222).
+                        Piece::Arc(a) => {
+                            let seg = Seg::Arc {
+                                center: a.center,
+                                radius: a.radius(),
+                                start: a.start_angle(),
+                                sweep: a.sweep(),
+                            };
+                            if back { seg.reversed() } else { seg }
+                        }
                     })
                     .collect()
             })

@@ -9,6 +9,7 @@ mod chain;
 mod constrain;
 mod demo;
 mod file_io;
+mod font_store;
 mod fonts;
 mod grid;
 mod hit;

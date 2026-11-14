@@ -141,19 +141,22 @@ impl OutlineFont {
         &self,
         line: &str,
         scale: f64,
+        tracking: f64,
         origin: Vec2,
         out: &mut Vec<Contour>,
     ) -> Result<f64, TextError> {
         let (placed, advance) = self.shape_line(line)?;
         let glyphs = self.font.outline_glyphs();
-        for p in &placed {
+        for (i, p) in placed.iter().enumerate() {
+            // Tracking after each glyph (#222), in mm.
+            let shift = i as f64 * tracking;
             let Some(glyph) = glyphs.get(GlyphId::new(p.gid)) else {
                 continue;
             };
             let mut sink = ContourSink {
                 out,
                 scale,
-                dx: origin.x + p.x * scale,
+                dx: origin.x + p.x * scale + shift,
                 dy: origin.y + p.y * scale,
                 cur: None,
             };
@@ -168,12 +171,19 @@ impl OutlineFont {
                 sink.discard();
             }
         }
-        Ok(advance * scale)
+        Ok(advance * scale + crate::tracked(placed.len(), tracking))
     }
 
-    /// Advance of `line` in mm at `scale` mm per font unit.
-    pub(crate) fn line_width(&self, line: &str, scale: f64) -> Result<f64, TextError> {
-        Ok(self.shape_line(line)?.1 * scale)
+    /// Advance of `line` in mm at `scale` mm per font unit, with `tracking`
+    /// mm after every glyph but the last.
+    pub(crate) fn line_width(
+        &self,
+        line: &str,
+        scale: f64,
+        tracking: f64,
+    ) -> Result<f64, TextError> {
+        let (placed, advance) = self.shape_line(line)?;
+        Ok(advance * scale + crate::tracked(placed.len(), tracking))
     }
 }
 

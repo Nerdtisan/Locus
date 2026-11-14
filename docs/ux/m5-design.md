@@ -231,6 +231,21 @@ Click to place the anchor, then type on the canvas. The Text dialog has a live p
 
 **Double-clicking placed text reopens the dialog**, as does Edit text in the marking menu. Explode turns text into curves.
 
+**As built (#222):**
+- **Text dialog.** It docks at the canvas's top-right while the Text tool is active.
+  - After a click places the text, the dialog switches to that text with its content selected, so you type straight in.
+  - Double-clicking placed text reopens it. The inspector's editor and its "Edit in dialog" button reach the same editor.
+- **Font list.** Search box; All / System / Bundled / Custom filter (System on desktop only); each font drawn in its own face with a tag (Bundled, Single-line, System, Custom). Its height, set by dragging the grip or ↕ Taller, is remembered per user.
+- **Add font… and remove.**
+  - Add font… loads a `.ttf`, `.otf`, `.ttc` or single-line `.svg` font and keeps it for later sessions: in the app's `fonts` folder on the desktop (atomic write), and in OPFS on the web. Names are sanitised, and sizes and counts are bounded.
+  - Custom fonts have a ✕ to remove them.
+- **Letter spacing** is in mm, typed or dragged on a slider. It is stored as `TextData::tracking` (format v14).
+- **SVG export issues:**
+  - Overlapping glyph contours (Figtree's `# $ & * + ^ { }` and more) are unioned on layout, so outline text exports with no "segments intersect" warnings. Texts placed earlier pick this up when they are next edited.
+  - The "stray arc": a Bézier's clockwise biarc pieces were taken with their ends swapped wherever export operations or offsets turned a path into a loop. They now follow the curve (`Cubic::to_pieces_oriented`).
+  - Canvas drawing of text was checked: the flatness is 0.2 pt. The jagged look the owner saw is most likely the crossing contours, which are now merged; it is left for the owner's hand-check.
+- **Not built:** fit to box and text on a path (placement modes).
+
 ### 6.6 Offset (#218)
 
 Pick one curve and its connected chain is selected (the Chain selection box is ticked by default). Then either:
