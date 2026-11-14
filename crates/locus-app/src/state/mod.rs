@@ -853,8 +853,8 @@ mod tests {
     use crate::settings::Settings;
     use crate::views::layers::LayersView;
     use crate::views::parameters::ParametersView;
-    use crate::views::patterns::PatternsView;
     use crate::views::properties::describe;
+    use crate::views::recipes::RecipesView;
     use locus_doc::RecipeKind;
 
     #[test]
@@ -958,7 +958,7 @@ mod tests {
     fn patterns_panel_creates_edits_and_suppresses() {
         let mut c = AppState::default();
         let ctx = egui::Context::default();
-        let mut view = PatternsView::default();
+        let mut view = RecipesView::default();
         let mut frame = |c: &mut AppState| {
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| view.ui(ui, c, Units::Mm));
         };

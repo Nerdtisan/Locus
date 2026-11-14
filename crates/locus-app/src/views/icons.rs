@@ -442,9 +442,110 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.line((6.0, 5.0), (11.0, 10.0));
             d.line((9.5, 6.5), (2.0, 14.0));
         }
+        // ── Browser layer rows (#326) ──
+        "ui.eye" | "ui.eye_off" => {
+            d.arc((8.0, 13.0), 7.0, -PI * 0.86, -PI * 0.14);
+            d.arc((8.0, 3.0), 7.0, PI * 0.14, PI * 0.86);
+            d.circle((8.0, 8.0), 2.0);
+            if id == "ui.eye_off" {
+                d.line((2.5, 13.5), (13.5, 2.5));
+            }
+        }
+        "ui.lock" | "ui.unlock" => {
+            d.rect(3.5, 7.5, 12.5, 14.0);
+            if id == "ui.lock" {
+                d.arc((8.0, 7.5), 3.0, PI, TAU);
+            } else {
+                d.arc((11.0, 5.5), 3.0, PI, TAU);
+            }
+        }
+        "ui.export" | "ui.export_off" => {
+            d.line((8.0, 10.0), (8.0, 2.5));
+            d.arrow_head((8.0, 1.5), (0.0, -1.0));
+            d.poly(&[(3.0, 9.0), (3.0, 14.0), (13.0, 14.0), (13.0, 9.0)], false);
+            if id == "ui.export_off" {
+                d.line((2.0, 2.0), (14.0, 14.0));
+            }
+        }
+        "ui.plugin" => {
+            // A plug: two prongs, a body and a lead.
+            d.line((6.0, 1.5), (6.0, 5.0));
+            d.line((10.0, 1.5), (10.0, 5.0));
+            d.rect(3.5, 5.0, 12.5, 10.0);
+            d.line((8.0, 10.0), (8.0, 14.5));
+        }
+        "ui.add" => {
+            d.line((8.0, 3.0), (8.0, 13.0));
+            d.line((3.0, 8.0), (13.0, 8.0));
+        }
+        // Operations (SPEC §7): what the machine does with a layer.
+        "op.cut" => {
+            // A blade through a line.
+            d.line((1.5, 12.0), (14.5, 12.0));
+            d.fill(&[(5.0, 10.0), (12.0, 2.0), (13.5, 3.5), (7.0, 11.0)]);
+        }
+        "op.score" => {
+            d.dashed((1.5, 12.0), (14.5, 12.0));
+            d.line((9.0, 2.0), (6.0, 10.0));
+        }
+        "op.engrave" => {
+            d.rect(2.5, 2.5, 13.5, 13.5);
+            d.line((2.5, 8.5), (8.5, 2.5));
+            d.line((2.5, 13.5), (13.5, 2.5));
+            d.line((7.5, 13.5), (13.5, 7.5));
+        }
+        "op.draw" => {
+            // A pen nib.
+            d.poly(
+                &[
+                    (10.0, 2.0),
+                    (14.0, 6.0),
+                    (6.0, 14.0),
+                    (2.0, 14.0),
+                    (2.0, 10.0),
+                ],
+                true,
+            );
+            d.line((8.5, 3.5), (12.5, 7.5));
+        }
+        "op.drag_knife" => {
+            d.arc((8.0, 14.0), 6.0, -PI, -PI * 0.15);
+            d.fill(&[(12.0, 2.0), (14.5, 4.5), (13.5, 8.5), (10.0, 5.0)]);
+        }
+        "op.reference" => {
+            d.dashed((2.0, 2.0), (14.0, 2.0));
+            d.dashed((14.0, 2.0), (14.0, 14.0));
+            d.dashed((14.0, 14.0), (2.0, 14.0));
+            d.dashed((2.0, 14.0), (2.0, 2.0));
+        }
         _ => return false,
     }
     true
+}
+
+/// The icon id for an operation (SPEC §7).
+pub fn operation(kind: locus_doc::OperationKind) -> &'static str {
+    use locus_doc::OperationKind as K;
+    match kind {
+        K::Cut => "op.cut",
+        K::Score => "op.score",
+        K::Engrave => "op.engrave",
+        K::Draw => "op.draw",
+        K::DragKnife => "op.drag_knife",
+        K::Reference => "op.reference",
+    }
+}
+
+/// A recipe's icon: the tool that makes it.
+pub fn recipe(kind: &locus_doc::RecipeKind) -> &'static str {
+    use locus_doc::RecipeKind as R;
+    match kind {
+        R::Linear { .. } => "sketch.pattern_rect",
+        R::Circular { .. } => "sketch.pattern_circ",
+        R::Mirror { .. } => "sketch.mirror",
+        R::Offset { .. } => "modify.offset",
+        R::Generated { .. } | R::Modified { .. } => "ui.plugin",
+    }
 }
 
 #[cfg(test)]
@@ -462,5 +563,29 @@ mod tests {
             assert!(has_icon(a.id.as_str()), "{} has no icon", a.id.as_str());
         }
         assert!(!has_icon("plugin.gear.insert"));
+    }
+
+    /// Browser rows (#326): every operation and recipe kind is drawn.
+    #[test]
+    fn every_operation_and_layer_toggle_has_an_icon() {
+        for k in locus_doc::OperationKind::ALL {
+            assert!(has_icon(operation(k)), "{k:?}");
+        }
+        for id in [
+            "ui.eye",
+            "ui.eye_off",
+            "ui.lock",
+            "ui.unlock",
+            "ui.export",
+            "ui.export_off",
+            "ui.add",
+            "ui.plugin",
+        ] {
+            assert!(has_icon(id), "{id}");
+        }
+        let mirror = locus_doc::RecipeKind::Mirror {
+            axis: locus_doc::EntityId::new(1),
+        };
+        assert!(has_icon(recipe(&mirror)));
     }
 }

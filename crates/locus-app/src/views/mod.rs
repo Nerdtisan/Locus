@@ -5,6 +5,7 @@
 //! directly: they run a `locus_doc::Command` through
 //! `AppState::apply_reporting` or run a registry action (SPEC §11).
 
+pub mod browser;
 pub mod canvas;
 pub mod constraints;
 pub mod icons;
@@ -12,8 +13,8 @@ pub mod layers;
 pub mod marking_menu;
 pub mod palette;
 pub mod parameters;
-pub mod patterns;
 pub mod properties;
+pub mod recipes;
 pub mod ribbon;
 pub mod shortcuts;
 pub mod style;

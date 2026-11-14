@@ -147,6 +147,8 @@ pub enum Shell {
     ToggleShortcuts,
     /// Put every pane back where the default layout has it (#327, design §2.4).
     ResetLayout,
+    /// Show a pane if it is hidden (the Browser's "Edit parameters", #326).
+    ShowPane(crate::layout::Tab),
 }
 
 /// The three kinds of action in the design (§7.1).
