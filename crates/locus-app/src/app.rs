@@ -73,6 +73,10 @@ pub struct App {
     dock: DockState<Tab>,
     /// Panes undocked into their own windows (#285).
     windows: Vec<PaneWindow>,
+    /// A dock tab being dragged, and where the pointer last was (#285).
+    tab_drag: Option<(Tab, Option<egui::Pos2>)>,
+    /// Where the last tab drag ended, for placing its window.
+    last_drop: Option<egui::Pos2>,
     /// Every command the UI offers (#294, design §7.1).
     registry: Registry,
     /// The ribbon's pinned actions (#299, design §2.3).
@@ -118,6 +122,8 @@ impl App {
         let mut app = Self {
             dock: layout.dock,
             windows: layout.windows.into_iter().map(PaneWindow::new).collect(),
+            tab_drag: None,
+            last_drop: None,
             registry,
             toolbar,
             panes: Panes::default(),
@@ -207,6 +213,7 @@ impl App {
                 status: &mut self.status,
                 plugins: &mut self.plugins,
                 undock: Vec::new(),
+                dragged: None,
             };
             let pos = egui::pos2(w.open_pos[0], w.open_pos[1]);
             let size = egui::vec2(w.open_size[0], w.open_size[1]);
@@ -294,6 +301,39 @@ impl App {
         }
     }
 
+    /// A dock tab released outside the dock, above all outside the main
+    /// window (#285). egui_dock only completes a drop while the pointer is
+    /// over one of its surfaces; anywhere else it silently cancels the drag
+    /// and the tab snaps back, which is why dragging a pane out of the main
+    /// window did nothing. Such a drop opens the pane in its own window
+    /// under the pointer.
+    fn tab_dropped_outside(
+        &mut self,
+        ctx: &egui::Context,
+        dragged: Option<Tab>,
+        dock: egui::Rect,
+        origin: egui::Vec2,
+    ) {
+        let (pointer, released) = ctx.input(|i| (i.pointer.latest_pos(), i.pointer.any_released()));
+        if let Some(tab) = dragged {
+            let last = pointer.or(self.tab_drag.and_then(|(_, p)| p));
+            self.tab_drag = Some((tab, last));
+        }
+        if !released {
+            return;
+        }
+        let Some((tab, last)) = self.tab_drag.take() else {
+            return;
+        };
+        self.last_drop = pointer.or(last);
+        if let Some(at) = drop_outside(dock, pointer, last)
+            && tab != Tab::Canvas
+            && self.dock.find_tab(&tab).is_some()
+        {
+            self.undock(tab, at - GRAB + origin, egui::vec2(360.0, 480.0));
+        }
+    }
+
     /// egui_dock floats a tab dragged out of the dock in a window inside the
     /// main one. Once the drag ends, that becomes a real OS window at the
     /// same place (design §2.2); on the web, an in-page window.
@@ -326,10 +366,12 @@ impl App {
                 } else {
                     egui::vec2(360.0, 480.0)
                 };
+                // A window egui_dock never drew has no rect yet: put it
+                // where the tab was dropped.
                 let pos = if rect.is_finite() {
                     rect.min + origin + step
                 } else {
-                    egui::pos2(120.0, 120.0) + origin + step
+                    self.last_drop.unwrap_or(egui::pos2(120.0, 120.0)) - GRAB + origin + step
                 };
                 if tab == Tab::Canvas {
                     layout::redock(&mut self.dock, tab);
@@ -528,6 +570,8 @@ struct Viewer<'a> {
     status: &'a mut Status,
     /// Tabs whose context menu asked for their own window (#285).
     undock: Vec<Tab>,
+    /// The tab being dragged this frame, if any (#285).
+    dragged: Option<Tab>,
     #[cfg(not(target_arch = "wasm32"))]
     plugins: &'a mut crate::plugins::Plugins,
     #[cfg(target_arch = "wasm32")]
@@ -578,6 +622,20 @@ impl TabViewer for Viewer<'_> {
 
     fn allowed_in_windows(&self, tab: &mut Tab) -> bool {
         *tab != Tab::Canvas
+    }
+
+    /// egui_dock draws a dragged tab as a copy with its own id, so the drag
+    /// is told from where the press started: on this tab's button.
+    fn on_tab_button(&mut self, tab: &mut Tab, response: &egui::Response) {
+        let dragging = response.ctx.input(|i| {
+            i.pointer.is_decidedly_dragging()
+                && i.pointer
+                    .press_origin()
+                    .is_some_and(|o| response.rect.contains(o))
+        });
+        if dragging {
+            self.dragged = Some(*tab);
+        }
     }
 
     fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Tab, _path: egui_dock::NodePath) {
@@ -633,11 +691,14 @@ impl eframe::App for App {
             status: &mut self.status,
             plugins: &mut self.plugins,
             undock: Vec::new(),
+            dragged: None,
         };
+        let dock_rect = ui.available_rect_before_wrap();
         DockArea::new(&mut self.dock)
             .show_leaf_collapse_buttons(false)
             .show_inside(ui, &mut viewer);
         let undock = std::mem::take(&mut viewer.undock);
+        let dragged = viewer.dragged;
         let ctx = ui.ctx().clone();
         let origin = ctx
             .input(|i| i.viewport().inner_rect)
@@ -646,6 +707,7 @@ impl eframe::App for App {
             let at = egui::pos2(160.0, 140.0) + origin;
             self.undock(tab, at, egui::vec2(360.0, 480.0));
         }
+        self.tab_dropped_outside(&ctx, dragged, dock_rect, origin);
         self.promote_floating(&ctx);
         self.pane_windows(&ctx);
         let mut cx = cx!(self);
@@ -665,6 +727,58 @@ impl eframe::App for App {
         if let Some(json) = layout::save(&self.dock, &windows) {
             storage.set_string(layout::LAYOUT_V3_KEY, json);
         }
+    }
+}
+
+/// Where the pointer is on a new pane window: near its top-left, as if the
+/// window were held by its title bar.
+const GRAB: egui::Vec2 = egui::vec2(60.0, 12.0);
+
+/// How close to the dock's edge a lost pointer counts as leaving it.
+const EDGE: f32 = 24.0;
+
+/// Where a tab released at `pointer` (or, if the pointer left the window,
+/// last seen at `last`) should open in its own window: `None` when it was
+/// released over the dock, where egui_dock handles it. A pointer that
+/// vanished well inside the dock is a touch release, not a drag out.
+fn drop_outside(
+    dock: egui::Rect,
+    pointer: Option<egui::Pos2>,
+    last: Option<egui::Pos2>,
+) -> Option<egui::Pos2> {
+    match pointer {
+        Some(p) => (!dock.contains(p)).then_some(p),
+        None => last.filter(|p| !dock.shrink(EDGE).contains(*p)),
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::drop_outside;
+    use egui::{Rect, pos2};
+
+    #[test]
+    fn a_tab_released_outside_the_dock_gets_a_window_there() {
+        let dock = Rect::from_min_max(pos2(0.0, 60.0), pos2(1000.0, 700.0));
+        // Over the dock: egui_dock's drop.
+        assert_eq!(drop_outside(dock, Some(pos2(500.0, 400.0)), None), None);
+        // Outside the main window (pointer captured, coordinates beyond it).
+        assert_eq!(
+            drop_outside(dock, Some(pos2(1300.0, 200.0)), None),
+            Some(pos2(1300.0, 200.0))
+        );
+        assert_eq!(
+            drop_outside(dock, Some(pos2(-40.0, 300.0)), None),
+            Some(pos2(-40.0, 300.0))
+        );
+        // Pointer gone after leaving through the right edge: last position.
+        assert_eq!(
+            drop_outside(dock, None, Some(pos2(995.0, 300.0))),
+            Some(pos2(995.0, 300.0))
+        );
+        // Pointer gone mid-dock (a touch release): not a drag out.
+        assert_eq!(drop_outside(dock, None, Some(pos2(500.0, 400.0))), None);
+        assert_eq!(drop_outside(dock, None, None), None);
     }
 }
 

@@ -8,6 +8,7 @@ mod app;
 mod chain;
 mod constrain;
 mod demo;
+mod dialog;
 mod file_io;
 mod fonts;
 mod grid;
