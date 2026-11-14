@@ -211,6 +211,22 @@ impl FileIo {
         self.dialogs(ctx, canvas, settings);
     }
 
+    /// OUTPUT ▸ Export… and Ctrl+E (#325): the export dialog with the
+    /// machine-profile picker, which validates first (SPEC §8).
+    pub fn open_export(&mut self, canvas: &AppState, settings: &Settings) {
+        self.begin_profile_export(canvas, settings);
+    }
+
+    /// The app bar's Save (#324): as File ▸ Save.
+    pub fn save_now(&mut self, canvas: &AppState) {
+        self.save(canvas, false);
+    }
+
+    /// OUTPUT ▸ Machine profiles… (#325, #286).
+    pub fn open_profiles(&mut self) {
+        self.profiles.open(None);
+    }
+
     /// The open document's file name, or "Untitled" (the Browser root, #326).
     pub fn doc_name(&self) -> &str {
         self.name.as_deref().unwrap_or("Untitled")
@@ -327,7 +343,7 @@ impl FileIo {
             .on_hover_text("Add, edit, duplicate and delete machine profiles")
             .clicked()
         {
-            self.profiles.open(None);
+            self.open_profiles();
             ui.close();
         }
         ui.menu_button("Export", |ui| {

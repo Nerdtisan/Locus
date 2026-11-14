@@ -459,7 +459,7 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
                 d.arc((11.0, 5.5), 3.0, PI, TAU);
             }
         }
-        "ui.export" | "ui.export_off" => {
+        "ui.export" | "ui.export_off" | "output.export" => {
             d.line((8.0, 10.0), (8.0, 2.5));
             d.arrow_head((8.0, 1.5), (0.0, -1.0));
             d.poly(&[(3.0, 9.0), (3.0, 14.0), (13.0, 14.0), (13.0, 9.0)], false);
@@ -467,12 +467,90 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
                 d.line((2.0, 2.0), (14.0, 14.0));
             }
         }
-        "ui.plugin" => {
+        "ui.plugin" | "output.exporter_plugins" | "util.plugin_manager" => {
             // A plug: two prongs, a body and a lead.
             d.line((6.0, 1.5), (6.0, 5.0));
             d.line((10.0, 1.5), (10.0, 5.0));
             d.rect(3.5, 5.0, 12.5, 10.0);
             d.line((8.0, 10.0), (8.0, 14.5));
+        }
+        // ── App bar (#324) ──
+        "file.save" => {
+            // A floppy disk.
+            d.poly(
+                &[
+                    (2.0, 2.0),
+                    (12.0, 2.0),
+                    (14.0, 4.0),
+                    (14.0, 14.0),
+                    (2.0, 14.0),
+                ],
+                true,
+            );
+            d.rect(5.0, 2.0, 11.0, 6.0);
+            d.rect(4.5, 9.0, 11.5, 14.0);
+        }
+        "edit.undo" | "edit.redo" => {
+            let m = |x: f32| if id == "edit.undo" { x } else { 16.0 - x };
+            if id == "edit.undo" {
+                d.arc((9.0, 9.5), 4.5, -FRAC_PI_2, FRAC_PI_2);
+            } else {
+                d.arc((7.0, 9.5), 4.5, FRAC_PI_2, 3.0 * FRAC_PI_2);
+            }
+            d.line((m(9.0), 5.0), (m(4.0), 5.0));
+            d.line((m(9.0), 14.0), (m(6.0), 14.0));
+            d.arrow_head(
+                (m(2.5), 5.0),
+                (if id == "edit.undo" { -1.0 } else { 1.0 }, 0.0),
+            );
+        }
+        "view.tool_search" => {
+            d.circle((6.5, 6.5), 4.5);
+            d.line((10.0, 10.0), (14.5, 14.5));
+        }
+        // ── OUTPUT and UTILITIES (#325) ──
+        "output.validate" => {
+            // A shield with a tick.
+            d.poly(
+                &[
+                    (8.0, 1.5),
+                    (14.0, 4.0),
+                    (13.0, 10.0),
+                    (8.0, 14.5),
+                    (3.0, 10.0),
+                    (2.0, 4.0),
+                ],
+                true,
+            );
+            d.poly(&[(5.0, 8.0), (7.5, 10.5), (11.0, 5.5)], false);
+        }
+        "output.profiles" => {
+            // A machine: screen on a stand.
+            d.rect(2.0, 2.5, 14.0, 10.5);
+            d.line((8.0, 10.5), (8.0, 13.5));
+            d.line((4.5, 13.5), (11.5, 13.5));
+        }
+        "util.install_plugin" => {
+            d.line((8.0, 1.5), (8.0, 9.0));
+            d.arrow_head((8.0, 10.0), (0.0, 1.0));
+            d.poly(&[(3.0, 9.0), (3.0, 14.0), (13.0, 14.0), (13.0, 9.0)], false);
+        }
+        "util.mcp" => {
+            // A robot's head: an assistant on this computer.
+            d.rect(2.5, 4.5, 13.5, 13.5);
+            d.line((8.0, 4.5), (8.0, 2.0));
+            d.dot((8.0, 1.8));
+            d.dot((5.5, 8.5));
+            d.dot((10.5, 8.5));
+            d.line((5.5, 11.5), (10.5, 11.5));
+        }
+        "view.shortcuts" => {
+            // A keyboard.
+            d.rect(1.5, 4.0, 14.5, 12.5);
+            for x in [4.0, 6.7, 9.3, 12.0] {
+                d.dot((x, 7.0));
+            }
+            d.line((4.5, 10.0), (11.5, 10.0));
         }
         "ui.add" => {
             d.line((8.0, 3.0), (8.0, 13.0));

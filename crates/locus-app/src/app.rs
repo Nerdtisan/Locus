@@ -14,6 +14,7 @@ use crate::toolbar::{self, Toolbar};
 use crate::views::browser::BrowserView;
 use crate::views::parameters::ParametersView;
 use crate::views::shortcuts::ShortcutsView;
+use crate::views::tool_search::ToolSearch;
 use egui_dock::{DockArea, DockState, TabViewer};
 use locus_geom::Vec2;
 
@@ -79,6 +80,8 @@ pub struct App {
     registry: Registry,
     /// The ribbon's pinned actions (#299, design §2.3).
     toolbar: Toolbar,
+    /// Tool search, S (#324, design §6.1).
+    search: ToolSearch,
     settings: Settings,
     /// The one mutable state (design §7.3).
     state: AppState,
@@ -125,6 +128,7 @@ impl App {
             last_drop: None,
             registry,
             toolbar,
+            search: ToolSearch::default(),
             panes: Panes::default(),
             settings,
             state: {
@@ -295,7 +299,7 @@ impl App {
     }
 
     /// Carry out what registry actions asked of the shell this frame.
-    fn shell_requests(&mut self) {
+    fn shell_requests(&mut self, ctx: &egui::Context) {
         for req in std::mem::take(&mut self.state.view.shell) {
             match req {
                 Shell::ToggleShortcuts => self.toggle_tab(Tab::Shortcuts),
@@ -307,6 +311,23 @@ impl App {
                     if !self.is_shown(tab) {
                         self.toggle_tab(tab);
                     }
+                }
+                Shell::Export => self.files.open_export(&self.state, &self.settings),
+                Shell::Profiles => self.files.open_profiles(),
+                Shell::InstallPlugin => self.plugins.open_install(),
+                Shell::PluginManager => self.plugins.open_manager(),
+                #[cfg(not(target_arch = "wasm32"))]
+                Shell::Mcp => self.mcp.open(),
+                // The registry disables it on the web (SPEC §16).
+                #[cfg(target_arch = "wasm32")]
+                Shell::Mcp => {}
+                Shell::Save => self.files.save_now(&self.state),
+                // At the pointer, as Fusion's shortcut box (design §6.1).
+                Shell::ToolSearch => {
+                    let at = ctx
+                        .pointer_latest_pos()
+                        .unwrap_or_else(|| ctx.content_rect().center());
+                    self.search.open(at);
                 }
             }
         }
@@ -400,125 +421,229 @@ impl App {
         }
     }
 
-    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+    /// The app bar (#324, design §2): LOCUS, the menus, Save · Undo · Redo,
+    /// the document with its machine profile and units, then tool search
+    /// and the shortcut map at the right, as the mockup lays it out.
+    fn app_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                self.files.file_menu(ui, &mut self.state, &self.settings);
-                ui.separator();
-                ui.menu_button("Samples", |ui| {
-                    if ui.button("Demo sketch").clicked() {
-                        let ctx = ui.ctx().clone();
-                        self.files
-                            .open_sample(&ctx, &mut self.state, crate::demo::sketch());
-                        ui.close();
-                    }
-                    if ui.button("Stress scene (5 000 curves)").clicked() {
-                        let ctx = ui.ctx().clone();
-                        self.files
-                            .open_sample(&ctx, &mut self.state, crate::demo::stress(5000));
-                        ui.close();
-                    }
-                });
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ui.separator();
-                    if ui.button("Quit").clicked() {
-                        ui.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                }
-            });
-            ui.menu_button("Edit", |ui| {
-                let mut cx = cx!(self);
-                actions::show(ui, &self.registry, &mut cx, actions::EDIT_MENU, Style::Menu);
-            });
-            ui.menu_button("View", |ui| {
-                {
-                    let mut cx = cx!(self);
-                    actions::show(ui, &self.registry, &mut cx, actions::VIEW_MENU, Style::Menu);
-                }
-                ui.separator();
-                for tab in Tab::PANES {
-                    let mut shown = self.is_shown(tab);
-                    if ui.checkbox(&mut shown, tab.title()).changed() {
-                        self.toggle_tab(tab);
-                    }
-                }
-                if ui
-                    .add_enabled(
-                        !self.windows.is_empty(),
-                        egui::Button::new("Dock all windows"),
-                    )
-                    .on_hover_text("Put every pane window back in the main window")
-                    .clicked()
-                {
-                    self.dock_all();
-                    ui.close();
-                }
-                {
-                    let mut cx = cx!(self);
-                    actions::show(
-                        ui,
-                        &self.registry,
-                        &mut cx,
-                        actions::LAYOUT_MENU,
-                        Style::Menu,
-                    );
-                }
-                ui.separator();
-                ui.menu_button("Theme", |ui| {
-                    for t in Theme::ALL {
-                        if ui
-                            .selectable_value(&mut self.settings.theme, t, t.label())
-                            .clicked()
-                        {
-                            ui.ctx().set_theme(t.preference());
-                        }
-                    }
-                });
-                #[cfg(not(target_arch = "wasm32"))]
-                self.mcp.menu(ui);
-                ui.menu_button("Units", |ui| {
-                    for u in Units::ALL {
-                        ui.selectable_value(&mut self.settings.units, u, u.label());
-                    }
-                });
-            });
-            ui.menu_button("Sketch", |ui| {
-                let mut cx = cx!(self);
-                actions::show(
-                    ui,
-                    &self.registry,
-                    &mut cx,
-                    actions::SKETCH_MENU,
-                    Style::Menu,
+            ui.label(egui::RichText::new("LOCUS").strong());
+            ui.add_space(4.0);
+            self.menus(ui);
+            ui.separator();
+            for id in ["file.save", "edit.undo", "edit.redo"] {
+                self.bar_icon(ui, id);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.bar_text(ui, "view.shortcuts", "?");
+                self.search_button(ui);
+                ui.with_layout(
+                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                    |ui| self.document_label(ui),
                 );
-            });
-            ui.menu_button("Constrain", |ui| {
-                let mut cx = cx!(self);
-                actions::show(
-                    ui,
-                    &self.registry,
-                    &mut cx,
-                    actions::CONSTRAIN_MENU,
-                    Style::Menu,
-                );
-            });
-            ui.menu_button("Plugins", |ui| {
-                self.plugins.menu(ui, &mut self.registry, &self.state);
-            });
-            ui.menu_button("Help", |ui| {
-                {
-                    let mut cx = cx!(self);
-                    actions::show(ui, &self.registry, &mut cx, actions::HELP_MENU, Style::Menu);
-                }
-                ui.separator();
-                ui.hyperlink_to("Locus on GitHub", "https://github.com/Nerdtisan/Locus");
-                ui.label(format!("Locus v{}", env!("CARGO_PKG_VERSION")));
             });
         });
     }
 
-    /// The SKETCH ribbon with the user's pinned tools (#299, design §2.3).
+    /// An app-bar icon button running a registry action (Save, Undo, Redo).
+    fn bar_icon(&mut self, ui: &mut egui::Ui, id: &str) {
+        let Some(a) = self.registry.get(id) else {
+            return;
+        };
+        let mut cx = cx!(self);
+        let enabled = self.registry.enabled(a, cx.state);
+        let r = ui.add_enabled(
+            enabled.yes(),
+            egui::Button::new("").min_size(egui::vec2(24.0, 22.0)),
+        );
+        let color = if enabled.yes() {
+            ui.style().interact(&r).fg_stroke.color
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        crate::views::icons::paint(ui.painter(), r.rect.shrink(4.0), id, &a.label, color);
+        let mut tip = self.registry.label(a, cx.state).into_owned();
+        if let Some(k) = self.registry.shortcut(a) {
+            tip += &format!(" ({})", actions::key_text(ui.ctx(), &k));
+        } else if !a.hint.is_empty() {
+            tip = a.hint.to_string();
+        }
+        let r = match &enabled {
+            actions::Enabled::No(why) => r.on_disabled_hover_text(why.as_ref()),
+            actions::Enabled::Yes => r.on_hover_text(tip),
+        };
+        if r.clicked() {
+            self.registry.run(a, &mut cx);
+        }
+    }
+
+    /// An app-bar text button running a registry action (the ?).
+    fn bar_text(&mut self, ui: &mut egui::Ui, id: &str, text: &str) {
+        let Some(a) = self.registry.get(id) else {
+            return;
+        };
+        let mut cx = cx!(self);
+        let mut tip = a.label.to_string();
+        if let Some(k) = self.registry.shortcut(a) {
+            tip += &format!(" ({})", actions::key_text(ui.ctx(), &k));
+        }
+        if ui.button(text).on_hover_text(tip).clicked() {
+            self.registry.run(a, &mut cx);
+        }
+    }
+
+    /// "Search  S": opens tool search under the button (design §6.1).
+    fn search_button(&mut self, ui: &mut egui::Ui) {
+        let Some(a) = self.registry.get("view.tool_search") else {
+            return;
+        };
+        let key = self
+            .registry
+            .shortcut(a)
+            .map(|k| actions::key_text(ui.ctx(), &k))
+            .unwrap_or_default();
+        let r = ui
+            .add(egui::Button::new(format!("      Search   {key}")))
+            .on_hover_text(a.hint.as_ref());
+        let icon = egui::Rect::from_center_size(
+            egui::pos2(r.rect.left() + 13.0, r.rect.center().y),
+            egui::vec2(13.0, 13.0),
+        );
+        let c = ui.style().interact(&r).fg_stroke.color;
+        crate::views::icons::paint(ui.painter(), icon, a.id.as_str(), "", c);
+        if r.clicked() {
+            self.search
+                .open(r.rect.left_bottom() + egui::vec2(0.0, 4.0));
+        }
+    }
+
+    /// "coaster-tray.locus · LightBurn (SVG) · mm", centred (mockup).
+    fn document_label(&mut self, ui: &mut egui::Ui) {
+        let profile = self
+            .state
+            .document()
+            .profile()
+            .and_then(|id| locus_export::profile::find(id, &self.settings.profiles))
+            .map_or_else(|| "No machine profile".to_owned(), |p| p.name);
+        let mut job = egui::text::LayoutJob::default();
+        let strong = egui::TextFormat {
+            color: ui.visuals().strong_text_color(),
+            font_id: egui::TextStyle::Body.resolve(ui.style()),
+            ..Default::default()
+        };
+        let weak = egui::TextFormat {
+            color: ui.visuals().weak_text_color(),
+            font_id: egui::TextStyle::Small.resolve(ui.style()),
+            ..Default::default()
+        };
+        job.append(self.files.doc_name(), 0.0, strong);
+        job.append(
+            &format!("  ·  {profile}  ·  {}", self.settings.units.label()),
+            0.0,
+            weak,
+        );
+        ui.label(job).on_hover_text(
+            "The document, the machine profile it exports for (OUTPUT ▸ Machine profiles…) and the display units (View ▸ Units)",
+        );
+    }
+
+    /// File, Edit, View, Plugins and Help (design §2): the full command set.
+    fn menus(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("File", |ui| {
+            self.files.file_menu(ui, &mut self.state, &self.settings);
+            ui.separator();
+            ui.menu_button("Samples", |ui| {
+                if ui.button("Demo sketch").clicked() {
+                    let ctx = ui.ctx().clone();
+                    self.files
+                        .open_sample(&ctx, &mut self.state, crate::demo::sketch());
+                    ui.close();
+                }
+                if ui.button("Stress scene (5 000 curves)").clicked() {
+                    let ctx = ui.ctx().clone();
+                    self.files
+                        .open_sample(&ctx, &mut self.state, crate::demo::stress(5000));
+                    ui.close();
+                }
+            });
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.separator();
+                if ui.button("Quit").clicked() {
+                    ui.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        });
+        ui.menu_button("Edit", |ui| {
+            let mut cx = cx!(self);
+            actions::show(ui, &self.registry, &mut cx, actions::EDIT_MENU, Style::Menu);
+        });
+        ui.menu_button("View", |ui| {
+            {
+                let mut cx = cx!(self);
+                actions::show(ui, &self.registry, &mut cx, actions::VIEW_MENU, Style::Menu);
+            }
+            ui.separator();
+            for tab in Tab::PANES {
+                let mut shown = self.is_shown(tab);
+                if ui.checkbox(&mut shown, tab.title()).changed() {
+                    self.toggle_tab(tab);
+                }
+            }
+            if ui
+                .add_enabled(
+                    !self.windows.is_empty(),
+                    egui::Button::new("Dock all windows"),
+                )
+                .on_hover_text("Put every pane window back in the main window")
+                .clicked()
+            {
+                self.dock_all();
+                ui.close();
+            }
+            {
+                let mut cx = cx!(self);
+                actions::show(
+                    ui,
+                    &self.registry,
+                    &mut cx,
+                    actions::LAYOUT_MENU,
+                    Style::Menu,
+                );
+            }
+            ui.separator();
+            ui.menu_button("Theme", |ui| {
+                for t in Theme::ALL {
+                    if ui
+                        .selectable_value(&mut self.settings.theme, t, t.label())
+                        .clicked()
+                    {
+                        ui.ctx().set_theme(t.preference());
+                    }
+                }
+            });
+            #[cfg(not(target_arch = "wasm32"))]
+            self.mcp.menu(ui);
+            ui.menu_button("Units", |ui| {
+                for u in Units::ALL {
+                    ui.selectable_value(&mut self.settings.units, u, u.label());
+                }
+            });
+        });
+        ui.menu_button("Plugins", |ui| {
+            self.plugins.menu(ui, &mut self.registry, &self.state);
+        });
+        ui.menu_button("Help", |ui| {
+            {
+                let mut cx = cx!(self);
+                actions::show(ui, &self.registry, &mut cx, actions::HELP_MENU, Style::Menu);
+            }
+            ui.separator();
+            ui.hyperlink_to("Locus on GitHub", "https://github.com/Nerdtisan/Locus");
+            ui.label(format!("Locus v{}", env!("CARGO_PKG_VERSION")));
+        });
+    }
+
+    /// The ribbon's tabs with the user's pinned tools (#299, #325, design §2.3).
     fn ribbon(&mut self, ui: &mut egui::Ui) {
         // eframe stores the pins with the other settings (`save`).
         let mut cx = cx!(self);
@@ -697,10 +822,10 @@ impl eframe::App for App {
         self.plugins.windows(ui.ctx(), &mut self.state);
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp.update(ui.ctx(), &mut self.state);
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("menu").show(ui, |ui| self.app_bar(ui));
         egui::Panel::top("ribbon").show(ui, |ui| self.ribbon(ui));
         egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
-        self.shell_requests();
+        self.shell_requests(ui.ctx());
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
             registry: &self.registry,
@@ -732,6 +857,8 @@ impl eframe::App for App {
         self.pane_windows(&ctx);
         let mut cx = cx!(self);
         crate::views::marking_menu::show(&ctx, &self.registry, &mut cx);
+        self.search
+            .show(&ctx, &self.registry, &mut cx, &self.toolbar);
         // A pane or the marking menu asked the shell for something after
         // it drained the requests: act on it next frame, not next input.
         if !self.state.view.shell.is_empty() {

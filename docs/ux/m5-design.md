@@ -67,6 +67,8 @@ As in Fusion, Mirror, the patterns and Offset sit in Create, because they create
 
 **Constraint symbols.** The CONSTRAIN group shows every constraint as a symbol button by default (they are small, so all twelve fit, as in Fusion). Hovering one shows its name. The same symbols mark constraints on the canvas; hovering one names it, and right-clicking it offers Delete. Constraints have no letter keys (owner decision): they are reached from the symbols, tool search (S), the marking-menu list (Constrain ▸), and pinning. A user can still bind a key to any constraint in Settings ▸ Keyboard; none are bound by default.
 
+**Ribbon tabs as built (#325).** SKETCH, OUTPUT and UTILITIES are tabs above the groups, as Fusion's workspace tabs. OUTPUT has PREVIEW (Machine preview, Validate for export…) and EXPORT (Export… Ctrl+E, Machine profiles…, Exporter plugins…); UTILITIES has PLUGINS (Install plugin…, Manage plugins…) and AUTOMATION (MCP server…, Keyboard shortcuts). SKETCH ends with EXPORT at the right. Every entry is a registry action (`output.*`, `util.*`); dialogs the shell owns are reached through `Op::Shell`. Each tab is its own pinnable toolbar: an action is pinned once per tab, so Machine preview can sit on SKETCH and OUTPUT, as in the mockup. Validate for export opens the export dialog, which always validates first (SPEC §8); there is no separate validation window. The constraint symbols are smaller buttons, as in the mockup, so SKETCH fits one row at 1600 px.
+
 \* **Smooth (G2 curvature continuity)** is in Fusion's set but **not in spec §5** or the solver. It is flagged (§17): the mockup shows its symbol for completeness, but the app hides it until a spec change and a solver ticket add it.
 
 ### 2.4 View menu and navigation bar (revision 3)
@@ -200,6 +202,8 @@ Every key is a property of an action in the registry (§7.1), so the ribbon tool
 ### 6.1 Tool search (S)
 
 S opens a search box at the cursor (Fusion's shortcut box). It shows recent and pinned actions before you type. Typing filters every registry action by label and keywords, shows each one's key and group, and shows disabled actions with the reason ("select two lines"). Enter runs the top match; ↑↓ choose another. Select, previously S, is Esc.
+
+**As built (#324).** Tool search is the registry action `view.tool_search` (S over the canvas; Search in the app bar opens it under the button). The S that opens it is not typed into the box. Matches rank label prefixes, then word prefixes, then substrings, then keywords and ids; recent picks are remembered for the session. An action that can't run stays listed, dimmed, with its reason; picking it shows the reason and keeps the box open. The app bar is LOCUS, File · Edit · View · Plugins · Help, Save · Undo · Redo (registry actions `file.save`, `edit.undo`, `edit.redo`), the document name with its machine profile and units centred, then Search S and ?. The Sketch and Constrain menus are gone: the mockup has none, and the ribbon's group menus list every tool.
 
 ### 6.2 Style panel and eyedropper (#287)
 

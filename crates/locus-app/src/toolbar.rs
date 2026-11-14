@@ -27,15 +27,68 @@ const MAX_JSON: usize = 64 * 1024;
 const MAX_PER_GROUP: usize = 64;
 const MAX_ID: usize = 128;
 
-/// The SKETCH ribbon's groups, in Fusion's order (design §2).
-pub const RIBBON: [Group; 6] = [
+/// The ribbon's tabs, as Fusion's workspace tabs (#325, design §2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RibbonTab {
+    #[default]
+    Sketch,
+    Output,
+    Utilities,
+}
+
+impl RibbonTab {
+    pub const ALL: [RibbonTab; 3] = [RibbonTab::Sketch, RibbonTab::Output, RibbonTab::Utilities];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            RibbonTab::Sketch => "SKETCH",
+            RibbonTab::Output => "OUTPUT",
+            RibbonTab::Utilities => "UTILITIES",
+        }
+    }
+
+    /// The tab `g` is on (SKETCH for a group no tab shows).
+    pub fn of(g: Group) -> RibbonTab {
+        RibbonTab::ALL
+            .into_iter()
+            .find(|t| t.groups().contains(&g))
+            .unwrap_or_default()
+    }
+
+    /// The tab's groups, left to right.
+    pub fn groups(self) -> &'static [Group] {
+        match self {
+            RibbonTab::Sketch => &RIBBON[..6],
+            RibbonTab::Output => &RIBBON[6..8],
+            RibbonTab::Utilities => &RIBBON[8..],
+        }
+    }
+}
+
+/// Every ribbon group, tab by tab, in Fusion's order (design §2): SKETCH,
+/// then OUTPUT, then UTILITIES. Only these take pins.
+pub const RIBBON: [Group; 10] = [
     Group::Create,
     Group::Modify,
     Group::Constrain,
     Group::Inspect,
     Group::Insert,
     Group::Select,
+    Group::Preview,
+    Group::Export,
+    Group::Plugins,
+    Group::Automation,
 ];
+
+/// Actions a group's ▾ menu lists although they belong to another group:
+/// OUTPUT ▸ PREVIEW shows Machine preview, which is also an Inspect toggle
+/// (design §2).
+pub fn also_in(g: Group) -> &'static [&'static str] {
+    match g {
+        Group::Preview => &["view.machine_preview"],
+        _ => &[],
+    }
+}
 
 /// Each group's default pins: its most used tools (design §2.3, §7.1).
 /// The CONSTRAIN group shows every constraint symbol, as Fusion does.
@@ -84,6 +137,14 @@ pub const DEFAULT_RIBBON: &[(Group, &[&str])] = &[
     ),
     (Group::Insert, &[]),
     (Group::Select, &["select.select", "select.chain"]),
+    // OUTPUT and UTILITIES (#325), as the mockup pins them.
+    (Group::Preview, &["view.machine_preview", "output.validate"]),
+    (Group::Export, &["output.export", "output.profiles"]),
+    (
+        Group::Plugins,
+        &["util.install_plugin", "util.plugin_manager"],
+    ),
+    (Group::Automation, &["util.mcp"]),
 ];
 
 impl Group {
@@ -96,10 +157,13 @@ impl Group {
             Group::Inspect => "inspect",
             Group::Insert => "insert",
             Group::Select => "select",
-            Group::Output => "output",
+            Group::Preview => "preview",
+            Group::Export => "export",
+            Group::Plugins => "plugins",
+            Group::Automation => "automation",
+            Group::File => "file",
             Group::Edit => "edit",
             Group::View => "view",
-            Group::File => "file",
         }
     }
 
@@ -112,10 +176,13 @@ impl Group {
             Group::Inspect => "INSPECT",
             Group::Insert => "INSERT",
             Group::Select => "SELECT",
-            Group::Output => "OUTPUT",
+            Group::Preview => "PREVIEW",
+            Group::Export => "EXPORT",
+            Group::Plugins => "PLUGINS",
+            Group::Automation => "AUTOMATION",
+            Group::File => "FILE",
             Group::Edit => "EDIT",
             Group::View => "VIEW",
-            Group::File => "FILE",
         }
     }
 }
@@ -154,22 +221,42 @@ impl Toolbar {
         self.groups.get(&g).map_or(&[], Vec::as_slice)
     }
 
-    pub fn is_pinned(&self, id: &str) -> bool {
-        self.groups.values().any(|v| v.iter().any(|p| p == id))
+    /// Each tab is its own toolbar (#325): an action is pinned at most once
+    /// per tab, but may be on several tabs (Machine preview is on SKETCH
+    /// and OUTPUT, as in the mockup).
+    fn in_tab(&mut self, tab: RibbonTab) -> impl Iterator<Item = (&Group, &mut Vec<String>)> {
+        self.groups
+            .iter_mut()
+            .filter(move |(g, _)| tab.groups().contains(g))
+    }
+
+    /// Every pin, tab by tab, left to right (tool search lists them, §2.3).
+    pub fn all_pins(&self) -> impl Iterator<Item = &str> {
+        RIBBON
+            .iter()
+            .flat_map(|g| self.pinned(*g).iter().map(String::as_str))
+    }
+
+    pub fn is_pinned(&self, id: &str, tab: RibbonTab) -> bool {
+        tab.groups()
+            .iter()
+            .any(|g| self.pinned(*g).iter().any(|p| p == id))
     }
 
     /// Pin `id` into `group` before position `index` (clamped). An id that
-    /// is already pinned moves, so this is also reorder (design §2.3).
+    /// is already pinned on the group's tab moves, so this is also reorder
+    /// (design §2.3).
     pub fn pin(&mut self, id: &str, group: Group, index: usize) {
         if !RIBBON.contains(&group) {
             return;
         }
+        let tab = RibbonTab::of(group);
         // Moving within a group: removing the old place shifts later ones.
-        let index = match self.position(id) {
+        let index = match self.position(id, tab) {
             Some((g, i)) if g == group && i < index => index - 1,
             _ => index,
         };
-        self.unpin(id);
+        self.unpin(id, tab);
         let v = self.groups.entry(group).or_default();
         if v.len() >= MAX_PER_GROUP {
             return;
@@ -177,17 +264,18 @@ impl Toolbar {
         v.insert(index.min(v.len()), id.to_owned());
     }
 
-    pub fn unpin(&mut self, id: &str) {
-        for v in self.groups.values_mut() {
+    /// Take `id` off `tab`'s toolbar.
+    pub fn unpin(&mut self, id: &str, tab: RibbonTab) {
+        for (_, v) in self.in_tab(tab) {
             v.retain(|p| p != id);
         }
     }
 
     /// Back to `group`'s default pins. A default pin that the user moved to
-    /// another group comes back here.
+    /// another group of the same tab comes back here.
     pub fn reset(&mut self, group: Group) {
         let d = defaults(group);
-        for (g, v) in &mut self.groups {
+        for (g, v) in self.in_tab(RibbonTab::of(group)) {
             if *g != group {
                 v.retain(|p| !d.contains(p));
             }
@@ -195,10 +283,13 @@ impl Toolbar {
         self.groups.insert(group, d);
     }
 
-    fn position(&self, id: &str) -> Option<(Group, usize)> {
-        self.groups
-            .iter()
-            .find_map(|(g, v)| v.iter().position(|p| p == id).map(|i| (*g, i)))
+    fn position(&self, id: &str, tab: RibbonTab) -> Option<(Group, usize)> {
+        tab.groups().iter().find_map(|g| {
+            self.pinned(*g)
+                .iter()
+                .position(|p| p == id)
+                .map(|i| (*g, i))
+        })
     }
 
     /// The pins from the stored value. `known` says whether a built-in
@@ -222,8 +313,10 @@ impl Toolbar {
                 return bar;
             }
         };
-        let mut seen: Vec<String> = Vec::new();
+        // Duplicates are dropped per tab: each tab is its own toolbar.
+        let mut seen: Vec<(RibbonTab, String)> = Vec::new();
         for g in RIBBON {
+            let tab = RibbonTab::of(g);
             let Some(ids) = saved.groups.get(g.key()) else {
                 continue; // keep this group's defaults
             };
@@ -232,9 +325,10 @@ impl Toolbar {
                 .filter(|id| id.len() <= MAX_ID)
                 .filter(|id| id.starts_with("plugin.") || known(id))
                 .filter(|id| {
-                    let new = !seen.contains(id);
+                    let key = (tab, (*id).clone());
+                    let new = !seen.contains(&key);
                     if new {
-                        seen.push((*id).clone());
+                        seen.push(key);
                     }
                     new
                 })
@@ -244,12 +338,18 @@ impl Toolbar {
             bar.groups.insert(g, kept);
         }
         // A default pin of an untouched group may also be pinned in a stored
-        // group; the stored place wins.
+        // group of the same tab; the stored place wins.
         for g in RIBBON {
+            let tab = RibbonTab::of(g);
+            let stored_in_tab = |p: &String| {
+                tab.groups()
+                    .iter()
+                    .any(|o| saved.groups.get(o.key()).is_some_and(|s| s.contains(p)))
+            };
             if !saved.groups.contains_key(g.key())
                 && let Some(v) = bar.groups.get_mut(&g)
             {
-                v.retain(|p| !saved.groups.values().any(|s| s.contains(p)));
+                v.retain(|p| !stored_in_tab(p));
             }
         }
         bar
@@ -293,10 +393,50 @@ mod tests {
         }
     }
 
+    /// The tabs split the groups as the mockup does (#325).
+    #[test]
+    fn tabs_hold_the_mockups_groups() {
+        assert_eq!(RibbonTab::Output.groups(), [Group::Preview, Group::Export]);
+        assert_eq!(
+            RibbonTab::Utilities.groups(),
+            [Group::Plugins, Group::Automation]
+        );
+        let all: Vec<Group> = RibbonTab::ALL
+            .iter()
+            .flat_map(|t| t.groups().iter().copied())
+            .collect();
+        assert_eq!(all, RIBBON);
+        // A pin stored before the new tabs existed still loads; the new
+        // groups get their defaults.
+        let old = r#"{"version":1,"groups":{"create":["sketch.line"]}}"#;
+        let t = Toolbar::load(Some(old), known);
+        assert_eq!(
+            t.pinned(Group::Export),
+            ["output.export", "output.profiles"]
+        );
+    }
+
+    /// The same action can be on two tabs; moving and unpinning act on one.
+    #[test]
+    fn each_tab_is_its_own_toolbar() {
+        let mut t = Toolbar::default();
+        let id = "view.machine_preview";
+        assert!(t.is_pinned(id, RibbonTab::Sketch) && t.is_pinned(id, RibbonTab::Output));
+        t.unpin(id, RibbonTab::Sketch);
+        assert!(!t.is_pinned(id, RibbonTab::Sketch) && t.is_pinned(id, RibbonTab::Output));
+        t.pin(id, Group::Export, 0);
+        assert_eq!(t.pinned(Group::Export)[0], id);
+        assert!(!t.pinned(Group::Preview).contains(&id.to_owned()));
+        // Both copies survive a save and load.
+        t.pin(id, Group::Create, 0);
+        let back = Toolbar::load(t.save().as_deref(), known);
+        assert_eq!(back, t);
+    }
+
     #[test]
     fn pin_unpin_and_reorder() {
         let mut t = Toolbar::default();
-        assert!(!t.is_pinned("modify.extend"));
+        assert!(!t.is_pinned("modify.extend", RibbonTab::Sketch));
         t.pin("modify.extend", Group::Modify, 0);
         assert_eq!(t.pinned(Group::Modify)[0], "modify.extend");
         // Moving right within a group lands before the target index.
@@ -318,23 +458,23 @@ mod tests {
                 .contains(&"modify.extend".to_owned())
         );
         assert_eq!(t.pinned(Group::Create).last().unwrap(), "modify.extend");
-        t.unpin("modify.extend");
-        assert!(!t.is_pinned("modify.extend"));
+        t.unpin("modify.extend", RibbonTab::Sketch);
+        assert!(!t.is_pinned("modify.extend", RibbonTab::Sketch));
     }
 
     #[test]
     fn only_ribbon_groups_take_pins() {
         let mut t = Toolbar::default();
         t.pin("edit.undo", Group::Edit, 0);
-        assert!(!t.is_pinned("edit.undo"));
+        assert!(!t.is_pinned("edit.undo", RibbonTab::Sketch));
     }
 
     #[test]
     fn reset_restores_one_group_only() {
         let mut t = Toolbar::default();
-        t.unpin("modify.trim");
+        t.unpin("modify.trim", RibbonTab::Sketch);
         t.pin("modify.fillet", Group::Create, 0);
-        t.unpin("sketch.line");
+        t.unpin("sketch.line", RibbonTab::Sketch);
         t.reset(Group::Modify);
         assert_eq!(
             t.pinned(Group::Modify),
@@ -344,14 +484,17 @@ mod tests {
             !t.pinned(Group::Create)
                 .contains(&"modify.fillet".to_owned())
         );
-        assert!(!t.is_pinned("sketch.line"), "Create was not reset");
+        assert!(
+            !t.is_pinned("sketch.line", RibbonTab::Sketch),
+            "Create was not reset"
+        );
     }
 
     #[test]
     fn round_trips() {
         let mut t = Toolbar::default();
         t.pin("modify.extend", Group::Select, 1);
-        t.unpin("sketch.line");
+        t.unpin("sketch.line", RibbonTab::Sketch);
         let json = t.save().unwrap();
         assert!(json.contains("\"version\":1"));
         assert_eq!(Toolbar::load(Some(&json), known), t);
