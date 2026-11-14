@@ -10,6 +10,7 @@ pub mod constraints;
 pub mod icons;
 pub mod layers;
 pub mod marking_menu;
+pub mod nav_bar;
 pub mod palette;
 pub mod parameters;
 pub mod patterns;

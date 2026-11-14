@@ -587,7 +587,17 @@ impl TabViewer for Viewer<'_> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
         match tab {
-            Tab::Canvas => self.state.canvas_ui(ui, self.settings, self.status),
+            Tab::Canvas => {
+                self.state.canvas_ui(ui, self.settings, self.status);
+                // The navigation bar floats over the canvas (design §2.4).
+                let rect = self.state.view.rect;
+                let mut cx = Cx {
+                    state: self.state,
+                    settings: self.settings,
+                    plugins: Some(self.plugins),
+                };
+                crate::views::nav_bar::show(ui.ctx(), self.registry, &mut cx, rect);
+            }
             Tab::Browser => {
                 // One tree (design §2): layers, recipes and regions.
                 egui::CollapsingHeader::new("Layers")

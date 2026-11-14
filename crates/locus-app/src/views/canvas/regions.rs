@@ -330,6 +330,19 @@ impl AppState {
                 fill(painter, view, rect, &region_loops(r), c);
             }
         };
+        // Display ▾ Profiles (design §2.4, #328): every closed profile shaded
+        // faintly, as Fusion shades sketch profiles.
+        if self.view.display.profiles {
+            for r in self.regions() {
+                fill(
+                    painter,
+                    view,
+                    rect,
+                    &region_loops(r),
+                    with_alpha(t.hover, 22),
+                );
+            }
+        }
         for (id, res) in self.doc.sketcher.boolean_results() {
             if let Ok(area) = res {
                 let focused = self.selection.regions.focus == Some(*id);

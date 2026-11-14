@@ -45,6 +45,11 @@ pub struct ViewState {
     pub(crate) touch_toggle: bool,
     /// The open marking menu (design §4, #290).
     pub(crate) marking: Option<Marking>,
+    /// The user's grid, snap and display settings, copied from `Settings`
+    /// each frame by the canvas (M5 design §2.4, #328).
+    pub(crate) display: crate::settings::Display,
+    /// The navigation bar's Pan is on: a left drag pans (Esc ends it).
+    pub(crate) pan_mode: bool,
     /// `view.shortcuts` ran: the shell shows or hides the shortcuts pane
     /// (design §5.1); it owns the dock, so it takes this each frame.
     pub(crate) toggle_shortcuts: bool,
@@ -84,6 +89,8 @@ impl Default for ViewState {
             touch_add: false,
             touch_toggle: false,
             marking: None,
+            display: crate::settings::Display::default(),
+            pan_mode: false,
             toggle_shortcuts: false,
         }
     }
