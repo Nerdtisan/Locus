@@ -56,6 +56,9 @@ pub enum ToolEvent {
     Typed(f64, Pick),
     /// Enter with nothing typed: finish (end a polyline).
     Enter,
+    /// Tab while sizing (#334): lock the typed value, if any, in the
+    /// active field and move to the next.
+    Tab(Option<f64>),
     /// Esc with nothing typed.
     Esc,
     /// The tool was picked with the selection already made (constraints).
@@ -157,6 +160,10 @@ pub trait Tool {
     }
     /// The heads-up value at the cursor: what it is and its length in mm.
     fn readout(&self, _cursor: Vec2) -> Option<(&'static str, f64)> {
+        None
+    }
+    /// Two heads-up fields while sizing (width and height, #334).
+    fn fields(&self, _cursor: Vec2) -> Option<[crate::tools::Field; 2]> {
         None
     }
     fn snap(&self) -> Snap {
@@ -267,6 +274,10 @@ impl Tool for DrawTool {
                 self.draft.finish();
                 Flow::Continue
             }
+            ToolEvent::Tab(v) => {
+                self.draft.tab(v);
+                Flow::Continue
+            }
             ToolEvent::Esc if self.draft.is_drawing() => {
                 self.draft.cancel();
                 Flow::Cancel
@@ -302,6 +313,10 @@ impl Tool for DrawTool {
 
     fn readout(&self, cursor: Vec2) -> Option<(&'static str, f64)> {
         self.draft.readout(cursor)
+    }
+
+    fn fields(&self, cursor: Vec2) -> Option<[crate::tools::Field; 2]> {
+        self.draft.fields(cursor)
     }
 
     fn snap(&self) -> Snap {
