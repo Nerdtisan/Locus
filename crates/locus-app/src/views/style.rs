@@ -87,21 +87,21 @@ impl AppState {
         let doc = self.doc.sketcher.document();
         let ids = styled(doc, &self.selected());
         let nothing = self.selection.items.is_empty();
-        ui.horizontal(|ui| {
-            ui.strong(if nothing { "Current style" } else { "Style" });
-            let picking = self.tools.eyedropper;
-            if ui
+        let picking = self.tools.eyedropper;
+        let mut toggle = false;
+        crate::views::properties::section(ui, "Style", |ui| {
+            toggle = ui
                 .selectable_label(picking, "💧")
                 .on_hover_text(if nothing {
                     "Eyedropper: click an object to make its style the current style"
                 } else {
                     "Eyedropper: click an object to copy its style to the selection"
                 })
-                .clicked()
-            {
-                self.tools.eyedropper = !picking;
-            }
+                .clicked();
         });
+        if toggle {
+            self.tools.eyedropper = !picking;
+        }
         if nothing {
             let mut s = self.doc.current_style;
             let shared = Shared::of(&[s]);
@@ -110,7 +110,7 @@ impl AppState {
             if s.validate().is_ok() {
                 self.doc.current_style = s;
             }
-            ui.weak("New geometry gets this style.");
+            ui.weak("Current style: new geometry is drawn with it. Pick a style with the eyedropper to change it.");
             return;
         }
         if ids.is_empty() {
