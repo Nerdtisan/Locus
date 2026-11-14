@@ -130,11 +130,20 @@ impl AppState {
             self.doc.notice = Some("That curve can't be offset".to_owned());
             return;
         }
-        let Some(item) = self.doc.scene.items.iter().find(|i| i.id == id) else {
+        // The piece of the picked entity nearest the click: a text is many
+        // outline pieces with one id (#347), so its handle sits by the click.
+        let Some((shape, base)) = self
+            .doc
+            .scene
+            .items
+            .iter()
+            .filter(|i| i.id == id)
+            .map(|i| (i.shape, closest(&i.shape, at)))
+            .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))
+        else {
             return;
         };
-        let base = closest(&item.shape, at);
-        let plus = plus_direction(doc, &sources, base, &item.shape);
+        let plus = plus_direction(doc, &sources, base, &shape);
         self.selection.items.set_all(sources.iter().copied());
         self.tools.offset_pick = None;
         self.tools.offset_draft = Some(OffsetDraft {
@@ -452,7 +461,18 @@ impl AppState {
                 match draft {
                     Some((n, focus, _)) => {
                         row(ui, "Curves", |ui| {
-                            let text = super::dialog::count(n, "curve", "curves");
+                            let is_text = self
+                                .tools
+                                .offset_draft
+                                .as_ref()
+                                .and_then(|d| d.sources.first())
+                                .and_then(|id| self.doc.sketcher.document().text(*id))
+                                .is_some();
+                            let text = if is_text {
+                                "1 text".to_owned()
+                            } else {
+                                super::dialog::count(n, "curve", "curves")
+                            };
                             cancel_pick = selection(ui, &text, true, false).1;
                         });
                         row(ui, "", |ui| {
@@ -794,6 +814,48 @@ mod tests {
             let measured = (h - d.base).dot(d.plus);
             assert!((measured - 2.0).abs() < 0.05, "{name}: {measured}");
         }
+        // Text (#347): picked by a glyph's outline, the handle is on the
+        // offset of the outline.
+        let mut c = AppState::default();
+        c.load(Document::new());
+        c.set_tool(Tool::Text);
+        c.tools.text_settings.content = "O".to_owned();
+        c.tool_event(ToolEvent::Click(Pick::free(Vec2::ZERO)), None, Units::Mm);
+        c.close_text_dialog();
+        let (text, piece) = c
+            .doc
+            .scene
+            .items
+            .iter()
+            .find(|i| {
+                matches!(
+                    c.doc.sketcher.document().entity(i.id).map(|e| &e.geom),
+                    Some(locus_doc::Geom::Text { .. })
+                )
+            })
+            .map(|i| (i.id, i.shape))
+            .expect("a placed text");
+        let at = closest(&piece, Vec2::new(0.0, 0.0));
+        c.set_modify(Modify::Offset);
+        c.tool_event(ToolEvent::Click(Pick::free(at)), Some(text), Units::Mm);
+        let d = c.tools.offset_draft.clone().expect("text: a draft");
+        assert_eq!(d.sources, vec![text]);
+        c.tools.corner.text.offset = "1".to_owned();
+        c.refresh_offset_preview(Units::Mm);
+        let shapes = c
+            .tools
+            .offset_draft
+            .as_ref()
+            .and_then(|d| d.preview.as_ref().map(|(_, s)| s.clone()))
+            .unwrap_or_default();
+        assert!(!shapes.is_empty(), "text: a preview");
+        let h = handle_point(d.base, d.plus, 1.0, Some(&shapes));
+        let gap = h.distance(d.base);
+        assert!(
+            (gap - 1.0).abs() < 0.1,
+            "text: the handle is 1 mm out ({gap})"
+        );
+        assert!(c.offset_ok(Units::Mm), "text: committed");
         // No preview yet, or zero: the moved point, or the base.
         let b = Vec2::new(1.0, 1.0);
         let up = Vec2::new(0.0, 1.0);
