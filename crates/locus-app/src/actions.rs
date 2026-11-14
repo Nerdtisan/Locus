@@ -479,6 +479,8 @@ pub static BUILTIN: &[Action] = &[
         &[],
         Modify::Pattern(true),
     ),
+    // Mirror creates geometry too (design §2, §6.9, #215).
+    modify("sketch.mirror", Group::Create, "⫴", &[], Modify::Mirror),
     // ── Modify ──
     modify(
         "modify.trim",
