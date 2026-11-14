@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The SKETCH ribbon with pinnable tools (#299, M5 design §2, §2.3).
+//! The ribbon: SKETCH, OUTPUT and UTILITIES tabs, with pinnable tools
+//! (#299, #325, M5 design §2, §2.3).
 //!
-//! Each group shows its pinned actions as symbol buttons, then a `GROUP ▾`
+//! The tab strip picks which groups show; SKETCH ends with EXPORT at the
+//! right, as Fusion's sketch ends with FINISH SKETCH. Each group shows its pinned actions as symbol buttons, then a `GROUP ▾`
 //! menu listing every action in the group. Pin by dragging a menu row (or
 //! its pin icon) onto the toolbar, or by clicking the pin icon; reorder by
 //! dragging a button sideways, into any group; unpin by dragging a button
@@ -10,7 +12,7 @@
 //! settings and never touch the document.
 
 use crate::actions::{Action, Cx, Enabled, Group, Registry, Source};
-use crate::toolbar::{RIBBON, Toolbar};
+use crate::toolbar::{RibbonTab, Toolbar, also_in};
 use crate::views::icons;
 use egui::{DragAndDrop, Sense};
 
@@ -25,7 +27,7 @@ struct Dragged {
 /// A change to the pins, applied after the ribbon is drawn.
 enum Edit {
     Pin(String, Group, usize),
-    Unpin(String),
+    Unpin(String, RibbonTab),
     Reset(Group),
 }
 
@@ -33,41 +35,131 @@ enum Edit {
 /// store them.
 pub fn show(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>, bar: &mut Toolbar) -> bool {
     let ctx = ui.ctx().clone();
+    let tab = tabs(ui);
     let dragging = DragAndDrop::payload::<Dragged>(&ctx);
     let mut edits = Vec::new();
+    let finish = tab == RibbonTab::Sketch;
+    let finish_w = if finish { 96.0 } else { 0.0 };
     // Wraps between groups on a narrow window: a group that wouldn't fit
     // in what is left of the row starts a new one, so its ▾ stays visible.
     let rect = ui
-        .horizontal_wrapped(|ui| {
-            let step = 26.0 + ui.spacing().item_spacing.x;
-            for (n, g) in RIBBON.into_iter().enumerate() {
-                let shown = bar
-                    .pinned(g)
-                    .iter()
-                    .filter(|id| reg.get(id).is_some())
-                    .count();
-                let need = shown as f32 * step + 110.0;
-                if n > 0 && need > ui.available_size_before_wrap().x {
-                    ui.end_row();
-                } else if n > 0 {
-                    ui.separator();
-                }
-                group(ui, reg, cx, bar, g, dragging.as_deref(), &mut edits);
+        .horizontal(|ui| {
+            let w = (ui.available_width() - finish_w).max(0.0);
+            let groups = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(w, 0.0),
+                    egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                    |ui| row(ui, reg, cx, bar, tab, dragging.as_deref(), &mut edits),
+                )
+                .response
+                .rect;
+            if finish {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    export_end(ui, reg, cx);
+                });
             }
+            groups
         })
-        .response
-        .rect;
-    if let Some(d) = &dragging {
+        .inner;
+    finish_drag(ui, &ctx, reg, dragging.as_deref(), rect, tab, &mut edits);
+    let changed = !edits.is_empty();
+    for e in edits {
+        match e {
+            Edit::Pin(id, g, i) => bar.pin(&id, g, i),
+            Edit::Unpin(id, tab) => bar.unpin(&id, tab),
+            Edit::Reset(g) => bar.reset(g),
+        }
+    }
+    changed
+}
+
+/// The tab strip; returns the tab showing. Which tab is open is view state
+/// for this session, kept in egui's memory.
+fn tabs(ui: &mut egui::Ui) -> RibbonTab {
+    let id = egui::Id::new("locus-ribbon-tab");
+    let mut tab: RibbonTab = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
+    ui.horizontal(|ui| {
+        for t in RibbonTab::ALL {
+            let text = egui::RichText::new(t.title()).small().strong();
+            if ui.selectable_label(tab == t, text).clicked() {
+                tab = t;
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(id, tab));
+    tab
+}
+
+/// EXPORT at the right end of SKETCH (design §2), as Fusion's FINISH SKETCH.
+fn export_end(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>) {
+    let Some(a) = reg.get("output.export") else {
+        return;
+    };
+    let tip = tooltip_plain(ui, reg, cx, a);
+    let label = ui.button("EXPORT").on_hover_text(&tip);
+    let icon = ui.add(egui::Button::new("").min_size(egui::vec2(26.0, 26.0)));
+    let color = icon_color(ui, &icon, true);
+    icons::paint(
+        ui.painter(),
+        icon.rect.shrink(5.0),
+        a.id.as_str(),
+        &a.label,
+        color,
+    );
+    if label.clicked() || icon.on_hover_text(tip).clicked() {
+        run_or_explain(reg, cx, a);
+    }
+}
+
+/// The groups of `tab`, separated.
+fn row(
+    ui: &mut egui::Ui,
+    reg: &Registry,
+    cx: &mut Cx<'_>,
+    bar: &Toolbar,
+    tab: RibbonTab,
+    dragging: Option<&Dragged>,
+    edits: &mut Vec<Edit>,
+) {
+    for (n, &g) in tab.groups().iter().enumerate() {
+        let step = button_size(g) + ui.spacing().item_spacing.x;
+        let shown = bar
+            .pinned(g)
+            .iter()
+            .filter(|id| reg.get(id).is_some())
+            .count();
+        let need = shown as f32 * step + 110.0;
+        if n > 0 && need > ui.available_size_before_wrap().x {
+            ui.end_row();
+        } else if n > 0 {
+            ui.separator();
+        }
+        group(ui, reg, cx, bar, g, dragging, edits);
+    }
+}
+
+/// The end of a drag: unpin a button dropped off the toolbar, and draw what
+/// is being dragged under the pointer.
+fn finish_drag(
+    ui: &egui::Ui,
+    ctx: &egui::Context,
+    reg: &Registry,
+    dragging: Option<&Dragged>,
+    rect: egui::Rect,
+    tab: RibbonTab,
+    edits: &mut Vec<Edit>,
+) {
+    if let Some(d) = dragging {
         let pointer = ctx.input(|i| i.pointer.latest_pos());
         let released = ctx.input(|i| i.pointer.any_released());
         if released {
             // A row dragged out of a group menu: the drop ends the menu too.
-            egui::Popup::close_all(&ctx);
+            egui::Popup::close_all(ctx);
         }
         // Dropped off the toolbar: a pinned button unpins (design §2.3).
         if released && d.from_bar && edits.is_empty() && !pointer.is_some_and(|p| rect.contains(p))
         {
-            edits.push(Edit::Unpin(d.id.clone()));
+            edits.push(Edit::Unpin(d.id.clone(), tab));
         }
         if let (Some(p), Some(a)) = (pointer, reg.get(&d.id)) {
             ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -93,15 +185,6 @@ pub fn show(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>, bar: &mut Toolba
             );
         }
     }
-    let changed = !edits.is_empty();
-    for e in edits {
-        match e {
-            Edit::Pin(id, g, i) => bar.pin(&id, g, i),
-            Edit::Unpin(id) => bar.unpin(&id),
-            Edit::Reset(g) => bar.reset(g),
-        }
-    }
-    changed
 }
 
 fn group(
@@ -123,7 +206,9 @@ fn group(
             // Stable ids: auto ids would shift as pins come and go, and a
             // menu's open state would jump to another widget.
             let r = ui
-                .push_id(("ribbon-pin", id.as_str()), |ui| pin_button(ui, reg, cx, a))
+                .push_id(("ribbon-pin", id.as_str()), |ui| {
+                    pin_button(ui, reg, cx, a, button_size(g))
+                })
                 .inner;
             r.dnd_set_drag_payload(Dragged {
                 id: id.clone(),
@@ -146,7 +231,7 @@ fn group(
             }
             r.context_menu(|ui| {
                 if ui.button("Unpin").clicked() {
-                    edits.push(Edit::Unpin(id.clone()));
+                    edits.push(Edit::Unpin(id.clone(), RibbonTab::of(g)));
                     ui.close();
                 }
             });
@@ -202,18 +287,30 @@ fn insertion_line(ui: &egui::Ui, x: f32, rect: egui::Rect) {
 /// One pinned symbol button. It is draggable, so it can't be greyed out
 /// with `add_enabled`; a disabled action is drawn weak and explains itself
 /// when clicked.
-fn pin_button(ui: &mut egui::Ui, reg: &Registry, cx: &Cx<'_>, a: &Action) -> egui::Response {
+/// Pinned buttons' size. The constraint symbols are smaller, as in Fusion
+/// and the mockup, so all twelve fit (design §2).
+fn button_size(g: Group) -> f32 {
+    if g == Group::Constrain { 22.0 } else { 26.0 }
+}
+
+fn pin_button(
+    ui: &mut egui::Ui,
+    reg: &Registry,
+    cx: &Cx<'_>,
+    a: &Action,
+    size: f32,
+) -> egui::Response {
     let enabled = reg.enabled(a, cx.state);
     let on = reg.is_on(a, cx.state, cx.settings);
     let r = ui.add(
         egui::Button::selectable(on, "")
-            .min_size(egui::vec2(26.0, 26.0))
+            .min_size(egui::vec2(size, size))
             .sense(Sense::click_and_drag()),
     );
     let color = icon_color(ui, &r, enabled.yes());
     icons::paint(
         ui.painter(),
-        r.rect.shrink(5.0),
+        r.rect.shrink(size * 0.19),
         a.id.as_str(),
         &a.label,
         color,
@@ -235,6 +332,22 @@ fn tooltip(ui: &egui::Ui, reg: &Registry, cx: &Cx<'_>, a: &Action, enabled: &Ena
         Enabled::Yes => {}
     }
     t + "\nDrag to reorder, drag off the toolbar or right-click to unpin"
+}
+
+/// A tooltip for a button that isn't a pin: label, key and hint.
+fn tooltip_plain(ui: &egui::Ui, reg: &Registry, cx: &Cx<'_>, a: &Action) -> String {
+    let mut t = reg.label(a, cx.state).into_owned();
+    if let Some(k) = reg.shortcut(a) {
+        t += &format!(" ({})", crate::actions::key_text(ui.ctx(), &k));
+    }
+    if !a.hint.is_empty() {
+        t += &format!(
+            "
+{}",
+            a.hint
+        );
+    }
+    t
 }
 
 /// Run `a`, or say in the status bar why it can't run now.
@@ -263,7 +376,11 @@ fn menu(
     g: Group,
     edits: &mut Vec<Edit>,
 ) {
-    let all: Vec<&Action> = reg.actions().iter().filter(|a| a.group == g).collect();
+    let all: Vec<&Action> = also_in(g)
+        .iter()
+        .filter_map(|id| reg.get(id))
+        .chain(reg.actions().iter().filter(|a| a.group == g))
+        .collect();
     if all.is_empty() {
         ui.weak(match g {
             Group::Insert => "Generator plugins add their commands here",
@@ -272,7 +389,7 @@ fn menu(
     }
     for a in all {
         let id = a.id.as_str();
-        let pinned = bar.is_pinned(id);
+        let pinned = bar.is_pinned(id, RibbonTab::of(g));
         ui.horizontal(|ui| {
             let pin = ui.add(
                 egui::Button::selectable(pinned, "")
@@ -298,7 +415,7 @@ fn menu(
             });
             if pin.clicked() {
                 edits.push(if pinned {
-                    Edit::Unpin(id.to_owned())
+                    Edit::Unpin(id.to_owned(), RibbonTab::of(g))
                 } else {
                     Edit::Pin(id.to_owned(), g, usize::MAX)
                 });

@@ -308,6 +308,15 @@ impl App {
                         self.toggle_tab(tab);
                     }
                 }
+                Shell::Export => self.files.open_export(&self.state, &self.settings),
+                Shell::Profiles => self.files.open_profiles(),
+                Shell::InstallPlugin => self.plugins.open_install(),
+                Shell::PluginManager => self.plugins.open_manager(),
+                #[cfg(not(target_arch = "wasm32"))]
+                Shell::Mcp => self.mcp.open(),
+                // The registry disables it on the web (SPEC §16).
+                #[cfg(target_arch = "wasm32")]
+                Shell::Mcp => {}
             }
         }
     }
@@ -518,7 +527,7 @@ impl App {
         });
     }
 
-    /// The SKETCH ribbon with the user's pinned tools (#299, design §2.3).
+    /// The ribbon's tabs with the user's pinned tools (#299, #325, design §2.3).
     fn ribbon(&mut self, ui: &mut egui::Ui) {
         // eframe stores the pins with the other settings (`save`).
         let mut cx = cx!(self);

@@ -219,27 +219,37 @@ impl WebPlugins {
         actions::plugin_actions(self.installed.iter().map(|p| &p.manifest))
     }
 
+    /// UTILITIES ▸ Install plugin… (#325): pick a `.locusplugin`.
+    pub fn open_install(&mut self) {
+        self.spawn(async {
+            let r = match pick_bytes(".locusplugin").await {
+                Ok(v) if v.is_null() || v.is_undefined() => Ok(None),
+                Ok(v) => match v.dyn_into::<Uint8Array>() {
+                    Ok(b) => Ok(Some(b.to_vec())),
+                    Err(v) => Err(v
+                        .as_string()
+                        .unwrap_or_else(|| "Could not read the file.".into())),
+                },
+                Err(_) => Err("Could not open the file picker.".into()),
+            };
+            Msg::Picked(r)
+        });
+    }
+
+    /// UTILITIES ▸ Manage plugins… and OUTPUT ▸ Exporter plugins… (#325).
+    pub fn open_manager(&mut self) {
+        self.manage = true;
+    }
+
     pub fn menu(&mut self, ui: &mut Ui, reg: &mut actions::Registry, canvas: &AppState) {
         reg.sync_plugins(self.plugin_actions());
         if ui.button("Install plugin…").clicked() {
             ui.close();
-            self.spawn(async {
-                let r = match pick_bytes(".locusplugin").await {
-                    Ok(v) if v.is_null() || v.is_undefined() => Ok(None),
-                    Ok(v) => match v.dyn_into::<Uint8Array>() {
-                        Ok(b) => Ok(Some(b.to_vec())),
-                        Err(v) => Err(v
-                            .as_string()
-                            .unwrap_or_else(|| "Could not read the file.".into())),
-                    },
-                    Err(_) => Err("Could not open the file picker.".into()),
-                };
-                Msg::Picked(r)
-            });
+            self.open_install();
         }
         if ui.button("Plugin manager…").clicked() {
             ui.close();
-            self.manage = true;
+            self.open_manager();
         }
         ui.separator();
         let of = |k: Kind| -> Vec<(String, String)> {
