@@ -50,8 +50,29 @@ struct Panes {
     shortcuts: ShortcutsView,
 }
 
+/// A pane in its own OS window (#285, design §2.2). The builder keeps the
+/// geometry it opened with: feeding the live geometry back each frame would
+/// make egui move the window every frame.
+struct PaneWindow {
+    saved: layout::Window,
+    open_pos: [f32; 2],
+    open_size: [f32; 2],
+}
+
+impl PaneWindow {
+    fn new(saved: layout::Window) -> Self {
+        Self {
+            open_pos: saved.pos,
+            open_size: saved.size,
+            saved,
+        }
+    }
+}
+
 pub struct App {
     dock: DockState<Tab>,
+    /// Panes undocked into their own windows (#285).
+    windows: Vec<PaneWindow>,
     /// Every command the UI offers (#294, design §7.1).
     registry: Registry,
     /// The ribbon's pinned actions (#299, design §2.3).
@@ -76,12 +97,16 @@ impl App {
         crate::fonts::install(&cc.egui_ctx);
         let settings = Settings::load(cc.storage);
         cc.egui_ctx.set_theme(settings.theme.preference());
-        let dock = cc.storage.map_or_else(default_layout, |s| {
-            layout::load(
-                s.get_string(layout::LAYOUT_V2_KEY).as_deref(),
-                s.get_string(layout::LAYOUT_V1_KEY).as_deref(),
-            )
-        });
+        let layout = cc.storage.map_or_else(
+            || layout::load(None, None, None),
+            |s| {
+                layout::load(
+                    s.get_string(layout::LAYOUT_V3_KEY).as_deref(),
+                    s.get_string(layout::LAYOUT_V2_KEY).as_deref(),
+                    s.get_string(layout::LAYOUT_V1_KEY).as_deref(),
+                )
+            },
+        );
         let registry = Registry::default();
         let toolbar = Toolbar::load(
             cc.storage
@@ -91,7 +116,8 @@ impl App {
         );
         #[allow(unused_mut)] // mutated only on desktop
         let mut app = Self {
-            dock,
+            dock: layout.dock,
+            windows: layout.windows.into_iter().map(PaneWindow::new).collect(),
             registry,
             toolbar,
             panes: Panes::default(),
@@ -129,23 +155,188 @@ impl App {
         self.state.load(crate::demo::stress(5000));
     }
 
+    /// Is `tab` showing, docked or in its own window?
+    fn is_shown(&self, tab: Tab) -> bool {
+        self.dock.find_tab(&tab).is_some() || self.windows.iter().any(|w| w.saved.tab == tab)
+    }
+
+    /// Show or hide a pane. A hidden pane comes back docked beside its
+    /// neighbour (design §5.1: Shortcuts under the Inspector's stack).
     fn toggle_tab(&mut self, tab: Tab) {
         if let Some(loc) = self.dock.find_tab(&tab) {
             self.dock.remove_tab(loc);
-        } else if tab == Tab::Shortcuts {
-            // By default under the side panes (design §5.1).
-            match self.dock.find_tab(&Tab::Constraints) {
-                Some(at) => {
-                    self.dock.set_focused_node_and_surface(egui_dock::NodePath {
-                        surface: at.surface,
-                        node: at.node,
-                    });
-                    self.dock.push_to_focused_leaf(tab);
-                }
-                None => self.dock.push_to_first_leaf(tab),
-            }
+        } else if let Some(i) = self.windows.iter().position(|w| w.saved.tab == tab) {
+            self.windows.remove(i);
         } else {
-            self.dock.push_to_focused_leaf(tab);
+            layout::redock(&mut self.dock, tab);
+        }
+    }
+
+    /// Move a docked pane into its own window at `pos` (desktop points).
+    fn undock(&mut self, tab: Tab, pos: egui::Pos2, size: egui::Vec2) {
+        if tab == Tab::Canvas || self.windows.iter().any(|w| w.saved.tab == tab) {
+            return;
+        }
+        if let Some(loc) = self.dock.find_tab(&tab) {
+            self.dock.remove_tab(loc);
+        }
+        self.windows.push(PaneWindow::new(layout::Window {
+            tab,
+            pos: [pos.x, pos.y],
+            size: [size.x.max(240.0), size.y.max(200.0)],
+            monitor: None,
+        }));
+    }
+
+    /// Draw each pane window (#285): an OS window on the desktop; on the
+    /// web, which has one window, an in-page window. Closing it, or Dock,
+    /// puts the pane back in the dock.
+    fn pane_windows(&mut self, ctx: &egui::Context) {
+        let mut windows = std::mem::take(&mut self.windows);
+        let mut back = Vec::new();
+        // eframe embeds viewports where it can't open windows (the web).
+        // Its embedded windows ignore the position, so draw our own there.
+        let embedded = ctx.embed_viewports();
+        for (i, w) in windows.iter_mut().enumerate() {
+            let mut tab = w.saved.tab;
+            let mut viewer = Viewer {
+                registry: &self.registry,
+                state: &mut self.state,
+                panes: &mut self.panes,
+                settings: &mut self.settings,
+                status: &mut self.status,
+                plugins: &mut self.plugins,
+                undock: Vec::new(),
+            };
+            let pos = egui::pos2(w.open_pos[0], w.open_pos[1]);
+            let size = egui::vec2(w.open_size[0], w.open_size[1]);
+            let dock_it = if embedded {
+                let mut open = true;
+                let mut dock_it = false;
+                let shown = egui::Window::new(tab.title())
+                    .id(egui::Id::new(("locus-pane", tab)))
+                    .open(&mut open)
+                    .default_pos(pos)
+                    .default_size(size)
+                    .constrain(true)
+                    .show(ctx, |ui| {
+                        if ui
+                            .button("Dock")
+                            .on_hover_text("Put this pane back in the dock")
+                            .clicked()
+                        {
+                            dock_it = true;
+                        }
+                        ui.separator();
+                        egui::ScrollArea::both().show(ui, |ui| viewer.ui(ui, &mut tab));
+                    });
+                if let Some(r) = shown.map(|s| s.response.rect) {
+                    w.saved.pos = [r.min.x, r.min.y];
+                    w.saved.size = [r.width(), r.height()];
+                }
+                dock_it || !open
+            } else {
+                let id = egui::ViewportId::from_hash_of(("locus-pane", tab));
+                let builder = egui::ViewportBuilder::default()
+                    .with_title(format!("{} - Locus", tab.title()))
+                    .with_position(pos)
+                    .with_inner_size(size)
+                    .with_min_inner_size(egui::vec2(200.0, 160.0));
+                ctx.show_viewport_immediate(id, builder, |ui, _class| {
+                    let mut dock_it = false;
+                    egui::Panel::top("pane-window-bar").show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.strong(tab.title());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    dock_it = ui
+                                        .button("Dock")
+                                        .on_hover_text("Put this pane back in the main window")
+                                        .clicked();
+                                },
+                            );
+                        });
+                    });
+                    egui::CentralPanel::default_margins().show(ui, |ui| {
+                        egui::ScrollArea::both().show(ui, |ui| viewer.ui(ui, &mut tab));
+                    });
+                    ui.input(|i| {
+                        let vp = i.viewport();
+                        if let Some(r) = vp.outer_rect {
+                            w.saved.pos = [r.min.x, r.min.y];
+                        }
+                        if let Some(r) = vp.inner_rect {
+                            w.saved.size = [r.width(), r.height()];
+                        }
+                        if let Some(m) = vp.monitor_size {
+                            w.saved.monitor = Some(format!("{:.0}x{:.0}", m.x, m.y));
+                        }
+                        dock_it || vp.close_requested()
+                    })
+                })
+            };
+            if dock_it {
+                back.push(i);
+            }
+        }
+        for i in back.into_iter().rev() {
+            let w = windows.remove(i);
+            layout::redock(&mut self.dock, w.saved.tab);
+        }
+        self.windows = windows;
+    }
+
+    /// Every pane window back into the dock.
+    fn dock_all(&mut self) {
+        for w in std::mem::take(&mut self.windows) {
+            layout::redock(&mut self.dock, w.saved.tab);
+        }
+    }
+
+    /// egui_dock floats a tab dragged out of the dock in a window inside the
+    /// main one. Once the drag ends, that becomes a real OS window at the
+    /// same place (design §2.2); on the web, an in-page window.
+    fn promote_floating(&mut self, ctx: &egui::Context) {
+        let origin = ctx
+            .input(|i| i.viewport().inner_rect)
+            .map_or(egui::Vec2::ZERO, |r| r.min.to_vec2());
+        let floating: Vec<_> = self
+            .dock
+            .iter_surfaces_indexed()
+            .filter(|(_, s)| matches!(s, egui_dock::Surface::Window(..)))
+            .map(|(i, _)| i)
+            .collect();
+        for si in floating {
+            let Some(ws) = self.dock.get_window_state(si) else {
+                continue;
+            };
+            if ws.dragged() {
+                continue;
+            }
+            let rect = ws.rect();
+            let Some(surface) = self.dock.remove_surface(si) else {
+                continue;
+            };
+            let tabs: Vec<Tab> = surface.iter_all_tabs().map(|(_, t)| *t).collect();
+            for (n, tab) in tabs.into_iter().enumerate() {
+                let step = egui::vec2(24.0, 24.0) * n as f32;
+                let size = if rect.is_finite() && rect.width() > 1.0 {
+                    rect.size()
+                } else {
+                    egui::vec2(360.0, 480.0)
+                };
+                let pos = if rect.is_finite() {
+                    rect.min + origin + step
+                } else {
+                    egui::pos2(120.0, 120.0) + origin + step
+                };
+                if tab == Tab::Canvas {
+                    layout::redock(&mut self.dock, tab);
+                } else {
+                    self.undock(tab, pos, size);
+                }
+            }
         }
     }
 
@@ -186,22 +377,26 @@ impl App {
                     actions::show(ui, &self.registry, &mut cx, actions::VIEW_MENU, Style::Menu);
                 }
                 ui.separator();
-                for tab in [
-                    Tab::Properties,
-                    Tab::Layers,
-                    Tab::Regions,
-                    Tab::Parameters,
-                    Tab::Patterns,
-                    Tab::Constraints,
-                    Tab::Shortcuts,
-                ] {
-                    let mut shown = self.dock.find_tab(&tab).is_some();
+                for tab in Tab::PANES {
+                    let mut shown = self.is_shown(tab);
                     if ui.checkbox(&mut shown, tab.title()).changed() {
                         self.toggle_tab(tab);
                     }
                 }
+                if ui
+                    .add_enabled(
+                        !self.windows.is_empty(),
+                        egui::Button::new("Dock all windows"),
+                    )
+                    .on_hover_text("Put every pane window back in the main window")
+                    .clicked()
+                {
+                    self.dock_all();
+                    ui.close();
+                }
                 if ui.button("Reset layout").clicked() {
                     self.dock = default_layout();
+                    self.windows.clear();
                     ui.close();
                 }
                 ui.separator();
@@ -267,8 +462,12 @@ impl App {
 
     /// The active tool's options and the next click's prompt.
     fn options_bar(&mut self, ui: &mut egui::Ui) {
+        let palette = self.is_shown(Tab::Palette);
         ui.horizontal_wrapped(|ui| {
-            self.state.tool_options_ui(ui);
+            // The palette holds the tool options; with it closed they stay here.
+            if !palette {
+                self.state.tool_options_ui(ui);
+            }
             ui.weak(self.state.hint());
             self.state.touch_modifiers_ui(ui);
         });
@@ -325,8 +524,10 @@ struct Viewer<'a> {
     registry: &'a Registry,
     state: &'a mut AppState,
     panes: &'a mut Panes,
-    settings: &'a Settings,
+    settings: &'a mut Settings,
     status: &'a mut Status,
+    /// Tabs whose context menu asked for their own window (#285).
+    undock: Vec<Tab>,
     #[cfg(not(target_arch = "wasm32"))]
     plugins: &'a mut crate::plugins::Plugins,
     #[cfg(target_arch = "wasm32")]
@@ -343,21 +544,47 @@ impl TabViewer for Viewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
         match tab {
             Tab::Canvas => self.state.canvas_ui(ui, self.settings, self.status),
-            Tab::Properties => {
+            Tab::Browser => {
+                // One tree (design §2): layers, recipes and regions.
+                egui::CollapsingHeader::new("Layers")
+                    .default_open(true)
+                    .show(ui, |ui| self.panes.layers.ui(ui, self.state, self.settings));
+                egui::CollapsingHeader::new("Recipes").show(ui, |ui| {
+                    self.panes.patterns.ui(ui, self.state, self.settings.units);
+                });
+                egui::CollapsingHeader::new("Regions").show(ui, |ui| self.state.regions_ui(ui));
+            }
+            Tab::Inspector => {
                 self.plugins.properties_ui(ui, self.state);
                 self.state.properties_ui(ui, self.settings);
             }
-            Tab::Layers => self.panes.layers.ui(ui, self.state, self.settings),
+            Tab::Palette => {
+                let mut cx = Cx {
+                    state: self.state,
+                    settings: self.settings,
+                    plugins: Some(self.plugins),
+                };
+                crate::views::palette::ui(ui, self.registry, &mut cx);
+            }
             Tab::Constraints => self.state.constraints_ui(ui, self.settings),
-            Tab::Regions => self.state.regions_ui(ui),
             Tab::Parameters => self.panes.parameters.ui(ui, self.state),
-            Tab::Patterns => self.panes.patterns.ui(ui, self.state, self.settings.units),
             Tab::Shortcuts => self.panes.shortcuts.ui(ui, self.registry),
         }
     }
 
     fn is_closeable(&self, tab: &Tab) -> bool {
         *tab != Tab::Canvas
+    }
+
+    fn allowed_in_windows(&self, tab: &mut Tab) -> bool {
+        *tab != Tab::Canvas
+    }
+
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Tab, _path: egui_dock::NodePath) {
+        if *tab != Tab::Canvas && ui.button("Open in its own window").clicked() {
+            self.undock.push(*tab);
+            ui.close();
+        }
     }
 
     fn scroll_bars(&self, tab: &Tab) -> [bool; 2] {
@@ -402,14 +629,25 @@ impl eframe::App for App {
             registry: &self.registry,
             state: &mut self.state,
             panes: &mut self.panes,
-            settings: &self.settings,
+            settings: &mut self.settings,
             status: &mut self.status,
             plugins: &mut self.plugins,
+            undock: Vec::new(),
         };
         DockArea::new(&mut self.dock)
             .show_leaf_collapse_buttons(false)
             .show_inside(ui, &mut viewer);
+        let undock = std::mem::take(&mut viewer.undock);
         let ctx = ui.ctx().clone();
+        let origin = ctx
+            .input(|i| i.viewport().inner_rect)
+            .map_or(egui::Vec2::ZERO, |r| r.min.to_vec2());
+        for tab in undock {
+            let at = egui::pos2(160.0, 140.0) + origin;
+            self.undock(tab, at, egui::vec2(360.0, 480.0));
+        }
+        self.promote_floating(&ctx);
+        self.pane_windows(&ctx);
         let mut cx = cx!(self);
         crate::views::marking_menu::show(&ctx, &self.registry, &mut cx);
     }
@@ -422,9 +660,10 @@ impl eframe::App for App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp.save(storage);
-        // v1 is left in place for older builds (design §7.4).
-        if let Some(json) = layout::save(&self.dock) {
-            storage.set_string(layout::LAYOUT_V2_KEY, json);
+        // v1 and v2 are left in place for older builds (design §7.4).
+        let windows: Vec<_> = self.windows.iter().map(|w| w.saved.clone()).collect();
+        if let Some(json) = layout::save(&self.dock, &windows) {
+            storage.set_string(layout::LAYOUT_V3_KEY, json);
         }
     }
 }

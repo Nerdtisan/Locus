@@ -1138,6 +1138,8 @@ pub enum Style {
     /// A drop-down menu: tools as selectable rows, commands as buttons with
     /// their key, toggles as checkboxes. Closes the menu on use.
     Menu,
+    /// The same rows in a pane (the sketch palette): nothing to close.
+    Pane,
 }
 
 /// Draw `items` from the registry. Returns true when an action ran.
