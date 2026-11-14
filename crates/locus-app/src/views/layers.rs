@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The Layers panel (#118; SPEC §4 Layers, §7 Operations).
+//! The Browser's layer rows (#118, #326; SPEC §4 Layers, §7 Operations).
+//!
+//! One compact row per layer, in export order: colour, name, then icons for
+//! the operation, export, lock and visibility (M5 design §2). Clicking the
+//! name makes the layer active and the Inspector's subject; the row's menu
+//! (right-click) holds rename, operation settings, order and delete.
 //!
 //! Every action is a `Sketcher` command, so each is one undo step. Slider and
 //! colour edits are held in a local copy while the pointer is down and
@@ -8,7 +13,8 @@
 use crate::constrain;
 use crate::settings::Settings;
 use crate::state::AppState;
-use egui::{DragValue, Ui};
+use crate::views::icons;
+use egui::{DragValue, Sense, Ui};
 use locus_doc::{
     Command, Compensation, ConstraintId, Document, EntityId, LayerDeletion, LayerId, LayerProps,
     LockReport, Operation, OperationKind,
@@ -47,6 +53,8 @@ pub struct LayersView {
     colour: Option<(LayerId, [u8; 3])>,
     op: Option<(LayerId, Operation)>,
     dialog: Option<Dialog>,
+    /// The Browser's + asked for a new layer.
+    add: bool,
     /// The document generation this state belongs to.
     seen: u64,
 }
@@ -74,47 +82,44 @@ impl LayersView {
         }
     }
 
-    /// Draw the pane. Transient state is dropped when another document loads.
+    /// The Layers header's +: a new Draw layer, made active, next frame.
+    pub fn request_add(&mut self) {
+        self.add = true;
+    }
+
+    /// Draw the layer rows. Transient state is dropped when another
+    /// document loads.
     pub fn ui(&mut self, ui: &mut Ui, app: &mut AppState, settings: &Settings) {
         if self.seen != app.doc.generation {
+            // A + clicked this frame still counts.
             *self = Self {
                 seen: app.doc.generation,
+                add: self.add,
                 ..Self::default()
             };
         }
         app.doc.active_layer = app.active_layer();
-        let mut want = Wants::default();
+        // A canvas selection is the Inspector's subject instead (§2.1).
+        if !app.selection.items.is_empty() {
+            app.view.browser_layer = None;
+        }
+        let mut want = Wants {
+            add: std::mem::take(&mut self.add),
+            ..Wants::default()
+        };
         let selected: Vec<EntityId> = app.selection.items.iter().collect();
         {
             let doc = app.doc.sketcher.document();
             let st = &mut *self;
-            let active = app.doc.active_layer;
-            ui.horizontal(|ui| {
-                if ui.button("+ Add layer").clicked() {
-                    want.add = true;
-                }
-                let name = doc.layer(active).map_or("", |l| l.name.as_str());
-                let b = ui.add_enabled(
-                    !selected.is_empty(),
-                    egui::Button::new(format!("Move {} to “{name}”", selected.len())),
-                );
-                if b.on_hover_text("Move the selection to the active layer")
-                    .clicked()
-                {
-                    want.commands.push(Command::MoveToLayer {
-                        entities: selected.clone(),
-                        layer: active,
-                    });
-                }
-            });
-            ui.separator();
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let order = sorted(doc);
-                for (pos, id) in order.iter().enumerate() {
-                    layer_row(ui, doc, st, &mut want, &order, pos, *id, active);
-                    ui.separator();
-                }
-            });
+            let row = Row {
+                active: app.doc.active_layer,
+                picked: app.view.browser_layer,
+                selected: &selected,
+            };
+            let order = sorted(doc);
+            for (pos, id) in order.iter().enumerate() {
+                layer_row(ui, doc, st, &mut want, &order, pos, *id, &row);
+            }
         }
         self.apply_wants(app, want, ui, settings);
     }
@@ -122,6 +127,9 @@ impl LayersView {
     fn apply_wants(&mut self, app: &mut AppState, want: Wants, ui: &Ui, settings: &Settings) {
         if let Some(id) = want.activate {
             app.doc.active_layer = id;
+            // The layer is now what the Inspector shows (design §2.1).
+            app.clear_selection();
+            app.view.browser_layer = Some(id);
         }
         if want.add {
             let cmd = new_layer(app.doc.sketcher.document());
@@ -383,6 +391,35 @@ fn reorder(doc: &Document, order: &[LayerId], pos: usize, dir: isize) -> Option<
     })
 }
 
+/// What every row needs to know about the app.
+struct Row<'a> {
+    active: LayerId,
+    /// The layer picked in the Browser, if any.
+    picked: Option<LayerId>,
+    selected: &'a [EntityId],
+}
+
+/// A small icon button for a layer row; dim when off or disabled.
+fn icon_toggle(ui: &mut Ui, icon: &str, on: bool, enabled: bool, tip: &str) -> egui::Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), sense);
+    if enabled && r.hovered() {
+        ui.painter()
+            .rect_filled(rect, 3.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    let color = if on && enabled {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    icons::paint(ui.painter(), rect.shrink(2.0), icon, "", color);
+    r.on_hover_text(tip)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layer_row(
     ui: &mut Ui,
@@ -392,28 +429,29 @@ fn layer_row(
     order: &[LayerId],
     pos: usize,
     id: LayerId,
-    active: LayerId,
+    row: &Row<'_>,
 ) {
     let Some(l) = doc.layer(id) else {
         return;
     };
     let props = |p: LayerProps| Command::SetLayerProps { id, props: p };
     ui.horizontal(|ui| {
-        if ui
-            .radio(active == id, "")
-            .on_hover_text("Draw on this layer")
-            .clicked()
-        {
-            want.activate = Some(id);
-        }
+        ui.spacing_mut().item_spacing.x = 4.0;
         // Colour: held locally until the pointer is released.
         let mut c = match st.colour {
             Some((i, c)) if i == id => c,
             _ => l.colour,
         };
-        if ui.color_edit_button_srgb(&mut c).changed() {
-            st.colour = Some((id, c));
-        }
+        ui.scope(|ui| {
+            ui.spacing_mut().interact_size = egui::vec2(14.0, 14.0);
+            if ui
+                .color_edit_button_srgb(&mut c)
+                .on_hover_text("Layer colour")
+                .changed()
+            {
+                st.colour = Some((id, c));
+            }
+        });
         if st.colour.is_some_and(|(i, _)| i == id)
             && !ui.input(|i| i.pointer.any_down())
             && let Some((_, c)) = st.colour.take()
@@ -424,9 +462,9 @@ fn layer_row(
                 ..LayerProps::default()
             }));
         }
-        // Name: double-click to rename.
+        // Name: click to make active, double-click to rename.
         if let Some((rid, text)) = st.rename.as_mut().filter(|(r, _)| *r == id) {
-            let r = ui.add(egui::TextEdit::singleline(text).desired_width(120.0));
+            let r = ui.add(egui::TextEdit::singleline(text).desired_width(110.0));
             r.request_focus();
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
@@ -445,86 +483,144 @@ fn layer_row(
             }
         } else {
             let text = egui::RichText::new(&l.name);
-            let text = if active == id { text.strong() } else { text };
+            let text = if row.active == id {
+                text.strong()
+            } else {
+                text
+            };
             let r = ui
-                .add(egui::Label::new(text).sense(egui::Sense::click()))
-                .on_hover_text("Double-click to rename");
+                .selectable_label(row.picked == Some(id), text)
+                .on_hover_text(
+                    "Click: draw on this layer and show it in the Inspector. \
+                     Double-click to rename; right-click for more.",
+                );
+            if r.clicked() {
+                want.activate = Some(id);
+            }
             if r.double_clicked() {
                 st.rename = Some((id, l.name.clone()));
             }
+            r.context_menu(|ui| row_menu(ui, l, st, want, doc, order, pos, row.selected));
         }
-        ui.weak(l.operation.kind().name());
-    });
-    ui.horizontal(|ui| {
-        if ui
-            .selectable_label(l.visible, "Show")
-            .on_hover_text("Visible on the canvas (no effect on the solver)")
-            .clicked()
-        {
-            want.commands.push(props(LayerProps {
-                visible: Some(!l.visible),
-                ..LayerProps::default()
-            }));
-        }
-        if ui
-            .selectable_label(l.locked, "Lock")
-            .on_hover_text("Fix this layer's geometry")
-            .clicked()
-        {
-            if l.locked {
-                want.commands
-                    .push(Command::SetLayerLocked { id, locked: false });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let (icon, tip) = if l.visible {
+                (
+                    "ui.eye",
+                    "Visible on the canvas: click to hide (no effect on the solver)",
+                )
             } else {
-                want.lock = Some(id);
+                ("ui.eye_off", "Hidden: click to show")
+            };
+            if icon_toggle(ui, icon, l.visible, true, tip).clicked() {
+                want.commands.push(props(LayerProps {
+                    visible: Some(!l.visible),
+                    ..LayerProps::default()
+                }));
             }
-        }
-        // Reference geometry is never exported (SPEC §7), whatever the flag says.
-        let reference = matches!(l.operation, Operation::Reference);
-        if ui
-            .add_enabled(
-                !reference,
-                egui::Button::selectable(l.export_enabled && !reference, "Export"),
-            )
-            .on_hover_text(if reference {
-                "Reference layers are never exported"
+            let (icon, tip) = if l.locked {
+                ("ui.lock", "Locked: geometry fixed. Click to unlock")
             } else {
-                "Include in exported files"
-            })
-            .clicked()
-        {
-            want.commands.push(props(LayerProps {
-                export_enabled: Some(!l.export_enabled),
-                ..LayerProps::default()
-            }));
-        }
-        if ui
-            .add_enabled(pos > 0, egui::Button::new("Up"))
-            .on_hover_text("Earlier in export order")
-            .clicked()
-        {
-            want.commands.extend(reorder(doc, order, pos, -1));
-        }
-        if ui
-            .add_enabled(pos + 1 < order.len(), egui::Button::new("Down"))
-            .on_hover_text("Later in export order")
-            .clicked()
-        {
-            want.commands.extend(reorder(doc, order, pos, 1));
-        }
-        let open = st.expanded == Some(id);
-        if ui.selectable_label(open, "Operation").clicked() {
-            st.expanded = if open { None } else { Some(id) };
-        }
-        if ui
-            .add_enabled(order.len() > 1, egui::Button::new("Delete"))
-            .on_hover_text("Delete layer…")
-            .clicked()
-        {
-            want.delete = Some(id);
-        }
+                ("ui.unlock", "Click to lock this layer's geometry")
+            };
+            if icon_toggle(ui, icon, l.locked, true, tip).clicked() {
+                if l.locked {
+                    want.commands
+                        .push(Command::SetLayerLocked { id, locked: false });
+                } else {
+                    want.lock = Some(id);
+                }
+            }
+            // Reference geometry is never exported (SPEC §7), whatever the flag says.
+            let reference = matches!(l.operation, Operation::Reference);
+            let exported = l.export_enabled && !reference;
+            let (icon, tip) = match (reference, exported) {
+                (true, _) => ("ui.export_off", "Reference layers are never exported"),
+                (false, true) => (
+                    "ui.export",
+                    "Exported: click to leave out of exported files",
+                ),
+                (false, false) => ("ui.export_off", "Not exported: click to include"),
+            };
+            if icon_toggle(ui, icon, exported, !reference, tip).clicked() {
+                want.commands.push(props(LayerProps {
+                    export_enabled: Some(!l.export_enabled),
+                    ..LayerProps::default()
+                }));
+            }
+            let kind = l.operation.kind();
+            let open = st.expanded == Some(id);
+            let tip = format!("{}: click for its settings", kind.name());
+            if icon_toggle(ui, icons::operation(kind), true, true, &tip).clicked() {
+                st.expanded = if open { None } else { Some(id) };
+            }
+        });
     });
     if st.expanded == Some(id) {
-        operation_editor(ui, st, want, id, l.operation);
+        ui.indent(("layer-op", id), |ui| {
+            operation_editor(ui, st, want, id, l.operation);
+        });
+    }
+}
+
+/// A layer row's menu: rename, settings, order and delete (design §2).
+#[allow(clippy::too_many_arguments)]
+fn row_menu(
+    ui: &mut Ui,
+    l: &locus_doc::Layer,
+    st: &mut LayersView,
+    want: &mut Wants,
+    doc: &Document,
+    order: &[LayerId],
+    pos: usize,
+    selected: &[EntityId],
+) {
+    let id = order[pos];
+    if ui.button("Rename").clicked() {
+        st.rename = Some((id, l.name.clone()));
+        ui.close();
+    }
+    if ui.button("Operation settings…").clicked() {
+        st.expanded = Some(id);
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            !selected.is_empty(),
+            egui::Button::new(format!("Move selection here ({})", selected.len())),
+        )
+        .clicked()
+    {
+        want.commands.push(Command::MoveToLayer {
+            entities: selected.to_vec(),
+            layer: id,
+        });
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .add_enabled(pos > 0, egui::Button::new("Move up"))
+        .on_hover_text("Earlier in export order")
+        .clicked()
+    {
+        want.commands.extend(reorder(doc, order, pos, -1));
+        ui.close();
+    }
+    if ui
+        .add_enabled(pos + 1 < order.len(), egui::Button::new("Move down"))
+        .on_hover_text("Later in export order")
+        .clicked()
+    {
+        want.commands.extend(reorder(doc, order, pos, 1));
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .add_enabled(order.len() > 1, egui::Button::new("Delete layer…"))
+        .clicked()
+    {
+        want.delete = Some(id);
+        ui.close();
     }
 }
 
@@ -643,7 +739,8 @@ fn operation_editor(
                     // Draw layers have no pen settings since M5: the pen is
                     // each object's style (design §2.1, #287).
                     ui.label("");
-                    ui.weak("Pen and width are set per object (Style)");
+                    ui.weak("Pen, width: per object")
+                        .on_hover_text("Pen and width are each object's Style");
                     ui.end_row();
                 }
                 Operation::DragKnife(p) => {
@@ -713,6 +810,50 @@ impl LayersView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(lv: &mut LayersView, app: &mut AppState) {
+        let ctx = egui::Context::default();
+        let settings = Settings::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| lv.ui(ui, app, &settings));
+    }
+
+    /// Picking a layer row makes it active and the Inspector's subject; a
+    /// canvas selection takes over again (#326, design §2.1).
+    #[test]
+    fn a_picked_layer_is_active_until_the_canvas_selects() {
+        let mut app = AppState::default();
+        let mut lv = LayersView::default();
+        lv.request_add();
+        frame(&mut lv, &mut app);
+        let ids: Vec<LayerId> = app.document().layers().keys().copied().collect();
+        assert_eq!(ids.len(), 2, "the Browser's + added a layer");
+        let first = ids[0];
+        app.select_all();
+        let mut want = Some(Wants {
+            activate: Some(first),
+            ..Wants::default()
+        });
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            if let Some(w) = want.take() {
+                lv.apply_wants(&mut app, w, ui, &Settings::default());
+            }
+        });
+        assert_eq!(app.doc.active_layer, first);
+        assert_eq!(app.view.browser_layer, Some(first));
+        assert!(app.selection.items.is_empty());
+        app.apply_reporting(&Command::AddEntity {
+            layer: first,
+            construction: false,
+            style: Default::default(),
+            geom: locus_doc::Geom::Point {
+                pos: locus_geom::Vec2::ZERO,
+            },
+        });
+        app.select_all();
+        frame(&mut lv, &mut app);
+        assert_eq!(app.view.browser_layer, None);
+    }
 
     #[test]
     fn add_layer_defaults_to_draw() {
