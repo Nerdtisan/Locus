@@ -183,6 +183,8 @@ pub struct Pick {
     pub point: Option<EntityId>,
     pub on_curve: Option<EntityId>,
     pub line: Option<LineHint>,
+    /// The sketch origin (0, 0), where no point exists yet (#335).
+    pub origin: bool,
 }
 
 impl Pick {
@@ -193,6 +195,15 @@ impl Pick {
             point: None,
             on_curve: None,
             line: None,
+            origin: false,
+        }
+    }
+
+    /// The sketch origin (#335): the new point is fixed there.
+    pub fn at_origin() -> Self {
+        Self {
+            origin: true,
+            ..Self::free(Vec2::ZERO)
         }
     }
 
@@ -212,12 +223,17 @@ enum Node {
     New(Vec2),
     /// A new point constrained onto an existing curve.
     OnCurve(Vec2, EntityId),
+    /// A new point on the sketch origin, fixed there: Fusion's coincident
+    /// to the origin (#335). The document has no origin entity, so a point
+    /// fixed at (0, 0) is the origin; later picks snap to it.
+    Origin,
 }
 
 impl Node {
     fn from_pick(p: Pick) -> Self {
         match (p.point, p.on_curve) {
             (Some(id), _) => Node::Existing(id, p.pos),
+            (None, _) if p.origin => Node::Origin,
             (None, Some(curve)) => Node::OnCurve(p.pos, curve),
             (None, None) => Node::New(p.pos),
         }
@@ -226,13 +242,14 @@ impl Node {
     fn pos(self) -> Vec2 {
         match self {
             Node::Existing(_, p) | Node::New(p) | Node::OnCurve(p, _) => p,
+            Node::Origin => Vec2::ZERO,
         }
     }
 
     fn id(self) -> Option<EntityId> {
         match self {
             Node::Existing(id, _) => Some(id),
-            Node::New(_) | Node::OnCurve(..) => None,
+            Node::New(_) | Node::OnCurve(..) | Node::Origin => None,
         }
     }
 }
@@ -310,6 +327,11 @@ impl Plan {
             Node::OnCurve(pos, curve) => {
                 let point = self.point(pos);
                 self.constrain(Constraint::PointOnCurve { point, curve });
+                point
+            }
+            Node::Origin => {
+                let point = self.point(Vec2::ZERO);
+                self.constrain(Constraint::Fix { point });
                 point
             }
         }
@@ -2086,5 +2108,37 @@ mod tests {
         line.nodes.push(Node::New(Vec2::ZERO));
         assert!(!line.tab(Some(5.0)));
         assert!(line.fields(Vec2::new(1.0, 0.0)).is_none());
+    }
+
+    /// #335: a shape started on the origin gets a point fixed at (0, 0)
+    /// (coincident to the origin); a rectangle's corner on it too.
+    #[test]
+    fn a_shape_started_on_the_origin_is_fixed_there() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Line);
+        click(&mut d, &mut s, Pick::at_origin());
+        click(&mut d, &mut s, at(10.0, 4.0)).expect("a line");
+        let doc = s.document();
+        let fixed: Vec<EntityId> = doc
+            .constraints()
+            .values()
+            .filter_map(|c| match c {
+                Constraint::Fix { point } => Some(*point),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fixed.len(), 1);
+        assert_eq!(doc.point_pos(fixed[0]), Some(Vec2::ZERO));
+        // A rectangle whose first corner is the origin.
+        let mut s = Sketcher::new(Document::new());
+        let mut r = Draft::new(Tool::RectCorner);
+        click(&mut r, &mut s, Pick::at_origin());
+        click(&mut r, &mut s, at(20.0, 10.0)).expect("a rectangle");
+        assert_rectangle(&s);
+        let doc = s.document();
+        assert!(doc.constraints().values().any(|c| matches!(
+            c,
+            Constraint::Fix { point } if doc.point_pos(*point) == Some(Vec2::ZERO)
+        )));
     }
 }

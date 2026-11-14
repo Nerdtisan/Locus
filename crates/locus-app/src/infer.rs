@@ -70,6 +70,10 @@ pub fn infer(
         }
         return pick;
     }
+    // The sketch origin is a snap point for every drawing tool (#335).
+    if opts.geometry && cursor.length() <= opts.tol {
+        return Pick::at_origin();
+    }
     let gridded = on_grid(cursor, opts.grid);
     let mut pick = Pick::free(gridded);
     if !opts.enabled {
@@ -232,6 +236,25 @@ mod tests {
         geometry: true,
         grid: None,
     };
+
+    /// #335: near (0, 0) the pick is the origin; an existing point there
+    /// wins (it is the origin once fixed); Snap to geometry off ignores it.
+    #[test]
+    fn the_origin_is_a_snap_point() {
+        let p = infer(&[], ON, Tool::Line, None, true, v(0.4, -0.3));
+        assert!(p.origin && p.pos == v(0.0, 0.0) && p.point.is_none());
+        let far = infer(&[], ON, Tool::Line, None, true, v(3.0, 0.0));
+        assert!(!far.origin);
+        let items = [item(9, Shape::Point(v(0.0, 0.0)))];
+        let p = infer(&items, ON, Tool::Line, None, true, v(0.2, 0.2));
+        assert_eq!(p.point, Some(EntityId::new(9)));
+        assert!(!p.origin);
+        let off = Options {
+            geometry: false,
+            ..ON
+        };
+        assert!(!infer(&[], off, Tool::Line, None, true, v(0.2, 0.2)).origin);
+    }
 
     /// Snap to grid rounds free picks to the step; geometry still wins,
     /// and Snap to geometry off ignores points (#328, design §2.4).

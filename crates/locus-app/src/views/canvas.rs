@@ -729,7 +729,7 @@ impl AppState {
         let tool = self.tools.host.tool();
         let pen = self.tools.pen.map(|(anchor, now)| (anchor.pos, now));
         frame.draw_preview(&tool.preview(pick.pos, pen));
-        if pick.point.is_some() {
+        if pick.point.is_some() || pick.origin {
             frame.draw_snap(pick.pos);
         }
         // Inference hint glyph (#69): what the shape will be constrained to.
@@ -737,7 +737,9 @@ impl AppState {
             (Some(h), _) => Some(h.badge()),
             // A point on a curve, or a snap onto a point: coincident.
             (None, Some(_)) => Some(crate::scene::Symbol::COINCIDENT),
-            (None, None) => pick.point.map(|_| crate::scene::Symbol::COINCIDENT),
+            (None, None) => {
+                (pick.point.is_some() || pick.origin).then_some(crate::scene::Symbol::COINCIDENT)
+            }
         };
         if let Some(b) = badge {
             frame.draw_hint(pick.pos, b);
