@@ -167,6 +167,17 @@ impl AppState {
         let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let rect = resp.rect;
         let dark = ui.visuals().dark_mode;
+        // The user's view settings (design §2.4): the navigation bar, View
+        // menu and palette change them in `Settings`; hiding construction
+        // takes it out of the scene, so picking skips it too.
+        if settings.display != self.view.display {
+            let rebuild = settings.display.construction != self.view.display.construction;
+            self.view.display = settings.display;
+            if rebuild {
+                self.rebuild();
+            }
+        }
+        let display = self.view.display;
         let pal = Palette::new(dark);
         painter.rect_filled(rect, 0.0, pal.background);
 
@@ -232,8 +243,22 @@ impl AppState {
                 self.view.auto_fit = false;
             }
         }
+        let pan = space || self.view.pan_mode;
+        if self.view.pan_mode {
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(if resp.dragged() {
+                    egui::CursorIcon::Grabbing
+                } else {
+                    egui::CursorIcon::Grab
+                });
+            }
+            // Esc leaves Pan, as it leaves any tool.
+            if self.view.pointer_over && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.view.pan_mode = false;
+            }
+        }
         if resp.dragged_by(PointerButton::Middle)
-            || (space && resp.dragged_by(PointerButton::Primary))
+            || (pan && resp.dragged_by(PointerButton::Primary))
         {
             self.view.camera.pan_points(resp.drag_delta());
             self.view.auto_fit = false;
@@ -249,7 +274,7 @@ impl AppState {
             self.selection.handles = wanted;
             self.rebuild();
         }
-        if suppress || space || self.view.marking.is_some() {
+        if suppress || pan || self.view.marking.is_some() {
             // A gesture, a Space pan or the marking menu: no tool sees the pointer.
         } else if let Some(mode) = self.transform_mode() {
             self.transform_input(ui, &resp, rect, settings.units, mode);
@@ -273,7 +298,9 @@ impl AppState {
         }
 
         let painter = painter.with_clip_rect(rect);
-        grid::draw(&painter, &self.view.camera, rect, dark);
+        if display.grid {
+            grid::draw(&painter, &self.view.camera, rect, dark);
+        }
         let frame = Frame {
             painter: &painter,
             view: &self.view.camera,
@@ -294,6 +321,8 @@ impl AppState {
                 Emphasis::Selected
             } else if hovered == Some(item.id) {
                 Emphasis::Hover
+            } else if !display.points && matches!(item.shape, crate::scene::Shape::Point(_)) {
+                Emphasis::Hidden
             } else {
                 Emphasis::None
             }
@@ -310,7 +339,12 @@ impl AppState {
         let hot = hover
             .filter(|_| self.view.marking.is_none())
             .and_then(|p| self.glyph_at(p));
-        let annots = frame.draw_annotations(&self.doc.scene, &flag_constraints, hot.map(|g| g.0));
+        let show = crate::render::Show {
+            dimensions: display.dimensions,
+            symbols: display.constraints,
+        };
+        let annots =
+            frame.draw_annotations(&self.doc.scene, &flag_constraints, hot.map(|g| g.0), show);
         self.view.dim_rects = annots.dims;
         self.view.glyph_rects = annots.glyphs;
         // Hovering a symbol names it, like the CONSTRAIN group (#329).
@@ -337,7 +371,9 @@ impl AppState {
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
-        grid::rulers(&painter, &self.view.camera, rect);
+        if display.rulers {
+            grid::rulers(&painter, &self.view.camera, rect);
+        }
         self.draw_offset_labels(&painter, rect, dark, settings.units);
         self.draw_pattern_labels(&painter, rect, dark, settings.units);
         self.dimension_editor(ui, rect, settings.units);
@@ -472,9 +508,15 @@ impl AppState {
     /// or with inferred constraints (#68, #69). Holding Alt suppresses
     /// inference for the moment, like the global toggle.
     pub(crate) fn designate(&self, world: Vec2, auto: bool) -> Pick {
+        let d = self.view.display;
         let opts = infer::Options {
             enabled: auto,
             tol: self.view.tol_pt / self.view.camera.pt_per_mm,
+            geometry: d.snap_geometry,
+            // The minor grid step the user sees (status bar "Grid …").
+            grid: d
+                .snap_grid
+                .then(|| grid::minor_step(self.view.camera.pt_per_mm).0),
         };
         let snap = self.tools.host.tool().snap();
         let anchor = snap.anchor.map(|(pos, point)| infer::Anchor { pos, point });

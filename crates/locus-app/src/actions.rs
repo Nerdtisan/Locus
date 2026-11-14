@@ -95,6 +95,52 @@ pub enum Flag {
     StrokeWidth,
     /// Drawing tools make construction geometry (design §6.10, #289).
     ConstructionLinetype,
+    /// The navigation bar's Pan: a left drag pans (design §2.4, #328).
+    PanMode,
+    /// A grid, snap or display setting (design §2.4, #328).
+    Display(DisplayFlag),
+}
+
+/// The settings behind Grid and snaps ▾ and Display ▾ ([`crate::settings::Display`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayFlag {
+    Grid,
+    SnapGrid,
+    SnapGeometry,
+    Rulers,
+    Construction,
+    Dimensions,
+    Constraints,
+    Points,
+    Profiles,
+}
+
+impl DisplayFlag {
+    fn get(self, mut d: crate::settings::Display) -> bool {
+        *self.of(&mut d)
+    }
+
+    fn of(self, d: &mut crate::settings::Display) -> &mut bool {
+        match self {
+            DisplayFlag::Grid => &mut d.grid,
+            DisplayFlag::SnapGrid => &mut d.snap_grid,
+            DisplayFlag::SnapGeometry => &mut d.snap_geometry,
+            DisplayFlag::Rulers => &mut d.rulers,
+            DisplayFlag::Construction => &mut d.construction,
+            DisplayFlag::Dimensions => &mut d.dimensions,
+            DisplayFlag::Constraints => &mut d.constraints,
+            DisplayFlag::Points => &mut d.points,
+            DisplayFlag::Profiles => &mut d.profiles,
+        }
+    }
+}
+
+/// The navigation bar's zoom commands (design §2.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Zoom {
+    In,
+    Out,
+    Selection,
 }
 
 /// The two plugin kinds that become actions (design §6.13). Exporters
@@ -128,6 +174,7 @@ pub enum Op {
     /// Grow the selection to the chains of its curves (#220).
     SelectChain,
     Fit,
+    Zoom(Zoom),
     /// Something only the shell can do, because it owns the dock, its
     /// windows and dialogs; this only asks it to (see [`Shell`]).
     Shell(Shell),
@@ -181,6 +228,7 @@ impl Action {
             | Op::SelectChain
             | Op::Deselect
             | Op::Fit
+            | Op::Zoom(_)
             | Op::Shell(_)
             | Op::Toggle(_) => false,
         }
@@ -239,6 +287,9 @@ pub struct Cx<'a> {
 pub trait PluginHost {
     fn run_action(&mut self, plugin: &str, kind: PluginKind, canvas: &AppState);
 }
+
+/// One Zoom in / Zoom out step (the mockup's 1.25).
+const ZOOM_STEP: f64 = 1.25;
 
 const fn key(k: Key) -> KeyboardShortcut {
     KeyboardShortcut::new(Modifiers::NONE, k)
@@ -320,6 +371,26 @@ const fn modify(
 }
 
 /// Constraints: symbol buttons with no keys (owner decision, design §5).
+/// A grid, snap or display toggle (design §2.4, #328).
+const fn display(
+    id: &'static str,
+    label: &'static str,
+    keywords: &'static [&'static str],
+    f: DisplayFlag,
+) -> Action {
+    a(
+        id,
+        label,
+        Group::View,
+        "▦",
+        keywords,
+        "",
+        &[],
+        KeyScope::Global,
+        Op::Toggle(Flag::Display(f)),
+    )
+}
+
 const fn constraint(id: &'static str, icon: &'static str, k: Kind) -> Action {
     a(
         id,
@@ -670,9 +741,102 @@ pub static BUILTIN: &[Action] = &[
         "⛶",
         &["zoom"],
         "",
-        &[],
+        &[key(Key::F6)],
         KeyScope::Global,
         Op::Fit,
+    ),
+    a(
+        "view.pan",
+        "Pan",
+        Group::View,
+        "✋",
+        &["move view", "scroll"],
+        "Left-drag pans while on; middle-drag or Space+drag pan any time",
+        &[],
+        KeyScope::Global,
+        Op::Toggle(Flag::PanMode),
+    ),
+    a(
+        "view.zoom_in",
+        "Zoom in",
+        Group::View,
+        "+",
+        &["magnify"],
+        "",
+        &[cmd(Key::Equals), cmd(Key::Plus)],
+        KeyScope::Global,
+        Op::Zoom(Zoom::In),
+    ),
+    a(
+        "view.zoom_out",
+        "Zoom out",
+        Group::View,
+        "-",
+        &["shrink"],
+        "",
+        &[cmd(Key::Minus)],
+        KeyScope::Global,
+        Op::Zoom(Zoom::Out),
+    ),
+    a(
+        "view.zoom_selection",
+        "Zoom to selection",
+        Group::View,
+        "⌕",
+        &["frame selection", "zoom"],
+        "Select something to zoom to",
+        &[],
+        KeyScope::Global,
+        Op::Zoom(Zoom::Selection),
+    ),
+    display(
+        "view.grid",
+        "Show grid",
+        &["sketch grid"],
+        DisplayFlag::Grid,
+    ),
+    display(
+        "view.snap_grid",
+        "Snap to grid",
+        &["snap"],
+        DisplayFlag::SnapGrid,
+    ),
+    display(
+        "view.snap_geometry",
+        "Snap to geometry",
+        &["snap", "points"],
+        DisplayFlag::SnapGeometry,
+    ),
+    display("view.rulers", "Rulers", &["ruler"], DisplayFlag::Rulers),
+    display(
+        "view.construction",
+        "Construction geometry",
+        &["show construction"],
+        DisplayFlag::Construction,
+    ),
+    display(
+        "view.dimensions",
+        "Dimensions",
+        &["show dimensions"],
+        DisplayFlag::Dimensions,
+    ),
+    display(
+        "view.constraints",
+        "Constraint symbols",
+        &["show constraints", "glyphs"],
+        DisplayFlag::Constraints,
+    ),
+    display(
+        "view.points",
+        "Points",
+        &["show points"],
+        DisplayFlag::Points,
+    ),
+    display(
+        "view.profiles",
+        "Profiles",
+        &["show profiles", "regions"],
+        DisplayFlag::Profiles,
     ),
     a(
         "view.machine_preview",
@@ -848,8 +1012,42 @@ pub const EDIT_MENU: &[Item] = &[
 /// The View menu's action part; panes, theme and units follow it.
 pub const VIEW_MENU: &[Item] = &[
     A("view.fit"),
+    A("view.zoom_in"),
+    A("view.zoom_out"),
+    A("view.zoom_selection"),
+    Sep,
+    A("view.grid"),
+    A("view.snap_grid"),
+    A("view.snap_geometry"),
+    A("view.rulers"),
+    Sep,
     A("view.machine_preview"),
     A("view.stroke_width"),
+    A("view.construction"),
+    A("view.dimensions"),
+    A("view.constraints"),
+    A("view.points"),
+    A("view.profiles"),
+];
+
+/// The navigation bar's Grid and snaps ▾ (design §2.4).
+pub const GRID_MENU: &[Item] = &[
+    A("view.grid"),
+    A("view.snap_grid"),
+    A("view.snap_geometry"),
+    A("view.rulers"),
+];
+
+/// The navigation bar's Display ▾ (design §2.4).
+pub const DISPLAY_MENU: &[Item] = &[
+    A("view.construction"),
+    A("view.dimensions"),
+    A("view.constraints"),
+    A("view.points"),
+    A("view.profiles"),
+    Sep,
+    A("view.stroke_width"),
+    A("view.machine_preview"),
 ];
 
 /// The View menu's layout part, after the panes.
@@ -1032,6 +1230,8 @@ impl Registry {
             Op::Toggle(Flag::MachinePreview) => canvas.machine_preview(),
             Op::Toggle(Flag::StrokeWidth) => canvas.stroke_preview(),
             Op::Toggle(Flag::ConstructionLinetype) => canvas.doc.construction_linetype,
+            Op::Toggle(Flag::PanMode) => canvas.view.pan_mode,
+            Op::Toggle(Flag::Display(f)) => f.get(settings.display),
             _ => false,
         }
     }
@@ -1088,6 +1288,11 @@ impl Registry {
                 None => canvas.doc.notice = Some(a.hint.to_string()),
             },
             Op::Fit => canvas.request_fit(),
+            Op::Zoom(Zoom::In) => canvas.zoom_by(ZOOM_STEP),
+            Op::Zoom(Zoom::Out) => canvas.zoom_by(1.0 / ZOOM_STEP),
+            Op::Zoom(Zoom::Selection) => {
+                canvas.zoom_to_selection();
+            }
             Op::Shell(req) => canvas.view.shell.push(*req),
             Op::Toggle(f) => {
                 let on = !self.is_on(a, canvas, cx.settings);
@@ -1096,6 +1301,9 @@ impl Registry {
                     Flag::MachinePreview => canvas.set_machine_preview(on),
                     Flag::StrokeWidth => canvas.set_stroke_preview(on),
                     Flag::ConstructionLinetype => canvas.doc.construction_linetype = on,
+                    Flag::PanMode => canvas.view.pan_mode = on,
+                    // The canvas picks the change up next frame.
+                    Flag::Display(f) => *f.of(&mut cx.settings.display) = on,
                 }
             }
             Op::Plugin { plugin, kind } => {

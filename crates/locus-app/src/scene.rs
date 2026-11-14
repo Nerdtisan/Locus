@@ -171,10 +171,23 @@ impl Scene {
     /// A Bézier's control points are left out unless the curve is in
     /// `handles` (it, or one of its points, is selected): handles show only
     /// for the selected curve (#160).
+    #[cfg(test)]
     pub fn build(
         doc: &Document,
         fully_constrained: &BTreeSet<EntityId>,
         handles: &BTreeSet<EntityId>,
+    ) -> Self {
+        Self::build_showing(doc, fully_constrained, handles, true)
+    }
+
+    /// [`Scene::build`], leaving construction geometry out when
+    /// `construction` is false (Display ▾ Construction geometry, #328): it
+    /// is neither drawn nor picked, and neither are its symbols.
+    pub fn build_showing(
+        doc: &Document,
+        fully_constrained: &BTreeSet<EntityId>,
+        handles: &BTreeSet<EntityId>,
+        construction: bool,
     ) -> Self {
         let hidden: HashSet<EntityId> = doc
             .entities()
@@ -199,7 +212,10 @@ impl Scene {
         let mut items = Vec::with_capacity(doc.entities().len());
         let mut bounds: Option<Aabb> = None;
         for (id, e) in doc.entities().iter() {
-            if doc.layer(e.layer).is_some_and(|l| !l.visible) || hidden.contains(&id) {
+            if doc.layer(e.layer).is_some_and(|l| !l.visible)
+                || hidden.contains(&id)
+                || (!construction && e.construction)
+            {
                 continue;
             }
             let shape = match e.geom {
@@ -275,6 +291,10 @@ impl Scene {
         let mut annots = Vec::new();
         let mut slots: HashMap<EntityId, u8> = HashMap::new();
         for (&cid, c) in doc.constraints() {
+            let on_hidden = |r: &EntityId| doc.entity(*r).is_some_and(|e| e.construction);
+            if !construction && c.references().iter().any(on_hidden) {
+                continue;
+            }
             if let Some(symbol) = glyph_symbol(c) {
                 if let Some(&first) = c.references().first()
                     && let Some(at) = Self::anchor(doc, first)

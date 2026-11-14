@@ -21,6 +21,13 @@ const GLYPH_SIZE: f32 = 16.0;
 const GLYPH_GAP: f32 = 12.0;
 const GLYPH_PITCH: f32 = 18.0;
 
+/// Which annotations to draw (Display ▾, M5 design §2.4, #328).
+#[derive(Clone, Copy, Debug)]
+pub struct Show {
+    pub dimensions: bool,
+    pub symbols: bool,
+}
+
 /// Where the annotations landed this frame (screen points).
 #[derive(Debug, Default)]
 pub struct AnnotRects {
@@ -95,6 +102,8 @@ pub enum Emphasis {
     Selected,
     /// Part of a conflicting or refused constraint set (#72).
     Conflict,
+    /// Not drawn (Display ▾ Points off, #328).
+    Hidden,
 }
 
 pub struct Frame<'a> {
@@ -133,6 +142,7 @@ impl Frame<'_> {
             Emphasis::Conflict => self.pal.conflict,
             Emphasis::Selected => self.pal.selected,
             Emphasis::Hover => self.pal.hover,
+            Emphasis::Hidden => Color32::TRANSPARENT,
             Emphasis::None if item.construction => self.pal.construction,
             Emphasis::None if item.constrained => self.pal.constrained,
             Emphasis::None => self.pal.free,
@@ -147,8 +157,11 @@ impl Frame<'_> {
             if !intersects(&item.bbox, lo, hi) {
                 continue;
             }
-            drawn += 1;
             let e = emphasis(item);
+            if e == Emphasis::Hidden {
+                continue;
+            }
+            drawn += 1;
             let colour = self.colour(item, e);
             let width = if e == Emphasis::None {
                 STROKE_W
@@ -334,6 +347,7 @@ impl Frame<'_> {
         scene: &Scene,
         flagged: &BTreeSet<ConstraintId>,
         hot: Option<ConstraintId>,
+        show: Show,
     ) -> AnnotRects {
         let (lo, hi) = self.visible(80.0);
         let mut out = AnnotRects::default();
@@ -345,7 +359,7 @@ impl Frame<'_> {
                     slot,
                     symbol,
                 } => {
-                    if intersects(&Aabb::from_point(*at), lo, hi) {
+                    if show.symbols && intersects(&Aabb::from_point(*at), lo, hi) {
                         let r =
                             self.glyph(*at, *slot, *symbol, flagged.contains(id), hot == Some(*id));
                         out.glyphs.push((*id, *symbol, r));
@@ -359,6 +373,9 @@ impl Frame<'_> {
                     edge,
                 } => {
                     let bad = flagged.contains(id);
+                    if !show.dimensions {
+                        continue;
+                    }
                     if let Some(r) = self.dimension(*kind, *value, *driven, *edge, bad, lo, hi) {
                         out.dims.push((*id, r));
                     }
