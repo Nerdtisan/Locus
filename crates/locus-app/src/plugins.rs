@@ -312,12 +312,11 @@ impl Plugins {
         reg.sync_plugins(self.plugin_actions());
         if ui.button("Install plugin…").clicked() {
             ui.close();
-            self.install();
+            self.open_install();
         }
         if ui.button("Plugin manager…").clicked() {
             ui.close();
-            self.refresh();
-            self.manage = true;
+            self.open_manager();
         }
         ui.separator();
         if reg
@@ -378,6 +377,17 @@ impl Plugins {
                 actions::PluginHost::run_action(self, plugin, *kind, canvas);
             }
         }
+    }
+
+    /// UTILITIES ▸ Install plugin… (#325).
+    pub fn open_install(&mut self) {
+        self.install();
+    }
+
+    /// UTILITIES ▸ Manage plugins… and OUTPUT ▸ Exporter plugins… (#325).
+    pub fn open_manager(&mut self) {
+        self.refresh();
+        self.manage = true;
     }
 
     fn install(&mut self) {
