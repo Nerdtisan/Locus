@@ -76,6 +76,45 @@ pub struct Settings {
     /// rather than resetting every setting.
     #[serde(deserialize_with = "lenient_profiles")]
     pub profiles: Vec<locus_export::MachineProfile>,
+    /// Grid, snaps and display toggles (M5 design §2.4): per user, shared
+    /// by the navigation bar, the View menu and the sketch palette.
+    pub display: Display,
+}
+
+/// The view settings behind the navigation bar's Grid and snaps ▾ and
+/// Display ▾ (M5 design §2.4, #328). Defaults follow the approved mockup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Display {
+    pub grid: bool,
+    /// Free picks land on the minor grid (the step shown in the status bar).
+    pub snap_grid: bool,
+    /// Picks snap onto points and curves.
+    pub snap_geometry: bool,
+    pub rulers: bool,
+    pub construction: bool,
+    pub dimensions: bool,
+    /// Constraint symbols on the canvas (#329).
+    pub constraints: bool,
+    pub points: bool,
+    /// Shade every closed profile (region), as Fusion does.
+    pub profiles: bool,
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self {
+            grid: true,
+            snap_grid: true,
+            snap_geometry: true,
+            rulers: false,
+            construction: true,
+            dimensions: true,
+            constraints: true,
+            points: true,
+            profiles: false,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -85,6 +124,7 @@ impl Default for Settings {
             theme: Theme::default(),
             auto_constrain: true,
             profiles: Vec::new(),
+            display: Display::default(),
         }
     }
 }
@@ -169,6 +209,11 @@ mod tests {
                     p
                 })
                 .collect(),
+            display: Display {
+                rulers: true,
+                snap_grid: false,
+                ..Display::default()
+            },
         };
         assert_eq!(Settings::from_json(&s.to_json().unwrap_or_default()), s);
     }

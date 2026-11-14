@@ -24,6 +24,20 @@ pub struct Options {
     pub enabled: bool,
     /// Snap distance in mm.
     pub tol: f64,
+    /// Snap onto points and curves (Grid and snaps ▾ Snap to geometry,
+    /// M5 design §2.4). Off, the cursor never lands on existing geometry.
+    pub geometry: bool,
+    /// Snap free picks to this grid step in mm (Snap to grid). Geometry
+    /// wins where both apply, as in Fusion.
+    pub grid: Option<f64>,
+}
+
+/// `p` rounded to the nearest multiple of `step` (mm) on each axis.
+fn on_grid(p: Vec2, step: Option<f64>) -> Vec2 {
+    match step.filter(|s| *s > 0.0 && s.is_finite()) {
+        Some(s) => Vec2::new((p.x / s).round() * s, (p.y / s).round() * s),
+        None => p,
+    }
 }
 
 /// The start of the line being drawn.
@@ -47,18 +61,22 @@ pub fn infer(
     curve_snap: bool,
     cursor: Vec2,
 ) -> Pick {
-    if let Some((id, pos)) = crate::hit::pick_point(items, cursor, opts.tol) {
+    if opts.geometry
+        && let Some((id, pos)) = crate::hit::pick_point(items, cursor, opts.tol)
+    {
         let mut pick = Pick::at_point(pos, id);
         if tool == Tool::ArcTangent {
             pick.host = host(items, id);
         }
         return pick;
     }
-    let mut pick = Pick::free(cursor);
+    let gridded = on_grid(cursor, opts.grid);
+    let mut pick = Pick::free(gridded);
     if !opts.enabled {
         return pick;
     }
-    if tool == Tool::Line
+    if opts.geometry
+        && tool == Tool::Line
         && let Some(a) = anchor
         && let Some((pos, arc)) = tangent(items, a, cursor)
     {
@@ -66,14 +84,17 @@ pub fn infer(
         pick.line = Some(LineHint::Tangent(arc));
         return pick;
     }
-    if curve_snap && let Some((curve, pos)) = nearest_curve(items, cursor, opts.tol) {
+    if opts.geometry
+        && curve_snap
+        && let Some((curve, pos)) = nearest_curve(items, cursor, opts.tol)
+    {
         pick.pos = pos;
         pick.on_curve = Some(curve);
         return pick;
     }
     if tool == Tool::Line
         && let Some(a) = anchor
-        && let Some((pos, hint)) = axis(a.pos, cursor)
+        && let Some((pos, hint)) = axis(a.pos, gridded)
     {
         pick.pos = pos;
         pick.line = Some(hint);
@@ -208,7 +229,31 @@ mod tests {
     const ON: Options = Options {
         enabled: true,
         tol: 1.0,
+        geometry: true,
+        grid: None,
     };
+
+    /// Snap to grid rounds free picks to the step; geometry still wins,
+    /// and Snap to geometry off ignores points (#328, design §2.4).
+    #[test]
+    fn grid_and_geometry_snaps() {
+        let grid = Options {
+            grid: Some(5.0),
+            ..ON
+        };
+        let p = infer(&[], grid, Tool::Point, None, true, v(7.4, -3.0));
+        assert_eq!(p.pos, v(5.0, -5.0));
+        let items = [item(7, Shape::Point(v(7.0, 0.0)))];
+        let p = infer(&items, grid, Tool::Point, None, true, v(7.4, 0.3));
+        assert_eq!(p.point, Some(EntityId::new(7)));
+        let no_geo = Options {
+            geometry: false,
+            ..ON
+        };
+        let p = infer(&items, no_geo, Tool::Point, None, true, v(7.4, 0.3));
+        assert_eq!(p.point, None);
+        assert_eq!(p.pos, v(7.4, 0.3));
+    }
 
     fn anchor(x: f64, y: f64) -> Option<Anchor> {
         Some(Anchor {

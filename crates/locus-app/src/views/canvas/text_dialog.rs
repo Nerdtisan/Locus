@@ -47,11 +47,18 @@ impl AppState {
             };
             let focus = std::mem::take(&mut self.tools.text_focus);
             let mut close = false;
-            super::dialog::command_dialog(ui, rect, "Edit Text", |ui| {
-                self.edit_text(ui, id, anchor, dir, &text, focus);
-                ui.separator();
-                close = ui.button("Close").clicked();
-            });
+            let header = super::dialog::Header::new("sketch.text", "Edit Text").wide();
+            super::dialog::command_dialog(
+                ui,
+                rect,
+                header,
+                |_| {},
+                |ui| {
+                    self.edit_text(ui, id, anchor, dir, &text, focus);
+                    // Edits apply as you type, each one undo step: just Close.
+                    close = super::dialog::close_footer(ui);
+                },
+            );
             if close {
                 self.close_text_dialog();
             }
@@ -59,19 +66,25 @@ impl AppState {
         }
         if self.tool() == Tool::Text {
             let mut done = false;
-            super::dialog::command_dialog(ui, rect, "Text", |ui| {
-                ui.weak("Click on the canvas to place the text.");
-                text_ui::controls(
-                    ui,
-                    &mut self.tools.text_settings,
-                    &mut self.tools.fonts,
-                    true,
-                    3,
-                    false,
-                );
-                ui.separator();
-                done = ui.button("Close").clicked();
-            });
+            let header = super::dialog::Header::new("sketch.text", "Text").wide();
+            super::dialog::command_dialog(
+                ui,
+                rect,
+                header,
+                |_| {},
+                |ui| {
+                    ui.weak("Click on the canvas to place the text.");
+                    text_ui::controls(
+                        ui,
+                        &mut self.tools.text_settings,
+                        &mut self.tools.fonts,
+                        true,
+                        3,
+                        false,
+                    );
+                    done = super::dialog::close_footer(ui);
+                },
+            );
             if done {
                 self.set_tool(Tool::Select);
             }

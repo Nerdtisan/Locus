@@ -389,89 +389,124 @@ impl AppState {
         let picked = self.offset_selected();
         let error = draft.and_then(|_| self.offset_value(units).err());
         let (mut ok, mut cancel, mut flip, mut rechain) = (false, false, false, false);
+        let mut cancel_pick = false;
         let mut explode = None;
         let mut remove = None;
         let mut edited = None;
         let unit = units.label();
         let params = picked.and_then(|rid| self.offset_params(rid));
-        super::dialog::command_dialog(ui, rect, "Offset", |ui| {
-            let c = &mut self.tools.corner;
-            match draft {
-                Some((n, focus, _)) => {
-                    ui.label(format!("Curves: {n} picked"));
-                    rechain = ui
-                        .checkbox(&mut c.offset_chain, "Chain")
-                        .on_hover_text("Offset every curve joined end to end with the picked one")
-                        .changed();
-                    ui.horizontal(|ui| {
-                        ui.label("Distance");
-                        let out = egui::TextEdit::singleline(&mut c.text.offset)
-                            .desired_width(90.0)
-                            .show(ui);
-                        let r = out.response.response.clone();
-                        if focus {
-                            super::corner_dialog::focus_all(ui, &r, out.state, &c.text.offset);
+        let header = super::dialog::Header::new("modify.offset", "Offset");
+        super::dialog::command_dialog(
+            ui,
+            rect,
+            header,
+            |_| {},
+            |ui| {
+                use super::dialog::{row, segmented, selection};
+                let c = &mut self.tools.corner;
+                match draft {
+                    Some((n, focus, _)) => {
+                        row(ui, "Curves", |ui| {
+                            let text = super::dialog::count(n, "curve", "curves");
+                            cancel_pick = selection(ui, &text, true, false).1;
+                        });
+                        row(ui, "", |ui| {
+                            rechain = ui
+                                .checkbox(&mut c.offset_chain, "Chain selection")
+                                .on_hover_text(
+                                    "Offset every curve joined end to end with the picked one",
+                                )
+                                .changed();
+                        });
+                        row(ui, "Distance", |ui| {
+                            let out = egui::TextEdit::singleline(&mut c.text.offset)
+                                .desired_width(110.0)
+                                .show(ui);
+                            let r = out.response.response.clone();
+                            if focus {
+                                super::corner_dialog::focus_all(ui, &r, out.state, &c.text.offset);
+                            }
+                            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                ok = true;
+                            }
+                            r.on_hover_text("A number, or an expression over parameters; + grows a closed chain or goes left");
+                            ui.weak(unit);
+                        });
+                        row(ui, "Direction", |ui| {
+                            flip = ui
+                                .button("⇅ Flip")
+                                .on_hover_text("Offset to the other side, keeping the distance")
+                                .clicked();
+                        });
+                        row(ui, "Corners", |ui| {
+                            if let Some(v) =
+                                segmented(ui, c.sharp, &[(false, "Round"), (true, "Sharp")])
+                            {
+                                c.sharp = v;
+                            }
+                        });
+                        ui.weak(
+                            "The offset stays live: it follows the source until you explode it.",
+                        );
+                        if let Some(why) = &error {
+                            ui.colored_label(ui.visuals().error_fg_color, why);
                         }
-                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            ok = true;
-                        }
-                        r.on_hover_text("A number, or an expression over parameters; + grows a closed chain or goes left");
-                        ui.weak(unit);
-                        flip = ui
-                            .button("Flip")
-                            .on_hover_text("Offset to the other side, keeping the distance")
-                            .clicked();
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Corners");
-                        ui.selectable_value(&mut c.sharp, false, "Round");
-                        ui.selectable_value(&mut c.sharp, true, "Sharp");
-                    });
-                    if let Some(why) = &error {
-                        ui.colored_label(ui.visuals().error_fg_color, why);
+                        let (o, x) =
+                            super::dialog::footer(ui, error.as_deref().map_or(Ok(()), Err));
+                        ok |= o;
+                        cancel = x;
                     }
-                    ui.horizontal(|ui| {
-                        ok |= ui
-                            .add_enabled(error.is_none(), egui::Button::new("OK"))
-                            .clicked();
-                        cancel = ui.button("Cancel").clicked();
-                    });
-                }
-                None => match (picked, params) {
-                    (Some(rid), Some((mut d, mut sharp))) => {
-                        ui.label("Picked offset");
-                        ui.horizontal(|ui| {
-                            ui.label("Distance");
-                            // Typed, not dragged: each change is one undo step.
-                            let r1 = ui
+                    None => match (picked, params) {
+                        (Some(rid), Some((mut d, mut sharp))) => {
+                            row(ui, "Offset", |ui| {
+                                selection(ui, "1 offset", true, false);
+                            });
+                            let mut changed = false;
+                            row(ui, "Distance", |ui| {
+                                // Typed, not dragged: each change is one undo step.
+                                changed |= ui
                                 .add(egui::DragValue::new(&mut d).speed(0.0).max_decimals(3).suffix(" mm"))
-                                .on_hover_text("Click to type, or double-click the label on the canvas for an expression");
-                            let r2 = ui.checkbox(&mut sharp, "Sharp");
-                            if (r1.changed() || r2.changed()) && d != 0.0 {
+                                .on_hover_text("Click to type, or double-click the label on the canvas for an expression")
+                                .changed();
+                            });
+                            row(ui, "Corners", |ui| {
+                                if let Some(v) =
+                                    segmented(ui, sharp, &[(false, "Round"), (true, "Sharp")])
+                                {
+                                    sharp = v;
+                                    changed = true;
+                                }
+                            });
+                            if changed && d != 0.0 {
                                 edited = Some((rid, d, sharp));
                             }
-                        });
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button("Explode")
-                                .on_hover_text("Turn the offset into ordinary geometry")
-                                .clicked()
-                            {
-                                explode = Some(rid);
-                            }
-                            if ui.button("Remove").clicked() {
-                                remove = Some(rid);
-                            }
-                            cancel = ui.button("Close").clicked();
-                        });
-                    }
-                    _ => {
-                        ui.label("Click a curve to offset its chain, or an offset to edit it");
-                        cancel = ui.button("Cancel").clicked();
-                    }
-                },
-            }
-        });
+                            row(ui, "", |ui| {
+                                if ui
+                                    .button("Explode")
+                                    .on_hover_text("Turn the offset into ordinary geometry")
+                                    .clicked()
+                                {
+                                    explode = Some(rid);
+                                }
+                                if ui.button("Remove").clicked() {
+                                    remove = Some(rid);
+                                }
+                            });
+                            cancel = super::dialog::close_footer(ui);
+                        }
+                        _ => {
+                            row(ui, "Curves", |ui| {
+                                selection(ui, "Click a curve or an offset", false, true);
+                            });
+                            cancel = super::dialog::footer(ui, Err("Pick a curve first")).1;
+                        }
+                    },
+                }
+            },
+        );
+        if cancel_pick {
+            self.offset_esc();
+        }
         if let Some((rid, d, sharp)) = edited {
             self.set_offset_params(rid, d, sharp);
         }

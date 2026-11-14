@@ -12,6 +12,7 @@
 //! result follows. Enter or OK applies the change as one command (SPEC §11).
 //! Esc resets the values, and a second Esc returns to Select.
 
+use super::dialog;
 use crate::hit;
 use crate::modify_tool::{Grip, Modify, TransformMode};
 use crate::render::Frame;
@@ -426,32 +427,46 @@ impl AppState {
         let mut ok = false;
         let mut cancel = false;
         let selected = self.selection.items.iter().count();
-        super::dialog::command_dialog(ui, rect, mode.tool_label(), |ui| {
-            ui.horizontal(|ui| {
-                for m in TransformMode::ALL {
-                    if ui.selectable_label(m == mode, m.label()).clicked() && m != mode {
-                        next = Some(m);
-                    }
-                }
-            });
-            ui.label(if selected == 0 {
-                "Objects: select geometry".to_owned()
-            } else {
-                format!("Objects: {selected} selected")
-            });
-            let t = &mut self.tools.transform;
-            let (scale, suffix) = match units {
-                Units::Mm => (1.0, " mm"),
-                Units::Inch => (25.4, " in"),
-            };
-            egui::Grid::new("transform-fields")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    match mode {
-                        TransformMode::Move => {
-                            for (name, v) in [("X distance", &mut t.dx), ("Y distance", &mut t.dy)]
-                            {
-                                ui.label(name);
+        let mut clear = false;
+        let icon = match mode {
+            TransformMode::Move => "modify.move",
+            TransformMode::Rotate => "modify.rotate",
+            TransformMode::Scale => "modify.scale",
+        };
+        let header = dialog::Header::new(icon, mode.label());
+        dialog::command_dialog(
+            ui,
+            rect,
+            header,
+            |_| {},
+            |ui| {
+                // Three tools, one dialog: switching keeps the selection (§6.7).
+                next = dialog::segmented(
+                    ui,
+                    mode,
+                    &[
+                        (TransformMode::Move, "Move (M)"),
+                        (TransformMode::Rotate, "Rotate"),
+                        (TransformMode::Scale, "Scale"),
+                    ],
+                );
+                dialog::row(ui, "Objects", |ui| {
+                    let text = if selected == 0 {
+                        "Select geometry".to_owned()
+                    } else {
+                        dialog::count(selected, "curve", "curves")
+                    };
+                    clear = dialog::selection(ui, &text, selected > 0, selected == 0).1;
+                });
+                let t = &mut self.tools.transform;
+                let (scale, suffix) = match units {
+                    Units::Mm => (1.0, " mm"),
+                    Units::Inch => (25.4, " in"),
+                };
+                match mode {
+                    TransformMode::Move => {
+                        for (name, v) in [("X distance", &mut t.dx), ("Y distance", &mut t.dy)] {
+                            dialog::row(ui, name, |ui| {
                                 let mut shown = *v / scale;
                                 if ui
                                     .add(
@@ -464,59 +479,62 @@ impl AppState {
                                 {
                                     *v = shown * scale;
                                 }
-                                ui.end_row();
-                            }
-                        }
-                        TransformMode::Rotate => {
-                            ui.label("Angle");
-                            ui.add(
-                                egui::DragValue::new(&mut t.angle_deg)
-                                    .speed(1.0)
-                                    .max_decimals(3)
-                                    .suffix("°"),
-                            );
-                            ui.end_row();
-                        }
-                        TransformMode::Scale => {
-                            ui.label("Scale factor");
-                            ui.add(
-                                egui::DragValue::new(&mut t.factor)
-                                    .range(0.001..=1000.0)
-                                    .speed(0.01)
-                                    .max_decimals(4),
-                            );
-                            ui.end_row();
+                            });
                         }
                     }
-                    if mode != TransformMode::Move {
-                        ui.label(if mode == TransformMode::Rotate {
+                    TransformMode::Rotate | TransformMode::Scale => {
+                        let pivot = if mode == TransformMode::Rotate {
                             "Pivot"
                         } else {
                             "Base point"
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(match t.pivot {
+                        };
+                        dialog::row(ui, pivot, |ui| {
+                            let text = match t.pivot {
                                 None => "Selection centre".to_owned(),
                                 Some(p) => {
                                     format!("{}, {}", units.format_len(p.x), units.format_len(p.y))
                                 }
-                            });
-                            if t.pivot.is_some() && ui.small_button("Reset").clicked() {
+                            };
+                            // ✕ goes back to the selection centre.
+                            if dialog::selection(ui, &text, true, false).1 {
                                 t.pivot = None;
                             }
                         });
-                        ui.end_row();
+                        if mode == TransformMode::Rotate {
+                            dialog::row(ui, "Angle", |ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut t.angle_deg)
+                                        .speed(1.0)
+                                        .max_decimals(3)
+                                        .suffix("°"),
+                                );
+                            });
+                        } else {
+                            dialog::row(ui, "Scale factor", |ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut t.factor)
+                                        .range(0.001..=1000.0)
+                                        .speed(0.01)
+                                        .max_decimals(4),
+                                );
+                            });
+                        }
                     }
-                });
-            ui.checkbox(&mut t.copy, "Create copy");
-            ui.horizontal(|ui| {
-                ok = ui
-                    .add_enabled(selected > 0, egui::Button::new("OK"))
-                    .on_disabled_hover_text("Select geometry first")
-                    .clicked();
-                cancel = ui.button("Cancel").clicked();
-            });
-        });
+                }
+                dialog::row(ui, "", |ui| ui.checkbox(&mut t.copy, "Create copy"));
+                (ok, cancel) = dialog::footer(
+                    ui,
+                    if selected > 0 {
+                        Ok(())
+                    } else {
+                        Err("Select geometry first")
+                    },
+                );
+            },
+        );
+        if clear {
+            self.clear_selection();
+        }
         if let Some(m) = next {
             self.set_modify(Modify::Transform(m));
         } else if ok {

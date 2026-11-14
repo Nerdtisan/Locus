@@ -576,137 +576,147 @@ impl AppState {
         let error = self.new_pattern_command(circular, units).err();
         let (mut ok, mut cancel, mut switch) = (false, false, None);
         let unit = units.label();
-        let title = if circular {
-            "Circular Pattern"
+        let mut clear = false;
+        let icon = if circular {
+            "sketch.pattern_circ"
         } else {
-            "Rectangular Pattern"
+            "sketch.pattern_rect"
         };
-        let doc_lines = |id: &EntityId| format!("line #{id}");
-        super::dialog::command_dialog(ui, rect, title, |ui| {
-            ui.horizontal(|ui| {
-                for (c, label) in [(false, "Rectangular"), (true, "Circular")] {
-                    if ui.selectable_label(c == circular, label).clicked() && c != circular {
-                        switch = Some(c);
-                    }
-                }
-            });
-            ui.label(if selected == 0 {
-                "Objects: select geometry".to_owned()
-            } else {
-                format!("Objects: {selected} selected")
-            });
-            let d = &mut self.tools.pattern;
-            let field = |ui: &mut egui::Ui, text: &mut String, w: f32| {
-                ui.add(egui::TextEdit::singleline(text).desired_width(w))
-                    .on_hover_text("A number, or an expression over parameters")
-            };
-            egui::Grid::new("pattern-fields")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    if circular {
-                        ui.label("Centre");
-                        ui.horizontal(|ui| {
-                            ui.label(match d.centre {
-                                Some(id) => format!("point #{id}"),
-                                None => "—".to_owned(),
-                            });
-                            let picking = d.pick == PatternPick::Centre;
-                            if ui.selectable_label(picking, "Pick").clicked() {
-                                d.pick = if picking {
-                                    PatternPick::Objects
-                                } else {
-                                    PatternPick::Centre
-                                };
-                            }
-                        });
-                        ui.end_row();
-                        ui.label("Quantity");
-                        field(ui, &mut d.c_count, 60.0);
-                        ui.end_row();
-                        ui.label("Total angle");
-                        ui.horizontal(|ui| {
-                            field(ui, &mut d.c_angle, 60.0);
-                            ui.weak("°");
-                        });
-                        ui.end_row();
-                        ui.label("");
-                        ui.checkbox(&mut d.rotate, "Rotate copies");
-                        ui.end_row();
+        let header = super::dialog::Header::new(icon, "Pattern");
+        super::dialog::command_dialog(
+            ui,
+            rect,
+            header,
+            |ui| {
+                // Right-to-left: the last option is drawn first.
+                switch = super::dialog::segmented(
+                    ui,
+                    circular,
+                    &[(true, "Circular"), (false, "Rectangular")],
+                );
+            },
+            |ui| {
+                use super::dialog::{row, segmented, selection};
+                let d = &mut self.tools.pattern;
+                row(ui, "Objects", |ui| {
+                    let text = if selected == 0 {
+                        "Select geometry".to_owned()
                     } else {
-                        for n in [1u8, 2] {
-                            if n == 2 {
-                                ui.label("");
-                                ui.checkbox(&mut d.second, "Second direction");
-                                ui.end_row();
-                                if !d.second {
-                                    break;
-                                }
-                            }
-                            let picking = d.pick == PatternPick::Direction(n);
-                            let (axis, count, spacing) = if n == 1 {
-                                (&mut d.axis1, &mut d.count1, &mut d.spacing1)
+                        super::dialog::count(selected, "curve", "curves")
+                    };
+                    let objects = d.pick == PatternPick::Objects;
+                    let (pick, x) = selection(ui, &text, selected > 0, objects && selected == 0);
+                    if pick {
+                        d.pick = PatternPick::Objects;
+                    }
+                    clear = x;
+                });
+                let field = |ui: &mut egui::Ui, text: &mut String, w: f32| {
+                    ui.add(egui::TextEdit::singleline(text).desired_width(w))
+                        .on_hover_text("A number, or an expression over parameters")
+                };
+                if circular {
+                    row(ui, "Centre", |ui| {
+                        let picking = d.pick == PatternPick::Centre;
+                        let (text, filled) = match d.centre {
+                            Some(_) => ("1 point", true),
+                            None => ("Pick a point", false),
+                        };
+                        let (pick, x) = selection(ui, text, filled, picking);
+                        if pick {
+                            d.pick = if picking {
+                                PatternPick::Objects
                             } else {
-                                (&mut d.axis2, &mut d.count2, &mut d.spacing2)
+                                PatternPick::Centre
                             };
-                            ui.label(format!("Direction {n}"));
-                            let mut pick = false;
-                            ui.horizontal(|ui| {
-                                for (a, label) in [(Axis::X, "X"), (Axis::Y, "Y")] {
-                                    if ui.selectable_label(*axis == a, label).clicked() {
-                                        *axis = a;
+                        }
+                        if x {
+                            d.centre = None;
+                            d.pick = PatternPick::Centre;
+                        }
+                    });
+                    row(ui, "Quantity", |ui| field(ui, &mut d.c_count, 56.0));
+                    row(ui, "Total angle", |ui| {
+                        field(ui, &mut d.c_angle, 72.0);
+                        ui.weak("°");
+                    });
+                    row(ui, "", |ui| ui.checkbox(&mut d.rotate, "Rotate instances"));
+                } else {
+                    row(ui, "Directions", |ui| {
+                        for n in [1u8, 2] {
+                            let on = n == 1 || d.second;
+                            let picking = d.pick == PatternPick::Direction(n);
+                            let axis = if n == 1 { &mut d.axis1 } else { &mut d.axis2 };
+                            let text = if !on {
+                                "+ Direction 2".to_owned()
+                            } else {
+                                match axis {
+                                    Axis::X => "X axis".to_owned(),
+                                    Axis::Y => "Y axis".to_owned(),
+                                    Axis::Line(_) => "1 line".to_owned(),
+                                }
+                            };
+                            let (click, x) = selection(ui, &text, on, picking);
+                            if click {
+                                if !on {
+                                    d.second = true;
+                                } else {
+                                    // Cycle X axis → Y axis → pick a line.
+                                    match axis {
+                                        Axis::X => *axis = Axis::Y,
+                                        Axis::Y => d.pick = PatternPick::Direction(n),
+                                        Axis::Line(_) => *axis = Axis::X,
                                     }
                                 }
-                                let on_line = matches!(axis, Axis::Line(_));
-                                let text = match axis {
-                                    Axis::Line(id) => doc_lines(id),
-                                    _ => "Line…".to_owned(),
-                                };
-                                if ui
-                                    .selectable_label(on_line || picking, text)
-                                    .on_hover_text("Pick a line to pattern along")
-                                    .clicked()
-                                {
-                                    pick = true;
-                                }
-                            });
-                            if pick {
-                                d.pick = PatternPick::Direction(n);
                             }
-                            ui.end_row();
-                            ui.label("Quantity");
-                            field(ui, count, 60.0);
-                            ui.end_row();
-                            ui.label("Distance");
-                            ui.horizontal(|ui| {
-                                field(ui, spacing, 60.0);
-                                ui.weak(unit);
-                            });
-                            ui.end_row();
+                            if x {
+                                if n == 2 {
+                                    d.second = false;
+                                } else {
+                                    d.axis1 = Axis::X;
+                                }
+                                if picking {
+                                    d.pick = PatternPick::Objects;
+                                }
+                            }
                         }
-                        ui.label("");
-                        ui.checkbox(&mut d.symmetric, "Symmetric (both sides)");
-                        ui.end_row();
+                    });
+                    row(ui, "Quantity", |ui| {
+                        field(ui, &mut d.count1, 56.0);
+                        ui.add_enabled_ui(d.second, |ui| field(ui, &mut d.count2, 56.0));
+                    });
+                    row(ui, "Distance", |ui| {
+                        field(ui, &mut d.spacing1, 64.0);
+                        ui.add_enabled_ui(d.second, |ui| field(ui, &mut d.spacing2, 64.0));
+                        ui.weak(unit);
+                    });
+                    row(ui, "Direction type", |ui| {
+                        if let Some(v) =
+                            segmented(ui, d.symmetric, &[(false, "One"), (true, "Symmetric")])
+                        {
+                            d.symmetric = v;
+                        }
+                    });
+                }
+                match d.pick {
+                    PatternPick::Centre => {
+                        ui.weak("Click a point on the canvas");
                     }
-                });
-            match d.pick {
-                PatternPick::Centre => {
-                    ui.weak("Click a point on the canvas");
+                    PatternPick::Direction(_) => {
+                        ui.weak("Click a line on the canvas");
+                    }
+                    PatternPick::Objects => {}
                 }
-                PatternPick::Direction(_) => {
-                    ui.weak("Click a line on the canvas");
+                ui.weak("Fields take numbers or expressions (pitch/2). Dragging on the canvas updates them.");
+                if let Some(why) = &error {
+                    ui.colored_label(ui.visuals().error_fg_color, why);
                 }
-                PatternPick::Objects => {}
-            }
-            if let Some(why) = &error {
-                ui.colored_label(ui.visuals().error_fg_color, why);
-            }
-            ui.horizontal(|ui| {
-                ok = ui
-                    .add_enabled(error.is_none(), egui::Button::new("OK"))
-                    .clicked();
-                cancel = ui.button("Cancel").clicked();
-            });
-        });
+                (ok, cancel) = super::dialog::footer(ui, error.as_deref().map_or(Ok(()), Err));
+            },
+        );
+        if clear {
+            self.clear_selection();
+        }
         if let Some(c) = switch {
             self.set_modify(Modify::Pattern(c));
         } else if ok {

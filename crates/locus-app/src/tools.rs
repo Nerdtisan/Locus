@@ -151,12 +151,13 @@ pub enum LineHint {
 }
 
 impl LineHint {
-    /// Badge shown beside the cursor.
-    pub fn badge(self) -> &'static str {
+    /// Symbol shown beside the cursor (#329: symbols, not letters).
+    pub fn badge(self) -> crate::scene::Symbol {
+        use crate::scene::Symbol;
         match self {
-            LineHint::Horizontal => "H",
-            LineHint::Vertical => "V",
-            LineHint::Tangent(_) => "T",
+            LineHint::Horizontal => Symbol::HORIZONTAL,
+            LineHint::Vertical => Symbol::VERTICAL,
+            LineHint::Tangent(_) => Symbol::TANGENT,
         }
     }
 }

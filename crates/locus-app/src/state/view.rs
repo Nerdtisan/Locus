@@ -30,6 +30,10 @@ pub struct ViewState {
     pub(crate) stroke_on: bool,
     /// Screen rectangles of the dimension labels drawn last frame.
     pub(crate) dim_rects: Vec<(ConstraintId, egui::Rect)>,
+    /// Screen rectangles of the constraint symbols drawn last frame (#329).
+    pub(crate) glyph_rects: Vec<(ConstraintId, crate::scene::Symbol, egui::Rect)>,
+    /// A constraint symbol's right-click menu: which constraint, and where.
+    pub(crate) glyph_menu: Option<(ConstraintId, Pos2)>,
     /// Screen rectangles of the offset / pattern labels drawn last frame (#164).
     pub(crate) offset_rects: Vec<(RecipeId, egui::Rect)>,
     /// Screen position where a rubber-band box started.
@@ -41,6 +45,11 @@ pub struct ViewState {
     pub(crate) touch_toggle: bool,
     /// The open marking menu (design §4, #290).
     pub(crate) marking: Option<Marking>,
+    /// The user's grid, snap and display settings, copied from `Settings`
+    /// each frame by the canvas (M5 design §2.4, #328).
+    pub(crate) display: crate::settings::Display,
+    /// The navigation bar's Pan is on: a left drag pans (Esc ends it).
+    pub(crate) pan_mode: bool,
     /// Requests for the shell (show the shortcuts pane, reset the layout):
     /// it owns the dock, so it takes these each frame.
     pub(crate) shell: Vec<crate::actions::Shell>,
@@ -76,12 +85,16 @@ impl Default for ViewState {
             machine: Vec::new(),
             stroke_on: false,
             dim_rects: Vec::new(),
+            glyph_rects: Vec::new(),
+            glyph_menu: None,
             offset_rects: Vec::new(),
             rubber: None,
             touches: crate::touch::Touches::default(),
             touch_add: false,
             touch_toggle: false,
             marking: None,
+            display: crate::settings::Display::default(),
+            pan_mode: false,
             shell: Vec::new(),
             browser_layer: None,
         }

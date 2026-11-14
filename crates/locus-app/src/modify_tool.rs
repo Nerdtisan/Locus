@@ -238,6 +238,7 @@ pub enum TransformMode {
 }
 
 impl TransformMode {
+    #[cfg(test)]
     pub const ALL: [TransformMode; 3] = [
         TransformMode::Move,
         TransformMode::Rotate,

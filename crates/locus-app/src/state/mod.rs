@@ -661,10 +661,11 @@ impl AppState {
     }
 
     pub(crate) fn rebuild(&mut self) {
-        self.doc.scene = Scene::build(
+        self.doc.scene = Scene::build_showing(
             self.doc.sketcher.document(),
             &self.doc.sketcher.state().fully_constrained,
             &self.selection.handles,
+            self.view.display.construction,
         );
         let scene = &self.doc.scene;
         self.selection
@@ -692,6 +693,41 @@ impl AppState {
     pub fn request_fit(&mut self) {
         self.view.auto_fit = true;
         self.view.fit_size = egui::Vec2::ZERO;
+    }
+
+    /// Zoom by `factor` about the canvas centre (navigation bar, Ctrl+= /
+    /// Ctrl+-; M5 design §2.4).
+    pub fn zoom_by(&mut self, factor: f64) {
+        let rect = self.view.rect;
+        if !rect.is_positive() {
+            return;
+        }
+        self.view.camera.zoom_about(rect.center(), factor, rect);
+        self.view.auto_fit = false;
+    }
+
+    /// Fit the view to the selection (Zoom to selection, design §2.4).
+    /// Returns false, with a notice, when nothing is selected.
+    pub fn zoom_to_selection(&mut self) -> bool {
+        let bbox = self
+            .doc
+            .scene
+            .items
+            .iter()
+            .filter(|i| self.selection.items.contains(i.id))
+            .map(|i| i.bbox)
+            .reduce(Aabb::union);
+        let (Some(b), true) = (bbox, self.view.rect.is_positive()) else {
+            self.doc.notice = Some("Select something to zoom to".to_owned());
+            return false;
+        };
+        // A little room around it, and never a zero-size box (one point).
+        let pad = Vec2::new(1.0, 1.0) + (b.max - b.min) * 0.1;
+        self.view
+            .camera
+            .fit(b.min - pad, b.max + pad, self.view.rect);
+        self.view.auto_fit = false;
+        true
     }
 
     /// Select chain (#220): add the chain of every selected curve.
