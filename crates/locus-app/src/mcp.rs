@@ -350,8 +350,13 @@ impl Mcp {
 
     pub fn menu(&mut self, ui: &mut egui::Ui) {
         if ui.button("MCP server (AI clients)…").clicked() {
-            self.window = true;
+            self.open();
         }
+    }
+
+    /// UTILITIES ▸ MCP server… (#325).
+    pub fn open(&mut self) {
+        self.window = true;
     }
 
     /// The always-visible indicator while the server runs (§16.4).

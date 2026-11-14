@@ -37,7 +37,8 @@ impl ActionId {
 }
 
 /// The ribbon group an action belongs to, in Fusion's naming (design §2).
-#[allow(dead_code)] // Output and File fill in with the OUTPUT ribbon tab
+/// SKETCH has Create … Select; OUTPUT has Preview and Export; UTILITIES has
+/// Plugins and Automation (#325). Edit and View live only in the menus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Group {
     Create,
@@ -46,10 +47,12 @@ pub enum Group {
     Inspect,
     Insert,
     Select,
-    Output,
+    Preview,
+    Export,
+    Plugins,
+    Automation,
     Edit,
     View,
-    File,
 }
 
 /// Whether an action can run now; the reason shows in menus and tool search
@@ -149,6 +152,14 @@ pub enum Shell {
     ResetLayout,
     /// Show a pane if it is hidden (the Browser's "Edit parameters", #326).
     ShowPane(crate::layout::Tab),
+    /// The export dialog, which validates first (SPEC §8, #325).
+    Export,
+    /// The machine profile manager (#286).
+    Profiles,
+    InstallPlugin,
+    PluginManager,
+    /// The MCP server window (desktop only, SPEC §16).
+    Mcp,
 }
 
 /// The three kinds of action in the design (§7.1).
@@ -699,13 +710,92 @@ pub static BUILTIN: &[Action] = &[
     a(
         "view.shortcuts",
         "Keyboard shortcuts",
-        Group::View,
+        Group::Automation,
         "⌨",
         &["keys", "help", "shortcut map"],
         "Show or hide the shortcut map pane",
         &[key(Key::Questionmark)],
         KeyScope::Global,
         Op::Shell(Shell::ToggleShortcuts),
+    ),
+    // ── OUTPUT (#325, design §2) ──
+    a(
+        "output.validate",
+        "Validate for export…",
+        Group::Preview,
+        "✓",
+        &["check", "open paths", "duplicates", "self-intersections"],
+        "Check the sketch as an export would (open paths, duplicates, self-intersections) and fix what can be fixed",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::Export),
+    ),
+    a(
+        "output.export",
+        "Export…",
+        Group::Export,
+        "⇪",
+        &["svg", "pdf", "dxf", "save as", "laser", "cutter", "plotter"],
+        "Export for a machine: pick its profile, check, then write the file",
+        &[cmd(Key::E)],
+        KeyScope::Global,
+        Op::Shell(Shell::Export),
+    ),
+    a(
+        "output.profiles",
+        "Machine profiles…",
+        Group::Export,
+        "▣",
+        &["lightburn", "cricut", "silhouette", "machine"],
+        "Add, edit, duplicate and delete machine profiles",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::Profiles),
+    ),
+    a(
+        "output.exporter_plugins",
+        "Exporter plugins…",
+        Group::Export,
+        "🧩",
+        &["plugin", "format"],
+        "Installed exporter plugins add formats to the export dialog",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::PluginManager),
+    ),
+    // ── UTILITIES (#325): add-ins live here, as in Fusion ──
+    a(
+        "util.install_plugin",
+        "Install plugin…",
+        Group::Plugins,
+        "⇩",
+        &["plugin", "add-in", "locusplugin"],
+        "Install a .locusplugin file",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::InstallPlugin),
+    ),
+    a(
+        "util.plugin_manager",
+        "Manage plugins…",
+        Group::Plugins,
+        "🧩",
+        &["plugin", "add-in", "uninstall", "enable"],
+        "Enable, disable, update and uninstall plugins",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::PluginManager),
+    ),
+    a(
+        "util.mcp",
+        "MCP server…",
+        Group::Automation,
+        "🤖",
+        &["ai", "assistant", "claude", "automation"],
+        "Let AI clients on this computer read and edit the sketch, with your approval",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::Mcp),
     ),
     a(
         "view.reset_layout",
@@ -1019,6 +1109,10 @@ impl Registry {
                 kind: PluginKind::Modifier,
                 ..
             } => Enabled::when(!canvas.selected_curves().is_empty(), a.hint.clone()),
+            Op::Shell(Shell::Mcp) => Enabled::when(
+                !cfg!(target_arch = "wasm32"),
+                "The MCP server runs in the desktop app (SPEC §16)",
+            ),
             _ => Enabled::Yes,
         }
     }
@@ -1257,7 +1351,17 @@ mod tests {
             assert!(seen.insert(a.id.as_str()), "duplicate id {}", a.id.as_str());
             let ns = a.id.as_str().split('.').next().unwrap_or_default();
             assert!(
-                ["select", "sketch", "modify", "constrain", "edit", "view"].contains(&ns),
+                [
+                    "select",
+                    "sketch",
+                    "modify",
+                    "constrain",
+                    "edit",
+                    "view",
+                    "output",
+                    "util"
+                ]
+                .contains(&ns),
                 "{}",
                 a.id.as_str()
             );
@@ -1303,6 +1407,7 @@ mod tests {
             ("sketch.pen", Key::N),
             ("edit.delete", Key::Delete),
             ("modify.construction", Key::X),
+            ("output.export", Key::E),
         ] {
             assert_eq!(bound(id), Some(k), "{id}");
         }
