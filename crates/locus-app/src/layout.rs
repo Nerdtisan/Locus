@@ -36,6 +36,9 @@ pub enum Tab {
     Parameters,
     /// Linear and circular patterns (#168, #169).
     Patterns,
+    /// The shortcut map (#299, design §5.1). Not in the default layout;
+    /// `?` adds it.
+    Shortcuts,
 }
 
 impl Tab {
@@ -48,6 +51,7 @@ impl Tab {
             Tab::Regions => "Regions",
             Tab::Parameters => "Parameters",
             Tab::Patterns => "Patterns",
+            Tab::Shortcuts => "Shortcuts",
         }
     }
 }
@@ -211,6 +215,7 @@ mod tests {
             Tab::Regions => v1::Tab::Regions,
             Tab::Parameters => v1::Tab::Parameters,
             Tab::Patterns => v1::Tab::Patterns,
+            Tab::Shortcuts => unreachable!("not in the default layout"),
         }))
         .unwrap()
     }

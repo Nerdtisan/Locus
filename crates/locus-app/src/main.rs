@@ -28,6 +28,7 @@ mod settings;
 mod shapes;
 mod state;
 mod tool;
+mod toolbar;
 mod tools;
 mod touch;
 mod view;
