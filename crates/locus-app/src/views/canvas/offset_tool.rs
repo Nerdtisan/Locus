@@ -23,9 +23,10 @@ use locus_doc::recipe::RecipeKind;
 use locus_doc::{Command, Document, EntityId};
 use locus_geom::Vec2;
 
-/// Screen length of the arrow at zero distance, and its grab radius.
-const MIN_ARROW_PT: f32 = 36.0;
-const GRAB_PT: f32 = 10.0;
+/// The arrow head's length on the offset curve, and the handle's grab
+/// radius (screen points).
+const HEAD_PT: f32 = 22.0;
+const GRAB_PT: f32 = 12.0;
 /// The ⇅ flip control sits this far behind the arrow's base.
 const FLIP_PT: f32 = 22.0;
 
@@ -87,6 +88,25 @@ fn plus_direction(doc: &Document, sources: &[EntityId], base: Vec2, picked: &Sha
         .map(|q| q - base)
         .filter(|d| d.length() > f64::EPSILON)
         .map_or(Vec2::new(0.0, 1.0), |d| d / d.length())
+}
+
+/// Where the arrow handle sits (world mm): on the offset result, at the
+/// point nearest where `base` moves by `distance` along `plus` (#336,
+/// design §6.6). Every shape Offset supports (lines, arcs, circles,
+/// rectangles, polygons, slots, Béziers, open and closed chains) has a
+/// result, so the handle is always on the curve it moves. Before the
+/// preview exists, or at zero distance, it is that moved point.
+fn handle_point(base: Vec2, plus: Vec2, distance: f64, preview: Option<&[Shape]>) -> Vec2 {
+    let target = base + plus * distance;
+    if distance == 0.0 {
+        return base;
+    }
+    preview
+        .into_iter()
+        .flatten()
+        .map(|s| closest(s, target))
+        .min_by(|a, b| a.distance(target).total_cmp(&b.distance(target)))
+        .unwrap_or(target)
 }
 
 impl AppState {
@@ -221,19 +241,20 @@ impl AppState {
         }
     }
 
-    /// Screen positions of the arrow's base, tip and the ⇅ control.
+    /// Screen positions of the arrow's base (on the source), its handle
+    /// (on the offset result, #336) and the ⇅ control.
     fn offset_arrow(&self, d: &OffsetDraft, distance: f64, rect: Rect) -> (Pos2, Pos2, Pos2) {
         let cam = &self.view.camera;
         let base = cam.to_screen(d.base, rect);
+        let preview = d.preview.as_ref().map(|(_, s)| s.as_slice());
+        let tip = cam.to_screen(handle_point(d.base, d.plus, distance, preview), rect);
         let ahead = cam.to_screen(d.base + d.plus, rect) - base;
         let dir = if ahead.length() > 0.0 {
             ahead.normalized()
         } else {
             EVec2::Y
         };
-        let len = (distance.abs() as f32 * cam.pt_per_mm as f32).max(MIN_ARROW_PT);
         let sign = if distance < 0.0 { -1.0 } else { 1.0 };
-        let tip = base + dir * len * sign;
         let flip = base - dir * FLIP_PT * sign;
         (base, tip, flip)
     }
@@ -291,8 +312,14 @@ impl AppState {
             self.offset_flip(units);
             return true;
         }
-        // A click on the arrow itself isn't a new pick.
-        press.is_some_and(|p| p.distance(tip) <= GRAB_PT) && resp.clicked_by(PointerButton::Primary)
+        // A click on the handle focuses the distance (design §6.6); it
+        // isn't a new pick.
+        let on_handle = press.is_some_and(|p| p.distance(tip) <= GRAB_PT)
+            && resp.clicked_by(PointerButton::Primary);
+        if on_handle && let Some(draft) = self.tools.offset_draft.as_mut() {
+            draft.focus = true;
+        }
+        on_handle
     }
 
     /// Recompute the preview when the distance, corners or chain changed:
@@ -335,16 +362,34 @@ impl AppState {
         let (base, tip, flip) = self.offset_arrow(d, distance, frame.rect);
         let c = frame.pal.selected;
         let p = frame.painter;
+        // The direction a growing distance moves the handle.
+        let ahead = frame.view.to_screen(d.base + d.plus, frame.rect) - base;
+        let plus = if ahead.length() > 0.0 {
+            ahead.normalized()
+        } else {
+            EVec2::Y
+        };
+        let dir = if distance < 0.0 { -plus } else { plus };
+        // A thin leader from the source to the handle, then the handle: a
+        // filled arrow standing on the offset curve (Fusion's offset arrow).
+        p.line_segment([base, tip], Stroke::new(1.0, c));
+        p.circle_filled(base, 2.5, c);
         let w = if d.dragging { 3.0 } else { 2.0 };
-        p.line_segment([base, tip], Stroke::new(w, c));
-        let dir = (tip - base).normalized();
+        let head_base = tip;
+        let head_tip = tip + dir * HEAD_PT;
+        p.line_segment([head_base, head_tip - dir * 8.0], Stroke::new(w, c));
         let side = EVec2::new(-dir.y, dir.x) * 6.0;
         p.add(egui::Shape::convex_polygon(
-            vec![tip + dir * 12.0, tip + side, tip - side],
+            vec![
+                head_tip,
+                head_tip - dir * 10.0 + side,
+                head_tip - dir * 10.0 - side,
+            ],
             c,
             Stroke::NONE,
         ));
-        p.circle_filled(base, 3.0, c);
+        p.circle_filled(tip, if d.dragging { 5.0 } else { 4.0 }, c);
+        p.circle_stroke(tip, GRAB_PT - 2.0, Stroke::new(1.0, c.gamma_multiply(0.5)));
         // ⇅ drawn as two opposed arrowheads along the arrow's axis (the
         // default fonts have no such glyph).
         p.circle_stroke(flip, 9.0, Stroke::new(1.5, c));
@@ -368,7 +413,7 @@ impl AppState {
             Align2::LEFT_CENTER
         };
         p.text(
-            tip + dir * 18.0,
+            head_tip + dir * 8.0,
             anchor,
             format!("offset {}", units.format_len(distance)),
             FontId::monospace(13.0),
@@ -434,7 +479,7 @@ impl AppState {
                         });
                         row(ui, "Direction", |ui| {
                             flip = ui
-                                .button("⇅ Flip")
+                                .button("Flip")
                                 .on_hover_text("Offset to the other side, keeping the distance")
                                 .clicked();
                         });
@@ -646,5 +691,172 @@ mod tests {
         c.tools.corner.text.offset = "0".to_owned();
         assert!(!c.offset_ok(Units::Mm));
         assert!(c.doc.notice.is_some());
+    }
+
+    /// Draw `tool` with `clicks` on a blank document, then Esc.
+    fn shape(tool: Tool, clicks: &[(f64, f64)]) -> AppState {
+        let mut c = AppState::default();
+        c.load(Document::new());
+        c.set_tool(tool);
+        for &(x, y) in clicks {
+            c.tool_event(
+                ToolEvent::Click(Pick::free(Vec2::new(x, y))),
+                None,
+                Units::Mm,
+            );
+        }
+        c.tool_event(ToolEvent::Esc, None, Units::Mm);
+        c
+    }
+
+    /// #336: for every kind of shape Offset takes, the arrow handle sits on
+    /// the offset result, the distance away from where the curve was
+    /// picked, and dragging it there gives back that distance.
+    #[test]
+    fn the_handle_sits_on_the_offset_of_every_shape() {
+        let cases: Vec<(&str, AppState)> = vec![
+            ("line", shape(Tool::Line, &[(0.0, 0.0), (30.0, 0.0)])),
+            (
+                "open chain",
+                shape(Tool::Line, &[(0.0, 0.0), (30.0, 0.0), (30.0, 20.0)]),
+            ),
+            ("circle", shape(Tool::Circle, &[(0.0, 0.0), (10.0, 0.0)])),
+            (
+                "arc",
+                shape(
+                    Tool::ArcThreePoint,
+                    &[(-10.0, 0.0), (10.0, 0.0), (0.0, 10.0)],
+                ),
+            ),
+            (
+                "rectangle",
+                shape(Tool::RectCorner, &[(0.0, 0.0), (30.0, 20.0)]),
+            ),
+            ("polygon", shape(Tool::Polygon, &[(0.0, 0.0), (15.0, 0.0)])),
+            (
+                "slot",
+                shape(Tool::Slot, &[(0.0, 0.0), (30.0, 0.0), (30.0, 5.0)]),
+            ),
+            (
+                "bezier",
+                shape(Tool::Bezier, &[(0.0, 0.0), (20.0, 10.0), (40.0, 0.0)]),
+            ),
+        ];
+        for (name, mut c) in cases {
+            let doc = c.doc.sketcher.document();
+            let curve = c
+                .doc
+                .scene
+                .items
+                .iter()
+                .find(|i| !i.construction && !matches!(i.shape, Shape::Point(_)))
+                .map(|i| (i.id, i.shape))
+                .unwrap_or_else(|| panic!("{name}: something drawn"));
+            assert!(doc.entity(curve.0).is_some());
+            let kind_ok = match name {
+                "circle" => matches!(curve.1, Shape::Circle(_)),
+                "arc" => matches!(curve.1, Shape::Arc(_)),
+                "bezier" => matches!(curve.1, Shape::Cubic(_)),
+                "slot" => matches!(curve.1, Shape::Line(_) | Shape::Arc(_)),
+                _ => matches!(curve.1, Shape::Line(_)),
+            };
+            assert!(kind_ok, "{name}: drew {:?}", curve.1);
+            // Pick it at a point on the curve.
+            let at = closest(&curve.1, Vec2::new(7.0, 3.0));
+            c.set_modify(Modify::Offset);
+            c.tool_event(ToolEvent::Click(Pick::free(at)), Some(curve.0), Units::Mm);
+            let d = c
+                .tools
+                .offset_draft
+                .clone()
+                .unwrap_or_else(|| panic!("{name}: a draft"));
+            c.tools.corner.text.offset = "2".to_owned();
+            c.refresh_offset_preview(Units::Mm);
+            let d2 = c.tools.offset_draft.clone().expect("draft");
+            let shapes = d2
+                .preview
+                .as_ref()
+                .map(|(_, s)| s.clone())
+                .unwrap_or_default();
+            assert!(!shapes.is_empty(), "{name}: a preview");
+            let h = handle_point(d.base, d.plus, 2.0, Some(&shapes));
+            let on = shapes
+                .iter()
+                .map(|s| closest(s, h).distance(h))
+                .fold(f64::INFINITY, f64::min);
+            assert!(on < 1e-6, "{name}: the handle is on the offset ({on})");
+            let gap = h.distance(d.base);
+            assert!(
+                (gap - 2.0).abs() < 0.05,
+                "{name}: the handle is the distance away ({gap})"
+            );
+            // Dragging along the arrow measures the same distance.
+            let measured = (h - d.base).dot(d.plus);
+            assert!((measured - 2.0).abs() < 0.05, "{name}: {measured}");
+        }
+        // No preview yet, or zero: the moved point, or the base.
+        let b = Vec2::new(1.0, 1.0);
+        let up = Vec2::new(0.0, 1.0);
+        assert_eq!(handle_point(b, up, 3.0, None), Vec2::new(1.0, 4.0));
+        assert_eq!(handle_point(b, up, 0.0, None), b);
+    }
+
+    /// #336: pressing the handle on the offset curve and dragging it, in
+    /// real egui frames through the canvas, sets the distance live; a
+    /// click on it keeps the draft and focuses the value.
+    #[test]
+    fn dragging_the_handle_on_the_curve_sets_the_distance() {
+        use egui::{Event, PointerButton as B, RawInput, pos2, vec2};
+        let (mut c, _) = drafted();
+        c.tools.corner.text.offset = "2".to_owned();
+        let ctx = egui::Context::default();
+        let settings = crate::settings::Settings {
+            display: crate::settings::Display {
+                snap_grid: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut t = 0.0;
+        let mut frame = |c: &mut AppState, events: Vec<Event>| {
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    pos2(0.0, 0.0),
+                    vec2(800.0, 600.0),
+                )),
+                time: Some(t),
+                events,
+                ..RawInput::default()
+            };
+            t += 0.03;
+            let mut status = crate::app::Status::default();
+            let _ = ctx.run_ui(input, |ui| c.canvas_ui(ui, &settings, &mut status));
+        };
+        frame(&mut c, Vec::new());
+        frame(&mut c, Vec::new());
+        let d = c.tools.offset_draft.clone().expect("draft");
+        let (_, tip, _) = c.offset_arrow(&d, 2.0, c.view.rect);
+        // The handle is on the offset: 2 mm below the bottom edge.
+        let w = c.view.camera.to_world(tip, c.view.rect);
+        assert!((w.y + 2.0).abs() < 0.05, "{w:?}");
+        let btn = |pos, pressed| Event::PointerButton {
+            pos,
+            button: B::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Drag it 5 mm further out (down).
+        let to = c.view.camera.to_screen(Vec2::new(w.x, -7.0), c.view.rect);
+        frame(&mut c, vec![Event::PointerMoved(tip)]);
+        frame(&mut c, vec![btn(tip, true)]);
+        for i in 1..=8 {
+            let f = i as f32 / 8.0;
+            frame(&mut c, vec![Event::PointerMoved(tip + (to - tip) * f)]);
+        }
+        frame(&mut c, vec![btn(to, false)]);
+        frame(&mut c, Vec::new());
+        let v = c.offset_value(Units::Mm).expect("a value").0;
+        assert!((v - 7.0).abs() < 0.11, "dragged to {v}");
+        assert!(c.tools.offset_draft.is_some(), "still a draft");
     }
 }
