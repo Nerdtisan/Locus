@@ -19,7 +19,7 @@ use locus_geom::{Aabb, Vec2};
 mod ai;
 mod bed;
 mod corner_dialog;
-mod dialog;
+pub(crate) mod dialog;
 mod machine;
 mod manipulator;
 mod mirror_tool;
