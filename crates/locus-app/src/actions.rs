@@ -116,6 +116,7 @@ pub enum DisplayFlag {
     Constraints,
     Points,
     Profiles,
+    Fills,
 }
 
 impl DisplayFlag {
@@ -134,6 +135,7 @@ impl DisplayFlag {
             DisplayFlag::Constraints => &mut d.constraints,
             DisplayFlag::Points => &mut d.points,
             DisplayFlag::Profiles => &mut d.profiles,
+            DisplayFlag::Fills => &mut d.fills,
         }
     }
 }
@@ -844,6 +846,12 @@ pub static BUILTIN: &[Action] = &[
         DisplayFlag::Points,
     ),
     display(
+        "view.fills",
+        "Fills",
+        &["show fills", "fill colour"],
+        DisplayFlag::Fills,
+    ),
+    display(
         "view.profiles",
         "Profiles",
         &["show profiles", "regions"],
@@ -1118,6 +1126,7 @@ pub const VIEW_MENU: &[Item] = &[
     A("view.constraints"),
     A("view.points"),
     A("view.profiles"),
+    A("view.fills"),
 ];
 
 /// The navigation bar's Grid and snaps ▾ (design §2.4).
@@ -1135,6 +1144,7 @@ pub const DISPLAY_MENU: &[Item] = &[
     A("view.constraints"),
     A("view.points"),
     A("view.profiles"),
+    A("view.fills"),
     Sep,
     A("view.stroke_width"),
     A("view.machine_preview"),
