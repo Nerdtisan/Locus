@@ -34,6 +34,8 @@ pub enum Msg {
     Picked(Result<Option<(String, String)>, String>),
     /// File ▸ Import reference…: an SVG or DXF, name and text (#243).
     PickedReference(Result<Option<(String, String)>, String>),
+    /// File ▸ Machine profiles ▸ Import: a profile `.json` (#286).
+    PickedProfile(Result<Option<(String, String)>, String>),
     /// The autosaved document text found at startup, if any.
     Restore(Option<String>),
     AutosaveDone(Result<(), String>),
@@ -105,6 +107,21 @@ impl Web {
                 Err(_) => Err("Could not open the file picker.".to_owned()),
             };
             Msg::PickedReference(res)
+        });
+    }
+
+    /// Show the file picker for a machine profile `.json` (#286). Its text
+    /// is untrusted; `profiles::import` bounds and validates it.
+    pub fn pick_profile(&self) {
+        self.spawn(async {
+            let res = match pick_text(".json").await {
+                Ok(v) => match v.as_string() {
+                    None => Ok(None),
+                    Some(json) => parse_picked(&json).map(Some),
+                },
+                Err(_) => Err("Could not open the file picker.".to_owned()),
+            };
+            Msg::PickedProfile(res)
         });
     }
 
