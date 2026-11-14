@@ -37,6 +37,12 @@ pub const MAX_TEXT_SIZE: f64 = 100_000.0;
 /// Largest accepted line-spacing multiplier.
 pub const MAX_LINE_SPACING: f64 = 100.0;
 
+// serde's `skip_serializing_if` passes a reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
 /// Content, font and style of a text entity, plus the cached layout.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextData {
@@ -46,6 +52,10 @@ pub struct TextData {
     pub size: f64,
     pub align: Align,
     pub line_spacing: f64,
+    /// Letter spacing (tracking) in mm (#222, format v14). Omitted from
+    /// files while zero, so older files load unchanged.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tracking: f64,
     /// Laid-out geometry in the local frame; derived from the fields above
     /// by [`TextData::new`] and stored so the file needs no font to open.
     pub layout: TextGeometry,
@@ -71,6 +81,7 @@ impl TextData {
             size,
             align,
             line_spacing,
+            tracking: 0.0,
             layout: TextGeometry::default(),
         };
         t.check_style()?;
@@ -103,6 +114,7 @@ impl TextData {
             size: self.size,
             align: self.align,
             line_spacing: self.line_spacing,
+            tracking: self.tracking,
         }
     }
 
@@ -129,6 +141,12 @@ impl TextData {
             return Err(DocError::BadValue {
                 what: "text size",
                 value: self.size,
+            });
+        }
+        if !(self.tracking.is_finite() && self.tracking.abs() <= MAX_TEXT_SIZE) {
+            return Err(DocError::BadValue {
+                what: "letter spacing",
+                value: self.tracking,
             });
         }
         if !(self.line_spacing.is_finite()

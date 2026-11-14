@@ -71,6 +71,10 @@ pub struct ToolState {
     pub(crate) fonts: FontCatalog,
     /// The selected text being edited: its id and the not-yet-committed settings.
     pub(crate) text_edit: Option<(EntityId, TextSettings)>,
+    /// The Text dialog is open on this placed text (#222), and its content
+    /// should take focus on the next frame.
+    pub(crate) text_dialog: Option<EntityId>,
+    pub(crate) text_focus: bool,
     /// The Style eyedropper is waiting for a click on an object (design §6.2).
     pub(crate) eyedropper: bool,
     /// The last tool or command run from the registry, for Repeat (design §4).
@@ -97,6 +101,8 @@ impl Default for ToolState {
             text_settings: TextSettings::default(),
             fonts: FontCatalog::headless(),
             text_edit: None,
+            text_dialog: None,
+            text_focus: false,
             eyedropper: false,
             last_action: None,
         }

@@ -132,9 +132,7 @@ impl Tool {
             (Tool::Slot, 0) => "Slot: click the first centre",
             (Tool::Slot, 1) => "Slot: click the second centre",
             (Tool::Slot, _) => "Slot: click to set the width, or type it",
-            (Tool::Text, _) => {
-                "Text: click to place the anchor (set the text and font in the tool bar)"
-            }
+            (Tool::Text, _) => "Text: set the text in the dialog, then click to place it",
             (Tool::Bezier, 0) => "Bézier: click the start (drag for a smooth point)",
             (Tool::Bezier, _) => {
                 "Bézier: click a corner, drag for a smooth point, click the start to close (Enter finishes)"

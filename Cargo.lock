@@ -2304,6 +2304,7 @@ version = "0.0.0"
 dependencies = [
  "harfrust 0.15.0",
  "locus-geom",
+ "locus-region",
  "serde",
  "skrifa 0.49.0",
  "thiserror 2.0.21",

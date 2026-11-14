@@ -85,7 +85,18 @@ impl AppState {
         }
         if let Some((id, anchor, dir, text)) = selected_text {
             ui.separator();
-            self.edit_text(ui, id, anchor, dir, &text);
+            if self.tools.text_dialog == Some(id) {
+                ui.weak("Editing in the Text dialog on the canvas.");
+            } else {
+                self.edit_text(ui, id, anchor, dir, &text, false);
+                if ui
+                    .button("Edit in dialog")
+                    .on_hover_text("Or double-click the text on the canvas")
+                    .clicked()
+                {
+                    self.open_text_dialog(id, true);
+                }
+            }
         } else {
             self.tools.text_edit = None;
         }
@@ -103,6 +114,7 @@ impl AppState {
         anchor: EntityId,
         dir: EntityId,
         stored: &locus_doc::TextData,
+        focus: bool,
     ) {
         let mut s = match self.tools.text_edit.take() {
             Some((i, s)) if i == id => s,
@@ -115,7 +127,7 @@ impl AppState {
             s = live;
         }
         let missing = self.tools.fonts.missing(&stored.font);
-        let mut edited = text_ui::controls(ui, &mut s, &mut self.tools.fonts, !missing, 3);
+        let mut edited = text_ui::controls(ui, &mut s, &mut self.tools.fonts, !missing, 3, focus);
         if s.content != stored.content
             && !missing
             && ui

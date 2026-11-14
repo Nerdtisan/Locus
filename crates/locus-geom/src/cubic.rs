@@ -190,6 +190,29 @@ impl Cubic {
         out
     }
 
+    /// [`Cubic::to_pieces`] in travel order with each piece's direction:
+    /// `true` marks an arc that runs clockwise along the curve (stored with
+    /// its ends swapped, as every arc is CCW). Callers that need the pieces
+    /// to join end to end (loops, offsets, plotting order) use this.
+    #[must_use]
+    pub fn to_pieces_oriented(&self, tol: f64) -> Vec<(Piece, bool)> {
+        let mut at = self.p0;
+        self.to_pieces(tol)
+            .into_iter()
+            .map(|p| match p {
+                Piece::Line(l) => {
+                    at = l.b;
+                    (p, false)
+                }
+                Piece::Arc(a) => {
+                    let backwards = a.end.distance(at) < a.start.distance(at);
+                    at = if backwards { a.start } else { a.end };
+                    (p, backwards)
+                }
+            })
+            .collect()
+    }
+
     fn pieces_into(&self, tol: f64, depth: u32, out: &mut Vec<Piece>) {
         let straight = self.is_straight(tol);
         if straight {
@@ -485,5 +508,33 @@ mod tests {
         let t = c.start_tangent().unwrap();
         assert!(t.approx_eq(v(1.0, 1.0).normalized(0.0).unwrap(), 1e-12));
         assert!(c.end_tangent().unwrap().x > 0.0);
+    }
+
+    #[test]
+    fn oriented_pieces_join_end_to_end() {
+        // An S has a clockwise and a counter-clockwise bend.
+        let c = Cubic::new(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(10.0, -10.0),
+            Vec2::new(20.0, 0.0),
+        );
+        let pieces = c.to_pieces_oriented(1e-3);
+        assert!(
+            pieces.iter().any(|(_, back)| *back),
+            "has a clockwise piece"
+        );
+        let ends = |(p, back): &(Piece, bool)| match (p, back) {
+            (Piece::Line(l), _) => (l.a, l.b),
+            (Piece::Arc(a), false) => (a.start, a.end),
+            (Piece::Arc(a), true) => (a.end, a.start),
+        };
+        let mut at = c.p0;
+        for p in &pieces {
+            let (s, e) = ends(p);
+            assert!(s.distance(at) < 1e-9, "{s:?} should start at {at:?}");
+            at = e;
+        }
+        assert!(at.distance(c.p1) < 1e-9);
     }
 }

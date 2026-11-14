@@ -11,7 +11,7 @@
 use crate::pipeline::{ExportLayer, ExportModel, ExportPath, PathSeg, Shape};
 use core::f64::consts::TAU;
 use locus_doc::{Compensation, EntityId, Operation};
-use locus_geom::{Arc, Circle, EXPORT_TOL, Line, Vec2};
+use locus_geom::{Arc, Circle, EXPORT_TOL, Line, Piece, Vec2};
 use locus_region::{Area, Edge, Join, Loop, Seg};
 
 /// Applies every layer's operation transform.
@@ -52,7 +52,22 @@ fn segs_of(s: &PathSeg) -> Vec<Seg> {
             Shape::Cubic(_) => None,
         }
     };
-    let mut out: Vec<Seg> = s.shape.pieces().iter().filter_map(one).collect();
+    // A Bézier's clockwise biarc pieces are stored with their ends swapped
+    // (arcs are CCW): turn them back so the pieces join in travel order.
+    let mut out: Vec<Seg> = match s.shape {
+        Shape::Cubic(c) => c
+            .to_pieces_oriented(EXPORT_TOL)
+            .into_iter()
+            .filter_map(|(p, back)| {
+                let shape = match p {
+                    Piece::Line(l) => Shape::Line(l),
+                    Piece::Arc(a) => Shape::Arc(a),
+                };
+                one(&shape).map(|seg| if back { seg.reversed() } else { seg })
+            })
+            .collect(),
+        _ => one(&s.shape).into_iter().collect(),
+    };
     if s.reversed {
         out.reverse();
         for p in &mut out {
@@ -450,6 +465,44 @@ mod tests {
 
     fn v(x: f64, y: f64) -> Vec2 {
         Vec2::new(x, y)
+    }
+
+    /// Regression (#222, the "stray arc"): a Bézier's clockwise biarc
+    /// pieces are stored with their ends swapped, so taking them as they
+    /// come reversed them, and the loop "bridged" the gap with a line.
+    #[test]
+    fn bezier_pieces_follow_the_curve() {
+        // An S: one bend each way, so it has clockwise and CCW pieces.
+        let s = PathSeg {
+            entity: locus_doc::EntityId::new(1),
+            shape: Shape::Cubic(locus_geom::Cubic::new(
+                v(0.0, 0.0),
+                v(10.0, 10.0),
+                v(10.0, -10.0),
+                v(20.0, 0.0),
+            )),
+            reversed: false,
+        };
+        for reversed in [false, true] {
+            let segs = segs_of(&PathSeg { reversed, ..s });
+            assert!(segs.len() > 1);
+            let (start, end) = if reversed {
+                (v(20.0, 0.0), v(0.0, 0.0))
+            } else {
+                (v(0.0, 0.0), v(20.0, 0.0))
+            };
+            assert!(segs[0].start().distance(start) < 1e-9);
+            assert!(segs.last().unwrap().end().distance(end) < 1e-9);
+            for w in segs.windows(2) {
+                assert!(
+                    w[0].end().distance(w[1].start()) < 1e-9,
+                    "pieces must join in travel order: {w:?}"
+                );
+            }
+            // Every piece stays close to the curve (no long way round).
+            let total: f64 = segs.iter().map(Seg::length).sum();
+            assert!(total < 30.0, "length {total}");
+        }
     }
 
     pub(super) fn layer(op: Operation, shapes: Vec<Shape>) -> ExportLayer {

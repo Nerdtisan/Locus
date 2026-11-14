@@ -122,3 +122,24 @@ fn text_follows_its_points_and_exports_the_same_without_the_font() {
     let after = collect(&doc);
     assert_eq!(before, after);
 }
+
+/// Regression (#222): outline text with a bundled font exported with
+/// "segments intersect" warnings (Figtree draws `#`, `$`, `&`, `*`, `+` … as
+/// overlapping contours, which a cutter would cut through). Every printable
+/// ASCII character in both bundled outline fonts now exports clean.
+#[test]
+fn bundled_outline_text_exports_without_intersections() {
+    let all: String = ('!'..='~').collect();
+    for font in [BundledFont::Figtree, BundledFont::LibreBaskerville] {
+        let (doc, _) = doc_with_text(font, &all);
+        let model = collect(&doc);
+        let report = locus_export::validate(&model);
+        let crossings = report
+            .issues
+            .iter()
+            .filter(|i| i.kind == locus_export::IssueKind::SelfIntersection)
+            .count();
+        assert_eq!(crossings, 0, "{font:?}");
+        assert!(model.layers[0].paths.iter().all(|p| p.closed), "{font:?}");
+    }
+}
