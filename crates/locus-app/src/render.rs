@@ -124,6 +124,61 @@ fn intersects(b: &Aabb, lo: Vec2, hi: Vec2) -> bool {
     b.max.x >= lo.x && b.min.x <= hi.x && b.max.y >= lo.y && b.min.y <= hi.y
 }
 
+/// How far outside the canvas geometry is still drawn, in points: enough
+/// for stroke joins and dashes, small enough that every coordinate given
+/// to the f32 painter stays near the canvas (#333).
+const CLIP_PAD_PT: f64 = 64.0;
+/// Above this screen radius a circle or arc is sampled only where it can
+/// be seen, and a Bézier is split until its pieces are this small.
+const HUGE_PT: f64 = 20_000.0;
+
+/// The part of segment `a`–`b` inside the box `lo`–`hi` (Liang–Barsky), in
+/// world mm (f64), or `None` when it misses the box.
+fn clip(a: Vec2, b: Vec2, lo: Vec2, hi: Vec2) -> Option<(Vec2, Vec2)> {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (p, q) in [
+        (-d.x, a.x - lo.x),
+        (d.x, hi.x - a.x),
+        (-d.y, a.y - lo.y),
+        (d.y, hi.y - a.y),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                t0 = t0.max(r);
+            } else {
+                t1 = t1.min(r);
+            }
+            if t0 > t1 {
+                return None;
+            }
+        }
+    }
+    Some((a + d * t0, a + d * t1))
+}
+
+/// The angle intervals of an arc from `a0` sweeping `sweep` (radians, ≥ 0)
+/// that fall inside the window `w0`..`w1` (any turn).
+fn arc_window(a0: f64, sweep: f64, w0: f64, w1: f64) -> Vec<(f64, f64)> {
+    use std::f64::consts::TAU;
+    let shift = ((a0 - w0) / TAU).floor() * TAU;
+    let mut out = Vec::new();
+    for k in -1..=2 {
+        let off = shift + f64::from(k) * TAU;
+        let lo = a0.max(w0 + off);
+        let hi = (a0 + sweep).min(w1 + off);
+        if hi > lo {
+            out.push((lo, hi));
+        }
+    }
+    out
+}
+
 impl Frame<'_> {
     fn s(&self, p: Vec2) -> Pos2 {
         self.view.to_screen(p, self.rect)
@@ -179,13 +234,7 @@ impl Frame<'_> {
                 Shape::Point(p) => {
                     self.painter.circle_filled(self.s(p), 3.4, colour);
                 }
-                Shape::Line(l) if !item.construction => {
-                    self.painter
-                        .line_segment([self.s(l.a), self.s(l.b)], stroke);
-                }
-                Shape::Line(l) => {
-                    self.polyline(vec![self.s(l.a), self.s(l.b)], stroke, true);
-                }
+                Shape::Line(l) => self.world_polyline(&[l.a, l.b], stroke, item.construction),
                 Shape::Circle(c) => self.circle(c, stroke, item.construction),
                 Shape::Arc(a) => self.arc(a, stroke, item.construction),
                 Shape::Cubic(c) => self.cubic(&c, stroke, item.construction),
@@ -208,19 +257,79 @@ impl Frame<'_> {
             if w <= 0.0 {
                 continue;
             }
-            let px = (w * self.view.pt_per_mm).max(1.0) as f32;
+            // Capped: deep in, a 0.3 mm pen would be a 10¹¹-point stroke.
+            let px = (w * self.view.pt_per_mm).clamp(1.0, 1.0e5) as f32;
             let stroke = Stroke::new(px, colour);
             match item.shape {
                 Shape::Point(_) => {}
-                Shape::Line(l) => {
-                    self.painter
-                        .line_segment([self.s(l.a), self.s(l.b)], stroke);
-                }
+                Shape::Line(l) => self.world_polyline(&[l.a, l.b], stroke, false),
                 Shape::Circle(c) => self.circle(c, stroke, false),
                 Shape::Arc(a) => self.arc(a, stroke, false),
                 Shape::Cubic(c) => self.cubic(&c, stroke, false),
             }
         }
+    }
+
+    /// A polyline given in world mm: each segment is clipped to the padded
+    /// view in f64 first, and the visible runs are drawn (#333).
+    fn world_polyline(&self, pts: &[Vec2], stroke: Stroke, dashed: bool) {
+        let (lo, hi) = self.visible(CLIP_PAD_PT);
+        let mut run: Vec<Pos2> = Vec::new();
+        let mut last: Option<Vec2> = None;
+        for w in pts.windows(2) {
+            match clip(w[0], w[1], lo, hi) {
+                Some((p, q)) => {
+                    if last != Some(p) && run.len() > 1 {
+                        self.polyline(std::mem::take(&mut run), stroke, dashed);
+                    }
+                    if last != Some(p) {
+                        run.clear();
+                        run.push(self.s(p));
+                    }
+                    run.push(self.s(q));
+                    last = Some(q);
+                }
+                None => {
+                    if run.len() > 1 {
+                        self.polyline(std::mem::take(&mut run), stroke, dashed);
+                    }
+                    run.clear();
+                    last = None;
+                }
+            }
+        }
+        if run.len() > 1 {
+            self.polyline(run, stroke, dashed);
+        }
+    }
+
+    /// The angle window (radians) of a huge circle of `r` mm about `c` that
+    /// can be seen, or `None` when none of it can. Small ones are seen whole.
+    fn visible_angles(&self, c: Vec2, r: f64) -> Option<(f64, f64)> {
+        use std::f64::consts::PI;
+        if r * self.view.pt_per_mm < HUGE_PT {
+            return Some((0.0, 2.0 * PI));
+        }
+        let (lo, hi) = self.visible(CLIP_PAD_PT);
+        let half_diag = (hi - lo).length() / 2.0;
+        let mid = (lo + hi) * 0.5;
+        let d = mid - c;
+        let dist = d.length();
+        if (dist - r).abs() > half_diag {
+            return None;
+        }
+        let around = d.y.atan2(d.x);
+        // Twice the angle the view subtends, so the run reaches past it.
+        let h = (2.0 * half_diag / r).min(PI);
+        Some((around - h, around + h))
+    }
+
+    /// Sample `c + r·(cos, sin)` over `a0`..`a1` finely enough on screen.
+    fn arc_points(&self, c: Vec2, r: f64, a0: f64, a1: f64) -> Vec<Vec2> {
+        let n = Self::segments(r * self.view.pt_per_mm, a1 - a0);
+        (0..=n)
+            .map(|i| c + Vec2::from_angle(a0 + (a1 - a0) * i as f64 / n as f64) * r)
+            .collect()
     }
 
     fn polyline(&self, pts: Vec<Pos2>, stroke: Stroke, dashed: bool) {
@@ -251,11 +360,11 @@ impl Frame<'_> {
                 .circle_stroke(self.s(c.center), r_pt as f32, stroke);
             return;
         }
-        let n = Self::segments(r_pt, std::f64::consts::TAU);
-        let pts = (0..=n)
-            .map(|i| self.s(c.eval(std::f64::consts::TAU * i as f64 / n as f64)))
-            .collect();
-        self.polyline(pts, stroke, dashed);
+        // Huge on screen (#333): only the part that can be seen.
+        if let Some((a0, a1)) = self.visible_angles(c.center, c.radius) {
+            let pts = self.arc_points(c.center, c.radius, a0, a1);
+            self.world_polyline(&pts, stroke, dashed);
+        }
     }
 
     fn arc(&self, a: Arc, stroke: Stroke, dashed: bool) {
@@ -267,21 +376,42 @@ impl Frame<'_> {
             return;
         }
         let a0 = a.start_angle();
-        let n = Self::segments(r_pt, sweep);
-        let pts = (0..=n)
-            .map(|i| {
-                let ang = a0 + sweep * i as f64 / n as f64;
-                self.s(a.center + Vec2::from_angle(ang) * a.radius())
-            })
-            .collect();
-        self.polyline(pts, stroke, dashed);
+        let Some((w0, w1)) = self.visible_angles(a.center, a.radius()) else {
+            return;
+        };
+        for (lo, hi) in arc_window(a0, sweep, w0, w1) {
+            let pts = self.arc_points(a.center, a.radius(), lo, hi);
+            self.world_polyline(&pts, stroke, dashed);
+        }
     }
 
     /// A Bézier as a polyline whose chord error stays under [`FLATNESS_PT`].
     fn cubic(&self, c: &Cubic, stroke: Stroke, dashed: bool) {
         let tol = FLATNESS_PT / self.view.pt_per_mm;
-        let pts = c.flatten(tol).into_iter().map(|p| self.s(p)).collect();
-        self.polyline(pts, stroke, dashed);
+        let (lo, hi) = self.visible(CLIP_PAD_PT);
+        let mut pieces = Vec::new();
+        self.visible_pieces(*c, lo, hi, 0, &mut pieces);
+        for piece in pieces {
+            self.world_polyline(&piece.flatten(tol), stroke, dashed);
+        }
+    }
+
+    /// Split a Bézier that is huge on screen until its pieces are small,
+    /// keeping only those near the view (#333): flattening a whole curve
+    /// at a nanometre tolerance would take millions of points.
+    fn visible_pieces(&self, c: Cubic, lo: Vec2, hi: Vec2, depth: u32, out: &mut Vec<Cubic>) {
+        let b = c.bbox();
+        if !intersects(&b, lo, hi) {
+            return;
+        }
+        let size_pt = (b.max - b.min).length() * self.view.pt_per_mm;
+        if size_pt < HUGE_PT || depth >= 48 {
+            out.push(c);
+            return;
+        }
+        let (l, r) = c.split(0.5);
+        self.visible_pieces(l, lo, hi, depth + 1, out);
+        self.visible_pieces(r, lo, hi, depth + 1, out);
     }
 
     /// Rubber-band shapes of the active drawing tool (#68).
@@ -292,7 +422,7 @@ impl Frame<'_> {
                 Shape::Point(p) => {
                     self.painter.circle_filled(self.s(p), 3.4, stroke.color);
                 }
-                Shape::Line(l) => self.polyline(vec![self.s(l.a), self.s(l.b)], stroke, true),
+                Shape::Line(l) => self.world_polyline(&[l.a, l.b], stroke, true),
                 Shape::Circle(c) => self.circle(c, stroke, true),
                 Shape::Arc(a) => self.arc(a, stroke, true),
                 Shape::Cubic(c) => self.cubic(&c, stroke, true),
@@ -325,7 +455,7 @@ impl Frame<'_> {
     pub fn draw_handle_guides(&self, guides: &[(Vec2, Vec2)]) {
         let stroke = Stroke::new(1.0, self.pal.construction);
         for (a, b) in guides {
-            self.painter.line_segment([self.s(*a), self.s(*b)], stroke);
+            self.world_polyline(&[*a, *b], stroke, false);
         }
     }
 
@@ -565,6 +695,24 @@ impl Frame<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::expect_used)] // a miss here should fail loudly
+    fn clipping_keeps_the_inside_and_drops_the_outside() {
+        let (lo, hi) = (Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+        let (a, b) = clip(Vec2::new(-1e12, 5.0), Vec2::new(1e12, 5.0), lo, hi).expect("crosses");
+        assert!((a.x - 0.0).abs() < 1e-3 && (b.x - 10.0).abs() < 1e-3 && a.y == 5.0);
+        assert!(clip(Vec2::new(-5.0, -5.0), Vec2::new(-1.0, 20.0), lo, hi).is_none());
+        let inside = clip(Vec2::new(1.0, 1.0), Vec2::new(2.0, 3.0), lo, hi);
+        assert_eq!(inside, Some((Vec2::new(1.0, 1.0), Vec2::new(2.0, 3.0))));
+        // An arc's sweep cut to a window, across the ±π seam.
+        let w = arc_window(3.0, 1.0, 3.5, 4.5);
+        assert_eq!(w.len(), 1);
+        assert!((w[0].0 - 3.5).abs() < 1e-12 && (w[0].1 - 4.0).abs() < 1e-12);
+        let w = arc_window(-0.5, 1.0, 6.0, 7.0);
+        assert!(!w.is_empty(), "the window wraps onto the sweep");
+        assert!(arc_window(0.0, 1.0, 2.0, 3.0).is_empty());
+    }
 
     #[test]
     fn flattening_stays_bounded_and_grows_with_radius() {

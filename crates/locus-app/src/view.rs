@@ -8,10 +8,13 @@
 
 use locus_geom::Vec2;
 
-/// Smallest and largest visible extent across the canvas's shorter side
-/// (issue #44: 0.001 mm to 2 m).
-pub const MIN_EXTENT_MM: f64 = 0.001;
-pub const MAX_EXTENT_MM: f64 = 2000.0;
+/// Smallest and largest visible extent across the canvas's shorter side:
+/// 1 nm to 100 km, effectively unlimited for sketches (#333, Fusion). Both
+/// stay well inside f64: a 1 nm view 100 km from the origin still resolves
+/// far below a screen point. Drawing clips in world space before narrowing
+/// to f32 (`render`), so huge screen coordinates never reach the painter.
+pub const MIN_EXTENT_MM: f64 = 1e-6;
+pub const MAX_EXTENT_MM: f64 = 1e8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
@@ -65,6 +68,10 @@ impl View {
 
     /// Zoom by `factor`, keeping the world point under `anchor` fixed.
     pub fn zoom_about(&mut self, anchor: egui::Pos2, factor: f64, rect: egui::Rect) {
+        // A non-finite or non-positive factor (a bad gesture) changes nothing.
+        if !(factor.is_finite() && factor > 0.0) {
+            return;
+        }
         let before = self.to_world(anchor, rect);
         let (lo, hi) = Self::zoom_limits(rect);
         self.pt_per_mm = (self.pt_per_mm * factor).clamp(lo, hi);
@@ -129,11 +136,11 @@ mod tests {
     fn zoom_clamps_to_extents() {
         let r = rect();
         let mut v = View::default();
-        v.zoom_about(r.center(), 1e12, r);
-        assert!((v.extent_mm(r) - MIN_EXTENT_MM).abs() < 1e-9);
-        v.zoom_about(r.center(), 1e-12, r);
-        // Zoomed out, the long side (800 pt wide) is the one held at 2 m.
-        assert!((r.width() as f64 / v.pt_per_mm - MAX_EXTENT_MM).abs() < 1e-6);
+        v.zoom_about(r.center(), 1e30, r);
+        assert!((v.extent_mm(r) / MIN_EXTENT_MM - 1.0).abs() < 1e-9);
+        v.zoom_about(r.center(), 1e-30, r);
+        // Zoomed out, the long side (800 pt wide) is the one held at the maximum.
+        assert!((r.width() as f64 / v.pt_per_mm / MAX_EXTENT_MM - 1.0).abs() < 1e-9);
     }
 
     #[test]
@@ -144,11 +151,33 @@ mod tests {
             pt_per_mm: 1.0,
         };
         v.zoom_about(r.center(), 1e9, r);
-        let p = Vec2::new(1_999.123_456 + 0.000_1, -1500.0);
+        let p = Vec2::new(1_999.123_456 + 0.000_000_1, -1500.0);
         let s = v.to_screen(p, r);
         let back = v.to_world(s, r);
         // One screen point at this zoom is 1/600 µm; allow a tenth of that.
         assert!((back - p).length() < 0.1 / v.pt_per_mm);
+    }
+
+    /// #333: zoom reaches 1 nm across and 100 km across, a 100 m point
+    /// round-trips at the deepest zoom, and bad factors are ignored.
+    #[test]
+    fn zoom_reaches_nanometres_and_kilometres() {
+        let r = rect();
+        let mut v = View {
+            center: Vec2::new(100_000.0, -50_000.0),
+            pt_per_mm: 1.0,
+        };
+        v.zoom_about(r.center(), 1e15, r);
+        assert!((v.extent_mm(r) - MIN_EXTENT_MM).abs() < 1e-12);
+        let p = v.center + Vec2::new(2e-7, -1e-7);
+        let back = v.to_world(v.to_screen(p, r), r);
+        assert!((back - p).length() < 0.05 / v.pt_per_mm, "{:?}", back - p);
+        v.zoom_about(r.center(), 1e-15, r);
+        assert!((r.width() as f64 / v.pt_per_mm - MAX_EXTENT_MM).abs() < 1.0);
+        let before = v;
+        v.zoom_about(r.center(), f64::NAN, r);
+        v.zoom_about(r.center(), 0.0, r);
+        assert_eq!(v, before);
     }
 
     #[test]
