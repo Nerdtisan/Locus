@@ -550,9 +550,8 @@ impl App {
     /// frame time sit in the cursor's hover text.
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(self.state.hint()).strong())
-                .on_hover_text("What the next click does");
-            self.state.touch_modifiers_ui(ui);
+            // The right-hand items first, so a long prompt is cut short
+            // instead of running under them.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 // Always visible while the MCP server runs (SPEC §16.4).
@@ -597,6 +596,15 @@ impl App {
                     format!("{n} selected")
                 });
                 crate::views::properties::solve_pill(ui, &self.state);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    self.state.touch_modifiers_ui(ui);
+                    let hint = self.state.hint();
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(hint.as_str()).strong()).truncate(),
+                    )
+                    .on_hover_text(hint);
+                });
             });
         });
     }
