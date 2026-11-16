@@ -252,6 +252,22 @@ impl AppState {
         })
     }
 
+    /// The curves on the outer boundaries of the selected regions, which
+    /// give them their fill (#338, #370): sorted, once each, no points.
+    pub(crate) fn region_boundary_curves(&self) -> Vec<EntityId> {
+        let mut ids: Vec<EntityId> = self
+            .selection
+            .regions
+            .selected
+            .iter()
+            .filter_map(|k| self.region(k))
+            .flat_map(|r| r.outer.edges.iter().map(|e| EntityId::new(e.source)))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        crate::views::style::styled(self.doc.sketcher.document(), &ids)
+    }
+
     pub(crate) fn region(&self, k: &RegionKey) -> Option<&Region> {
         let rs = self.regions();
         rs.binary_search_by(|r| r.key.cmp(k)).ok().map(|i| &rs[i])

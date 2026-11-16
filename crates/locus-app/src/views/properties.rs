@@ -95,6 +95,10 @@ impl AppState {
                 self.document_section(ui, settings);
                 ui.separator();
                 self.style_ui(ui);
+            } else {
+                // Regions alone (#370): their fill.
+                ui.separator();
+                self.region_style_ui(ui, settings.display.fills);
             }
             self.tools.text_edit = None;
             return;
@@ -517,6 +521,61 @@ pub(crate) fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #370: selecting a region shows its Fill; setting the fill of its
+    /// boundary curves fills it.
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn a_selected_region_shows_and_takes_its_fill() {
+        use egui::accesskit::Role;
+        use locus_doc::{Command, Fill, StylePatch};
+        let mut state = AppState::default();
+        let mut settings = Settings::default();
+        let key = state
+            .regions()
+            .first()
+            .expect("the demo has regions")
+            .key
+            .clone();
+        state.selection.regions.selected.insert(key.clone());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut frame = || {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                state.properties_ui(ui, &mut settings);
+            })
+        };
+        let _ = frame();
+        let out = frame();
+        let tree = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit tree");
+        let has = |role: Role, text: &str| {
+            tree.nodes.iter().any(|(_, n)| {
+                let said = |t: Option<&str>| t.is_some_and(|t| t.to_lowercase().contains(text));
+                n.role() == role && (text.is_empty() || said(n.label()) || said(n.value()))
+            })
+        };
+        assert!(has(Role::Label, "fill"), "a Fill section");
+        assert!(has(Role::CheckBox, ""), "the fill on/off box");
+        // The fill comes from the boundary curves: set theirs, and the
+        // region is filled.
+        let ids = state.region_boundary_curves();
+        assert!(!ids.is_empty());
+        let region = state.region(&key).unwrap().clone();
+        assert!(state.region_fill(&region).is_none());
+        assert!(state.apply_reporting(&Command::SetStyle {
+            entities: ids,
+            patch: StylePatch {
+                fill: Some(Fill::Colour([200, 40, 40])),
+                ..StylePatch::default()
+            },
+        }));
+        let region = state.region(&key).unwrap().clone();
+        let c = state.region_fill(&region).expect("filled");
+        assert_eq!((c.r(), c.g(), c.b()), (200, 40, 40));
+    }
 
     /// The Inspector draws each context of design §2.1 without panicking:
     /// nothing selected (Document + current style), one curve, many
