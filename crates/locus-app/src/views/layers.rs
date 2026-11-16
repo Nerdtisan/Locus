@@ -462,48 +462,22 @@ fn layer_row(
                 ..LayerProps::default()
             }));
         }
-        // Name: click to make active, double-click to rename.
-        if let Some((rid, text)) = st.rename.as_mut().filter(|(r, _)| *r == id) {
-            let r = ui.add(egui::TextEdit::singleline(text).desired_width(110.0));
-            r.request_focus();
-            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-            if esc {
-                st.rename = None;
-            } else if enter || r.lost_focus() {
-                let new = text.trim().to_owned();
-                let rid = *rid;
-                st.rename = None;
-                if !new.is_empty() && new != l.name && rid == id {
-                    want.commands.push(props(LayerProps {
-                        name: Some(new),
-                        ..LayerProps::default()
-                    }));
-                }
-            }
-        } else {
-            let text = egui::RichText::new(&l.name);
-            let text = if row.active == id {
-                text.strong()
-            } else {
-                text
-            };
-            let r = ui
-                .selectable_label(row.picked == Some(id), text)
-                .on_hover_text(
-                    "Click: draw on this layer and show it in the Inspector. \
-                     Double-click to rename; right-click for more.",
-                );
-            if r.clicked() {
-                want.activate = Some(id);
-            }
-            if r.double_clicked() {
-                st.rename = Some((id, l.name.clone()));
-            }
-            r.context_menu(|ui| row_menu(ui, l, st, want, doc, order, pos, row.selected));
-        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 1.0;
+            // Right to left: lock, then the eye, as the mockup's row ends.
+            let (icon, tip) = if l.locked {
+                ("ui.lock", "Locked: geometry fixed. Click to unlock")
+            } else {
+                ("ui.unlock", "Click to lock this layer's geometry")
+            };
+            if icon_toggle(ui, icon, l.locked, true, tip).clicked() {
+                if l.locked {
+                    want.commands
+                        .push(Command::SetLayerLocked { id, locked: false });
+                } else {
+                    want.lock = Some(id);
+                }
+            }
             let (icon, tip) = if l.visible {
                 (
                     "ui.eye",
@@ -517,19 +491,6 @@ fn layer_row(
                     visible: Some(!l.visible),
                     ..LayerProps::default()
                 }));
-            }
-            let (icon, tip) = if l.locked {
-                ("ui.lock", "Locked: geometry fixed. Click to unlock")
-            } else {
-                ("ui.unlock", "Click to lock this layer's geometry")
-            };
-            if icon_toggle(ui, icon, l.locked, true, tip).clicked() {
-                if l.locked {
-                    want.commands
-                        .push(Command::SetLayerLocked { id, locked: false });
-                } else {
-                    want.lock = Some(id);
-                }
             }
             // Reference geometry is never exported (SPEC §7), whatever the flag says.
             let reference = matches!(l.operation, Operation::Reference);
@@ -554,6 +515,51 @@ fn layer_row(
             if icon_toggle(ui, icons::operation(kind), true, true, &tip).clicked() {
                 st.expanded = if open { None } else { Some(id) };
             }
+            // The name gets the space the icons leave, truncated, so a
+            // narrow Browser never draws the icons over it (#358).
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                // Name: click to make active, double-click to rename.
+                if let Some((rid, text)) = st.rename.as_mut().filter(|(r, _)| *r == id) {
+                    let r = ui
+                        .add(egui::TextEdit::singleline(text).desired_width(ui.available_width()));
+                    r.request_focus();
+                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    if esc {
+                        st.rename = None;
+                    } else if enter || r.lost_focus() {
+                        let new = text.trim().to_owned();
+                        let rid = *rid;
+                        st.rename = None;
+                        if !new.is_empty() && new != l.name && rid == id {
+                            want.commands.push(props(LayerProps {
+                                name: Some(new),
+                                ..LayerProps::default()
+                            }));
+                        }
+                    }
+                } else {
+                    let text = egui::RichText::new(&l.name);
+                    let text = if row.active == id {
+                        text.strong()
+                    } else {
+                        text
+                    };
+                    let r = ui
+                        .add(egui::Button::selectable(row.picked == Some(id), text).truncate())
+                        .on_hover_text(
+                            "Click: draw on this layer and show it in the Inspector. \
+                             Double-click to rename; right-click for more.",
+                        );
+                    if r.clicked() {
+                        want.activate = Some(id);
+                    }
+                    if r.double_clicked() {
+                        st.rename = Some((id, l.name.clone()));
+                    }
+                    r.context_menu(|ui| row_menu(ui, l, st, want, doc, order, pos, row.selected));
+                }
+            });
         });
     });
     if st.expanded == Some(id) {
@@ -853,6 +859,38 @@ mod tests {
         app.select_all();
         frame(&mut lv, &mut app);
         assert_eq!(app.view.browser_layer, None);
+    }
+
+    /// #358: hiding a layer takes its geometry off the canvas; showing it
+    /// brings it back. A view setting, not an export exclusion.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn hiding_a_layer_hides_its_geometry() {
+        let mut app = AppState::default();
+        app.load(crate::demo::sketch());
+        let layer = app.active_layer();
+        let shown = app.doc.scene.items.len();
+        assert!(shown > 0);
+        let set = |visible| Command::SetLayerProps {
+            id: layer,
+            props: LayerProps {
+                visible: Some(visible),
+                ..LayerProps::default()
+            },
+        };
+        let annots = app.doc.scene.annots.len();
+        assert!(annots > 0, "the demo has dimensions and constraint symbols");
+        assert!(app.apply_reporting(&set(false)), "{:?}", app.doc.notice);
+        assert!(!app.document().layer(layer).unwrap().visible);
+        assert!(app.doc.scene.items.is_empty());
+        // Its dimensions and constraint symbols go too, or the layer
+        // doesn't look hidden (the bug in #358).
+        assert!(app.doc.scene.annots.is_empty());
+        // Hiding is a view setting: export is untouched.
+        assert!(app.document().layer(layer).unwrap().export_enabled);
+        assert!(app.apply_reporting(&set(true)));
+        assert_eq!(app.doc.scene.items.len(), shown);
+        assert_eq!(app.doc.scene.annots.len(), annots);
     }
 
     #[test]

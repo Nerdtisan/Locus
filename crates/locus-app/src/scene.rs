@@ -291,8 +291,15 @@ impl Scene {
         let mut annots = Vec::new();
         let mut slots: HashMap<EntityId, u8> = HashMap::new();
         for (&cid, c) in doc.constraints() {
-            let on_hidden = |r: &EntityId| doc.entity(*r).is_some_and(|e| e.construction);
-            if !construction && c.references().iter().any(on_hidden) {
+            // Nothing marks geometry that isn't drawn: a hidden layer's
+            // (#358), or construction geometry while it is hidden.
+            let off = |r: &EntityId| {
+                doc.entity(*r).is_some_and(|e| {
+                    (!construction && e.construction)
+                        || doc.layer(e.layer).is_some_and(|l| !l.visible)
+                })
+            };
+            if c.references().iter().any(off) {
                 continue;
             }
             if let Some(symbol) = glyph_symbol(c) {
