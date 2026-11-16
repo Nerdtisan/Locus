@@ -788,6 +788,7 @@ impl FileIo {
             .get(&panel.format)
             .map_or_else(|| "Export".to_owned(), |e| e.name().to_owned());
         crate::dialog::Dialog::new(format!("Export {title}"))
+            .default_size([520.0, 460.0])
             .collapsible(false)
             .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)

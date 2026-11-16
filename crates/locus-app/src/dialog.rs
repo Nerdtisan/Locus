@@ -8,13 +8,25 @@
 //!
 //! [`Dialog`] mirrors the `egui::Window` builder calls the app uses, so a
 //! call site changes only its constructor.
+//!
+//! Size (#361): a fixed-size dialog fits its content. A resizable one opens
+//! at its default size (a roomy [`RESIZABLE_SIZE`] unless the call site
+//! gives one), and on the desktop at the size the user last left it, kept
+//! in egui's persisted memory per dialog title. On the web the in-app
+//! window keeps its size the same way. Stored sizes are bounded.
 
 use egui::{Align2, Context, Id, Pos2, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId};
 
 /// Margin between the content and the OS window edge, in points.
 const MARGIN: f32 = 8.0;
+/// A fixed-size dialog's starting size; it then fits its content.
 const DEFAULT_SIZE: Vec2 = Vec2::new(360.0, 160.0);
+/// A resizable dialog's size when the call site gives none: room for a
+/// list or a form without the user resizing first (#361).
+const RESIZABLE_SIZE: Vec2 = Vec2::new(560.0, 420.0);
 const MIN_SIZE: Vec2 = Vec2::new(200.0, 80.0);
+/// Largest remembered size (stored data is untrusted).
+const MAX_SIZE: Vec2 = Vec2::new(4000.0, 3000.0);
 
 pub struct Dialog<'open> {
     title: String,
@@ -61,12 +73,19 @@ impl<'open> Dialog<'open> {
         self
     }
 
-    // Used by the desktop-only dialogs (MCP, plugins).
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub fn default_width(mut self, w: f32) -> Self {
-        let h = self.default_size.map_or(DEFAULT_SIZE.y, |s| s.y);
-        self.default_size = Some(Vec2::new(w, h));
-        self
+    /// The size with nothing given: roomy if resizable, else small (it
+    /// fits its content).
+    fn fallback_size(&self) -> Vec2 {
+        if self.resizable {
+            RESIZABLE_SIZE
+        } else {
+            DEFAULT_SIZE
+        }
+    }
+
+    /// The size to open at.
+    fn initial_size(&self) -> Vec2 {
+        self.default_size.unwrap_or_else(|| self.fallback_size())
     }
 
     pub fn default_size(mut self, size: impl Into<Vec2>) -> Self {
@@ -87,13 +106,17 @@ impl<'open> Dialog<'open> {
     }
 
     fn show_in_app<R>(self, ctx: &Context, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
+        let size = self.initial_size();
         let mut w = egui::Window::new(self.title)
             .resizable(self.resizable)
             .collapsible(self.collapsible);
         if let Some((a, o)) = self.anchor {
             w = w.anchor(a, o);
         }
-        if let Some(s) = self.default_size {
+        if self.resizable {
+            // egui keeps a resized window's size (persisted with memory).
+            w = w.default_size(size);
+        } else if let Some(s) = self.default_size {
             w = w.default_size(s);
         }
         if let Some(open) = self.open {
@@ -104,7 +127,20 @@ impl<'open> Dialog<'open> {
 
     fn show_os<R>(self, ctx: &Context, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
         let id = ViewportId::from_hash_of(("locus-dialog", &self.title));
-        let size = self.default_size.unwrap_or(DEFAULT_SIZE);
+        // The size the user last left a resizable dialog at (#361).
+        let size_key = Id::new(id).with("size");
+        let remembered = if self.resizable {
+            ctx.data_mut(|d| d.get_persisted::<Vec2>(size_key))
+        } else {
+            None
+        };
+        // Fixed for as long as the window is open: a builder that changes
+        // makes egui resize (or move) the window every frame.
+        let open_key = Id::new(id).with("open-size");
+        let default = self.initial_size();
+        let size = ctx.data_mut(|d| {
+            *d.get_temp_mut_or_insert_with(open_key, || opening_size(default, remembered))
+        });
         // Centred on the main window when it first opens; remembered so
         // the builder doesn't change (which would move the window) while
         // the main window moves.
@@ -123,6 +159,7 @@ impl<'open> Dialog<'open> {
             .with_close_button(self.open.is_some())
             .with_minimize_button(false);
         let fit = !self.resizable;
+        let remember = self.resizable;
         let mut add = Some(add);
         let (out, closed) = ctx.show_viewport_immediate(id, builder, |ui, _class| {
             let inner = egui::CentralPanel::default_margins().show(ui, |ui| {
@@ -141,15 +178,29 @@ impl<'open> Dialog<'open> {
                     );
                 }
             }
+            if remember && let Some(now) = ui.input(|i| i.viewport().inner_rect.map(|r| r.size())) {
+                ui.ctx().data_mut(|d| d.insert_persisted(size_key, now));
+            }
             (r, ui.input(|i| i.viewport().close_requested()))
         });
         if closed && let Some(open) = self.open {
             *open = false;
-            // Re-centre next time it opens.
-            ctx.data_mut(|d| d.remove::<Pos2>(Id::new(id).with("pos")));
+            // Re-centre next time it opens, at the size it was left.
+            ctx.data_mut(|d| {
+                d.remove::<Pos2>(Id::new(id).with("pos"));
+                d.remove::<Vec2>(open_key);
+            });
         }
         out
     }
+}
+
+/// The size a dialog opens at: the one the user left it at, if usable,
+/// else its default. A stored size is bounded (untrusted memory).
+fn opening_size(default: Vec2, remembered: Option<Vec2>) -> Vec2 {
+    remembered
+        .filter(|s| s.x.is_finite() && s.y.is_finite())
+        .map_or(default, |s| s.clamp(MIN_SIZE, MAX_SIZE))
 }
 
 /// The top-left that centres a `size` window on `parent`.
@@ -168,6 +219,36 @@ mod tests {
             centred(main, Vec2::new(200.0, 100.0)),
             Pos2::new(500.0, 400.0)
         );
+    }
+
+    /// #361: a resizable dialog without a size opens roomy, not 360 × 160;
+    /// a given size wins.
+    #[test]
+    fn resizable_dialogs_open_at_a_usable_size() {
+        let d = Dialog::new("Plugin manager").resizable(true);
+        assert_eq!(d.initial_size(), RESIZABLE_SIZE);
+        let d = Dialog::new("MCP server")
+            .resizable(true)
+            .default_size([480.0, 520.0]);
+        assert_eq!(d.initial_size(), Vec2::new(480.0, 520.0));
+        let d = Dialog::new("Error").resizable(false);
+        assert_eq!(d.initial_size(), DEFAULT_SIZE);
+    }
+
+    /// #361: the user's size wins over the default, bounded.
+    #[test]
+    fn a_remembered_size_is_kept_and_bounded() {
+        let def = Vec2::new(500.0, 400.0);
+        assert_eq!(opening_size(def, None), def);
+        assert_eq!(
+            opening_size(def, Some(Vec2::new(900.0, 700.0))),
+            Vec2::new(900.0, 700.0)
+        );
+        assert_eq!(
+            opening_size(def, Some(Vec2::new(1.0, 1e9))),
+            Vec2::new(MIN_SIZE.x, MAX_SIZE.y)
+        );
+        assert_eq!(opening_size(def, Some(Vec2::new(f32::NAN, 10.0))), def);
     }
 
     /// Where viewports are embedded (the web, tests) a dialog is an in-app
