@@ -11,6 +11,11 @@
 //! the solve. They stay out of the solver and can't carry constraints;
 //! Explode turns them into ordinary geometry that can.
 //!
+//! The source is a chain of curves, or one placed text (#347): the text's
+//! outline is offset (closed glyph contours as one area, holes kept;
+//! single-line strokes on both sides), and regenerates when the text, font,
+//! size or spacing changes, like any source edit.
+//!
 //! The recipe's `pool[0]` is a flat list of every entity ID the offset ever
 //! used, in output order; the first `active` exist. Regeneration reuses
 //! them in order and allocates more only when the output grows (ADR 0003,
@@ -24,7 +29,7 @@ use crate::ids::{EntityId, RecipeId};
 use crate::recipe::{MAX_INSTANCE_ENTITIES, RecipeKind};
 use crate::style::Style;
 use core::f64::consts::TAU;
-use locus_geom::{EXPORT_TOL, Piece, SOLVER_TOL, Vec2};
+use locus_geom::{Cubic, EXPORT_TOL, Piece, SOLVER_TOL, Vec2};
 use locus_region::{Area, Edge, Join, Loop, Seg};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,9 +75,7 @@ pub(crate) fn chain(
             Geom::Circle { .. } => None,
             Geom::Point { .. } => return Err(bad("points can't be offset")),
             Geom::Text { .. } => {
-                return Err(bad(
-                    "text can't be offset (offset its exported outline instead)",
-                ));
+                return Err(bad("text can only be offset on its own"));
             }
         };
         items.push(Item { id: *id, ends });
@@ -149,33 +152,9 @@ fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> {
                 }]
             })
             .unwrap_or_default(),
-        Some(Geom::Bezier { .. }) => doc
-            .cubic(id)
-            .map(|c| {
-                c.to_pieces_oriented(EXPORT_TOL)
-                    .into_iter()
-                    .map(|(p, back)| match p {
-                        Piece::Line(l) => Seg::Line { a: l.a, b: l.b },
-                        // Biarc pieces are stored CCW: orient them along the
-                        // curve, so the chain joins end to end (#222).
-                        Piece::Arc(a) => {
-                            let seg = Seg::Arc {
-                                center: a.center,
-                                radius: a.radius(),
-                                start: a.start_angle(),
-                                sweep: a.sweep(),
-                            };
-                            if back { seg.reversed() } else { seg }
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        Some(Geom::Bezier { .. }) => doc.cubic(id).map(|c| cubic_segs(&c)).unwrap_or_default(),
         _ => Vec::new(),
     };
-    if matches!(doc.entity(id).map(|e| &e.geom), Some(Geom::Bezier { .. })) {
-        orient(&mut out);
-    }
     if backwards {
         out.reverse();
         for s in &mut out {
@@ -183,6 +162,124 @@ fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> {
         }
     }
     out
+}
+
+/// A cubic as line and arc pieces (biarcs) in travel order.
+fn cubic_segs(c: &Cubic) -> Vec<Seg> {
+    let mut out: Vec<Seg> = c
+        .to_pieces_oriented(EXPORT_TOL)
+        .into_iter()
+        .map(|(p, back)| match p {
+            Piece::Line(l) => Seg::Line { a: l.a, b: l.b },
+            // Biarc pieces are stored CCW: orient them along the curve, so
+            // the chain joins end to end (#222).
+            Piece::Arc(a) => {
+                let seg = Seg::Arc {
+                    center: a.center,
+                    radius: a.radius(),
+                    start: a.start_angle(),
+                    sweep: a.sweep(),
+                };
+                if back { seg.reversed() } else { seg }
+            }
+        })
+        .collect();
+    orient(&mut out);
+    out
+}
+
+/// The offset's source when it is one placed text (#347).
+fn text_source(doc: &Document, sources: &[EntityId]) -> Option<EntityId> {
+    match sources {
+        [id] if matches!(doc.entity(*id).map(|e| &e.geom), Some(Geom::Text { .. })) => Some(*id),
+        _ => None,
+    }
+}
+
+/// Whether `sources` can be offset: one connected chain of curves, or one
+/// placed text with an outline (#347).
+pub(crate) fn check_sources(doc: &Document, sources: &[EntityId]) -> Result<(), DocError> {
+    if let Some(id) = text_source(doc, sources) {
+        let has_outline = doc
+            .text_geometry(id)
+            .is_some_and(|g| g.contours.iter().any(|c| !c.segs.is_empty()));
+        return if has_outline {
+            Ok(())
+        } else {
+            Err(DocError::Invalid(
+                "offset: the text has no outline to offset".to_owned(),
+            ))
+        };
+    }
+    chain(doc, sources).map(|_| ())
+}
+
+/// A text's outline as region edges (#347): closed contours as loops, each
+/// turned so outer boundaries run CCW and holes CW (by how deeply it is
+/// nested, whatever the font's own winding), and open strokes as runs.
+fn text_edges(doc: &Document, id: EntityId) -> (Vec<Loop>, Vec<Vec<Edge>>) {
+    let Some(g) = doc.text_geometry(id) else {
+        return (Vec::new(), Vec::new());
+    };
+    let source = id.get();
+    let (mut loops, mut strokes) = (Vec::new(), Vec::new());
+    for c in &g.contours {
+        let mut segs = Vec::new();
+        let mut from = c.start;
+        for s in &c.segs {
+            match *s {
+                locus_text::Seg::Line { end } => {
+                    if from.distance(end) > EXPORT_TOL {
+                        segs.push(Seg::Line { a: from, b: end });
+                    }
+                }
+                locus_text::Seg::Cubic { c0, c1, end } => {
+                    segs.extend(cubic_segs(&Cubic::new(from, c0, c1, end)));
+                }
+            }
+            from = s.end();
+        }
+        if c.closed && from.distance(c.start) > EXPORT_TOL {
+            segs.push(Seg::Line {
+                a: from,
+                b: c.start,
+            });
+        }
+        let edges: Vec<Edge> = segs.into_iter().map(|seg| Edge { seg, source }).collect();
+        if edges.is_empty() {
+            continue;
+        }
+        if c.closed {
+            loops.push(Loop { edges });
+        } else {
+            strokes.push(edges);
+        }
+    }
+    let probes: Vec<Vec2> = loops.iter().map(|l| l.edges[0].seg.at(0.5)).collect();
+    let depths: Vec<usize> = probes
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            loops
+                .iter()
+                .enumerate()
+                .filter(|(j, l)| *j != i && l.winding(*p) != 0)
+                .count()
+        })
+        .collect();
+    let loops = loops
+        .into_iter()
+        .zip(depths)
+        .map(|(l, depth)| {
+            let outer = depth % 2 == 0;
+            if (l.area() > 0.0) == outer {
+                l
+            } else {
+                l.reversed()
+            }
+        })
+        .collect();
+    (loops, strokes)
 }
 
 /// Turns pieces end to end: each is reversed if that makes it start where
@@ -227,6 +324,31 @@ fn generate(
     d: f64,
     sharp: bool,
 ) -> Result<Vec<Out>, DocError> {
+    let join = if sharp {
+        Join::Miter { limit: MITER_LIMIT }
+    } else {
+        Join::Round
+    };
+    if let Some(id) = text_source(doc, sources) {
+        let (loops, strokes) = text_edges(doc, id);
+        let mut runs: Vec<(Vec<Edge>, bool)> = Vec::new();
+        if !loops.is_empty() {
+            runs.extend(
+                locus_region::offset(&Area { loops }, d, join)
+                    .loops
+                    .into_iter()
+                    .map(|l| (l.edges, true)),
+            );
+        }
+        for s in &strokes {
+            runs.extend(
+                locus_region::offset_open(s, d, join)
+                    .into_iter()
+                    .map(|r| (r, false)),
+            );
+        }
+        return finish(runs);
+    }
     let (order, closed) = chain(doc, sources)?;
     let mut edges: Vec<Edge> = Vec::new();
     for (id, back) in &order {
@@ -237,11 +359,6 @@ fn generate(
             });
         }
     }
-    let join = if sharp {
-        Join::Miter { limit: MITER_LIMIT }
-    } else {
-        Join::Round
-    };
     let runs: Vec<(Vec<Edge>, bool)> = if closed {
         let mut l = Loop { edges };
         if l.area() < 0.0 {
@@ -258,6 +375,11 @@ fn generate(
             .map(|r| (r, false))
             .collect()
     };
+    finish(runs)
+}
+
+/// The output entities for offset runs, within the instance limit.
+fn finish(runs: Vec<(Vec<Edge>, bool)>) -> Result<Vec<Out>, DocError> {
     let mut out = Vec::new();
     for (run, loop_) in runs {
         emit(&run, loop_, &mut out);
@@ -457,7 +579,8 @@ pub fn chain_through(doc: &Document, id: EntityId) -> Vec<EntityId> {
         return Vec::new();
     }
     let Some(first) = ends(&e0.geom) else {
-        return if matches!(e0.geom, Geom::Circle { .. }) {
+        // A circle, or a placed text (#347), is offset on its own.
+        return if matches!(e0.geom, Geom::Circle { .. } | Geom::Text { .. }) {
             vec![id]
         } else {
             Vec::new()
@@ -811,5 +934,123 @@ mod tests {
         let mut want = l2.clone();
         want.sort_unstable();
         assert_eq!(all, want);
+    }
+
+    /// A placed text in `font` at (0, 0), as a document and its entity.
+    fn placed_text(content: &str, font: locus_text::BundledFont) -> (Document, EntityId) {
+        let mut d = Document::new();
+        let anchor = pt(&mut d, 0.0, 0.0);
+        let dir = pt(&mut d, 10.0, 0.0);
+        let text = crate::text::TextData::new(
+            content,
+            locus_text::FontRef::bundled(font),
+            20.0,
+            locus_text::Align::Left,
+            1.0,
+            &locus_text::BundledProvider,
+        )
+        .unwrap();
+        let id = add(
+            &mut d,
+            Geom::Text {
+                anchor,
+                dir,
+                text: Box::new(text),
+            },
+        );
+        (d, id)
+    }
+
+    /// How many lines and arcs the offset has now.
+    fn curve_count(doc: &Document) -> usize {
+        let (_, r) = the_recipe(doc);
+        r.instances()
+            .filter(|i| doc.line(*i).is_some() || doc.arc(*i).is_some())
+            .count()
+    }
+
+    /// #347: a placed text is offset by its outline. An "O" has an outer
+    /// boundary and a hole; growing gives two loops (outside the outer,
+    /// inside the hole), and the result regenerates when the text changes.
+    #[test]
+    fn a_placed_text_offsets_its_outline_and_follows_edits() {
+        let (d, t) = placed_text("O", locus_text::BundledFont::Figtree);
+        let mut sk = Sketcher::new(d);
+        sk.apply(&Command::AddRecipe {
+            kind: offset_kind(0.5, false),
+            sources: vec![t],
+        })
+        .unwrap();
+        let doc = sk.document();
+        let (_, r) = the_recipe(doc);
+        assert!(r.active > 0, "the outline was offset");
+        let glyph = doc.text_geometry(t).unwrap().bbox().unwrap();
+        let out = r
+            .instances()
+            .filter_map(|i| doc.entity(i).map(|_| i))
+            .filter_map(|i| doc.point_pos(i))
+            .fold(locus_geom::Aabb::from_point(glyph.min), |b, p| {
+                b.union(locus_geom::Aabb::from_point(p))
+            });
+        assert!(
+            out.min.x < glyph.min.x - 0.4 && out.max.x > glyph.max.x + 0.4,
+            "grown by about 0.5 mm: {out:?} vs {glyph:?}"
+        );
+        let before = curve_count(doc);
+        // Editing the text regenerates the offset.
+        let (data, anchor, dir) = doc.text(t).map(|(d, a, b)| (d.clone(), a, b)).unwrap();
+        let longer = data
+            .edited(&locus_text::BundledProvider, |x| x.content = "OO".into())
+            .unwrap();
+        sk.apply(&Command::ModifyEntity {
+            id: t,
+            geom: Geom::Text {
+                anchor,
+                dir,
+                text: Box::new(longer),
+            },
+        })
+        .unwrap();
+        let after = curve_count(sk.document());
+        assert!(
+            after > before,
+            "two letters, more curves: {before} -> {after}"
+        );
+        // Shrinking works too.
+        let (d, t) = placed_text("O", locus_text::BundledFont::Figtree);
+        let mut sk = Sketcher::new(d);
+        sk.apply(&Command::AddRecipe {
+            kind: offset_kind(-0.3, true),
+            sources: vec![t],
+        })
+        .unwrap();
+        assert!(the_recipe(sk.document()).1.active > 0);
+    }
+
+    /// #347: single-line text (strokes) offsets both sides of each stroke;
+    /// text can't be mixed with curves in one offset.
+    #[test]
+    fn single_line_text_offsets_its_strokes_and_text_stands_alone() {
+        let (d, t) = placed_text("L", locus_text::BundledFont::HersheySans);
+        let mut sk = Sketcher::new(d);
+        sk.apply(&Command::AddRecipe {
+            kind: offset_kind(0.5, false),
+            sources: vec![t],
+        })
+        .unwrap();
+        assert!(the_recipe(sk.document()).1.active > 0);
+        let (mut d, t) = placed_text("O", locus_text::BundledFont::Figtree);
+        let a = pt(&mut d, 50.0, 0.0);
+        let b = pt(&mut d, 60.0, 0.0);
+        let l = line(&mut d, a, b);
+        let mut sk = Sketcher::new(d);
+        assert!(
+            sk.apply(&Command::AddRecipe {
+                kind: offset_kind(0.5, false),
+                sources: vec![t, l],
+            })
+            .is_err()
+        );
+        assert_eq!(chain_through(sk.document(), t), vec![t]);
     }
 }

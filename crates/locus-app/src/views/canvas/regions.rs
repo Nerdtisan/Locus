@@ -13,7 +13,7 @@ use crate::hit::Mods;
 use crate::state::AppState;
 use crate::view::View;
 use egui::{Color32, Mesh, Painter, Pos2, Rect, Stroke, Ui};
-use locus_doc::{Boolean, BooleanId, Command};
+use locus_doc::{Boolean, BooleanId, Command, EntityId, Fill};
 use locus_geom::Vec2;
 use locus_region::{Area, BoolOp, Loop, Region, RegionKey};
 use std::collections::BTreeSet;
@@ -107,38 +107,32 @@ impl Tints {
 /// rarely convex; this keeps the fill exact to a point without a
 /// tessellation dependency.
 fn fill(painter: &Painter, view: &View, rect: Rect, loops: &[Loop], colour: Color32) {
-    let sag = FLAT_PT / view.pt_per_mm;
-    let polys: Vec<Vec<Pos2>> = loops
+    // Rows are found in world space (f64) against the exact line and arc
+    // edges, so the fill stays exact at any zoom without flattening (#333,
+    // #338); only the clipped spans are narrowed to screen points.
+    let Some(bb) = loops
         .iter()
-        .map(|l| {
-            l.flatten(sag)
-                .into_iter()
-                .map(|p| view.to_screen(p, rect))
-                .collect()
-        })
-        .filter(|p: &Vec<Pos2>| p.len() >= 2)
-        .collect();
-    let (mut top, mut bottom) = (f32::INFINITY, f32::NEG_INFINITY);
-    for p in polys.iter().flatten() {
-        top = top.min(p.y);
-        bottom = bottom.max(p.y);
-    }
-    let (top, bottom) = (top.max(rect.top()), bottom.min(rect.bottom()));
-    if top >= bottom {
+        .filter_map(Loop::bbox)
+        .reduce(locus_geom::Aabb::union)
+    else {
+        return;
+    };
+    let top = (view.to_screen(Vec2::new(0.0, bb.max.y), rect).y).max(rect.top());
+    let bottom = (view.to_screen(Vec2::new(0.0, bb.min.y), rect).y).min(rect.bottom());
+    if top.is_nan() || bottom.is_nan() || top >= bottom {
         return;
     }
+    let cx = f64::from(rect.center().x);
+    let to_x = |wx: f64| (cx + (wx - view.center.x) * view.pt_per_mm) as f32;
     let mut mesh = Mesh::default();
-    let mut xs: Vec<(f32, i32)> = Vec::new();
+    let mut xs: Vec<(f64, i32)> = Vec::new();
     let mut y = top.floor() + 0.5;
     while y < bottom {
+        let wy = view.to_world(Pos2::new(rect.center().x, y), rect).y;
         xs.clear();
-        for poly in &polys {
-            for (i, &a) in poly.iter().enumerate() {
-                let b = poly[(i + 1) % poly.len()];
-                if (a.y <= y) != (b.y <= y) {
-                    let x = a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x);
-                    xs.push((x, if b.y > a.y { 1 } else { -1 }));
-                }
+        for l in loops {
+            for e in &l.edges {
+                crossings(&e.seg, wy, &mut xs);
             }
         }
         xs.sort_by(|p, q| p.0.total_cmp(&q.0));
@@ -149,7 +143,8 @@ fn fill(painter: &Painter, view: &View, rect: Rect, loops: &[Loop], colour: Colo
             }
             w += dw;
             if w == 0 {
-                let (l, r) = (start.max(rect.left()), x.min(rect.right()));
+                let l = to_x(start).max(rect.left());
+                let r = to_x(x).min(rect.right());
                 if r > l {
                     mesh.add_colored_rect(
                         Rect::from_min_max(Pos2::new(l, y - 0.5), Pos2::new(r, y + 0.5)),
@@ -161,6 +156,50 @@ fn fill(painter: &Painter, view: &View, rect: Rect, loops: &[Loop], colour: Colo
         y += 1.0;
     }
     painter.add(mesh);
+}
+
+/// Where `seg` crosses the horizontal line at world `y`: x and the
+/// direction it crosses (+1 upwards, -1 downwards), for non-zero filling.
+/// Ends are half-open, as for polygon edges, so shared vertices count once.
+fn crossings(seg: &locus_region::Seg, y: f64, out: &mut Vec<(f64, i32)>) {
+    use locus_region::Seg;
+    use std::f64::consts::TAU;
+    match *seg {
+        Seg::Line { a, b } => {
+            if (a.y <= y) != (b.y <= y) {
+                let x = a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x);
+                out.push((x, if b.y > a.y { 1 } else { -1 }));
+            }
+        }
+        Seg::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            let dy = y - center.y;
+            if dy.abs() >= radius || sweep == 0.0 {
+                return;
+            }
+            let dx = (radius * radius - dy * dy).sqrt();
+            for x in [center.x + dx, center.x - dx] {
+                let a = dy.atan2(x - center.x);
+                let rel = if sweep > 0.0 {
+                    (a - start).rem_euclid(TAU)
+                } else {
+                    (start - a).rem_euclid(TAU)
+                };
+                if rel < sweep.abs() {
+                    // y grows with the angle where cos > 0; reversed for a
+                    // clockwise sweep.
+                    let up = (x - center.x) * sweep;
+                    if up != 0.0 {
+                        out.push((x, if up > 0.0 { 1 } else { -1 }));
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn outline(painter: &Painter, view: &View, rect: Rect, loops: &[Loop], stroke: Stroke) {
@@ -195,6 +234,22 @@ impl AppState {
             .iter()
             .find(|r| r.contains(w))
             .map(|r| r.key.clone())
+    }
+
+    /// A region's style fill (#338): the fill of the first curve on its
+    /// outer boundary that has one, at that curve's opacity.
+    pub(crate) fn region_fill(&self, r: &Region) -> Option<Color32> {
+        let doc = self.doc.sketcher.document();
+        r.outer.edges.iter().find_map(|e| {
+            let s = doc.entity(EntityId::new(e.source))?.style;
+            match s.fill {
+                Fill::Colour([red, g, b]) => {
+                    let a = (s.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    Some(Color32::from_rgba_unmultiplied(red, g, b, a))
+                }
+                Fill::None => None,
+            }
+        })
     }
 
     pub(crate) fn region(&self, k: &RegionKey) -> Option<&Region> {
@@ -330,6 +385,15 @@ impl AppState {
                 fill(painter, view, rect, &region_loops(r), c);
             }
         };
+        // Style fills (#338): each region in its objects' fill colour, as it
+        // exports, while Show fills is on.
+        if self.view.display.fills {
+            for r in self.regions() {
+                if let Some(c) = self.region_fill(r) {
+                    fill(painter, view, rect, &region_loops(r), c);
+                }
+            }
+        }
         // Display ▾ Profiles (design §2.4, #328): every closed profile shaded
         // faintly, as Fusion shades sketch profiles.
         if self.view.display.profiles {
@@ -616,5 +680,86 @@ mod tests {
         assert_eq!(ui.selected.len(), 1);
         ui.click(None, none);
         assert!(ui.selected.is_empty());
+    }
+
+    /// #338: horizontal crossings are exact for lines and for arcs either
+    /// way round, with the direction that makes non-zero filling work.
+    #[test]
+    fn crossings_are_exact_for_lines_and_arcs() {
+        use locus_region::Seg;
+        let mut xs = Vec::new();
+        let ccw = Seg::Arc {
+            center: Vec2::new(0.0, 0.0),
+            radius: 2.0,
+            start: 0.0,
+            sweep: std::f64::consts::TAU,
+        };
+        crossings(&ccw, 1.0, &mut xs);
+        xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let dx = 3f64.sqrt();
+        assert_eq!(xs.len(), 2);
+        assert!((xs[0].0 + dx).abs() < 1e-12 && xs[0].1 == -1);
+        assert!((xs[1].0 - dx).abs() < 1e-12 && xs[1].1 == 1);
+        // The upper half only, clockwise: the right crossing goes down.
+        xs.clear();
+        let cw = Seg::Arc {
+            center: Vec2::new(0.0, 0.0),
+            radius: 2.0,
+            start: std::f64::consts::PI,
+            sweep: -std::f64::consts::PI,
+        };
+        crossings(&cw, 1.0, &mut xs);
+        xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert_eq!(xs.iter().map(|x| x.1).collect::<Vec<_>>(), vec![1, -1]);
+        xs.clear();
+        crossings(&cw, -1.0, &mut xs);
+        assert!(xs.is_empty(), "below the upper half");
+        let line = Seg::Line {
+            a: Vec2::new(5.0, 0.0),
+            b: Vec2::new(5.0, 4.0),
+        };
+        xs.clear();
+        crossings(&line, 2.0, &mut xs);
+        assert_eq!(xs, vec![(5.0, 1)]);
+    }
+
+    /// #338: a closed shape's region takes its style fill, at its opacity;
+    /// without a fill it has none.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn a_region_takes_its_objects_fill() {
+        use crate::settings::Units;
+        use crate::tool::ToolEvent;
+        use crate::tools::{Pick, Tool};
+        let mut c = AppState::default();
+        c.load(locus_doc::Document::new());
+        c.set_tool(Tool::RectCorner);
+        for p in [Vec2::ZERO, Vec2::new(20.0, 10.0)] {
+            c.tool_event(ToolEvent::Click(Pick::free(p)), None, Units::Mm);
+        }
+        let r = c.regions().first().cloned().expect("a region");
+        assert_eq!(c.region_fill(&r), None);
+        let curves: Vec<EntityId> = c
+            .doc
+            .sketcher
+            .document()
+            .entities()
+            .iter()
+            .filter(|(_, e)| !matches!(e.geom, locus_doc::Geom::Point { .. }))
+            .map(|(id, _)| id)
+            .collect();
+        assert!(c.apply_reporting(&Command::SetStyle {
+            entities: curves,
+            patch: locus_doc::StylePatch {
+                fill: Some(Fill::Colour([10, 200, 30])),
+                opacity: Some(0.5),
+                ..Default::default()
+            },
+        }));
+        let r = c.regions().first().cloned().expect("a region");
+        assert_eq!(
+            c.region_fill(&r),
+            Some(Color32::from_rgba_unmultiplied(10, 200, 30, 128))
+        );
     }
 }

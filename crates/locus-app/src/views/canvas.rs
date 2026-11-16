@@ -645,6 +645,10 @@ impl AppState {
 
     pub(crate) fn tool_keys(&mut self, ui: &egui::Ui, units: Units) {
         use egui::Key;
+        // Tab moves between the heads-up fields while sizing (#334); egui
+        // would otherwise move keyboard focus.
+        let tab =
+            self.is_drawing() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Tab));
         let (text, enter, esc, back) = ui.input(|i| {
             let text: String = i
                 .events
@@ -669,9 +673,30 @@ impl AppState {
         if back {
             self.tools.typed.pop();
         }
+        let to_mm = |v: f64| match units {
+            Units::Mm => v,
+            Units::Inch => v * 25.4,
+        };
+        if tab {
+            let value = std::mem::take(&mut self.tools.typed);
+            let mm = value.parse::<f64>().ok().map(to_mm);
+            if !value.is_empty() && mm.is_none() {
+                self.doc.notice = Some(format!("\"{value}\" is not a number"));
+            }
+            self.tool_event(ToolEvent::Tab(mm), None, units);
+        }
+        let sizing = self
+            .tools
+            .cursor
+            .is_some_and(|c| self.tools.host.tool().fields(c.pos).is_some());
         if enter {
             let value = std::mem::take(&mut self.tools.typed);
-            if value.is_empty() {
+            if value.is_empty() && sizing {
+                // Enter places the shape with its locked sides (#334).
+                if let Some(at) = self.tools.cursor {
+                    self.tool_event(ToolEvent::Click(at), None, units);
+                }
+            } else if value.is_empty() {
                 self.tool_event(ToolEvent::Enter, None, units);
             } else if let Ok(v) = value.parse::<f64>() {
                 let mm = match units {
@@ -704,7 +729,7 @@ impl AppState {
         let tool = self.tools.host.tool();
         let pen = self.tools.pen.map(|(anchor, now)| (anchor.pos, now));
         frame.draw_preview(&tool.preview(pick.pos, pen));
-        if pick.point.is_some() {
+        if pick.point.is_some() || pick.origin {
             frame.draw_snap(pick.pos);
         }
         // Inference hint glyph (#69): what the shape will be constrained to.
@@ -712,12 +737,40 @@ impl AppState {
             (Some(h), _) => Some(h.badge()),
             // A point on a curve, or a snap onto a point: coincident.
             (None, Some(_)) => Some(crate::scene::Symbol::COINCIDENT),
-            (None, None) => pick.point.map(|_| crate::scene::Symbol::COINCIDENT),
+            (None, None) => {
+                (pick.point.is_some() || pick.origin).then_some(crate::scene::Symbol::COINCIDENT)
+            }
         };
         if let Some(b) = badge {
             frame.draw_hint(pick.pos, b);
         }
-        let label = if self.tools.typed.is_empty() {
+        // Two fields while sizing (#334): "Width 40.00 · [Height 25▏]",
+        // the active one bracketed, locked values marked with "=".
+        let fields = tool.fields(pick.pos).map(|f| {
+            f.iter()
+                .map(|x| {
+                    let v = if x.active && !self.tools.typed.is_empty() {
+                        format!("{}▏", self.tools.typed)
+                    } else {
+                        frame.units.format_len(x.mm)
+                    };
+                    let v = if x.locked && !(x.active && !self.tools.typed.is_empty()) {
+                        format!("= {v}")
+                    } else {
+                        v
+                    };
+                    if x.active {
+                        format!("[{} {v}]", x.name)
+                    } else {
+                        format!("{} {v}", x.name)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("  ")
+        });
+        let label = if let Some(f) = fields {
+            Some(f)
+        } else if self.tools.typed.is_empty() {
             tool.readout(pick.pos)
                 .map(|(what, mm)| format!("{what} {}", frame.units.format_len(mm)))
         } else {

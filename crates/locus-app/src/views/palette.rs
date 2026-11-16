@@ -21,6 +21,7 @@ const CHECKS: &[(&str, &str)] = &[
     ("view.constraints", "Show constraints"),
     ("view.construction", "Show construction"),
     ("view.stroke_width", "Stroke width"),
+    ("view.fills", "Show fills"),
 ];
 
 /// The linetype switch's action: on means construction (design §6.10).

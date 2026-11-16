@@ -99,6 +99,8 @@ pub struct Display {
     pub points: bool,
     /// Shade every closed profile (region), as Fusion does.
     pub profiles: bool,
+    /// Fill regions with their objects' style fill, as exported (#338).
+    pub fills: bool,
 }
 
 impl Default for Display {
@@ -113,6 +115,7 @@ impl Default for Display {
             constraints: true,
             points: true,
             profiles: false,
+            fills: true,
         }
     }
 }
