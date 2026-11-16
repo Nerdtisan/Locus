@@ -55,7 +55,9 @@ pub(crate) fn regenerate(
     let Ok(slots) = recipe::slots(doc, &next.kind, &next.sources) else {
         return Ok(());
     };
-    let cl: Vec<EntityId> = recipe::closure(doc, &next.sources).into_iter().collect();
+    let cl: Vec<EntityId> = recipe::copied(doc, &next.kind, &next.sources)
+        .into_iter()
+        .collect();
     // Each copy maps the closure by position, so when its size changes (an
     // offset's output changed shape) the old copies can't be reused: remove
     // them and start a fresh pool. Plain sources never change size.

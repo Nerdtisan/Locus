@@ -794,3 +794,41 @@ fn text_can_be_patterned() {
         assert_eq!(texts, if circular { 3 } else { 2 }, "circular {circular}");
     }
 }
+
+/// #367: a circular pattern whose centre is a point of the patterned
+/// shape (e.g. a line patterned round its own end, like spokes).
+#[test]
+fn a_circular_pattern_round_a_point_of_its_own_shape() {
+    let mut s = Sketcher::new(Document::new());
+    let a = pt(&mut s, 0.0, 0.0);
+    let b = pt(&mut s, 10.0, 0.0);
+    let l = s
+        .apply(&Command::AddEntity {
+            layer: L,
+            construction: false,
+            style: Default::default(),
+            geom: Geom::Line { start: a, end: b },
+        })
+        .unwrap()
+        .entities[0];
+    let r = add(
+        &mut s,
+        RecipeKind::Circular {
+            centre: a,
+            count: "4".to_owned(),
+            angle: "360".to_owned(),
+            symmetric: false,
+            rotate: true,
+        },
+        &[l],
+    )
+    .unwrap_or_else(|e| panic!("refused: {e}"));
+    let doc = s.document();
+    let lines = doc
+        .recipe(r)
+        .unwrap()
+        .instances()
+        .filter(|e| doc.line(*e).is_some())
+        .count();
+    assert_eq!(lines, 3);
+}
