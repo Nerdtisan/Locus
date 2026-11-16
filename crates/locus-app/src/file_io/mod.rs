@@ -394,7 +394,10 @@ impl FileIo {
 
     fn perform(&mut self, ctx: &egui::Context, canvas: &mut AppState, action: Action) {
         match action {
-            Action::New => self.replace(canvas, Document::new(), None, None),
+            Action::New => {
+                self.replace(canvas, Document::new(), None, None);
+                canvas.centre_on_origin();
+            }
             Action::Replace(doc) => self.replace(canvas, *doc, None, None),
             Action::OpenDialog => self.begin_open(canvas),
             #[cfg(not(target_arch = "wasm32"))]
@@ -414,6 +417,8 @@ impl FileIo {
         name: Option<String>,
     ) {
         canvas.load(doc);
+        // An opened file shows its content; New centres the origin (#366).
+        canvas.request_fit();
         self.baseline = canvas.document().clone();
         self.path = path;
         self.name = name;
