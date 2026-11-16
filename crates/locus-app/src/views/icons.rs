@@ -599,6 +599,21 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             );
             d.poly(&[(5.0, 8.0), (7.5, 10.5), (11.0, 5.5)], false);
         }
+        "output.export_png" => {
+            // A picture: frame, sun and hill.
+            d.rect(1.5, 2.5, 14.5, 13.5);
+            d.circle((5.5, 6.0), 1.5);
+            d.poly(
+                &[
+                    (1.5, 12.0),
+                    (6.0, 8.5),
+                    (9.0, 11.0),
+                    (11.5, 8.5),
+                    (14.5, 11.5),
+                ],
+                false,
+            );
+        }
         "output.profiles" => {
             // A machine: screen on a stand.
             d.rect(2.0, 2.5, 14.0, 10.5);

@@ -585,6 +585,13 @@ async fn export_returns_bytes_and_respects_validation() {
     assert_eq!(mime, "image/svg+xml");
     assert!(String::from_utf8(bytes).unwrap().contains("<svg"));
     assert_eq!(info["format"], "svg");
+    // PNG is built in too (#332), at its default settings.
+    let Ok(Output::File { mime, bytes, .. }) = t.call("export", json!({"format": "png"})).await
+    else {
+        panic!("expected a PNG")
+    };
+    assert_eq!(mime, "image/png");
+    assert!(bytes.starts_with(b"\x89PNG"));
 
     let t = setup("open.locus", all(), false);
     let err = t
@@ -598,7 +605,7 @@ async fn export_returns_bytes_and_respects_validation() {
             .is_ok()
     );
     let err = t
-        .call("export", json!({"format": "png"}))
+        .call("export", json!({"format": "bmp"}))
         .await
         .unwrap_err();
     assert!(matches!(err, ToolError::BadArguments(_)));

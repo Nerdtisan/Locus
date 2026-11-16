@@ -119,13 +119,14 @@ impl std::fmt::Debug for Registry {
 }
 
 impl Registry {
-    /// SVG, PDF and DXF.
+    /// SVG, PDF, DXF and PNG (at its default settings, #332).
     #[must_use]
     pub fn builtin() -> Self {
         let mut r = Self::default();
         r.register(Box::new(SvgExporter));
         r.register(Box::new(PdfExporter));
         r.register(Box::new(DxfExporter));
+        r.register(Box::new(crate::png::PngExporter::default()));
         r
     }
 
@@ -185,7 +186,7 @@ mod tests {
     fn builtins_match_the_free_functions_byte_for_byte() {
         let m = model();
         let r = Registry::builtin();
-        assert_eq!(r.ids(), ["svg", "pdf", "dxf"]);
+        assert_eq!(r.ids(), ["svg", "pdf", "dxf", "png"]);
         let svg = r.get("svg").unwrap().export(&m).unwrap();
         assert_eq!(svg.bytes, crate::to_svg_model(&m));
         assert_eq!(
@@ -226,9 +227,9 @@ mod tests {
     fn register_adds_and_replaces_by_id() {
         let mut r = Registry::builtin();
         r.register(Box::new(Fake("fake")));
-        assert_eq!(r.ids(), ["svg", "pdf", "dxf", "fake"]);
+        assert_eq!(r.ids(), ["svg", "pdf", "dxf", "png", "fake"]);
         r.register(Box::new(Fake("svg")));
-        assert_eq!(r.ids().len(), 4);
+        assert_eq!(r.ids().len(), 5);
         assert_eq!(r.get("svg").unwrap().name(), "Fake");
         assert!(r.get("fake").unwrap().export(&model()).is_err());
     }
@@ -239,6 +240,6 @@ mod tests {
         assert!(!r.add(Box::new(Fake("svg"))));
         assert_eq!(r.get("svg").unwrap().name(), "SVG");
         assert!(r.add(Box::new(Fake("hpgl"))));
-        assert_eq!(r.ids(), ["svg", "pdf", "dxf", "hpgl"]);
+        assert_eq!(r.ids(), ["svg", "pdf", "dxf", "png", "hpgl"]);
     }
 }

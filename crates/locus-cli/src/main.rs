@@ -20,6 +20,7 @@ usage:
   locus-cli profiles
   locus-cli export <file.locus> (--format <id> | --profile <id> | --profile-file <profile.json>) [--per-layer]
                    --out <file> [--fix] [--force]
+                   [--dpi <n> | --width-px <n>] [--background transparent|white]
                    [--plugin <file.locusplugin>]... [--plugins <dir>]
   locus-cli plugin pack --manifest <plugin.toml> --wasm <file.wasm> --out <file.locusplugin>
                         [--readme <README.md>] [--icon <icon.png>]
@@ -32,9 +33,11 @@ its format, colours and bed check; --profile-file loads one from a .json file.
 validate prints errors and warnings and exits 1 when errors remain.
 --fix applies the safe auto-fixes to the exported geometry (never to the file).
 export refuses to write when errors remain unless --force is given. Formats:
-svg, pdf, dxf, plus those of exporter plugins given with --plugin (a file) or
+svg, pdf, dxf, png, plus those of exporter plugins given with --plugin (a file) or
 --plugins (an installed-plugins folder). Validator plugins given the same way
 add their findings to validate and export; their errors block export too.
+--dpi (default 300) or --width-px sets a PNG's resolution; --background its
+background (default transparent). They apply to --format png only.
 plugin pack wraps a wasm32 build of a plugin into a checked .locusplugin.
 plugin run runs a generator headlessly and exports its output; params.ron is
 `(key: value, ...)`, and keys left out take the plugin's defaults.
@@ -125,7 +128,19 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     "--format, --profile or --profile-file is required".into(),
                 ));
             };
-            let registry = plugin::exporters(&opts.plugin_files, opts.plugins_dir.as_deref())?;
+            let mut registry = plugin::exporters(&opts.plugin_files, opts.plugins_dir.as_deref())?;
+            match (format.as_str(), opts.png) {
+                ("png", Some(o)) => {
+                    registry.register(Box::new(locus_export::PngExporter { options: o }))
+                }
+                ("png", None) => {}
+                (_, Some(_)) => {
+                    return Err(CliError::Usage(
+                        "--dpi, --width-px and --background apply to --format png only".into(),
+                    ));
+                }
+                _ => {}
+            }
             if registry.get(&format).is_none() {
                 return Err(CliError::Usage(format!(
                     "unsupported format `{}` (one of: {})",
@@ -234,6 +249,8 @@ struct ExportOpts {
     per_layer: bool,
     plugin_files: Vec<PathBuf>,
     plugins_dir: Option<PathBuf>,
+    /// PNG settings, if any PNG option was given (#332).
+    png: Option<locus_export::PngOptions>,
 }
 
 impl ExportOpts {
@@ -244,6 +261,7 @@ impl ExportOpts {
         let (mut profile, mut profile_file) = (None, None);
         let (mut fix, mut force, mut per_layer) = (false, false, false);
         let (mut plugin_files, mut plugins_dir) = (Vec::new(), None);
+        let (mut dpi, mut width_px, mut background) = (None, None, None);
         let mut it = args.iter();
         while let Some(a) = it.next() {
             match a.as_str() {
@@ -252,6 +270,29 @@ impl ExportOpts {
                 }
                 "--plugins" => {
                     plugins_dir = Some(PathBuf::from(it.next().ok_or("--plugins needs a value")?));
+                }
+                "--dpi" => {
+                    let v = it.next().ok_or("--dpi needs a value")?;
+                    let n: f64 = v.parse().map_err(|_| "--dpi needs a number")?;
+                    if !(n.is_finite() && n > 0.0) {
+                        return Err("--dpi must be a positive number".into());
+                    }
+                    dpi = Some(n);
+                }
+                "--width-px" => {
+                    let v = it.next().ok_or("--width-px needs a value")?;
+                    let n: u32 = v.parse().map_err(|_| "--width-px needs a whole number")?;
+                    if n == 0 {
+                        return Err("--width-px must be at least 1".into());
+                    }
+                    width_px = Some(n);
+                }
+                "--background" => {
+                    background = Some(match it.next().map(String::as_str) {
+                        Some("transparent") => locus_export::Background::Transparent,
+                        Some("white") => locus_export::Background::White,
+                        _ => return Err("--background is transparent or white".into()),
+                    });
                 }
                 "--format" => format = Some(it.next().ok_or("--format needs a value")?.clone()),
                 "--profile" => profile = Some(it.next().ok_or("--profile needs a value")?.clone()),
@@ -275,6 +316,20 @@ impl ExportOpts {
         if profile.is_some() && profile_file.is_some() {
             return Err("use either --profile or --profile-file, not both".into());
         }
+        if dpi.is_some() && width_px.is_some() {
+            return Err("use either --dpi or --width-px, not both".into());
+        }
+        let png = (dpi.is_some() || width_px.is_some() || background.is_some()).then(|| {
+            let d = locus_export::PngOptions::default();
+            locus_export::PngOptions {
+                resolution: match (dpi, width_px) {
+                    (_, Some(px)) => locus_export::Resolution::Width(px),
+                    (Some(n), None) => locus_export::Resolution::Dpi(n),
+                    (None, None) => d.resolution,
+                },
+                background: background.unwrap_or(d.background),
+            }
+        });
         Ok(Self {
             input: input.ok_or("no input file given")?,
             out: out.ok_or("--out is required")?,
@@ -286,6 +341,7 @@ impl ExportOpts {
             per_layer,
             plugin_files,
             plugins_dir,
+            png,
         })
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "locus-export"
-description = "Export validation and SVG/PDF/DXF writers"
+description = "Export validation and SVG/PDF/DXF/PNG writers"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -19,3 +19,6 @@ locus-region.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# PNG export (#332): pure-Rust rasteriser and encoder, BSD-3-Clause / MIT.
+# No `simd`, so the crate still builds for wasm32 (SPEC §3).
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "png-format"] }

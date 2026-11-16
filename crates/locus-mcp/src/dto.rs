@@ -434,7 +434,8 @@ pub struct ApplyModifierArgs {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExportArgs {
-    /// Format ID: `svg`, `pdf`, `dxf`, or an exporter plugin's.
+    /// Format ID: `svg`, `pdf`, `dxf`, `png` (300 DPI, transparent), or an
+    /// exporter plugin's.
     pub format: String,
     /// Apply the safe auto-fixes to the exported geometry (never the document).
     #[serde(default)]

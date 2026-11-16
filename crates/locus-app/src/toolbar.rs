@@ -139,7 +139,10 @@ pub const DEFAULT_RIBBON: &[(Group, &[&str])] = &[
     (Group::Select, &["select.select", "select.chain"]),
     // OUTPUT and UTILITIES (#325), as the mockup pins them.
     (Group::Preview, &["view.machine_preview", "output.validate"]),
-    (Group::Export, &["output.export", "output.profiles"]),
+    (
+        Group::Export,
+        &["output.export", "output.export_png", "output.profiles"],
+    ),
     (
         Group::Plugins,
         &["util.install_plugin", "util.plugin_manager"],
@@ -412,7 +415,7 @@ mod tests {
         let t = Toolbar::load(Some(old), known);
         assert_eq!(
             t.pinned(Group::Export),
-            ["output.export", "output.profiles"]
+            ["output.export", "output.export_png", "output.profiles"]
         );
     }
 

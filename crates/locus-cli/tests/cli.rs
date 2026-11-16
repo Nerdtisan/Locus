@@ -231,6 +231,55 @@ fn export_pdf_and_dxf_from_the_cli() {
     assert!(text.contains("AC1009") && text.contains("CIRCLE"));
 }
 
+/// `export --format png` (#332): the resolution and background options.
+#[test]
+fn export_png_with_resolution_and_background() {
+    let png = scratch("plate.png");
+    let out = run_export(
+        "plate.locus",
+        "png",
+        &png,
+        &["--width-px", "400", "--background", "white"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&png).unwrap();
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    // IHDR: width is the big-endian u32 at bytes 16..20.
+    assert_eq!(
+        u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+        400
+    );
+    // PNG options on another format, or both resolutions, are usage errors.
+    let svg = scratch("plate-dpi.svg");
+    assert_eq!(
+        run_export("plate.locus", "svg", &svg, &["--dpi", "300"])
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_eq!(
+        run_export(
+            "plate.locus",
+            "png",
+            &png,
+            &["--dpi", "300", "--width-px", "9"]
+        )
+        .status
+        .code(),
+        Some(2)
+    );
+    assert_eq!(
+        run_export("plate.locus", "png", &png, &["--dpi", "-1"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
+
 #[test]
 fn profiles_lists_the_presets() {
     let out = cli(&[s("profiles")]);

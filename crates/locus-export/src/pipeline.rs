@@ -337,6 +337,34 @@ impl ExportModel {
             .reduce(Aabb::union)
     }
 
+    /// Only the geometry of `keep` (an export of the selection, #332): each
+    /// layer keeps the segments drawn from those entities, chained again.
+    /// The frame is dropped, so the bounds are the selection's.
+    #[must_use]
+    pub fn only(&self, keep: &std::collections::BTreeSet<EntityId>) -> ExportModel {
+        let layers = self
+            .layers
+            .iter()
+            .map(|l| {
+                let segs: Vec<PathSeg> = l
+                    .paths
+                    .iter()
+                    .flat_map(|p| p.segs.iter())
+                    .filter(|s| keep.contains(&s.entity))
+                    .cloned()
+                    .collect();
+                let mut out = l.clone();
+                out.paths = l.chain(segs);
+                out.degenerate.retain(|e| keep.contains(e));
+                out
+            })
+            .collect();
+        ExportModel {
+            layers,
+            frame: None,
+        }
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.layers.iter().all(|l| l.paths.is_empty())

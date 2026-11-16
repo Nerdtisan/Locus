@@ -205,6 +205,8 @@ pub enum Shell {
     ShowPane(crate::layout::Tab),
     /// The export dialog, which validates first (SPEC §8, #325).
     Export,
+    /// The export dialog for a PNG image (#332).
+    ExportPng,
     /// The machine profile manager (#286).
     Profiles,
     InstallPlugin,
@@ -942,6 +944,17 @@ pub static BUILTIN: &[Action] = &[
         &[cmd(Key::E)],
         KeyScope::Global,
         Op::Shell(Shell::Export),
+    ),
+    a(
+        "output.export_png",
+        "Export PNG…",
+        Group::Export,
+        "🖼",
+        &["image", "raster", "bitmap", "picture", "png"],
+        "A PNG image of the sketch or the selection, at a chosen resolution",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::ExportPng),
     ),
     a(
         "output.profiles",
