@@ -620,7 +620,7 @@ pub(crate) fn validate(
                     "offset distance must be non-zero and at most 1000 mm".to_owned(),
                 ));
             }
-            crate::offset::chain(doc, sources)?;
+            crate::offset::check_sources(doc, sources)?;
         }
         RecipeKind::Linear { dir1, dir2 } => {
             let cl = closure(doc, sources);
