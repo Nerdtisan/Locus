@@ -736,3 +736,61 @@ fn a_mirror_still_refuses_offset_curves() {
         Err(DocError::Driven { .. })
     ));
 }
+
+/// #364: placed text can be patterned, linearly and round a centre; each
+/// copy is a text placed at its instance anchor.
+#[test]
+fn text_can_be_patterned() {
+    use locus_text::{Align, BundledFont, BundledProvider, FontRef};
+    for circular in [false, true] {
+        let mut s = Sketcher::new(Document::new());
+        let a = pt(&mut s, 0.0, 0.0);
+        let d = pt(&mut s, 10.0, 0.0);
+        let text = locus_doc::TextData::new(
+            "Hi",
+            FontRef::bundled(BundledFont::Figtree),
+            8.0,
+            Align::Left,
+            1.0,
+            &BundledProvider,
+        )
+        .unwrap();
+        let t = s
+            .apply(&Command::AddEntity {
+                layer: L,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Text {
+                    anchor: a,
+                    dir: d,
+                    text: Box::new(text),
+                },
+            })
+            .unwrap()
+            .entities[0];
+        let kind = if circular {
+            let c = pt(&mut s, 0.0, -30.0);
+            RecipeKind::Circular {
+                centre: c,
+                count: "4".to_owned(),
+                angle: "360".to_owned(),
+                symmetric: false,
+                rotate: true,
+            }
+        } else {
+            RecipeKind::Linear {
+                dir1: dir(Axis::X, "3", "25"),
+                dir2: None,
+            }
+        };
+        let r = add(&mut s, kind, &[t]).unwrap_or_else(|e| panic!("circular {circular}: {e}"));
+        let doc = s.document();
+        let texts = doc
+            .recipe(r)
+            .unwrap()
+            .instances()
+            .filter(|e| doc.text(*e).is_some())
+            .count();
+        assert_eq!(texts, if circular { 3 } else { 2 }, "circular {circular}");
+    }
+}
