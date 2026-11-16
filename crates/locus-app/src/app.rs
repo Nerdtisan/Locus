@@ -697,10 +697,19 @@ impl App {
                 ));
                 let cursor = match self.status.cursor {
                     Some(p) => {
+                        // Enough decimals to tell screen points apart at any
+                        // zoom (#333): about a thousandth of the view.
+                        let fine = |extent: f64| {
+                            (-(extent / 1000.0).log10()).ceil().clamp(2.0, 10.0) as usize
+                        };
                         let (x, y) = match u {
-                            Units::Mm => (format!("{:.2}", p.x), format!("{:.2}", p.y)),
+                            Units::Mm => {
+                                let d = fine(self.status.extent_mm);
+                                (format!("{:.d$}", p.x), format!("{:.d$}", p.y))
+                            }
                             Units::Inch => {
-                                (format!("{:.3}", p.x / 25.4), format!("{:.3}", p.y / 25.4))
+                                let d = fine(self.status.extent_mm / 25.4).max(3);
+                                (format!("{:.d$}", p.x / 25.4), format!("{:.d$}", p.y / 25.4))
                             }
                         };
                         format!("x {x}  y {y} {}", u.label())

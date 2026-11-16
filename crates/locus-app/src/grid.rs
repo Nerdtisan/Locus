@@ -121,16 +121,21 @@ pub fn rulers(painter: &Painter, view: &View, rect: Rect) {
     }
 }
 
-/// Human label for a step in mm, e.g. "1 µm", "10 mm", "1 m".
+/// Human label for a step in mm, e.g. "1 µm", "10 mm", "1 m", "10 km"
+/// (decade steps from picometres to kilometres, #333).
 pub fn label(step_mm: f64) -> String {
-    if step_mm < 0.999e-3 {
+    if step_mm < 0.999e-6 {
+        format!("{} pm", (step_mm * 1.0e9).round())
+    } else if step_mm < 0.999e-3 {
         format!("{} nm", (step_mm * 1.0e6).round())
     } else if step_mm < 0.999 {
         format!("{} µm", (step_mm * 1.0e3).round())
     } else if step_mm < 999.0 {
         format!("{} mm", step_mm.round())
-    } else {
+    } else if step_mm < 0.999e6 {
         format!("{} m", (step_mm / 1000.0).round())
+    } else {
+        format!("{} km", (step_mm / 1.0e6).round())
     }
 }
 
@@ -140,7 +145,7 @@ mod tests {
 
     #[test]
     fn step_is_a_decade_at_least_min_spacing() {
-        for &z in &[1e-3, 0.3, 1.0, 7.5, 123.0, 6e5] {
+        for &z in &[1e-6, 1e-3, 0.3, 1.0, 7.5, 123.0, 6e5, 1e9, 1e12] {
             let (s, _) = minor_step(z);
             assert!(s * z >= MIN_MINOR_PT - 1e-9, "zoom {z}");
             assert!(s * z < MIN_MINOR_PT * 10.0 + 1e-9, "zoom {z}");
@@ -155,5 +160,8 @@ mod tests {
         assert_eq!(label(0.1), "100 µm");
         assert_eq!(label(10.0), "10 mm");
         assert_eq!(label(1000.0), "1 m");
+        assert_eq!(label(1e-7), "100 pm");
+        assert_eq!(label(1e-5), "10 nm");
+        assert_eq!(label(1e7), "10 km");
     }
 }

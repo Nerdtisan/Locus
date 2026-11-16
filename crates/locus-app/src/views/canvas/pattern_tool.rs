@@ -6,9 +6,13 @@
 //! before or while the tool is active. Everything can also be set on the
 //! canvas, with a live preview of the copies:
 //! - an arrowhead on each direction drags its spacing;
-//! - − / + beside it change that direction's count;
+//! - a count handle one spacing beyond the last copy drags the count, and
+//!   − / + beside the arrow step it (#337);
 //! - for a circular pattern, a knob at the end of the arc drags the total
-//!   angle, snapping to 360° near a full turn, with − / + for the count.
+//!   angle, snapping to 360° near a full turn; a handle on the second copy
+//!   drags the count, with − / + to step it.
+//!
+//! Clicking a handle focuses its value in the dialog (#337, design §6.8).
 //!
 //! The dialog and the handles are one set of values. Enter or OK adds the
 //! recipe as one command (§11), and its count, spacing and angle stay
@@ -24,7 +28,7 @@ use egui::{Align2, FontId, PointerButton, Pos2, Rect, Stroke, Vec2 as EVec2};
 use locus_doc::{Axis, Command, Document, Editor, EntityId, Geom, LinearDir, RecipeKind};
 use locus_geom::Vec2;
 
-const GRAB_PT: f32 = 9.0;
+const GRAB_PT: f32 = 11.0;
 /// The − / + buttons: their size and their distance from the handle.
 const BUTTON_PT: f32 = 9.0;
 const BUTTON_OFF_PT: f32 = 22.0;
@@ -40,11 +44,17 @@ pub enum PatternPick {
     Direction(u8),
 }
 
-/// A canvas handle being dragged.
+/// A canvas handle: dragged, or the value a click on it focuses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Drag {
+pub enum Drag {
+    /// Direction 1 or 2's spacing (its arrow).
     Spacing(u8),
+    /// Direction 1 or 2's count (the ring beyond the last copy).
+    Count(u8),
+    /// The circular pattern's total angle (the knob at the arc's end).
     Angle,
+    /// The circular pattern's count (the ring on the second copy).
+    CircCount,
 }
 
 /// The pattern being set up (persists between uses, like tool options).
@@ -64,6 +74,8 @@ pub struct PatternDraft {
     pub rotate: bool,
     pub pick: PatternPick,
     drag: Option<Drag>,
+    /// A handle was clicked: the dialog focuses its field (#337).
+    pub focus: Option<Drag>,
     /// The preview for a key (the command's debug text).
     preview: Option<(String, Vec<Shape>)>,
 }
@@ -85,6 +97,7 @@ impl Default for PatternDraft {
             rotate: true,
             pick: PatternPick::Objects,
             drag: None,
+            focus: None,
             preview: None,
         }
     }
@@ -123,6 +136,21 @@ impl PatternDraft {
             2 => &mut self.count2,
             _ => &mut self.c_count,
         }
+    }
+}
+
+/// Most copies a handle drag sets in one direction (SPEC §6.2.1 caps a
+/// whole pattern at `MAX_INSTANCES`; the recipe refuses more).
+const MAX_COUNT: usize = 1000;
+
+/// The angle between circular copies: a full turn shares it among all `n`,
+/// a partial sweep among the `n - 1` gaps (as `locus_doc` lays them out).
+fn circ_step(sweep: f64, n: i64) -> f64 {
+    let full = sweep.abs() >= std::f64::consts::TAU - 1e-9;
+    if full || n < 2 {
+        sweep / n.max(1) as f64
+    } else {
+        sweep / (n - 1) as f64
     }
 }
 
@@ -246,6 +274,38 @@ impl AppState {
         })
     }
 
+    /// The count handles (#337), in screen points: one spacing beyond
+    /// each direction's last copy, and on a circular pattern's second copy.
+    fn count_spots(&self, h: &Handles, rect: Rect) -> Vec<(Drag, Pos2)> {
+        let cam = &self.view.camera;
+        let s = |p: Vec2| cam.to_screen(p, rect);
+        let mut out = Vec::new();
+        for (i, d) in h.dirs.iter().enumerate() {
+            if let Some((v, spacing, n)) = *d {
+                let at = h.start + v * spacing * n.max(1) as f64;
+                out.push((Drag::Count(i as u8 + 1), s(at)));
+            }
+        }
+        if let Some((c, r, a0, sweep, n)) = h.arc {
+            let a = a0 + circ_step(sweep, n);
+            out.push((Drag::CircCount, s(c + Vec2::new(a.cos(), a.sin()) * r)));
+        }
+        out
+    }
+
+    /// The handle under screen point `p`: a drag target or a count ring.
+    fn pattern_handle_at(&self, h: &Handles, rect: Rect, p: Pos2) -> Option<Drag> {
+        self.pattern_spots(h, rect)
+            .into_iter()
+            .find_map(|(d, _, tip, ..)| d.filter(|_| tip.distance(p) <= GRAB_PT))
+            .or_else(|| {
+                self.count_spots(h, rect)
+                    .into_iter()
+                    .find(|(_, at)| at.distance(p) <= GRAB_PT)
+                    .map(|(d, _)| d)
+            })
+    }
+
     /// Screen spots of the handles: (what, tip, minus, plus).
     fn pattern_spots(&self, h: &Handles, rect: Rect) -> Vec<(Option<Drag>, u8, Pos2, Pos2, Pos2)> {
         let cam = &self.view.camera;
@@ -359,11 +419,11 @@ impl AppState {
         let spots = self.pattern_spots(&h, rect);
         let press = super::press_pos(ui, resp);
         let near = |a: Pos2, b: Pos2, r: f32| a.distance(b) <= r;
+        let under_press = press.and_then(|o| self.pattern_handle_at(&h, rect, o));
         if resp.drag_started_by(PointerButton::Primary)
-            && let Some(o) = press
-            && let Some((Some(d), ..)) = spots.iter().find(|s| near(o, s.2, GRAB_PT))
+            && let Some(d) = under_press
         {
-            self.tools.pattern.drag = Some(*d);
+            self.tools.pattern.drag = Some(d);
         }
         if let Some(drag) = self.tools.pattern.drag {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -388,15 +448,21 @@ impl AppState {
                 }
             })
         });
-        let on_handle = press.is_some_and(|o| spots.iter().any(|s| near(o, s.2, GRAB_PT)));
+        let on_handle = under_press.is_some();
         if let Some(hp) = resp.hover_pos()
-            && spots.iter().any(|s| {
-                near(hp, s.2, GRAB_PT)
-                    || near(hp, s.3, BUTTON_PT + 2.0)
-                    || near(hp, s.4, BUTTON_PT + 2.0)
-            })
+            && (self.pattern_handle_at(&h, rect, hp).is_some()
+                || spots
+                    .iter()
+                    .any(|s| near(hp, s.3, BUTTON_PT + 2.0) || near(hp, s.4, BUTTON_PT + 2.0)))
         {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        // A click on a handle focuses its value in the dialog (#337).
+        if resp.clicked_by(PointerButton::Primary)
+            && let Some(d) = under_press
+        {
+            self.tools.pattern.focus = Some(d);
+            return;
         }
         if resp.clicked_by(PointerButton::Primary)
             && let Some((which, by)) = on_button
@@ -431,6 +497,38 @@ impl AppState {
                         d.spacing2 = text;
                     }
                 }
+            }
+            Drag::Count(which) => {
+                let Some((v, spacing, _)) = h.dirs[usize::from(which) - 1] else {
+                    return;
+                };
+                if spacing.abs() < f64::EPSILON {
+                    return;
+                }
+                // The ring sits at index `count`: where it lands is the count.
+                let along = (w - h.start).dot(v) / spacing;
+                let n = along.round().clamp(1.0, MAX_COUNT as f64) as i64;
+                *d.count_mut(which) = n.to_string();
+            }
+            Drag::CircCount => {
+                let Some((c, _, a0, sweep, _)) = h.arc else {
+                    return;
+                };
+                let full = sweep.abs() >= std::f64::consts::TAU - 1e-9;
+                let a = (w - c).y.atan2((w - c).x);
+                // The angle from the first copy to the ring, the same way
+                // round as the sweep.
+                let mut step = (a - a0).rem_euclid(std::f64::consts::TAU);
+                if sweep < 0.0 {
+                    step -= std::f64::consts::TAU;
+                }
+                if step.abs() < 1e-3 {
+                    return;
+                }
+                let gaps = (sweep / step).round().max(1.0);
+                let n = if full { gaps } else { gaps + 1.0 };
+                let n = n.clamp(2.0, MAX_COUNT as f64) as i64;
+                d.c_count = n.to_string();
             }
             Drag::Angle => {
                 let Some((c, _, a0, _, _)) = h.arc else {
@@ -513,13 +611,11 @@ impl AppState {
                 c,
                 Stroke::NONE,
             ));
+            // Above the arrow: the count ring sits ahead of it and the
+            // − / + buttons below.
             p.text(
-                tip + dir * 18.0,
-                if dir.x < -0.3 {
-                    Align2::RIGHT_CENTER
-                } else {
-                    Align2::LEFT_CENTER
-                },
+                tip - EVec2::new(-dir.y, dir.x) * 14.0,
+                Align2::CENTER_BOTTOM,
                 format!("{n} × {}", frame.units.format_len(spacing)),
                 font.clone(),
                 frame.pal.hover,
@@ -545,6 +641,15 @@ impl AppState {
                 font,
                 frame.pal.hover,
             );
+        }
+        // The count rings (#337), filled while dragged.
+        for (d, at) in self.count_spots(&h, frame.rect) {
+            let live = self.tools.pattern.drag == Some(d);
+            p.circle_filled(at, 6.0, frame.pal.background);
+            p.circle_stroke(at, 6.0, Stroke::new(1.8, c));
+            if live {
+                p.circle_filled(at, 3.5, c);
+            }
         }
         // − / + beside each handle.
         for (_, _, _, minus, plus) in self.pattern_spots(&h, frame.rect) {
@@ -611,9 +716,15 @@ impl AppState {
                     }
                     clear = x;
                 });
-                let field = |ui: &mut egui::Ui, text: &mut String, w: f32| {
-                    ui.add(egui::TextEdit::singleline(text).desired_width(w))
-                        .on_hover_text("A number, or an expression over parameters")
+                let focus = d.focus.take();
+                let field = |ui: &mut egui::Ui, text: &mut String, w: f32, me: Drag| {
+                    let r = ui
+                        .add(egui::TextEdit::singleline(text).desired_width(w))
+                        .on_hover_text("A number, or an expression over parameters");
+                    if focus == Some(me) {
+                        r.request_focus();
+                    }
+                    r
                 };
                 if circular {
                     row(ui, "Centre", |ui| {
@@ -635,9 +746,11 @@ impl AppState {
                             d.pick = PatternPick::Centre;
                         }
                     });
-                    row(ui, "Quantity", |ui| field(ui, &mut d.c_count, 56.0));
+                    row(ui, "Quantity", |ui| {
+                        field(ui, &mut d.c_count, 56.0, Drag::CircCount)
+                    });
                     row(ui, "Total angle", |ui| {
-                        field(ui, &mut d.c_angle, 72.0);
+                        field(ui, &mut d.c_angle, 72.0, Drag::Angle);
                         ui.weak("°");
                     });
                     row(ui, "", |ui| ui.checkbox(&mut d.rotate, "Rotate instances"));
@@ -682,12 +795,16 @@ impl AppState {
                         }
                     });
                     row(ui, "Quantity", |ui| {
-                        field(ui, &mut d.count1, 56.0);
-                        ui.add_enabled_ui(d.second, |ui| field(ui, &mut d.count2, 56.0));
+                        field(ui, &mut d.count1, 56.0, Drag::Count(1));
+                        ui.add_enabled_ui(d.second, |ui| {
+                            field(ui, &mut d.count2, 56.0, Drag::Count(2))
+                        });
                     });
                     row(ui, "Distance", |ui| {
-                        field(ui, &mut d.spacing1, 64.0);
-                        ui.add_enabled_ui(d.second, |ui| field(ui, &mut d.spacing2, 64.0));
+                        field(ui, &mut d.spacing1, 64.0, Drag::Spacing(1));
+                        ui.add_enabled_ui(d.second, |ui| {
+                            field(ui, &mut d.spacing2, 64.0, Drag::Spacing(2))
+                        });
                         ui.weak(unit);
                     });
                     row(ui, "Direction type", |ui| {
@@ -883,5 +1000,76 @@ mod tests {
         assert_eq!(c.tools.pattern.c_angle, "90");
         assert!(c.pattern_ok(true, Units::Mm));
         assert_eq!(c.doc.sketcher.document().recipes().len(), 1);
+    }
+
+    /// #337: the count rings drag the count (linear: where the ring lands
+    /// along the direction; circular: the angle to the second copy), and
+    /// each handle is found under the pointer for click-to-focus.
+    #[test]
+    fn count_handles_drag_the_count_and_are_found_under_the_pointer() {
+        let mut c = ready(false);
+        c.view.rect = Rect::from_min_size(Pos2::ZERO, EVec2::new(800.0, 600.0));
+        c.tools.pattern.count1 = "3".to_owned();
+        c.tools.pattern.spacing1 = "30".to_owned();
+        let h = c.pattern_handles(false, Units::Mm).expect("handles");
+        // Start (10, 5); the ring sits at index 3 (x = 100). Dragged to
+        // x = 160 it lands on index 5.
+        c.pattern_drag(Drag::Count(1), &h, Vec2::new(160.0, 7.0), false, Units::Mm);
+        assert_eq!(c.tools.pattern.count1, "5");
+        let h = c.pattern_handles(false, Units::Mm).expect("handles");
+        let rect = c.view.rect;
+        for (d, at) in c.count_spots(&h, rect) {
+            assert_eq!(c.pattern_handle_at(&h, rect, at), Some(d));
+        }
+        let (tip_drag, tip) = c
+            .pattern_spots(&h, rect)
+            .into_iter()
+            .find_map(|(d, _, tip, ..)| d.map(|d| (d, tip)))
+            .expect("an arrow");
+        assert_eq!(c.pattern_handle_at(&h, rect, tip), Some(tip_drag));
+
+        // Circular: centre straight below the selection centre.
+        let mut c = ready(true);
+        let centre = c
+            .apply_reporting(&Command::AddEntity {
+                layer: Document::default_layer(),
+                construction: false,
+                geom: Geom::Point {
+                    pos: Vec2::new(10.0, -40.0),
+                },
+                style: Default::default(),
+            })
+            .then(|| {
+                c.doc
+                    .sketcher
+                    .document()
+                    .entities()
+                    .iter()
+                    .last()
+                    .map(|(id, _)| id)
+            })
+            .flatten()
+            .expect("a centre point");
+        c.tools.pattern.centre = Some(centre);
+        c.tools.pattern.c_angle = "360".to_owned();
+        c.tools.pattern.c_count = "6".to_owned();
+        let h = c.pattern_handles(true, Units::Mm).expect("handles");
+        // A quarter turn from the first copy: four copies round a full turn.
+        c.pattern_drag(
+            Drag::CircCount,
+            &h,
+            Vec2::new(-35.0, -40.0),
+            false,
+            Units::Mm,
+        );
+        assert_eq!(c.tools.pattern.c_count, "4");
+        // A partial sweep of 90° with copies 30° apart: four copies.
+        c.tools.pattern.c_angle = "90".to_owned();
+        let h = c.pattern_handles(true, Units::Mm).expect("handles");
+        let a = 120f64.to_radians();
+        let w = Vec2::new(10.0, -40.0) + Vec2::new(a.cos(), a.sin()) * 45.0;
+        c.pattern_drag(Drag::CircCount, &h, w, false, Units::Mm);
+        assert_eq!(c.tools.pattern.c_count, "4");
+        assert!((circ_step(90f64.to_radians(), 4).to_degrees() - 30.0).abs() < 1e-9);
     }
 }
