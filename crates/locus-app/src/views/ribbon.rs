@@ -90,23 +90,25 @@ fn tabs(ui: &mut egui::Ui) -> RibbonTab {
     tab
 }
 
-/// EXPORT at the right end of SKETCH (design §2), as Fusion's FINISH SKETCH.
+/// EXPORT at the right end of SKETCH (design §2), as Fusion's FINISH SKETCH:
+/// one button, its icon then its label (#359: an icon button beside a
+/// text button read as two Export buttons).
 fn export_end(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>) {
     let Some(a) = reg.get("output.export") else {
         return;
     };
     let tip = tooltip_plain(ui, reg, cx, a);
-    let label = ui.button("EXPORT").on_hover_text(&tip);
-    let icon = ui.add(egui::Button::new("").min_size(egui::vec2(26.0, 26.0)));
-    let color = icon_color(ui, &icon, true);
-    icons::paint(
-        ui.painter(),
-        icon.rect.shrink(5.0),
-        a.id.as_str(),
-        &a.label,
-        color,
+    // Room on the left for the painted icon (the fonts have no glyph).
+    let r = ui
+        .add(egui::Button::new("        EXPORT").min_size(egui::vec2(0.0, 26.0)))
+        .on_hover_text(tip);
+    let icon = egui::Rect::from_center_size(
+        egui::pos2(r.rect.left() + 15.0, r.rect.center().y),
+        egui::vec2(16.0, 16.0),
     );
-    if label.clicked() || icon.on_hover_text(tip).clicked() {
+    let color = icon_color(ui, &r, true);
+    icons::paint(ui.painter(), icon, a.id.as_str(), &a.label, color);
+    if r.clicked() {
         run_or_explain(reg, cx, a);
     }
 }
@@ -473,6 +475,41 @@ fn title_case(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #359: the SKETCH tab ends in exactly one Export button.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn sketch_ends_in_one_export_button() {
+        use egui::accesskit::Role;
+        let reg = Registry::default();
+        let mut state = crate::state::AppState::default();
+        let mut settings = crate::settings::Settings::default();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut run = || {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut cx = Cx {
+                    state: &mut state,
+                    settings: &mut settings,
+                    plugins: None,
+                };
+                export_end(ui, &reg, &mut cx);
+            })
+        };
+        let _ = run();
+        let out = run();
+        let tree = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit tree");
+        let buttons: Vec<_> = tree
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == Role::Button)
+            .collect();
+        assert_eq!(buttons.len(), 1, "one button, icon and label together");
+        assert!(buttons[0].1.label().is_some_and(|l| l.contains("EXPORT")));
+    }
 
     #[test]
     fn group_titles_read_as_words() {
