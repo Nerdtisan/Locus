@@ -217,6 +217,11 @@ impl FileIo {
         self.begin_profile_export(canvas, settings);
     }
 
+    /// The app bar's Save (#324): as File ▸ Save.
+    pub fn save_now(&mut self, canvas: &AppState) {
+        self.save(canvas, false);
+    }
+
     /// OUTPUT ▸ Machine profiles… (#325, #286).
     pub fn open_profiles(&mut self) {
         self.profiles.open(None);
