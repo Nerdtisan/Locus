@@ -205,6 +205,43 @@ impl Group {
     }
 }
 
+/// Default pins earlier releases shipped (and stored for every group, #386
+/// follow-up): a group stored exactly like this was never customised.
+const EARLIER_DEFAULTS: &[(Group, &[&str])] = &[
+    // Before #386.
+    (
+        Group::Create,
+        &[
+            "sketch.line",
+            "sketch.rect_2pt",
+            "sketch.circle_centre",
+            "sketch.arc_3pt",
+            "sketch.polygon",
+            "modify.offset",
+        ],
+    ),
+    (
+        Group::Modify,
+        &[
+            "modify.trim",
+            "modify.fillet",
+            "modify.move",
+            "modify.construction",
+        ],
+    ),
+    (
+        Group::Inspect,
+        &["view.machine_preview", "view.stroke_width"],
+    ),
+    (Group::Insert, &[]),
+];
+
+/// Is `ids` what `g` shipped with, today or in an earlier release?
+fn shipped(g: Group, ids: &[String]) -> bool {
+    let same = |d: &[&str]| ids.len() == d.len() && ids.iter().zip(d).all(|(a, b)| a == b);
+    defaults(g) == ids || EARLIER_DEFAULTS.iter().any(|(dg, d)| *dg == g && same(d))
+}
+
 fn defaults(g: Group) -> Vec<String> {
     DEFAULT_RIBBON
         .iter()
@@ -320,7 +357,7 @@ impl Toolbar {
             tracing::warn!("saved toolbar too large, using the default");
             return bar;
         }
-        let saved = match serde_json::from_str::<Saved>(json) {
+        let mut saved = match serde_json::from_str::<Saved>(json) {
             Ok(s) if s.version == VERSION => s,
             Ok(_) => {
                 tracing::warn!("saved toolbar is from another Locus version, using the default");
@@ -331,6 +368,15 @@ impl Toolbar {
                 return bar;
             }
         };
+        // A group stored as it shipped (today's defaults or an earlier
+        // release's) was never customised: it takes today's defaults, so new
+        // default pins reach everyone who hasn't changed that group.
+        saved.groups.retain(|key, ids| {
+            RIBBON
+                .iter()
+                .find(|g| g.key() == key)
+                .is_none_or(|&g| !shipped(g, ids))
+        });
         // Duplicates are dropped per tab: each tab is its own toolbar.
         let mut seen: Vec<(RibbonTab, String)> = Vec::new();
         for g in RIBBON {
@@ -373,13 +419,15 @@ impl Toolbar {
         bar
     }
 
-    /// The value to store.
+    /// The value to store: only the groups the user changed, so the others
+    /// follow the defaults as they change between releases.
     pub fn save(&self) -> Option<String> {
         let saved = Saved {
             version: VERSION,
             groups: self
                 .groups
                 .iter()
+                .filter(|(g, v)| **v != defaults(**g))
                 .map(|(g, v)| (g.key().to_owned(), v.clone()))
                 .collect(),
         };
@@ -395,6 +443,38 @@ mod tests {
 
     fn known(id: &str) -> bool {
         Registry::default().get(id).is_some()
+    }
+
+    /// #386 follow-up: every release stored every group, so new default
+    /// pins (INSPECT ▸ Measure, INSERT ▸ Insert SVG) never reached anyone
+    /// who had run the app. A group stored as an earlier release shipped it
+    /// now takes today's defaults; a customised group is kept; and only
+    /// customised groups are stored from now on.
+    #[test]
+    fn new_default_pins_reach_groups_the_user_never_changed() {
+        let old = r#"{"version":1,"groups":{
+            "inspect":["view.machine_preview","view.stroke_width"],
+            "insert":[],
+            "create":["sketch.line","sketch.rect_2pt","sketch.circle_centre","sketch.arc_3pt","sketch.polygon","modify.offset"],
+            "select":["select.chain"]}}"#;
+        let bar = Toolbar::load(Some(old), known);
+        assert_eq!(bar.pinned(Group::Inspect), defaults(Group::Inspect));
+        assert!(
+            bar.pinned(Group::Inspect)
+                .contains(&"inspect.measure".to_owned())
+        );
+        assert_eq!(bar.pinned(Group::Insert), ["insert.svg"]);
+        assert_eq!(bar.pinned(Group::Create), defaults(Group::Create));
+        // The user's own change survives.
+        assert_eq!(bar.pinned(Group::Select), ["select.chain"]);
+        // Only that change is stored.
+        let saved = bar.save().unwrap_or_default();
+        assert!(saved.contains("\"select\""), "{saved}");
+        assert!(
+            !saved.contains("\"inspect\"") && !saved.contains("\"create\""),
+            "{saved}"
+        );
+        assert_eq!(Toolbar::load(Some(&saved), known), bar);
     }
 
     #[test]
