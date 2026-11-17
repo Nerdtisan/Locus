@@ -14,7 +14,7 @@ mod web;
 
 use crate::settings::Settings;
 use crate::state::AppState;
-use locus_doc::{Command, Document, EntityId};
+use locus_doc::{Document, EntityId};
 use locus_export::MachineProfile;
 use locus_export::{Prepared, Severity};
 #[cfg(not(target_arch = "wasm32"))]
@@ -274,8 +274,8 @@ impl FileIo {
     }
 
     /// OUTPUT ▸ Export PNG… and File ▸ Export ▸ PNG image… (#332).
-    pub fn open_export_png(&mut self, canvas: &AppState) {
-        self.begin_export("png", canvas);
+    pub fn open_export_png(&mut self, canvas: &AppState, settings: &Settings) {
+        self.begin_export("png", canvas, settings);
     }
 
     /// OUTPUT ▸ Machine profiles… (#325, #286).
@@ -394,6 +394,17 @@ impl FileIo {
             self.save(canvas, true);
             ui.close();
         }
+        let mut manage = false;
+        ui.menu_button("Machine profile", |ui| {
+            manage = crate::views::machine_profile::picker_menu(ui, canvas, settings);
+        })
+        .response
+        .on_hover_text(
+            "The machine this document is for: new layers' operation, the bed, Machine preview and export (saved with the document)",
+        );
+        if manage {
+            self.open_profiles();
+        }
         if ui
             .button("Machine profiles…")
             .on_hover_text("Add, edit, duplicate and delete machine profiles")
@@ -427,7 +438,7 @@ impl FileIo {
                 .collect();
             for (id, name) in formats {
                 if ui.button(format!("{name}…")).clicked() {
-                    self.begin_export(&id, canvas);
+                    self.begin_export(&id, canvas, settings);
                     ui.close();
                 }
             }
@@ -622,8 +633,11 @@ impl FileIo {
 
     /// Validate, then either write straight away (nothing to report) or open
     /// the pre-export panel. Export always goes through validation (#128, #133).
-    fn begin_export(&mut self, format: &str, canvas: &AppState) {
-        let prepared = locus_export::prepare(canvas.document(), false);
+    /// The document's machine profile, if it has one, supplies the colours,
+    /// hairlines and bed check whatever the format (SPEC §7, #419).
+    fn begin_export(&mut self, format: &str, canvas: &AppState, settings: &Settings) {
+        let profile = crate::views::machine_profile::current(canvas.document(), settings);
+        let prepared = locus_export::prepare_for(canvas.document(), false, profile.as_ref());
         let extra = self.extra(&prepared);
         // A PNG always asks for its resolution and background first (#332).
         if prepared.report.issues.is_empty() && extra.is_empty() && format != "png" {
@@ -637,7 +651,7 @@ impl FileIo {
                 format: format.to_owned(),
                 fixed: false,
                 prepared,
-                profile: None,
+                profile,
                 picker: false,
                 profile_changed: false,
                 extra,
@@ -1313,12 +1327,12 @@ fn profile_picker(
     if let Some(id) = chosen
         && let Some(p) = locus_export::profile::find(&id, &settings.profiles)
     {
-        if let Err(e) = canvas.apply(&Command::SetProfile { id: Some(id) }) {
-            *error = Some(format!("Could not select the profile: {e}."));
-        }
-        // A profile's pen width seeds the style new geometry gets (#287).
-        if let Some(w) = p.defaults.pen_width_mm {
-            canvas.doc.current_style.width = w;
+        // One undoable SetProfile; layers are only offered an update (#419).
+        if !canvas.choose_profile(Some(id), settings) {
+            *error = Some(format!(
+                "Could not select the profile: {}.",
+                canvas.doc.notice.clone().unwrap_or_default()
+            ));
         }
         panel.format.clone_from(&p.format);
         panel.prepared = locus_export::prepare_for(canvas.document(), panel.fixed, Some(&p));
