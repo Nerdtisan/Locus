@@ -100,6 +100,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         crate::fonts::install(&cc.egui_ctx);
+        crate::theme::install(&cc.egui_ctx);
         let settings = Settings::load(cc.storage);
         cc.egui_ctx.set_theme(settings.theme.preference());
         let layout = cc.storage.map_or_else(
@@ -787,8 +788,12 @@ struct Viewer<'a> {
 impl TabViewer for Viewer<'_> {
     type Tab = Tab;
 
+    /// The mockup's pane headers (#360): small, spaced, muted capitals.
     fn title(&mut self, tab: &mut Tab) -> egui::WidgetText {
-        tab.title().into()
+        egui::RichText::new(tab.title().to_uppercase())
+            .size(10.5)
+            .strong()
+            .into()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
@@ -888,13 +893,18 @@ impl eframe::App for App {
         self.plugins.windows(ui.ctx(), &mut self.state);
         #[cfg(not(target_arch = "wasm32"))]
         self.mcp.update(ui.ctx(), &mut self.state);
-        egui::Panel::top("menu").show(ui, |ui| self.app_bar(ui));
+        let tk = crate::theme::tokens(ui);
+        egui::Panel::top("menu")
+            .frame(crate::theme::bar(ui, tk.panel_2))
+            .show(ui, |ui| self.app_bar(ui));
         egui::Panel::top("ribbon").show(ui, |ui| self.ribbon(ui));
         if !self.is_shown(Tab::Palette) {
             egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
         }
         self.shell_requests(ui.ctx());
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        egui::Panel::bottom("status")
+            .frame(crate::theme::bar(ui, tk.panel_2))
+            .show(ui, |ui| self.status_bar(ui));
         let mut viewer = Viewer {
             registry: &self.registry,
             state: &mut self.state,
@@ -908,6 +918,7 @@ impl eframe::App for App {
         };
         let dock_rect = ui.available_rect_before_wrap();
         DockArea::new(&mut self.dock)
+            .style(dock_style(ui.style(), &tk))
             .show_leaf_collapse_buttons(false)
             .show_inside(ui, &mut viewer);
         let undock = std::mem::take(&mut viewer.undock);
@@ -948,6 +959,28 @@ impl eframe::App for App {
             storage.set_string(layout::LAYOUT_V4_KEY, json);
         }
     }
+}
+
+/// The dock in the mockup's colours (#360): pane headers on panel-2, the
+/// open tab on the panel, hairline separators.
+fn dock_style(style: &egui::Style, t: &crate::theme::Tokens) -> egui_dock::Style {
+    let mut s = egui_dock::Style::from_egui(style);
+    s.tab_bar.bg_fill = t.panel_2;
+    s.tab_bar.height = 26.0;
+    s.tab_bar.hline_color = t.line;
+    s.separator.color_idle = t.line;
+    s.separator.width = 1.0;
+    s.tab.tab_body.bg_fill = t.panel;
+    s.tab.tab_body.stroke = egui::Stroke::new(1.0, t.line);
+    s.tab.active.bg_fill = t.panel;
+    s.tab.active.text_color = t.ink;
+    s.tab.focused.bg_fill = t.panel;
+    s.tab.focused.text_color = t.accent;
+    s.tab.inactive.bg_fill = t.panel_2;
+    s.tab.inactive.text_color = t.muted;
+    s.tab.hovered.bg_fill = t.accent_soft;
+    s.tab.hovered.text_color = t.ink;
+    s
 }
 
 /// Where the pointer is on a new pane window: near its top-left, as if the
