@@ -30,6 +30,7 @@ mod offsets;
 mod pattern_labels;
 mod pattern_tool;
 pub mod plugin_objects;
+mod polygon_dialog;
 mod regions;
 mod text_dialog;
 
@@ -405,6 +406,7 @@ impl AppState {
         if self.modify() == Some(Modify::Mirror) {
             self.mirror_dialog(ui, rect);
         }
+        self.polygon_dialog(ui, rect);
         if self.modify() == Some(Modify::Calibrate) {
             self.calibrate_dialog(ui, rect, settings.units);
         }

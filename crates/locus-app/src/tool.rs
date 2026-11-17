@@ -181,8 +181,8 @@ pub trait Tool {
     fn polygon(&self) -> Option<(usize, bool)> {
         None
     }
-    #[cfg(test)]
-    fn dialog_set_polygon_for_test(&mut self, _sides: usize, _circumscribed: bool) {}
+    /// Set the polygon tool's sides and kind (the Polygon dialog, #389).
+    fn set_polygon_options(&mut self, _sides: usize, _circumscribed: bool) {}
 }
 
 /// The id of the built-in action that runs `op`.
@@ -247,7 +247,12 @@ impl DrawTool {
 
 impl Tool for DrawTool {
     fn id(&self) -> ActionId {
-        id_of(&Op::Draw(self.draft.tool()))
+        match self.draft.tool() {
+            DrawKind::Polygon => id_of(&Op::Polygon {
+                circumscribed: self.draft.polygon().1,
+            }),
+            t => id_of(&Op::Draw(t)),
+        }
     }
 
     fn kind(&self) -> ToolKind {
@@ -352,46 +357,8 @@ impl Tool for DrawTool {
         Some(self.draft.polygon())
     }
 
-    #[cfg(test)]
-    fn dialog_set_polygon_for_test(&mut self, sides: usize, circumscribed: bool) {
+    fn set_polygon_options(&mut self, sides: usize, circumscribed: bool) {
         self.draft.set_polygon(sides, circumscribed);
-    }
-
-    /// Polygon options (#157, #356): the side count, and for a centre
-    /// polygon whether the radius reaches a vertex (inscribed) or a side's
-    /// middle (circumscribed: the apothem), as Fusion offers them.
-    fn dialog(&mut self, ui: &mut egui::Ui) {
-        let kind = self.draft.tool();
-        if !matches!(kind, DrawKind::Polygon | DrawKind::PolygonEdge) {
-            return;
-        }
-        let (mut sides, mut outside) = self.draft.polygon();
-        let mut changed = false;
-        ui.horizontal(|ui| {
-            ui.label("Sides");
-            changed |= ui
-                .add(egui::DragValue::new(&mut sides).range(3..=64))
-                .on_hover_text("Also typed while drawing: Tab to the Sides field")
-                .changed();
-        });
-        if kind == DrawKind::Polygon {
-            ui.horizontal(|ui| {
-                changed |= ui
-                    .selectable_value(&mut outside, false, "Inscribed")
-                    .on_hover_text("The radius reaches a vertex")
-                    .changed();
-                changed |= ui
-                    .selectable_value(&mut outside, true, "Circumscribed")
-                    .on_hover_text("The radius reaches the middle of a side (the apothem)")
-                    .changed();
-            });
-        } else {
-            ui.weak("Click a side's two ends, then the side it goes on.");
-        }
-        if changed {
-            self.draft.set_polygon(sides, outside);
-        }
-        ui.separator();
     }
 }
 
@@ -650,6 +617,16 @@ impl ToolHost {
     /// touching options: for tools that run once (constraints).
     pub fn swap(&mut self, tool: Box<dyn Tool>) -> Box<dyn Tool> {
         std::mem::replace(&mut self.active, tool)
+    }
+
+    /// Set the centre polygon's kind for the next polygon tool (#389).
+    pub fn set_polygon_kind(&mut self, circumscribed: bool) {
+        if let Some(p) = self.active.polygon() {
+            self.polygon = p;
+            // `set_draw` reads the options back from the active tool.
+            self.active.set_polygon_options(p.0, circumscribed);
+        }
+        self.polygon.1 = circumscribed;
     }
 
     /// Make a drawing tool (or Select) active.

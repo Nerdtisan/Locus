@@ -712,6 +712,7 @@ mod tests {
                 "sketch.arc_3pt",
                 "sketch.arc_centre",
                 "sketch.arc_tangent",
+                "sketch.polygon_circumscribed",
                 "sketch.polygon",
                 "sketch.polygon_edge",
                 "sketch.slot",

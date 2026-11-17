@@ -221,14 +221,20 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.arc((7.0, 7.0), 5.0, FRAC_PI_2, -FRAC_PI_2);
             d.dot((7.0, 12.0));
         }
-        "sketch.polygon" => {
+        // Fusion's polygon icons (#389): inscribed sits inside its circle,
+        // circumscribed around it.
+        "sketch.polygon" | "sketch.polygon_circumscribed" => {
+            let outer = id == "sketch.polygon_circumscribed";
+            let r = if outer { 7.0 } else { 5.6 };
             let pts: Vec<(f32, f32)> = (0..6)
                 .map(|i| {
                     let t = i as f32 * TAU / 6.0;
-                    (8.0 + 6.5 * t.cos(), 8.0 + 6.5 * t.sin())
+                    (8.0 + r * t.cos(), 8.0 + r * t.sin())
                 })
                 .collect();
             d.poly(&pts, true);
+            let thin = Pen { w: d.w * 0.6, ..d };
+            thin.circle((8.0, 8.0), if outer { r * 0.866 } else { 7.0 });
         }
         "sketch.polygon_edge" => {
             let pts: Vec<(f32, f32)> = (0..6)
