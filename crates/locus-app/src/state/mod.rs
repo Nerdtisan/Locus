@@ -118,7 +118,7 @@ impl AppState {
                     self.tools.transform.reset();
                 }
             }
-            Modify::Pattern(_) => {}
+            Modify::Pattern(_) => self.tools.pattern.begin(),
             Modify::Mirror => {
                 // Selection first, then the line (design §6.9).
                 self.tools.mirror.picking =
