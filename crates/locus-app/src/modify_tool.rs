@@ -29,11 +29,13 @@ pub enum Modify {
     Mirror,
     /// Scale a reference from two picked points and a typed distance (#391).
     Calibrate,
+    /// Bind a text to a path (#392).
+    TextOnPath,
 }
 
 impl Modify {
     #[cfg(test)]
-    pub const ALL: [Modify; 13] = [
+    pub const ALL: [Modify; 14] = [
         Modify::Trim,
         Modify::Extend,
         Modify::Break,
@@ -47,6 +49,7 @@ impl Modify {
         Modify::Pattern(true),
         Modify::Mirror,
         Modify::Calibrate,
+        Modify::TextOnPath,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -62,6 +65,7 @@ impl Modify {
             Modify::Pattern(true) => "Circular Pattern",
             Modify::Mirror => "Mirror",
             Modify::Calibrate => "Calibrate",
+            Modify::TextOnPath => "Text on path",
         }
     }
 
@@ -87,6 +91,9 @@ impl Modify {
             }
             (Modify::Mirror, _) => {
                 "Mirror: select objects, pick the mirror line, then Enter (copies follow the source and the line)"
+            }
+            (Modify::TextOnPath, _) => {
+                "Text on path: click a text, then a line, arc, circle, shape or Bézier; drag the text to slide it along"
             }
             (Modify::Calibrate, _) => {
                 "Calibrate: click two points on a reference, type the real distance between them, then Enter"
@@ -121,7 +128,8 @@ impl Modify {
             | Modify::Offset
             | Modify::Pattern(_)
             | Modify::Mirror
-            | Modify::Calibrate => Err(ModifyError::NoCorner),
+            | Modify::Calibrate
+            | Modify::TextOnPath => Err(ModifyError::NoCorner),
         }
     }
 

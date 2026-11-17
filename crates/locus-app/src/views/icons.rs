@@ -276,6 +276,12 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.dashed((2.0, 13.0), (2.0, 4.0));
             d.dot((2.0, 4.0));
         }
+        // Text on a path (#392): a letter A riding an arc.
+        "sketch.text_path" => {
+            d.arc((8.0, 18.0), 12.0, -2.4, -0.74);
+            d.poly(&[(5.0, 10.0), (8.0, 2.5), (11.0, 10.0)], false);
+            d.line((6.3, 7.0), (9.7, 7.0));
+        }
         "sketch.text" => {
             d.poly(&[(3.0, 14.0), (8.0, 2.0), (13.0, 14.0)], false);
             d.line((5.0, 10.0), (11.0, 10.0));

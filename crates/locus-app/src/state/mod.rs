@@ -136,6 +136,16 @@ impl AppState {
                 }
             }
             Modify::Pattern(_) => self.tools.pattern.begin(),
+            Modify::TextOnPath => {
+                // A text already selected is the one to bind.
+                let doc = self.doc.sketcher.document();
+                let text = self
+                    .selection
+                    .items
+                    .iter()
+                    .find(|id| doc.text(*id).is_some());
+                self.tools.path_text.begin(text);
+            }
             Modify::Calibrate => {
                 // On the reference picked in the Browser, if it is one.
                 let doc = self.doc.sketcher.document();
@@ -923,6 +933,11 @@ impl AppState {
     /// Start dragging what was grabbed (#71). A point moves itself; a line
     /// moves by its end nearer the cursor; a circle or arc by its centre.
     pub(crate) fn begin_drag(&mut self, grabbed: EntityId, at: Vec2) -> bool {
+        // Text on a path slides along it instead (#392).
+        if self.begin_slide(grabbed, at) {
+            self.doc.notice = None;
+            return true;
+        }
         let doc = self.doc.sketcher.document();
         let near = |a: EntityId, b: EntityId| {
             let d = |p: EntityId| doc.point_pos(p).map_or(f64::MAX, |q| q.distance(at));

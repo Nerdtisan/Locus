@@ -59,6 +59,10 @@ pub struct TextData {
     /// Laid-out geometry in the local frame; derived from the fields above
     /// by [`TextData::new`] and stored so the file needs no font to open.
     pub layout: TextGeometry,
+    /// Set along a path (#392, format v17): the text's geometry is then
+    /// its glyphs bent along that path ([`crate::path_text`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<Box<crate::path_text::TextPath>>,
 }
 
 impl TextData {
@@ -83,6 +87,7 @@ impl TextData {
             line_spacing,
             tracking: 0.0,
             layout: TextGeometry::default(),
+            path: None,
         };
         t.check_style()?;
         t.layout = t.lay_out(provider)?;
@@ -104,6 +109,12 @@ impl TextData {
         with(&mut t);
         t.check_style()?;
         t.layout = t.lay_out(provider)?;
+        if t.path.is_some() {
+            let run = t.glyph_run(provider)?;
+            if let Some(p) = t.path.as_mut() {
+                p.run = run;
+            }
+        }
         t.validate()?;
         Ok(t)
     }
@@ -123,6 +134,16 @@ impl TextData {
     #[must_use]
     pub fn font_missing(&self, provider: &dyn FontProvider) -> bool {
         provider.resolve(&self.font).is_none()
+    }
+
+    /// The text as single glyphs, for a path (#392): one line, with this
+    /// text's size and letter spacing.
+    fn glyph_run(&self, provider: &dyn FontProvider) -> Result<locus_text::GlyphRun, DocError> {
+        let font: Font = provider
+            .resolve(&self.font)
+            .ok_or_else(|| DocError::FontUnavailable(self.font.display_name()))?;
+        font.glyph_run(&self.content, &self.style())
+            .map_err(|e| DocError::BadText(e.to_string()))
     }
 
     fn lay_out(&self, provider: &dyn FontProvider) -> Result<TextGeometry, DocError> {
@@ -190,6 +211,9 @@ impl TextData {
         if !ok {
             return bad("cached geometry is not finite");
         }
+        if let Some(p) = &self.path {
+            p.validate()?;
+        }
         Ok(())
     }
 }
@@ -222,6 +246,20 @@ impl Document {
     #[must_use]
     pub fn text_geometry(&self, id: EntityId) -> Option<TextGeometry> {
         let (t, anchor, dir) = self.text(id)?;
+        // On a path (#392): the glyphs bent along it. A path that is gone
+        // or broken leaves the text straight at its anchor.
+        if let Some(p) = &t.path
+            && let Ok((pts, closed)) = crate::path_text::path(self, &p.curves, p.flip)
+        {
+            let contours = crate::path_text::bend(p, t.align, t.tracking, &pts, closed);
+            return Some(TextGeometry {
+                contours,
+                width: p.run.width,
+                ascent: p.run.ascent,
+                descent: p.run.descent,
+                lines: 1,
+            });
+        }
         let f = frame(self.point_pos(anchor)?, self.point_pos(dir)?);
         Some(t.layout.transformed(&f))
     }

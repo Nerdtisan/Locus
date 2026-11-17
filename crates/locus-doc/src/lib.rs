@@ -26,6 +26,7 @@ pub mod modify;
 pub mod offset;
 pub mod operation;
 pub mod params;
+pub mod path_text;
 pub mod pattern;
 pub mod recipe;
 pub mod reference;

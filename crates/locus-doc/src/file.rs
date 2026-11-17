@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 16;
+pub const CURRENT_VERSION: u32 = 17;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -752,8 +752,52 @@ impl From<FileV15> for FileV16 {
     }
 }
 
-/// The newest on-disk shape. When adding v17, point this at `FileV17`.
-type Latest = FileV16;
+/// Version 17: text on a path (#392). `TextData` gains an optional `path`,
+/// omitted while unset, so an older build refuses a v17 file as too new
+/// instead of silently dropping the path. Nothing else changes, and the
+/// migration is the identity on the data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV17 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+}
+
+impl From<FileV16> for FileV17 {
+    fn from(f: FileV16) -> Self {
+        FileV17 {
+            format_version: 17,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v18, point this at `FileV18`.
+type Latest = FileV17;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -779,7 +823,7 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV16::from(f)
+    FileV17::from(FileV16::from(f))
 }
 
 /// Serialise to `.locus` text.
@@ -856,7 +900,8 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => parse::<FileV16>(text)?,
+        16 => FileV17::from(parse::<FileV16>(text)?),
+        17 => parse::<FileV17>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -1726,26 +1771,94 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v16 fixture is frozen; it migrates to the current version
+    /// unchanged (no text on a path, which is all v17 adds).
     #[test]
-    fn v16_fixture_is_current_and_loads() {
+    fn v16_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v16/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v16()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 16"));
-        assert!(text.contains("images: {"), "{text}");
-        assert!(text.contains("data: \"iVBORw0KGg"), "base64 of the file");
-        assert_eq!(load(&text).unwrap(), sample_v16());
+        assert!(text.contains("images: {"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v16());
+        let out = save(&doc).unwrap();
+        assert_eq!(out.replace(&current(), "format_version: 16"), text);
+    }
+
+    /// The v17 sample: `sample_v16()` with its letter-spaced text bound to
+    /// the plate's first edge, below it and slid along (#392).
+    pub(crate) fn sample_v17() -> Document {
+        use crate::path_text::{PathSide, TextPath};
+        use locus_text::BundledProvider;
+        let mut ed = Editor::new(sample_v16());
+        let doc = ed.document();
+        let edge = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| e.layer == L && matches!(e.geom, Geom::Line { .. }))
+            .map(|(id, _)| id)
+            .unwrap();
+        let (id, (data, anchor, dir)) = doc
+            .entities()
+            .iter()
+            .find_map(|(id, _)| doc.text(id).map(|t| (id, t)))
+            .unwrap();
+        let bound = data
+            .edited(&BundledProvider, |t| {
+                let mut p = TextPath::new(vec![edge]);
+                p.side = PathSide::Below;
+                p.offset = 2.0;
+                t.path = Some(Box::new(p));
+            })
+            .unwrap();
+        ed.apply(&Command::ModifyEntity {
+            id,
+            geom: Geom::Text {
+                anchor,
+                dir,
+                text: Box::new(bound),
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v17_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v17/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v17()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 17"));
+        assert!(text.contains("path: Some(("), "{text}");
+        assert_eq!(load(&text).unwrap(), sample_v17());
         assert_eq!(
-            save(&sample_v16()).unwrap(),
+            save(&sample_v17()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    /// A hostile text path is refused on load (CLAUDE.md: untrusted input).
+    #[test]
+    fn bad_text_paths_are_refused_on_load() {
+        let good = save(&sample_v17()).unwrap();
+        for (from, to) in [
+            ("offset: 2.0", "offset: 1e300"),
+            ("curves: [", "curves: [], x: ["),
+        ] {
+            assert!(good.contains(from), "{from}");
+            let bad = good.replacen(from, to, 1);
+            assert!(load(&bad).is_err(), "{to}");
+        }
     }
 
     /// A hostile image is refused on load (CLAUDE.md: untrusted input).
