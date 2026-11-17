@@ -696,77 +696,113 @@ impl AppState {
 
     pub(crate) fn tool_keys(&mut self, ui: &egui::Ui, units: Units) {
         use egui::Key;
-        // Tab moves between the heads-up fields while sizing (#334); egui
-        // would otherwise move keyboard focus.
-        let tab =
-            self.is_drawing() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Tab));
-        let (text, enter, esc, back) = ui.input(|i| {
-            let text: String = i
-                .events
+        /// One keystroke of typing, in the order it arrived. Digits, Tab
+        /// and Enter typed within one frame must apply in that order, or a
+        /// value meant for the second field lands in the first (#356).
+        enum Step {
+            Text(String),
+            Tab,
+            Enter,
+            Back,
+            Esc,
+        }
+        let drawing = self.is_drawing();
+        let steps: Vec<Step> = ui.input(|i| {
+            i.events
                 .iter()
                 .filter_map(|e| match e {
-                    egui::Event::Text(t) => Some(t.as_str()),
+                    egui::Event::Text(t) => Some(Step::Text(t.clone())),
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => match key {
+                        Key::Tab if drawing && modifiers.is_none() => Some(Step::Tab),
+                        Key::Enter => Some(Step::Enter),
+                        Key::Backspace => Some(Step::Back),
+                        Key::Escape => Some(Step::Esc),
+                        _ => None,
+                    },
                     _ => None,
                 })
-                .collect();
-            (
-                text,
-                i.key_pressed(Key::Enter),
-                i.key_pressed(Key::Escape),
-                i.key_pressed(Key::Backspace),
-            )
+                .collect()
         });
-        if self.is_drawing() {
+        // Tab moves between the heads-up fields while sizing (#334); egui
+        // would otherwise move keyboard focus.
+        if drawing {
+            ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Tab));
+        }
+        for step in steps {
+            match step {
+                Step::Text(t) => {
+                    if self.is_drawing() {
+                        self.tools
+                            .typed
+                            .extend(t.chars().filter(|c| c.is_ascii_digit() || *c == '.'));
+                    }
+                }
+                Step::Back => {
+                    self.tools.typed.pop();
+                }
+                Step::Tab => {
+                    let value = std::mem::take(&mut self.tools.typed);
+                    let mm = value
+                        .parse::<f64>()
+                        .ok()
+                        .map(|v| self.typed_to_mm(v, units));
+                    if !value.is_empty() && mm.is_none() {
+                        self.doc.notice = Some(format!("\"{value}\" is not a number"));
+                    }
+                    self.tool_event(ToolEvent::Tab(mm), None, units);
+                }
+                Step::Enter => {
+                    let sizing = self
+                        .tools
+                        .cursor
+                        .is_some_and(|c| self.tools.host.tool().fields(c.pos).is_some());
+                    let value = std::mem::take(&mut self.tools.typed);
+                    if value.is_empty() && sizing {
+                        // Enter places the shape with its locked sides (#334).
+                        if let Some(at) = self.tools.cursor {
+                            self.tool_event(ToolEvent::Click(at), None, units);
+                        }
+                    } else if value.is_empty() {
+                        self.tool_event(ToolEvent::Enter, None, units);
+                    } else if let Ok(v) = value.parse::<f64>() {
+                        let mm = self.typed_to_mm(v, units);
+                        let at = self.tools.cursor.unwrap_or_else(|| Pick::free(Vec2::ZERO));
+                        self.tool_event(ToolEvent::Typed(mm, at), None, units);
+                    } else {
+                        self.doc.notice = Some(format!("\"{value}\" is not a number"));
+                    }
+                }
+                Step::Esc => {
+                    if !self.tools.typed.is_empty() {
+                        self.tools.typed.clear();
+                    } else {
+                        // Cancels the step; with nothing pending, back to Select.
+                        self.tool_event(ToolEvent::Esc, None, units);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A typed number in mm: lengths are in the display units; a count
+    /// field (a polygon's sides, #356) takes the number as typed.
+    fn typed_to_mm(&self, v: f64, units: Units) -> f64 {
+        let count = self.tools.cursor.is_some_and(|c| {
             self.tools
-                .typed
-                .extend(text.chars().filter(|c| c.is_ascii_digit() || *c == '.'));
-        }
-        if back {
-            self.tools.typed.pop();
-        }
-        let to_mm = |v: f64| match units {
+                .host
+                .tool()
+                .fields(c.pos)
+                .is_some_and(|f| f.iter().any(|x| x.active && x.count))
+        });
+        match units {
+            _ if count => v,
             Units::Mm => v,
             Units::Inch => v * 25.4,
-        };
-        if tab {
-            let value = std::mem::take(&mut self.tools.typed);
-            let mm = value.parse::<f64>().ok().map(to_mm);
-            if !value.is_empty() && mm.is_none() {
-                self.doc.notice = Some(format!("\"{value}\" is not a number"));
-            }
-            self.tool_event(ToolEvent::Tab(mm), None, units);
-        }
-        let sizing = self
-            .tools
-            .cursor
-            .is_some_and(|c| self.tools.host.tool().fields(c.pos).is_some());
-        if enter {
-            let value = std::mem::take(&mut self.tools.typed);
-            if value.is_empty() && sizing {
-                // Enter places the shape with its locked sides (#334).
-                if let Some(at) = self.tools.cursor {
-                    self.tool_event(ToolEvent::Click(at), None, units);
-                }
-            } else if value.is_empty() {
-                self.tool_event(ToolEvent::Enter, None, units);
-            } else if let Ok(v) = value.parse::<f64>() {
-                let mm = match units {
-                    Units::Mm => v,
-                    Units::Inch => v * 25.4,
-                };
-                let at = self.tools.cursor.unwrap_or_else(|| Pick::free(Vec2::ZERO));
-                self.tool_event(ToolEvent::Typed(mm, at), None, units);
-            } else {
-                self.doc.notice = Some(format!("\"{value}\" is not a number"));
-            }
-        }
-        if esc {
-            if !self.tools.typed.is_empty() {
-                self.tools.typed.clear();
-            } else {
-                // Cancels the step; with nothing pending, back to Select.
-                self.tool_event(ToolEvent::Esc, None, units);
-            }
         }
     }
 
@@ -812,6 +848,8 @@ impl AppState {
                 .map(|x| {
                     let v = if x.active && !self.tools.typed.is_empty() {
                         format!("{}▏", self.tools.typed)
+                    } else if x.count {
+                        format!("{:.0}", x.mm)
                     } else {
                         frame.units.format_len(x.mm)
                     };
@@ -1222,5 +1260,44 @@ mod chain_tests {
         c.centre_on_origin();
         frame(&mut c, &ctx, 0.2, Vec::new());
         assert!(c.view.camera.center.length() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod typing_tests {
+    use super::*;
+    use egui::{Event, Key, Modifiers, RawInput};
+
+    fn key(k: Key) -> Event {
+        Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    /// #356: Tab, a number and Enter typed within one frame apply in the
+    /// order typed: the number goes to the Sides field Tab moved to, not
+    /// to the radius.
+    #[test]
+    fn typing_in_one_frame_keeps_its_order() {
+        let mut c = AppState::default();
+        c.set_tool(Tool::Polygon);
+        c.tool_event(ToolEvent::Click(Pick::free(Vec2::ZERO)), None, Units::Mm);
+        c.tools.cursor = Some(Pick::free(Vec2::new(10.0, 0.0)));
+        let ctx = egui::Context::default();
+        let input = RawInput {
+            events: vec![key(Key::Tab), Event::Text("8".into()), key(Key::Enter)],
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(input, |ui| c.tool_keys(ui, Units::Inch));
+        let tool = c.tools.host.tool();
+        assert_eq!(tool.polygon().map(|p| p.0), Some(8), "sides, as typed");
+        let f = tool.fields(Vec2::new(10.0, 0.0)).unwrap();
+        assert!(!f[0].locked, "the radius was not set");
+        assert!(f[0].active, "back on the radius after the count");
     }
 }
