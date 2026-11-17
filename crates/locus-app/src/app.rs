@@ -133,7 +133,7 @@ impl App {
             panes: Panes::default(),
             settings,
             state: {
-                let mut c = AppState::default();
+                let mut c = AppState::untitled();
                 c.install_fonts(&cc.egui_ctx);
                 c
             },
