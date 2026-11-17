@@ -63,7 +63,10 @@ pub struct PatternDraft {
     pub axis1: Axis,
     pub count1: String,
     pub spacing1: String,
+    /// Direction 1 goes both ways from the source (#371).
     pub symmetric: bool,
+    /// Direction 2 goes both ways too (#371).
+    pub symmetric2: bool,
     pub second: bool,
     pub axis2: Axis,
     pub count2: String,
@@ -72,6 +75,9 @@ pub struct PatternDraft {
     pub c_count: String,
     pub c_angle: String,
     pub rotate: bool,
+    /// Circular: a centre click away from any point lands on the nearest
+    /// grid point, where a point is added for it (#368).
+    pub centre_on_grid: bool,
     pub pick: PatternPick,
     drag: Option<Drag>,
     /// A handle was clicked: the dialog focuses its field (#337).
@@ -87,6 +93,7 @@ impl Default for PatternDraft {
             count1: "3".to_owned(),
             spacing1: "20".to_owned(),
             symmetric: false,
+            symmetric2: false,
             second: false,
             axis2: Axis::Y,
             count2: "2".to_owned(),
@@ -95,6 +102,7 @@ impl Default for PatternDraft {
             c_count: "6".to_owned(),
             c_angle: "360".to_owned(),
             rotate: true,
+            centre_on_grid: false,
             pick: PatternPick::Objects,
             drag: None,
             focus: None,
@@ -125,7 +133,7 @@ impl PatternDraft {
                 dir1: dir(&self.axis1, &self.count1, &self.spacing1, self.symmetric),
                 dir2: self
                     .second
-                    .then(|| dir(&self.axis2, &self.count2, &self.spacing2, false)),
+                    .then(|| dir(&self.axis2, &self.count2, &self.spacing2, self.symmetric2)),
             })
         }
     }
@@ -184,12 +192,17 @@ pub(crate) fn recipe_preview(doc: &Document, cmd: &Command) -> Vec<Shape> {
         .entities()
         .iter()
         .filter(|(id, _)| id.get() >= first_new)
-        .filter_map(|(id, e)| match e.geom {
-            Geom::Line { .. } => after.line(id).map(Shape::Line),
-            Geom::Arc { .. } => after.arc(id).map(Shape::Arc),
-            Geom::Circle { .. } => after.circle(id).map(Shape::Circle),
-            Geom::Bezier { .. } => after.cubic(id).map(Shape::Cubic),
-            _ => None,
+        .flat_map(|(id, e)| match e.geom {
+            Geom::Line { .. } => after.line(id).map(Shape::Line).into_iter().collect(),
+            Geom::Arc { .. } => after.arc(id).map(Shape::Arc).into_iter().collect(),
+            Geom::Circle { .. } => after.circle(id).map(Shape::Circle).into_iter().collect(),
+            Geom::Bezier { .. } => after.cubic(id).map(Shape::Cubic).into_iter().collect(),
+            // Copies of a text preview as their outline (#364).
+            Geom::Text { .. } => after
+                .text_geometry(id)
+                .map(|g| crate::scene::text_shapes(&g))
+                .unwrap_or_default(),
+            _ => Vec::new(),
         })
         .collect()
 }
@@ -378,6 +391,8 @@ impl AppState {
                 if resp.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
                 }
+                // For the grid-centre ring (#368).
+                self.tools.cursor = resp.hover_pos().map(|p| crate::tools::Pick::free(world(p)));
                 if resp.clicked_by(PointerButton::Primary)
                     && let Some(p) = resp.interact_pointer_pos()
                 {
@@ -388,8 +403,13 @@ impl AppState {
                             if let Some((id, _)) = hit::pick_point(items, w, tol) {
                                 self.tools.pattern.centre = Some(id);
                                 self.tools.pattern.pick = PatternPick::Objects;
+                            } else if self.tools.pattern.centre_on_grid {
+                                self.centre_on_grid_point(w);
                             } else {
-                                self.doc.notice = Some("Click a point for the centre".to_owned());
+                                self.doc.notice = Some(
+                                    "Click a point for the centre, or tick Snap centre to grid"
+                                        .to_owned(),
+                                );
                             }
                         }
                         PatternPick::Direction(n) => {
@@ -473,6 +493,44 @@ impl AppState {
         }
         if on_button.is_none() && !on_handle {
             self.pick_and_select(ui, resp, rect, units, false);
+        }
+    }
+
+    /// The grid point nearest `w`, at the grid step the user sees (#368).
+    pub(crate) fn grid_point(&self, w: Vec2) -> Vec2 {
+        let step = crate::grid::minor_step(self.view.camera.pt_per_mm).0;
+        Vec2::new((w.x / step).round() * step, (w.y / step).round() * step)
+    }
+
+    /// Make the grid point nearest `w` the circular pattern's centre: an
+    /// existing point there, or a new point added for it (one undo step).
+    pub(crate) fn centre_on_grid_point(&mut self, w: Vec2) {
+        let g = self.grid_point(w);
+        let doc = self.doc.sketcher.document();
+        let existing = doc
+            .entities()
+            .iter()
+            .find(|(id, e)| {
+                matches!(e.geom, Geom::Point { .. })
+                    && doc.point_pos(*id).is_some_and(|p| p.distance(g) < 1e-9)
+            })
+            .map(|(id, _)| id);
+        let id = match existing {
+            Some(id) => Some(id),
+            None => {
+                let id = EntityId::new(doc.next_id());
+                let added = self.apply_reporting(&Command::AddEntity {
+                    layer: self.active_layer(),
+                    construction: false,
+                    geom: Geom::Point { pos: g },
+                    style: Default::default(),
+                });
+                added.then_some(id)
+            }
+        };
+        if let Some(id) = id {
+            self.tools.pattern.centre = Some(id);
+            self.tools.pattern.pick = PatternPick::Objects;
         }
     }
 
@@ -589,6 +647,14 @@ impl AppState {
     pub(crate) fn draw_pattern_draft(&self, frame: &Frame<'_>, circular: bool) {
         if let Some((_, shapes)) = &self.tools.pattern.preview {
             frame.draw_preview(shapes);
+        }
+        // Where a centre click would land on the grid (#368).
+        if circular
+            && self.tools.pattern.pick == PatternPick::Centre
+            && self.tools.pattern.centre_on_grid
+            && let Some(c) = self.tools.cursor
+        {
+            frame.draw_snap(self.grid_point(c.pos));
         }
         let Some(h) = self.pattern_handles(circular, frame.units) else {
             return;
@@ -746,6 +812,12 @@ impl AppState {
                             d.pick = PatternPick::Centre;
                         }
                     });
+                    row(ui, "", |ui| {
+                        ui.checkbox(&mut d.centre_on_grid, "Snap centre to grid")
+                            .on_hover_text(
+                                "A centre click away from any point lands on the nearest grid point",
+                            )
+                    });
                     row(ui, "Quantity", |ui| {
                         field(ui, &mut d.c_count, 56.0, Drag::CircCount)
                     });
@@ -755,45 +827,34 @@ impl AppState {
                     });
                     row(ui, "", |ui| ui.checkbox(&mut d.rotate, "Rotate instances"));
                 } else {
-                    row(ui, "Directions", |ui| {
-                        for n in [1u8, 2] {
+                    // Each direction: X, Y or a picked line (#371: Y alone
+                    // is one click, not a cycle).
+                    for n in [1u8, 2] {
+                        let label = if n == 1 { "Direction 1" } else { "Direction 2" };
+                        row(ui, label, |ui| {
+                            if n == 2 {
+                                ui.checkbox(&mut d.second, "")
+                                    .on_hover_text("Pattern in a second direction too");
+                            }
                             let on = n == 1 || d.second;
                             let picking = d.pick == PatternPick::Direction(n);
                             let axis = if n == 1 { &mut d.axis1 } else { &mut d.axis2 };
-                            let text = if !on {
-                                "+ Direction 2".to_owned()
-                            } else {
-                                match axis {
-                                    Axis::X => "X axis".to_owned(),
-                                    Axis::Y => "Y axis".to_owned(),
-                                    Axis::Line(_) => "1 line".to_owned(),
-                                }
+                            let now = match axis {
+                                Axis::X => 0u8,
+                                Axis::Y => 1,
+                                Axis::Line(_) => 2,
                             };
-                            let (click, x) = selection(ui, &text, on, picking);
-                            if click {
-                                if !on {
-                                    d.second = true;
-                                } else {
-                                    // Cycle X axis → Y axis → pick a line.
-                                    match axis {
-                                        Axis::X => *axis = Axis::Y,
-                                        Axis::Y => d.pick = PatternPick::Direction(n),
-                                        Axis::Line(_) => *axis = Axis::X,
-                                    }
+                            ui.add_enabled_ui(on, |ui| {
+                                let shown = if picking { 2 } else { now };
+                                match segmented(ui, shown, &[(0, "X"), (1, "Y"), (2, "Line…")]) {
+                                    Some(0) => *axis = Axis::X,
+                                    Some(1) => *axis = Axis::Y,
+                                    Some(_) => d.pick = PatternPick::Direction(n),
+                                    None => {}
                                 }
-                            }
-                            if x {
-                                if n == 2 {
-                                    d.second = false;
-                                } else {
-                                    d.axis1 = Axis::X;
-                                }
-                                if picking {
-                                    d.pick = PatternPick::Objects;
-                                }
-                            }
-                        }
-                    });
+                            });
+                        });
+                    }
                     row(ui, "Quantity", |ui| {
                         field(ui, &mut d.count1, 56.0, Drag::Count(1));
                         ui.add_enabled_ui(d.second, |ui| {
@@ -807,9 +868,22 @@ impl AppState {
                         });
                         ui.weak(unit);
                     });
-                    row(ui, "Direction type", |ui| {
-                        if let Some(v) =
-                            segmented(ui, d.symmetric, &[(false, "One"), (true, "Symmetric")])
+                    // Symmetric each way, per direction or both (#371).
+                    row(ui, "Symmetric", |ui| {
+                        if d.second {
+                            let now = (d.symmetric, d.symmetric2);
+                            let opts = [
+                                ((false, false), "None"),
+                                ((true, false), "Dir 1"),
+                                ((false, true), "Dir 2"),
+                                ((true, true), "Both"),
+                            ];
+                            if let Some((a, b)) = segmented(ui, now, &opts) {
+                                d.symmetric = a;
+                                d.symmetric2 = b;
+                            }
+                        } else if let Some(v) =
+                            segmented(ui, d.symmetric, &[(false, "One way"), (true, "Both ways")])
                         {
                             d.symmetric = v;
                         }
@@ -1071,5 +1145,121 @@ mod tests {
         c.pattern_drag(Drag::CircCount, &h, w, false, Units::Mm);
         assert_eq!(c.tools.pattern.c_count, "4");
         assert!((circ_step(90f64.to_radians(), 4).to_degrees() - 30.0).abs() < 1e-9);
+    }
+
+    /// #364: placed text patterns, rectangular and circular: the preview
+    /// shows the copies' outlines and OK adds the recipe.
+    #[test]
+    fn text_patterns_preview_and_commit() {
+        use crate::tool::ToolEvent;
+        use crate::tools::{Pick, Tool};
+        for circular in [false, true] {
+            let mut c = AppState::default();
+            c.load(Document::new());
+            c.set_tool(Tool::Text);
+            c.tools.text_settings.content = "Hi".to_owned();
+            c.tool_event(ToolEvent::Click(Pick::free(Vec2::ZERO)), None, Units::Mm);
+            c.close_text_dialog();
+            let doc = c.doc.sketcher.document();
+            let t = doc
+                .entities()
+                .iter()
+                .find(|(_, e)| matches!(e.geom, Geom::Text { .. }))
+                .map(|(id, _)| id)
+                .expect("a text");
+            if circular {
+                let centre = c
+                    .apply_reporting(&Command::AddEntity {
+                        layer: Document::default_layer(),
+                        construction: false,
+                        geom: Geom::Point {
+                            pos: Vec2::new(0.0, -40.0),
+                        },
+                        style: Default::default(),
+                    })
+                    .then(|| {
+                        c.doc
+                            .sketcher
+                            .document()
+                            .entities()
+                            .iter()
+                            .last()
+                            .map(|(id, _)| id)
+                    })
+                    .flatten()
+                    .expect("a centre");
+                c.tools.pattern.centre = Some(centre);
+            }
+            c.set_modify(Modify::Pattern(circular));
+            c.selection.items.set_all([t]);
+            c.refresh_pattern_preview(circular, Units::Mm);
+            let preview = c.tools.pattern.preview.as_ref().map_or(0, |(_, s)| s.len());
+            assert!(preview > 0, "circular {circular}: a preview of the copies");
+            assert!(
+                c.pattern_ok(circular, Units::Mm),
+                "circular {circular}: committed"
+            );
+            assert_eq!(c.doc.sketcher.document().recipes().len(), 1);
+        }
+    }
+
+    /// #368: with Snap centre to grid, a centre click away from any point
+    /// adds a point on the nearest grid point and makes it the centre.
+    #[test]
+    fn the_centre_snaps_to_a_grid_point() {
+        let mut c = ready(true);
+        c.view.camera.pt_per_mm = 2.0; // minor grid 10 mm
+        c.tools.pattern.centre_on_grid = true;
+        c.centre_on_grid_point(Vec2::new(23.0, -38.0));
+        let id = c.tools.pattern.centre.expect("a centre");
+        assert_eq!(
+            c.doc.sketcher.document().point_pos(id),
+            Some(Vec2::new(20.0, -40.0))
+        );
+        // Again at the same grid point: the same point, nothing added.
+        let n = c.doc.sketcher.document().entities().len();
+        c.centre_on_grid_point(Vec2::new(18.0, -41.0));
+        assert_eq!(c.tools.pattern.centre, Some(id));
+        assert_eq!(c.doc.sketcher.document().entities().len(), n);
+        assert!(c.pattern_ok(true, Units::Mm));
+    }
+
+    /// #371: symmetry is chosen per direction (or both), and Y alone is a
+    /// direction of its own; the recipe gets exactly that.
+    #[test]
+    fn symmetry_per_direction_and_y_alone() {
+        let mut d = PatternDraft {
+            axis1: Axis::Y,
+            ..PatternDraft::default()
+        };
+        let one = d.kind(false, Units::Mm).expect("a kind");
+        assert!(matches!(
+            one,
+            RecipeKind::Linear {
+                dir1: LinearDir { axis: Axis::Y, .. },
+                dir2: None
+            }
+        ));
+        d.second = true;
+        d.axis2 = Axis::X;
+        d.symmetric = false;
+        d.symmetric2 = true;
+        let RecipeKind::Linear {
+            dir1,
+            dir2: Some(dir2),
+        } = d.kind(false, Units::Mm).expect("a kind")
+        else {
+            panic!("two directions");
+        };
+        assert!(!dir1.symmetric && dir2.symmetric);
+        d.symmetric = true;
+        let RecipeKind::Linear {
+            dir1,
+            dir2: Some(dir2),
+        } = d.kind(false, Units::Mm).expect("a kind")
+        else {
+            panic!("two directions");
+        };
+        assert!(dir1.symmetric && dir2.symmetric);
     }
 }

@@ -41,6 +41,10 @@ pub struct Item {
     pub constrained: bool,
     /// A point that belongs to a line, circle or arc (an endpoint or centre).
     pub owned_point: bool,
+    /// A point of an offset's or plugin's output (#369): can't be edited,
+    /// so it isn't drawn (a Bézier's offset is dozens of biarc joints and
+    /// centres); it still snaps.
+    pub derived_point: bool,
     /// The defining end points of a line or arc, for inference (#69).
     pub ends: Option<(EntityId, EntityId)>,
     pub bbox: Aabb,
@@ -129,6 +133,24 @@ impl Symbol {
     };
 }
 
+/// A text's outline as drawable shapes: lines and cubics, one per segment.
+pub fn text_shapes(g: &locus_text::TextGeometry) -> Vec<Shape> {
+    let mut out = Vec::new();
+    for c in &g.contours {
+        let mut from = c.start;
+        for s in &c.segs {
+            out.push(match *s {
+                locus_text::Seg::Line { end } => Shape::Line(Line::new(from, end)),
+                locus_text::Seg::Cubic { c0, c1, end } => {
+                    Shape::Cubic(Cubic::new(from, c0, c1, end))
+                }
+            });
+            from = s.end();
+        }
+    }
+    out
+}
+
 pub fn glyph_symbol(c: &Constraint) -> Option<Symbol> {
     let s = |action, name| Symbol { action, name };
     Some(match c {
@@ -209,6 +231,21 @@ impl Scene {
             .flat_map(|(_, e)| e.geom.point_refs())
             .collect();
 
+        // Outputs written from their sources rather than solved: offsets
+        // and plugin geometry. Pattern copies stay, as they take constraints.
+        let derived: HashSet<EntityId> = doc
+            .recipes()
+            .values()
+            .filter(|r| {
+                matches!(
+                    r.kind,
+                    locus_doc::RecipeKind::Offset { .. }
+                        | locus_doc::RecipeKind::Generated { .. }
+                        | locus_doc::RecipeKind::Modified { .. }
+                )
+            })
+            .flat_map(|r| r.instances().collect::<Vec<_>>())
+            .collect();
         let mut items = Vec::with_capacity(doc.entities().len());
         let mut bounds: Option<Aabb> = None;
         for (id, e) in doc.entities().iter() {
@@ -226,16 +263,8 @@ impl Scene {
                         continue;
                     };
                     let constrained = fully_constrained.contains(&id);
-                    for c in &g.contours {
-                        let mut from = c.start;
-                        for s in &c.segs {
-                            let shape = match *s {
-                                locus_text::Seg::Line { end } => Shape::Line(Line::new(from, end)),
-                                locus_text::Seg::Cubic { c0, c1, end } => {
-                                    Shape::Cubic(Cubic::new(from, c0, c1, end))
-                                }
-                            };
-                            from = s.end();
+                    for shape in text_shapes(&g) {
+                        {
                             let bbox = shape.bbox();
                             bounds = Some(bounds.map_or(bbox, |b| b.union(bbox)));
                             items.push(Item {
@@ -244,6 +273,7 @@ impl Scene {
                                 construction: e.construction,
                                 constrained,
                                 owned_point: false,
+                                derived_point: false,
                                 ends: None,
                                 bbox,
                             });
@@ -278,6 +308,7 @@ impl Scene {
                 construction: e.construction,
                 constrained,
                 owned_point: matches!(shape, Shape::Point(_)) && owned.contains(&id),
+                derived_point: matches!(shape, Shape::Point(_)) && derived.contains(&id),
                 ends: match e.geom {
                     Geom::Line { start, end }
                     | Geom::Arc { start, end, .. }
@@ -291,8 +322,15 @@ impl Scene {
         let mut annots = Vec::new();
         let mut slots: HashMap<EntityId, u8> = HashMap::new();
         for (&cid, c) in doc.constraints() {
-            let on_hidden = |r: &EntityId| doc.entity(*r).is_some_and(|e| e.construction);
-            if !construction && c.references().iter().any(on_hidden) {
+            // Nothing marks geometry that isn't drawn: a hidden layer's
+            // (#358), or construction geometry while it is hidden.
+            let off = |r: &EntityId| {
+                doc.entity(*r).is_some_and(|e| {
+                    (!construction && e.construction)
+                        || doc.layer(e.layer).is_some_and(|l| !l.visible)
+                })
+            };
+            if c.references().iter().any(off) {
                 continue;
             }
             if let Some(symbol) = glyph_symbol(c) {

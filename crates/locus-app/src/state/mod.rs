@@ -78,7 +78,12 @@ impl AppState {
         self.tools.dim_edit = None;
         self.doc.refusal = None;
         self.rebuild();
+        // Re-fit, keeping whether it centres the origin (#366): the start-up
+        // document (or a restored autosave) does; callers that open a file
+        // ask for a content fit.
+        let origin = self.view.fit_origin;
         self.request_fit();
+        self.view.fit_origin = origin;
     }
 
     /// The drawing tool in use (Select while a modify tool is active).
@@ -597,11 +602,33 @@ impl AppState {
         })
     }
 
+    /// Delete the selection, with what is built on it, as one undo step
+    /// (#223). Offsets and patterns go with what they are built on (#365);
+    /// when that removes recipes the user didn't pick, they are asked first
+    /// (`confirm_delete`).
     pub fn delete_selection(&mut self) {
         let ids: Vec<EntityId> = self.selection.items.iter().collect();
-        if let Some(cmd) = locus_doc::delete::delete_entities(self.doc.sketcher.document(), &ids)
-            && self.apply_reporting(&cmd)
+        let Some(plan) = locus_doc::delete::delete_plan(self.doc.sketcher.document(), &ids) else {
+            return;
+        };
+        if plan.dependent_recipes.is_empty() {
+            self.run_delete(&plan.command);
+        } else {
+            self.tools.pending_delete = Some((plan.command, plan.dependent_recipes.len()));
+        }
+    }
+
+    /// The user's answer to a pending delete.
+    pub(crate) fn confirm_delete(&mut self, yes: bool) {
+        if let Some((cmd, _)) = self.tools.pending_delete.take()
+            && yes
         {
+            self.run_delete(&cmd);
+        }
+    }
+
+    fn run_delete(&mut self, cmd: &Command) {
+        if self.apply_reporting(cmd) {
             self.selection.items.clear();
         }
     }
@@ -692,7 +719,26 @@ impl AppState {
 
     pub fn request_fit(&mut self) {
         self.view.auto_fit = true;
+        self.view.fit_origin = false;
         self.view.fit_size = egui::Vec2::ZERO;
+    }
+
+    /// Centre the view on the origin (0, 0) at the next frame, zoomed so
+    /// the content shows round it (#366): at start and for a new document.
+    pub fn centre_on_origin(&mut self) {
+        self.request_fit();
+        self.view.fit_origin = true;
+    }
+
+    /// The box the next auto-fit shows: the content, or (centring on the
+    /// origin) the content mirrored round (0, 0) so the origin is mid-view.
+    pub(crate) fn fit_box(&self) -> (Vec2, Vec2) {
+        let (lo, hi) = self.bounds();
+        if !self.view.fit_origin {
+            return (lo, hi);
+        }
+        let m = Vec2::new(lo.x.abs().max(hi.x.abs()), lo.y.abs().max(hi.y.abs()));
+        (Vec2::new(-m.x, -m.y), m)
     }
 
     /// Zoom by `factor` about the canvas centre (navigation bar, Ctrl+= /

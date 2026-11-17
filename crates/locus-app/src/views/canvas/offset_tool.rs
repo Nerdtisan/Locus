@@ -921,4 +921,115 @@ mod tests {
         assert!((v - 7.0).abs() < 0.11, "dragged to {v}");
         assert!(c.tools.offset_draft.is_some(), "still a draft");
     }
+
+    /// #365: Delete on an offset removes it at once; Delete on its source
+    /// asks first, then removes both in one undo step.
+    #[test]
+    fn deleting_an_offset_or_its_source() {
+        let (mut c, bottom) = drafted();
+        c.tools.corner.text.offset = "3".to_owned();
+        assert!(c.offset_ok(Units::Mm));
+        let rid = c.offset_selected().expect("the offset");
+        let out = c
+            .doc
+            .sketcher
+            .document()
+            .recipe(rid)
+            .and_then(|r| r.instances().next())
+            .expect("an output");
+        c.selection.items.set_all([out]);
+        c.delete_selection();
+        assert!(
+            c.tools.pending_delete.is_none(),
+            "no question for the offset itself"
+        );
+        assert_eq!(recipes(&c), 0);
+        assert!(c.doc.sketcher.document().entity(bottom).is_some());
+        // Again, deleting the source this time.
+        let (mut c, bottom) = drafted();
+        c.tools.corner.text.offset = "3".to_owned();
+        assert!(c.offset_ok(Units::Mm));
+        c.selection.items.set_all([bottom]);
+        c.delete_selection();
+        assert_eq!(c.tools.pending_delete.as_ref().map(|p| p.1), Some(1));
+        assert_eq!(recipes(&c), 1, "nothing yet");
+        c.confirm_delete(false);
+        assert_eq!(recipes(&c), 1, "cancelled");
+        c.selection.items.set_all([bottom]);
+        c.delete_selection();
+        c.confirm_delete(true);
+        assert_eq!(recipes(&c), 0);
+        assert!(c.doc.sketcher.document().entity(bottom).is_none());
+        c.undo();
+        assert_eq!(recipes(&c), 1, "one undo step");
+    }
+
+    /// #369: a Bézier's offset adds no visible points: its biarc joints and
+    /// centres are marked derived (not drawn), the source's points aren't.
+    #[test]
+    fn a_bezier_offset_shows_no_extra_points() {
+        let mut c = AppState::default();
+        c.load(Document::new());
+        let pt = |c: &mut AppState, x: f64, y: f64| {
+            let doc = c.doc.sketcher.document();
+            let id = EntityId::new(doc.next_id());
+            assert!(c.apply_reporting(&Command::AddEntity {
+                layer: Document::default_layer(),
+                construction: false,
+                geom: locus_doc::Geom::Point {
+                    pos: Vec2::new(x, y)
+                },
+                style: Default::default(),
+            }));
+            id
+        };
+        let p = [
+            pt(&mut c, 0.0, 0.0),
+            pt(&mut c, 10.0, 40.0),
+            pt(&mut c, 30.0, -40.0),
+            pt(&mut c, 40.0, 0.0),
+        ];
+        assert!(c.apply_reporting(&Command::AddEntity {
+            layer: Document::default_layer(),
+            construction: false,
+            geom: locus_doc::Geom::Bezier {
+                start: p[0],
+                start_ctrl: p[1],
+                end_ctrl: p[2],
+                end: p[3],
+            },
+            style: Default::default(),
+        }));
+        let visible = |c: &AppState| {
+            c.doc
+                .scene
+                .items
+                .iter()
+                .filter(|i| matches!(i.shape, Shape::Point(_)) && !i.derived_point)
+                .count()
+        };
+        let before = visible(&c);
+        let curve = c
+            .doc
+            .scene
+            .items
+            .iter()
+            .find(|i| matches!(i.shape, Shape::Cubic(_)))
+            .map(|i| (i.id, i.shape))
+            .expect("a Bézier");
+        c.set_modify(Modify::Offset);
+        let at = closest(&curve.1, Vec2::new(20.0, 5.0));
+        c.tool_event(ToolEvent::Click(Pick::free(at)), Some(curve.0), Units::Mm);
+        c.tools.corner.text.offset = "2".to_owned();
+        assert!(c.offset_ok(Units::Mm));
+        let points = c
+            .doc
+            .scene
+            .items
+            .iter()
+            .filter(|i| matches!(i.shape, Shape::Point(_)))
+            .count();
+        assert!(points > before + 4, "the offset has many points ({points})");
+        assert_eq!(visible(&c), before, "none of them is drawn");
+    }
 }

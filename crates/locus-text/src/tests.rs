@@ -203,3 +203,24 @@ fn tracking_spaces_the_letters() {
         assert!((plain.width - tight.width - 1.5).abs() < 1e-9, "{f:?}");
     }
 }
+
+/// #362: alignment is the same for outline and single-line fonts: Left
+/// starts at the anchor and runs right, Right ends at the anchor.
+#[test]
+fn alignment_is_the_same_for_every_font() {
+    for font in BundledFont::ALL {
+        let f = load(font);
+        let mut s = style(10.0);
+        let left = f.layout("ab\nabcd", &s).unwrap().bbox().unwrap();
+        assert!(
+            left.min.x > -0.5 && left.max.x > 1.0,
+            "{font:?} left {left:?}"
+        );
+        s.align = Align::Right;
+        let right = f.layout("ab\nabcd", &s).unwrap().bbox().unwrap();
+        assert!(
+            right.max.x < 0.5 && right.min.x < -1.0,
+            "{font:?} right {right:?}"
+        );
+    }
+}

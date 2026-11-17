@@ -95,6 +95,10 @@ impl AppState {
                 self.document_section(ui, settings);
                 ui.separator();
                 self.style_ui(ui);
+            } else {
+                // Regions alone (#370): their fill.
+                ui.separator();
+                self.region_style_ui(ui, settings.display.fills);
             }
             self.tools.text_edit = None;
             return;
@@ -117,6 +121,8 @@ impl AppState {
                 }
             }
             self.layer_row(ui);
+            // Text switches between normal and construction too (#363).
+            self.construction_row(ui);
             ui.separator();
             self.style_ui(ui);
             return;
@@ -124,6 +130,21 @@ impl AppState {
         self.tools.text_edit = None;
         self.selection_header(ui);
         self.layer_row(ui);
+        self.construction_row(ui);
+        ui.separator();
+        section(ui, "Geometry", |_| {});
+        self.geometry_rows(ui, settings.units);
+        if !regions {
+            ui.separator();
+            self.style_ui(ui);
+        }
+        ui.separator();
+        self.constraints_section(ui, settings.units);
+    }
+
+    /// The Construction checkbox (X): one command per click (design §2.1,
+    /// §6.10; #289).
+    fn construction_row(&mut self, ui: &mut egui::Ui) {
         if let Some(cmd) = self.construction_toggle() {
             // Normal/Construction (design §2.1, §6.10; #289): one command per click.
             let doc = self.doc.sketcher.document();
@@ -146,15 +167,6 @@ impl AppState {
                 self.apply_reporting(&cmd);
             }
         }
-        ui.separator();
-        section(ui, "Geometry", |_| {});
-        self.geometry_rows(ui, settings.units);
-        if !regions {
-            ui.separator();
-            self.style_ui(ui);
-        }
-        ui.separator();
-        self.constraints_section(ui, settings.units);
     }
 
     /// A layer picked in the Browser (design §2.1): name, operation,
@@ -415,14 +427,7 @@ impl AppState {
         if edited.commit() && s != TextSettings::from_data(stored) {
             match s.to_data(&self.tools.fonts.library) {
                 Ok(text) => {
-                    let cmd = Command::ModifyEntity {
-                        id,
-                        geom: Geom::Text {
-                            anchor,
-                            dir,
-                            text: Box::new(text),
-                        },
-                    };
+                    let cmd = self.text_edit_command(id, anchor, dir, stored, text);
                     match self.apply(&cmd) {
                         Ok(()) => self.doc.notice = None,
                         Err(e) => self.doc.notice = Some(e.to_string()),
@@ -432,6 +437,59 @@ impl AppState {
             }
         }
         self.tools.text_edit = Some((id, s));
+    }
+}
+
+impl AppState {
+    /// The command for an edited text. A new alignment keeps the text
+    /// block where it is and lines up its lines inside it (#362, Fusion):
+    /// the anchor is moved by how far the block's left edge would jump, in
+    /// one undo step, instead of the text swinging round the anchor.
+    pub(crate) fn text_edit_command(
+        &self,
+        id: EntityId,
+        anchor: EntityId,
+        dir: EntityId,
+        stored: &locus_doc::TextData,
+        text: locus_doc::TextData,
+    ) -> Command {
+        use locus_text::Align;
+        let left = |a: Align, w: f64| match a {
+            Align::Left => 0.0,
+            Align::Center => -w / 2.0,
+            Align::Right => -w,
+        };
+        let shift = left(stored.align, stored.layout.width) - left(text.align, text.layout.width);
+        let modify = Command::ModifyEntity {
+            id,
+            geom: Geom::Text {
+                anchor,
+                dir,
+                text: Box::new(text),
+            },
+        };
+        let doc = self.doc.sketcher.document();
+        let along = doc
+            .point_pos(anchor)
+            .zip(doc.point_pos(dir))
+            .and_then(|(a, d)| (d - a).normalized(1e-12));
+        let Some(u) = along.filter(|_| shift.abs() > 1e-9) else {
+            return modify;
+        };
+        match locus_doc::transform::transform(
+            doc,
+            &[id],
+            locus_doc::transform::Transform::Move(u * shift),
+            false,
+        ) {
+            Ok(plan) => Command::Compound {
+                label: "Align text".to_owned(),
+                commands: vec![modify, plan.command],
+            },
+            // The anchor can't move (it is held by constraints): align
+            // about it instead.
+            Err(_) => modify,
+        }
     }
 }
 
@@ -518,6 +576,61 @@ pub(crate) fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(Strin
 mod tests {
     use super::*;
 
+    /// #370: selecting a region shows its Fill; setting the fill of its
+    /// boundary curves fills it.
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn a_selected_region_shows_and_takes_its_fill() {
+        use egui::accesskit::Role;
+        use locus_doc::{Command, Fill, StylePatch};
+        let mut state = AppState::default();
+        let mut settings = Settings::default();
+        let key = state
+            .regions()
+            .first()
+            .expect("the demo has regions")
+            .key
+            .clone();
+        state.selection.regions.selected.insert(key.clone());
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut frame = || {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                state.properties_ui(ui, &mut settings);
+            })
+        };
+        let _ = frame();
+        let out = frame();
+        let tree = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit tree");
+        let has = |role: Role, text: &str| {
+            tree.nodes.iter().any(|(_, n)| {
+                let said = |t: Option<&str>| t.is_some_and(|t| t.to_lowercase().contains(text));
+                n.role() == role && (text.is_empty() || said(n.label()) || said(n.value()))
+            })
+        };
+        assert!(has(Role::Label, "fill"), "a Fill section");
+        assert!(has(Role::CheckBox, ""), "the fill on/off box");
+        // The fill comes from the boundary curves: set theirs, and the
+        // region is filled.
+        let ids = state.region_boundary_curves();
+        assert!(!ids.is_empty());
+        let region = state.region(&key).unwrap().clone();
+        assert!(state.region_fill(&region).is_none());
+        assert!(state.apply_reporting(&Command::SetStyle {
+            entities: ids,
+            patch: StylePatch {
+                fill: Some(Fill::Colour([200, 40, 40])),
+                ..StylePatch::default()
+            },
+        }));
+        let region = state.region(&key).unwrap().clone();
+        let c = state.region_fill(&region).expect("filled");
+        assert_eq!((c.r(), c.g(), c.b()), (200, 40, 40));
+    }
+
     /// The Inspector draws each context of design §2.1 without panicking:
     /// nothing selected (Document + current style), one curve, many
     /// curves; and the Document section's units switch is the setting.
@@ -544,6 +657,108 @@ mod tests {
         frame(&mut state, &mut settings);
         assert!(state.view.browser_layer.is_some());
         assert_eq!(settings.units, Units::Mm);
+    }
+
+    /// #362: changing alignment keeps the text block in place (its left
+    /// edge doesn't jump), and Right ends the lines at the block's right.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn changing_alignment_keeps_the_text_in_place() {
+        use crate::tool::ToolEvent;
+        use crate::tools::{Pick, Tool};
+        use locus_text::Align;
+        let mut c = AppState::default();
+        c.load(locus_doc::Document::new());
+        c.set_tool(Tool::Text);
+        c.tools.text_settings.content = "ab
+abcd"
+            .to_owned();
+        c.tool_event(
+            ToolEvent::Click(Pick::free(Vec2::new(10.0, 5.0))),
+            None,
+            Units::Mm,
+        );
+        c.close_text_dialog();
+        let doc = c.doc.sketcher.document();
+        let id = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Text { .. }))
+            .map(|(id, _)| id)
+            .expect("a text");
+        let before = doc.text_geometry(id).and_then(|g| g.bbox()).expect("bbox");
+        let (stored, anchor, dir) = doc
+            .text(id)
+            .map(|(t, a, d)| (t.clone(), a, d))
+            .expect("text");
+        let right = stored
+            .edited(&locus_text::BundledProvider, |t| t.align = Align::Right)
+            .expect("relaid out");
+        let cmd = c.text_edit_command(id, anchor, dir, &stored, right);
+        assert!(c.apply_reporting(&cmd));
+        let after = c
+            .doc
+            .sketcher
+            .document()
+            .text_geometry(id)
+            .and_then(|g| g.bbox())
+            .expect("bbox");
+        assert!(
+            (after.min.x - before.min.x).abs() < 0.05,
+            "{before:?} -> {after:?}"
+        );
+        // The right edge moves only by the last glyph's side bearing.
+        assert!(
+            (after.max.x - before.max.x).abs() < 0.5,
+            "{before:?} -> {after:?}"
+        );
+        assert_eq!(c.undo_label(), Some("Align text"));
+    }
+
+    /// #363: text switches between normal and construction both ways,
+    /// through the Normal/Construction action (X) and the Inspector row.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn text_toggles_between_normal_and_construction() {
+        use crate::tool::ToolEvent;
+        use crate::tools::{Pick, Tool};
+        for start_construction in [false, true] {
+            let mut c = AppState::default();
+            c.load(locus_doc::Document::new());
+            c.doc.construction_linetype = start_construction;
+            c.set_tool(Tool::Text);
+            c.tools.text_settings.content = "Hi".to_owned();
+            c.tool_event(ToolEvent::Click(Pick::free(Vec2::ZERO)), None, Units::Mm);
+            c.close_text_dialog();
+            let id = c
+                .doc
+                .sketcher
+                .document()
+                .entities()
+                .iter()
+                .find(|(_, e)| matches!(e.geom, Geom::Text { .. }))
+                .map(|(id, _)| id)
+                .expect("a text");
+            let is_cons =
+                |c: &AppState| c.doc.sketcher.document().entity(id).map(|e| e.construction);
+            assert_eq!(is_cons(&c), Some(start_construction));
+            c.selection.items.set_all([id]);
+            let reg = crate::actions::Registry::default();
+            let mut settings = Settings::default();
+            let mut cx = crate::actions::Cx {
+                state: &mut c,
+                settings: &mut settings,
+                plugins: None,
+            };
+            reg.run(reg.get("modify.construction").expect("X"), &mut cx);
+            assert_eq!(is_cons(&c), Some(!start_construction));
+            // The Inspector shows the row for a selected text.
+            let ctx = egui::Context::default();
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                c.properties_ui(ui, &mut settings);
+            });
+            assert!(c.construction_toggle().is_some());
+        }
     }
 
     #[test]

@@ -182,7 +182,7 @@ impl AppState {
         painter.rect_filled(rect, 0.0, pal.background);
 
         if self.view.auto_fit && rect.size() != self.view.fit_size && rect.width() > 10.0 {
-            let (lo, hi) = self.bounds();
+            let (lo, hi) = self.fit_box();
             self.view.camera.fit(lo, hi, rect);
         }
         self.view.fit_size = rect.size();
@@ -321,7 +321,9 @@ impl AppState {
                 Emphasis::Selected
             } else if hovered == Some(item.id) {
                 Emphasis::Hover
-            } else if !display.points && matches!(item.shape, crate::scene::Shape::Point(_)) {
+            } else if (!display.points || item.derived_point)
+                && matches!(item.shape, crate::scene::Shape::Point(_))
+            {
                 Emphasis::Hidden
             } else {
                 Emphasis::None
@@ -395,10 +397,59 @@ impl AppState {
         }
         self.text_dialog(ui, rect);
         self.glyph_menu(ui);
+        self.delete_prompt(ui, rect);
 
         status.cursor = hover.map(|p| self.view.camera.to_world(p, rect));
         status.extent_mm = self.view.camera.extent_mm(rect);
         status.grid = grid::label(grid::minor_step(self.view.camera.pt_per_mm).0);
+    }
+
+    /// Asks before a delete that also removes recipes built on the
+    /// selection (#365): Delete (Enter) or Cancel (Esc).
+    fn delete_prompt(&mut self, ui: &egui::Ui, rect: egui::Rect) {
+        let Some((_, n)) = self.tools.pending_delete else {
+            return;
+        };
+        let mut answer = None;
+        egui::Area::new(egui::Id::new("delete-prompt"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .fixed_pos(rect.center())
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width(320.0);
+                    ui.label(if n == 1 {
+                        "Deleting this also removes the offset or pattern built on it.".to_owned()
+                    } else {
+                        format!(
+                            "Deleting this also removes the {n} offsets and patterns built on it."
+                        )
+                    });
+                    ui.weak("It is one step: Undo brings everything back.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Delete").clicked() {
+                            answer = Some(true);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            answer = Some(false);
+                        }
+                    });
+                });
+            });
+        let (enter, esc) = ui.input(|i| {
+            (
+                i.key_pressed(egui::Key::Enter),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        if enter {
+            answer = Some(true);
+        } else if esc {
+            answer = Some(false);
+        }
+        if let Some(yes) = answer {
+            self.confirm_delete(yes);
+        }
     }
 
     /// The constraint symbol under screen point `p`, as drawn last frame.
@@ -1137,5 +1188,29 @@ mod chain_tests {
         // Away from any symbol, right-click is the marking menu as before.
         let away = egui::pos2(5.0, 5.0);
         assert!(c.glyph_at(away).is_none());
+    }
+
+    /// #366: at start the view is centred on the origin; F6 then fits the
+    /// content; a new document centres on the origin again.
+    #[test]
+    fn the_view_starts_and_renews_centred_on_the_origin() {
+        let ctx = egui::Context::default();
+        let mut c = AppState::default();
+        frame(&mut c, &ctx, 0.0, Vec::new());
+        assert!(
+            c.view.camera.center.length() < 1e-9,
+            "{:?}",
+            c.view.camera.center
+        );
+        c.request_fit();
+        frame(&mut c, &ctx, 0.1, Vec::new());
+        assert!(
+            c.view.camera.center.length() > 1.0,
+            "F6 fits the demo's content"
+        );
+        c.load(locus_doc::Document::new());
+        c.centre_on_origin();
+        frame(&mut c, &ctx, 0.2, Vec::new());
+        assert!(c.view.camera.center.length() < 1e-9);
     }
 }

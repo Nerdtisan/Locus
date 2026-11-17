@@ -48,6 +48,9 @@ pub struct ToolState {
     pub(crate) cursor: Option<Pick>,
     /// The inline dimension editor, while open (#70).
     pub(crate) dim_edit: Option<DimEdit>,
+    /// A delete that would also remove recipes built on the selection,
+    /// waiting for the user's OK (#365): the command and how many recipes.
+    pub(crate) pending_delete: Option<(locus_doc::Command, usize)>,
     /// A point drag is in progress (#71): frames re-solve, release records.
     pub(crate) dragging: bool,
     /// The offset picked with the Offset tool (#164).
@@ -89,6 +92,7 @@ impl Default for ToolState {
             typed: String::new(),
             cursor: None,
             dim_edit: None,
+            pending_delete: None,
             dragging: false,
             offset_pick: None,
             offset_draft: None,
