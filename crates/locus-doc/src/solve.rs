@@ -284,6 +284,60 @@ impl Sketcher {
         Ok(())
     }
 
+    /// Start dragging `point` with `followers` carried rigidly along (#411):
+    /// for the drag only, each follower keeps its offset from `point`
+    /// (signed horizontal and vertical distances in the solver's copy of
+    /// the sketch; the document is untouched). Text is dragged this way by
+    /// its anchor with its direction point, so it translates and never turns
+    /// round. A follower held elsewhere by constraints holds the drag too.
+    ///
+    /// # Errors
+    /// As [`Self::begin_drag`], and [`DocError::UnknownEntity`] for a
+    /// follower that isn't a point.
+    pub fn begin_drag_with(
+        &mut self,
+        point: EntityId,
+        followers: &[EntityId],
+    ) -> Result<(), DocError> {
+        // Check the followers first, so a bad one leaves no drag running.
+        {
+            let doc = self.editor.document();
+            for f in followers {
+                if doc.point_pos(*f).is_none() {
+                    return Err(DocError::UnknownEntity(*f));
+                }
+            }
+        }
+        self.begin_drag(point)?;
+        let Some(drag) = self.drag.as_mut() else {
+            return Ok(());
+        };
+        let lead = drag.point;
+        let at = |pid: ls::PointId, sk: &ls::Sketch| sk.points[pid.0 as usize].at;
+        for f in followers {
+            let fid = drag.low.point(*f)?;
+            if fid == lead {
+                continue;
+            }
+            let d = at(fid, &drag.low.sketch) - at(lead, &drag.low.sketch);
+            drag.low
+                .sketch
+                .constrain(ls::ConstraintKind::HorizontalDistance {
+                    p: lead,
+                    q: fid,
+                    d: d.x,
+                });
+            drag.low
+                .sketch
+                .constrain(ls::ConstraintKind::VerticalDistance {
+                    p: lead,
+                    q: fid,
+                    d: d.y,
+                });
+        }
+        Ok(())
+    }
+
     /// One drag frame: pull the point towards `to`, re-solving from the
     /// previous frame with everything else kept as still as the constraints
     /// allow (§3). Nothing is recorded.
