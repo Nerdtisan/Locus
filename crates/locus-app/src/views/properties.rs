@@ -629,6 +629,26 @@ mod tests {
         let region = state.region(&key).unwrap().clone();
         let c = state.region_fill(&region).expect("filled");
         assert_eq!((c.r(), c.g(), c.b()), (200, 40, 40));
+        // Regression (#388): untick Fill, then tick it again, as the Fill
+        // box does (the default colour is only for curves that never had
+        // one): the chosen colour comes back.
+        let switch = |state: &mut AppState, on: bool| {
+            let ids = state.region_boundary_curves();
+            assert!(state.apply_reporting(&Command::SetStyle {
+                entities: ids,
+                patch: StylePatch {
+                    fill_on: Some(on),
+                    fill: Some(Fill::Colour([0, 0, 0])),
+                    ..StylePatch::default()
+                },
+            }));
+            let region = state.region(&key).unwrap().clone();
+            state.region_fill(&region)
+        };
+        assert!(switch(&mut state, false).is_none(), "unfilled");
+        let c = switch(&mut state, true).expect("filled again");
+        assert_eq!((c.r(), c.g(), c.b()), (200, 40, 40), "the colour is kept");
+        assert_eq!(state.undo_label(), Some("Set style"));
     }
 
     /// The Inspector draws each context of design §2.1 without panicking:
