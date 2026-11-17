@@ -105,7 +105,7 @@ impl AppState {
         if nothing {
             let mut s = self.doc.current_style;
             let shared = Shared::of(&[s]);
-            let patch = fields(ui, shared, [0, 0, 0]);
+            let patch = fields(ui, shared, [0, 0, 0], false);
             s = s.patched(&patch);
             if s.validate().is_ok() {
                 self.doc.current_style = s;
@@ -117,6 +117,14 @@ impl AppState {
             ui.weak("Points have no style.");
             return;
         }
+        self.edit_styles(ui, ids, false);
+    }
+
+    /// Edit the style of `ids`, held until the pointer is released and no
+    /// field has focus, then applied as one `SetStyle` (one undo step).
+    /// `fill_only` shows Fill and Opacity alone (a region's fill, #370).
+    fn edit_styles(&mut self, ui: &mut Ui, ids: Vec<EntityId>, fill_only: bool) {
+        let doc = self.doc.sketcher.document();
         let styles: Vec<Style> = ids
             .iter()
             .filter_map(|id| doc.entity(*id).map(|e| e.style))
@@ -135,7 +143,7 @@ impl AppState {
             .map(|(_, p)| p)
             .unwrap_or_default();
         let shown = Shared::of(&styles).with(&pending);
-        let edit = fields(ui, shown, layer_colour);
+        let edit = fields(ui, shown, layer_colour, fill_only);
         merge(&mut pending, &edit);
         if machine {
             ui.weak("Cut, Score, Engrave and Drag-knife layers export in the machine profile's colour and hairline.");
@@ -151,6 +159,24 @@ impl AppState {
             ui.data_mut(|d| d.remove::<(Vec<EntityId>, StylePatch)>(key));
         } else {
             ui.data_mut(|d| d.insert_temp(key, (ids, pending)));
+        }
+    }
+
+    /// Selected regions (#370, design §2.1): their Fill. A region is filled
+    /// with the style fill of the curves around it (#338), so editing it
+    /// sets the fill of the curves on the regions' outer boundaries, as one
+    /// command; holes stay open.
+    pub(crate) fn region_style_ui(&mut self, ui: &mut Ui, fills_shown: bool) {
+        let ids = self.region_boundary_curves();
+        crate::views::properties::section(ui, "Fill", |_| {});
+        if ids.is_empty() {
+            ui.weak("This region's outline has no curves to fill from.");
+            return;
+        }
+        self.edit_styles(ui, ids, true);
+        ui.weak("A region takes the fill of the curves around it; holes stay open.");
+        if !fills_shown {
+            ui.weak("Fills are hidden on the canvas: turn on Show fills in the Sketch palette.");
         }
     }
 
@@ -194,7 +220,8 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
 }
 
 /// Draw the fields; returns what the user changed this frame.
-fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
+/// `fill_only` shows just Fill and Opacity (a region's fill, #370).
+fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> StylePatch {
     let mut out = StylePatch::default();
     let mixed = |ui: &mut Ui, m: bool| {
         if m {
@@ -204,62 +231,64 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
     egui::Grid::new("style-fields")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("Stroke");
-            ui.horizontal(|ui| {
-                let mut by_layer = s.stroke == Some(Stroke::ByLayer);
-                if ui
-                    .checkbox(&mut by_layer, "Layer")
-                    .on_hover_text("Use the layer's colour")
-                    .changed()
-                {
-                    out.stroke = Some(if by_layer {
-                        Stroke::ByLayer
-                    } else {
-                        Stroke::Colour(layer_colour)
-                    });
-                }
-                let mut c = match s.stroke {
-                    Some(Stroke::Colour(c)) => c,
-                    _ => layer_colour,
-                };
-                if ui.color_edit_button_srgb(&mut c).changed() {
-                    out.stroke = Some(Stroke::Colour(c));
-                }
-                mixed(ui, s.stroke.is_none());
-            });
-            ui.end_row();
+            if !fill_only {
+                ui.label("Stroke");
+                ui.horizontal(|ui| {
+                    let mut by_layer = s.stroke == Some(Stroke::ByLayer);
+                    if ui
+                        .checkbox(&mut by_layer, "Layer")
+                        .on_hover_text("Use the layer's colour")
+                        .changed()
+                    {
+                        out.stroke = Some(if by_layer {
+                            Stroke::ByLayer
+                        } else {
+                            Stroke::Colour(layer_colour)
+                        });
+                    }
+                    let mut c = match s.stroke {
+                        Some(Stroke::Colour(c)) => c,
+                        _ => layer_colour,
+                    };
+                    if ui.color_edit_button_srgb(&mut c).changed() {
+                        out.stroke = Some(Stroke::Colour(c));
+                    }
+                    mixed(ui, s.stroke.is_none());
+                });
+                ui.end_row();
 
-            ui.label("Width");
-            ui.horizontal(|ui| {
-                let mut w = s.width.unwrap_or(locus_doc::style::DEFAULT_WIDTH);
-                if ui
-                    .add(
-                        DragValue::new(&mut w)
-                            .range(0.001..=1000.0)
-                            .speed(0.01)
-                            .suffix(" mm"),
-                    )
-                    .changed()
-                {
-                    out.width = Some(w);
-                }
-                mixed(ui, s.width.is_none());
-            });
-            ui.end_row();
+                ui.label("Width");
+                ui.horizontal(|ui| {
+                    let mut w = s.width.unwrap_or(locus_doc::style::DEFAULT_WIDTH);
+                    if ui
+                        .add(
+                            DragValue::new(&mut w)
+                                .range(0.001..=1000.0)
+                                .speed(0.01)
+                                .suffix(" mm"),
+                        )
+                        .changed()
+                    {
+                        out.width = Some(w);
+                    }
+                    mixed(ui, s.width.is_none());
+                });
+                ui.end_row();
 
-            ui.label("Pen");
-            ui.horizontal(|ui| {
-                let mut p = s.pen.unwrap_or(1);
-                if ui
-                    .add(DragValue::new(&mut p).range(1..=MAX_PEN))
-                    .on_hover_text("Plotter pen number")
-                    .changed()
-                {
-                    out.pen = Some(p);
-                }
-                mixed(ui, s.pen.is_none());
-            });
-            ui.end_row();
+                ui.label("Pen");
+                ui.horizontal(|ui| {
+                    let mut p = s.pen.unwrap_or(1);
+                    if ui
+                        .add(DragValue::new(&mut p).range(1..=MAX_PEN))
+                        .on_hover_text("Plotter pen number")
+                        .changed()
+                    {
+                        out.pen = Some(p);
+                    }
+                    mixed(ui, s.pen.is_none());
+                });
+                ui.end_row();
+            }
 
             ui.label("Fill");
             ui.horizontal(|ui| {
