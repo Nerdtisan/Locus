@@ -66,6 +66,39 @@ pub fn polygon(
     Some((pts, r))
 }
 
+/// A regular polygon built on the side `a`–`b` (Fusion's Edge Polygon,
+/// #356), on the side of that edge where `side` lies: its vertices (the
+/// first two are `a` and `b`), its centre and its circumradius. `None` for
+/// a zero-length side or `sides` outside [`POLYGON_SIDES`].
+pub fn edge_polygon(a: Vec2, b: Vec2, side: Vec2, sides: usize) -> Option<(Vec<Vec2>, Vec2, f64)> {
+    if !POLYGON_SIDES.contains(&sides) {
+        return None;
+    }
+    let e = b - a;
+    let len = e.length();
+    let u = e.normalized(MIN)?;
+    let n = u.perp();
+    let sign = if (side - a).dot(n) < 0.0 { -1.0 } else { 1.0 };
+    let half = core::f64::consts::PI / sides as f64;
+    let apothem = len / (2.0 * half.tan());
+    let r = len / (2.0 * half.sin());
+    let centre = a + e * 0.5 + n * (sign * apothem);
+    let step = core::f64::consts::TAU / sides as f64;
+    let a0 = (a - centre).angle();
+    // Turn the way that reaches `b` next.
+    let at = |k: f64| centre + Vec2::from_angle(a0 + step * k) * r;
+    let dir = if at(1.0).distance(b) <= at(-1.0).distance(b) {
+        1.0
+    } else {
+        -1.0
+    };
+    let mut pts: Vec<Vec2> = (0..sides).map(|k| at(dir * k as f64)).collect();
+    // Exactly the clicked points, not their round-trip through angles.
+    pts[0] = a;
+    pts[1] = b;
+    Some((pts, centre, r))
+}
+
 /// A slot (#158): two end circles of radius `half_width` about `a` and `b`
 /// joined by two tangent lines.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -170,6 +203,31 @@ mod tests {
         // The dragged point is the middle of a side.
         let mid = pts[0].lerp(pts[1], 0.5);
         assert!(mid.approx_eq(v(0.0, 4.0), 1e-9) || pts.iter().any(|p| p.lerp(mid, 0.0) == *p));
+    }
+
+    /// #356: an edge polygon has the clicked side, equal sides, and lies on
+    /// the side of the edge the third click was.
+    #[test]
+    fn edge_polygon_is_regular_on_the_chosen_side() {
+        let (a, b) = (v(0.0, 0.0), v(10.0, 0.0));
+        for sides in [3, 4, 6, 9] {
+            for (side, up) in [(v(5.0, 3.0), true), (v(5.0, -3.0), false)] {
+                let (pts, c, r) = edge_polygon(a, b, side, sides).unwrap();
+                assert_eq!(pts.len(), sides);
+                assert_eq!((pts[0], pts[1]), (a, b));
+                for i in 0..sides {
+                    let next = pts[(i + 1) % sides];
+                    assert!((pts[i].distance(next) - 10.0).abs() < 1e-9, "{sides} sides");
+                    assert!((pts[i].distance(c) - r).abs() < 1e-9);
+                }
+                assert_eq!(c.y > 0.0, up);
+            }
+        }
+        // A square on a 10 mm side has a 5 mm apothem.
+        let (_, c, _) = edge_polygon(a, b, v(1.0, 1.0), 4).unwrap();
+        assert!((c.y - 5.0).abs() < 1e-9);
+        assert!(edge_polygon(a, a, v(1.0, 1.0), 5).is_none());
+        assert!(edge_polygon(a, b, v(1.0, 1.0), 2).is_none());
     }
 
     #[test]

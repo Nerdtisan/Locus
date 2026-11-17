@@ -341,19 +341,37 @@ impl Tool for DrawTool {
         self.draft.set_polygon(sides, circumscribed);
     }
 
+    /// Polygon options (#157, #356): the side count, and for a centre
+    /// polygon whether the radius reaches a vertex (inscribed) or a side's
+    /// middle (circumscribed: the apothem), as Fusion offers them.
     fn dialog(&mut self, ui: &mut egui::Ui) {
-        if self.draft.tool() != DrawKind::Polygon {
+        let kind = self.draft.tool();
+        if !matches!(kind, DrawKind::Polygon | DrawKind::PolygonEdge) {
             return;
         }
         let (mut sides, mut outside) = self.draft.polygon();
-        let changed = ui
-            .add(
-                egui::DragValue::new(&mut sides)
-                    .range(3..=64)
-                    .suffix(" sides"),
-            )
-            .changed()
-            | ui.checkbox(&mut outside, "Circumscribed").changed();
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label("Sides");
+            changed |= ui
+                .add(egui::DragValue::new(&mut sides).range(3..=64))
+                .on_hover_text("Also typed while drawing: Tab to the Sides field")
+                .changed();
+        });
+        if kind == DrawKind::Polygon {
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .selectable_value(&mut outside, false, "Inscribed")
+                    .on_hover_text("The radius reaches a vertex")
+                    .changed();
+                changed |= ui
+                    .selectable_value(&mut outside, true, "Circumscribed")
+                    .on_hover_text("The radius reaches the middle of a side (the apothem)")
+                    .changed();
+            });
+        } else {
+            ui.weak("Click a side's two ends, then the side it goes on.");
+        }
         if changed {
             self.draft.set_polygon(sides, outside);
         }

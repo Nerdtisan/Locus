@@ -47,6 +47,9 @@ pub enum Tool {
     ArcTangent,
     /// Centre, then a vertex or a side's middle; sides set in the tool bar (#157).
     Polygon,
+    /// One side's two ends, then which side of it the polygon lies on
+    /// (Fusion's Edge Polygon, #356).
+    PolygonEdge,
     /// Centre, centre, then the width (#158).
     Slot,
     /// Bézier pen: click for corners, click-drag for smooth points (#160).
@@ -57,7 +60,7 @@ pub enum Tool {
 
 impl Tool {
     #[cfg(test)]
-    pub const DRAWING: [Tool; 15] = [
+    pub const DRAWING: [Tool; 16] = [
         Tool::Point,
         Tool::Line,
         Tool::RectCorner,
@@ -70,6 +73,7 @@ impl Tool {
         Tool::ArcCentre,
         Tool::ArcTangent,
         Tool::Polygon,
+        Tool::PolygonEdge,
         Tool::Slot,
         Tool::Bezier,
         Tool::Text,
@@ -88,6 +92,7 @@ impl Tool {
             Tool::Circle3 => "Circle (3-point)",
             Tool::ArcTangent => "Arc (tangent)",
             Tool::Polygon => "Polygon",
+            Tool::PolygonEdge => "Edge Polygon",
             Tool::Slot => "Slot",
             Tool::Bezier => "Bézier",
             Tool::Text => "Text",
@@ -130,7 +135,14 @@ impl Tool {
             (Tool::ArcTangent, 0) => "Arc: click the end of a line or arc to continue",
             (Tool::ArcTangent, _) => "Arc: click the arc's end",
             (Tool::Polygon, 0) => "Polygon: click the centre",
-            (Tool::Polygon, _) => "Polygon: click a vertex (or side middle), or type a radius",
+            (Tool::Polygon, _) => {
+                "Polygon: click a vertex (or side middle), or type the radius; Tab for sides"
+            }
+            (Tool::PolygonEdge, 0) => "Edge polygon: click one end of a side",
+            (Tool::PolygonEdge, 1) => {
+                "Edge polygon: click the side's other end, or type its length; Tab for sides"
+            }
+            (Tool::PolygonEdge, _) => "Edge polygon: click the side of the edge it goes on",
             (Tool::Slot, 0) => "Slot: click the first centre",
             (Tool::Slot, 1) => "Slot: click the second centre",
             (Tool::Slot, _) => "Slot: click to set the width, or type it",
@@ -359,6 +371,9 @@ pub struct Field {
     pub locked: bool,
     /// Typing goes here.
     pub active: bool,
+    /// A whole number (a polygon's sides, #356), not a length: typed as
+    /// is, whatever the display units.
+    pub count: bool,
 }
 
 /// The clicks so far of the active drawing tool.
@@ -458,6 +473,7 @@ impl Draft {
             Tool::Select => false,
             Tool::Point | Tool::Line => true,
             Tool::Circle | Tool::ArcCentre | Tool::Polygon => self.nodes.is_empty(),
+            Tool::PolygonEdge => self.nodes.len() < 2,
             Tool::RectCorner | Tool::RectCentre | Tool::RectThree | Tool::Slot => {
                 self.nodes.len() < 2
             }
@@ -517,6 +533,7 @@ impl Draft {
             Tool::Circle3 => self.click_circle3(here, plan),
             Tool::ArcTangent => self.click_arc_tangent(pick, here, plan),
             Tool::Polygon => self.click_polygon(here, plan, None),
+            Tool::PolygonEdge => self.click_edge_polygon(here, plan),
             Tool::Slot => self.click_slot(here, plan, None),
             Tool::Bezier => self.pen(pick, None, doc_next_id),
             Tool::Text => self.click_text(here, plan),
@@ -918,8 +935,18 @@ impl Draft {
             self.nodes.push(here);
             return Outcome::Pending;
         };
-        let Some((pts, r)) =
-            shapes::polygon(centre.pos(), here.pos(), self.sides, self.circumscribed)
+        // A radius typed and locked with Tab (#356) holds; the click turns it.
+        let radius = radius.or(self.dims[0]);
+        let towards = match radius {
+            Some(r) => {
+                let d = (here.pos() - centre.pos())
+                    .normalized(MIN_SIZE_MM)
+                    .unwrap_or(Vec2::new(1.0, 0.0));
+                centre.pos() + d * r
+            }
+            None => here.pos(),
+        };
+        let Some((pts, r)) = shapes::polygon(centre.pos(), towards, self.sides, self.circumscribed)
         else {
             return Outcome::Pending;
         };
@@ -953,6 +980,74 @@ impl Draft {
             plan.constrain(Constraint::Radius {
                 curve: circle,
                 dim: Dimension::driving(r),
+            });
+        }
+        self.cancel();
+        Outcome::Commit(plan.finish("Add polygon"))
+    }
+
+    /// Edge polygon (#356): two clicks for one side, a third for the side
+    /// of it the polygon lies on. Built like an inscribed polygon: its
+    /// vertices on a construction circle, every side equal.
+    fn click_edge_polygon(&mut self, here: Node, plan: Plan) -> Outcome {
+        match self.nodes.len() {
+            0 => {
+                self.nodes.push(here);
+                Outcome::Pending
+            }
+            1 => {
+                // A length typed and locked with Tab holds; the click aims it.
+                let at = match self.dims[0] {
+                    Some(len) => {
+                        let from = self.nodes[0].pos();
+                        let d = (here.pos() - from)
+                            .normalized(MIN_SIZE_MM)
+                            .unwrap_or(Vec2::new(1.0, 0.0));
+                        Node::New(from + d * len)
+                    }
+                    None => here,
+                };
+                if at.pos().distance(self.nodes[0].pos()) <= MIN_SIZE_MM {
+                    return Outcome::Pending;
+                }
+                self.nodes.push(at);
+                self.field = 0;
+                Outcome::Pending
+            }
+            _ => self.edge_polygon(here.pos(), plan),
+        }
+    }
+
+    fn edge_polygon(&mut self, side: Vec2, mut plan: Plan) -> Outcome {
+        let (a, b) = (self.nodes[0], self.nodes[1]);
+        let Some((pts, centre, r)) = shapes::edge_polygon(a.pos(), b.pos(), side, self.sides)
+        else {
+            return Outcome::Pending;
+        };
+        let c = plan.point(centre);
+        let circle = plan.construction(Geom::Circle {
+            center: c,
+            radius: r,
+        });
+        let mut ps: Vec<EntityId> = vec![plan.node(a), plan.node(b)];
+        ps.extend(pts[2..].iter().map(|p| plan.point(*p)));
+        let n = ps.len();
+        let lines: Vec<EntityId> = (0..n).map(|i| plan.line(ps[i], ps[(i + 1) % n])).collect();
+        for p in &ps {
+            plan.constrain(Constraint::PointOnCurve {
+                point: *p,
+                curve: circle,
+            });
+        }
+        for w in lines.windows(2) {
+            plan.constrain(Constraint::Equal { a: w[0], b: w[1] });
+        }
+        // A typed side length is a dimension (SPEC §6.1).
+        if let Some(len) = self.dims[0] {
+            plan.constrain(Constraint::Distance {
+                a: ps[0],
+                b: ps[1],
+                dim: Dimension::driving(len),
             });
         }
         self.cancel();
@@ -1088,6 +1183,20 @@ impl Draft {
             Tool::RectCorner | Tool::RectCentre | Tool::RectThree => {
                 return self.typed_rect(value, cursor, doc_next_id);
             }
+            // The Sides field takes a count, not a length (#356).
+            Tool::Polygon | Tool::PolygonEdge if self.two_fields() && self.field == 1 => {
+                self.set_sides(value);
+                self.field = 0;
+                return Outcome::Pending;
+            }
+            Tool::PolygonEdge if self.nodes.len() == 1 => {
+                self.dims[0] = Some(value);
+                let at = cursor.pos;
+                return self.click_edge_polygon(
+                    Node::New(at),
+                    Plan::new(doc_next_id, self.layer, self.style, self.construction),
+                );
+            }
             _ => {}
         }
         let Some(&from) = self.nodes.first() else {
@@ -1131,9 +1240,20 @@ impl Draft {
         }
     }
 
-    /// A shape with two heads-up fields (width and height) is being sized.
+    /// A shape with two heads-up fields is being sized: a rectangle's width
+    /// and height, a polygon's radius (or side length) and sides (#356).
     fn two_fields(&self) -> bool {
-        matches!(self.tool, Tool::RectCorner | Tool::RectCentre) && self.nodes.len() == 1
+        matches!(
+            self.tool,
+            Tool::RectCorner | Tool::RectCentre | Tool::Polygon | Tool::PolygonEdge
+        ) && self.nodes.len() == 1
+    }
+
+    /// The side count from a typed number (#356): whole, within range.
+    fn set_sides(&mut self, value: f64) {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let n = value.round().clamp(0.0, 1000.0) as usize;
+        self.set_polygon(n, self.circumscribed);
     }
 
     /// Tab while sizing (#334, design §3 step 2): a typed `value` locks the
@@ -1143,8 +1263,13 @@ impl Draft {
         if !self.two_fields() {
             return false;
         }
+        let polygon = matches!(self.tool, Tool::Polygon | Tool::PolygonEdge);
         if let Some(v) = value.filter(|v| v.is_finite() && *v > MIN_SIZE_MM) {
-            self.dims[self.field] = Some(v);
+            if polygon && self.field == 1 {
+                self.set_sides(v);
+            } else {
+                self.dims[self.field] = Some(v);
+            }
         }
         self.field = 1 - self.field;
         true
@@ -1157,6 +1282,32 @@ impl Draft {
             return None;
         }
         let d = cursor - self.nodes[0].pos();
+        if matches!(self.tool, Tool::Polygon | Tool::PolygonEdge) {
+            let name = match self.tool {
+                Tool::PolygonEdge => "Length",
+                // The radius to a side's middle when circumscribed.
+                _ if self.circumscribed => "Apothem",
+                _ => "Radius",
+            };
+            #[allow(clippy::cast_precision_loss)]
+            let sides = self.sides as f64;
+            return Some([
+                Field {
+                    name,
+                    mm: self.dims[0].unwrap_or(d.length()),
+                    locked: self.dims[0].is_some(),
+                    active: self.field == 0,
+                    count: false,
+                },
+                Field {
+                    name: "Sides",
+                    mm: sides,
+                    locked: false,
+                    active: self.field == 1,
+                    count: true,
+                },
+            ]);
+        }
         // A centred rectangle's sides are twice the cursor's offset.
         let k = if self.tool == Tool::RectCentre {
             2.0
@@ -1168,6 +1319,7 @@ impl Draft {
             mm: self.dims[i].unwrap_or(live * k),
             locked: self.dims[i].is_some(),
             active: self.field == i,
+            count: false,
         };
         Some([f(0, "Width", d.x.abs()), f(1, "Height", d.y.abs())])
     }
@@ -1178,9 +1330,12 @@ impl Draft {
         let from = self.nodes.first()?.pos();
         match (self.tool, self.nodes.len()) {
             (Tool::Line, _) => Some(("Length", from.distance(cursor))),
-            (Tool::Circle, _) | (Tool::ArcCentre, 1) | (Tool::Polygon, _) => {
-                Some(("Radius", from.distance(cursor)))
+            (Tool::Polygon | Tool::PolygonEdge, 1) => {
+                let f = self.fields(cursor)?;
+                let a = &f[self.field];
+                Some((a.name, a.mm))
             }
+            (Tool::Circle, _) | (Tool::ArcCentre, 1) => Some(("Radius", from.distance(cursor))),
             (Tool::Circle2, _) => Some(("Diameter", from.distance(cursor))),
             (Tool::RectCorner | Tool::RectCentre, _) => {
                 let f = self.fields(cursor)?;
@@ -1268,8 +1423,41 @@ impl Draft {
                 },
                 None => Vec::new(),
             },
+            (Tool::PolygonEdge, 1) => {
+                let end = match self.dims[0] {
+                    Some(len) => {
+                        first
+                            + (cursor - first)
+                                .normalized(MIN_SIZE_MM)
+                                .unwrap_or(Vec2::new(1.0, 0.0))
+                                * len
+                    }
+                    None => cursor,
+                };
+                vec![guide(first, end)]
+            }
+            (Tool::PolygonEdge, _) => {
+                match shapes::edge_polygon(first, self.nodes[1].pos(), cursor, self.sides) {
+                    Some((pts, c, r)) => {
+                        let mut v = outline(&pts);
+                        v.push(Shape::Circle(Circle::new(c, r)));
+                        v
+                    }
+                    None => Vec::new(),
+                }
+            }
             (Tool::Polygon, _) => {
-                match shapes::polygon(first, cursor, self.sides, self.circumscribed) {
+                let towards = match self.dims[0] {
+                    Some(r) => {
+                        first
+                            + (cursor - first)
+                                .normalized(MIN_SIZE_MM)
+                                .unwrap_or(Vec2::new(1.0, 0.0))
+                                * r
+                    }
+                    None => cursor,
+                };
+                match shapes::polygon(first, towards, self.sides, self.circumscribed) {
                     Some((pts, r)) => {
                         let mut v = outline(&pts);
                         v.push(Shape::Circle(Circle::new(first, r)));
@@ -1909,6 +2097,76 @@ mod tests {
             s.end_drag().unwrap();
             regular(&s);
         }
+    }
+
+    /// #356: while sizing a polygon, Tab moves between the radius and the
+    /// side count; a typed count sets the sides, a typed radius holds.
+    #[test]
+    fn polygon_fields_take_a_radius_and_a_side_count() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Polygon);
+        click(&mut d, &mut s, at(0.0, 0.0));
+        let f = d.fields(Vec2::new(3.0, 4.0)).expect("two fields");
+        assert_eq!((f[0].name, f[0].mm), ("Radius", 5.0));
+        assert!(f[1].count && f[1].name == "Sides" && !f[0].count);
+        // Lock a radius, then type the sides into the second field.
+        assert!(d.tab(Some(20.0)));
+        let out = d.typed(8.0, at(1.0, 0.0), s.document().next_id());
+        assert!(matches!(out, Outcome::Pending));
+        assert_eq!(d.polygon().0, 8);
+        // The click turns the polygon; the locked radius holds.
+        click(&mut d, &mut s, at(1.0, 1.0)).expect("placed");
+        let radius = s
+            .document()
+            .entities()
+            .iter()
+            .find_map(|(_, e)| match e.geom {
+                Geom::Circle { radius, .. } => Some(radius),
+                _ => None,
+            })
+            .expect("the construction circle");
+        assert!((radius - 20.0).abs() < 1e-9);
+        assert_eq!(count(&s, |g| matches!(g, Geom::Line { .. })), 8);
+    }
+
+    /// #356: an edge polygon from two clicks and a side; a typed length is
+    /// a dimension on the first side.
+    #[test]
+    fn edge_polygon_is_built_on_the_clicked_side() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::PolygonEdge);
+        d.set_polygon(5, false);
+        click(&mut d, &mut s, at(0.0, 0.0));
+        assert_eq!(
+            d.fields(Vec2::new(12.0, 0.0)).expect("fields")[0].name,
+            "Length"
+        );
+        let out = d.typed(12.0, at(1.0, 0.0), s.document().next_id());
+        assert!(matches!(out, Outcome::Pending));
+        assert!(d.fields(Vec2::ZERO).is_none(), "the side is placed");
+        click(&mut d, &mut s, at(6.0, 5.0)).expect("placed");
+        let doc = s.document();
+        let lengths: Vec<f64> = doc
+            .entities()
+            .iter()
+            .filter_map(|(_, e)| match e.geom {
+                Geom::Line { start, end } => Some(
+                    doc.point_pos(start)
+                        .unwrap()
+                        .distance(doc.point_pos(end).unwrap()),
+                ),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lengths.len(), 5);
+        assert!(
+            lengths.iter().all(|l| (l - 12.0).abs() < 1e-6),
+            "{lengths:?}"
+        );
+        assert!(doc.constraints().values().any(|c| matches!(
+            c,
+            Constraint::Distance { dim, .. } if (dim.value - 12.0).abs() < 1e-9
+        )));
     }
 
     #[test]

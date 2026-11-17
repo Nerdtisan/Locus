@@ -536,6 +536,14 @@ pub static BUILTIN: &[Action] = &[
         Tool::Polygon,
     ),
     draw(
+        "sketch.polygon_edge",
+        Group::Create,
+        "⬡",
+        &["hexagon", "side", "edge polygon"],
+        &[],
+        Tool::PolygonEdge,
+    ),
+    draw(
         "sketch.slot",
         Group::Create,
         "⊂⊃",

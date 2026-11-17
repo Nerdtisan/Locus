@@ -230,6 +230,18 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
                 .collect();
             d.poly(&pts, true);
         }
+        "sketch.polygon_edge" => {
+            let pts: Vec<(f32, f32)> = (0..6)
+                .map(|i| {
+                    let t = i as f32 * TAU / 6.0 + TAU / 12.0;
+                    (8.0 + 6.5 * t.cos(), 8.0 + 6.5 * t.sin())
+                })
+                .collect();
+            d.poly(&pts, true);
+            // The side it is built from, bold.
+            let bold = Pen { w: d.w * 2.2, ..d };
+            bold.line(pts[1], pts[2]);
+        }
         "sketch.slot" => {
             d.line((5.0, 4.0), (11.0, 4.0));
             d.line((5.0, 12.0), (11.0, 12.0));
