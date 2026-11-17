@@ -56,6 +56,9 @@ pub enum Tool {
     Bezier,
     /// Text: one click places the anchor; content and font come from the tool strip (#180).
     Text,
+    /// Inspect ▸ Measure (#386, design §2): two snapped clicks; the distance,
+    /// Δx, Δy and angle go to the status bar. Never changes the document.
+    Measure,
 }
 
 impl Tool {
@@ -84,20 +87,21 @@ impl Tool {
             Tool::Select => "Select",
             Tool::Point => "Point",
             Tool::Line => "Line",
-            Tool::Circle => "Circle (centre)",
-            Tool::RectCorner => "Rectangle (2-point)",
-            Tool::RectCentre => "Rectangle (centre)",
-            Tool::RectThree => "Rectangle (3-point)",
-            Tool::Circle2 => "Circle (2-point)",
-            Tool::Circle3 => "Circle (3-point)",
-            Tool::ArcTangent => "Arc (tangent)",
+            Tool::Circle => "Center Diameter Circle",
+            Tool::RectCorner => "2-Point Rectangle",
+            Tool::RectCentre => "Center Rectangle",
+            Tool::RectThree => "3-Point Rectangle",
+            Tool::Circle2 => "2-Point Circle",
+            Tool::Circle3 => "3-Point Circle",
+            Tool::ArcTangent => "Tangent Arc",
             Tool::Polygon => "Polygon",
             Tool::PolygonEdge => "Edge Polygon",
             Tool::Slot => "Slot",
-            Tool::Bezier => "Bézier",
+            Tool::Bezier => "Bézier Pen",
             Tool::Text => "Text",
-            Tool::ArcThreePoint => "Arc (3-point)",
-            Tool::ArcCentre => "Arc (centre)",
+            Tool::Measure => "Measure",
+            Tool::ArcThreePoint => "3-Point Arc",
+            Tool::ArcCentre => "Center Point Arc",
         }
     }
 
@@ -147,6 +151,8 @@ impl Tool {
             (Tool::Slot, 1) => "Slot: click the second centre",
             (Tool::Slot, _) => "Slot: click to set the width, or type it",
             (Tool::Text, _) => "Text: set the text in the dialog, then click to place it",
+            (Tool::Measure, 0) => "Measure: click the first point (snaps to points and curves)",
+            (Tool::Measure, _) => "Measure: click the second point (Esc cancels)",
             (Tool::Bezier, 0) => "Bézier: click the start (drag for a smooth point)",
             (Tool::Bezier, _) => {
                 "Bézier: click a corner, drag for a smooth point, click the start to close (Enter finishes)"
@@ -454,6 +460,10 @@ pub struct Draft {
     text: Option<Box<TextData>>,
     /// The text entity the last click created, for the canvas to select.
     placed: Option<EntityId>,
+    /// Measure: the last two points measured, drawn until the next
+    /// measurement, and whether the status bar has been told yet.
+    measured: Option<(Vec2, Vec2)>,
+    measured_new: bool,
 }
 
 impl Draft {
@@ -474,6 +484,8 @@ impl Draft {
             construction: false,
             text: None,
             placed: None,
+            measured: None,
+            measured_new: false,
         }
     }
 
@@ -524,7 +536,7 @@ impl Draft {
             Tool::RectCorner | Tool::RectCentre | Tool::RectThree | Tool::Slot => {
                 self.nodes.len() < 2
             }
-            Tool::Circle2 | Tool::Circle3 | Tool::Bezier | Tool::Text => true,
+            Tool::Circle2 | Tool::Circle3 | Tool::Bezier | Tool::Text | Tool::Measure => true,
             Tool::ArcTangent => false,
             // The "through" click is only a guide.
             Tool::ArcThreePoint => self.nodes.len() < 2,
@@ -584,6 +596,26 @@ impl Draft {
             Tool::Slot => self.click_slot(here, plan, None),
             Tool::Bezier => self.pen(pick, None, doc_next_id),
             Tool::Text => self.click_text(here, plan),
+            Tool::Measure => {
+                match self.nodes.first() {
+                    None => self.nodes.push(here),
+                    Some(from) => {
+                        self.measured = Some((from.pos(), here.pos()));
+                        self.measured_new = true;
+                        self.nodes.clear();
+                    }
+                }
+                Outcome::Pending
+            }
+        }
+    }
+
+    /// Measure: the measurement the last click completed, once (#386).
+    pub fn take_measured(&mut self) -> Option<(Vec2, Vec2)> {
+        if std::mem::take(&mut self.measured_new) {
+            self.measured
+        } else {
+            None
         }
     }
 
@@ -1383,6 +1415,7 @@ impl Draft {
         let from = self.nodes.first()?.pos();
         match (self.tool, self.nodes.len()) {
             (Tool::Line, _) => Some(("Length", from.distance(cursor))),
+            (Tool::Measure, _) => Some(("Distance", from.distance(cursor))),
             (Tool::Polygon | Tool::PolygonEdge, 1) => {
                 let f = self.fields(cursor)?;
                 let a = &f[self.field];
@@ -1412,10 +1445,14 @@ impl Draft {
     pub fn preview(&self, cursor: Vec2) -> Vec<Shape> {
         let guide = |a: Vec2, b: Vec2| Shape::Line(Line::new(a, b));
         let Some(first) = self.nodes.first().map(|n| n.pos()) else {
-            return Vec::new();
+            // The last measurement stays drawn until the next one starts.
+            return match (self.tool, self.measured) {
+                (Tool::Measure, Some((a, b))) => vec![guide(a, b)],
+                _ => Vec::new(),
+            };
         };
         match (self.tool, self.nodes.len()) {
-            (Tool::Line, _) => vec![guide(first, cursor)],
+            (Tool::Line | Tool::Measure, _) => vec![guide(first, cursor)],
             (Tool::Circle, _) => {
                 let r = first.distance(cursor);
                 if r < MIN_SIZE_MM {

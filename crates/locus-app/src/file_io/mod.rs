@@ -21,6 +21,46 @@ use locus_export::{Prepared, Severity};
 use std::path::Path;
 use std::path::PathBuf;
 
+/// Which files an Insert / Import reference picker offers (#386):
+/// INSERT ▸ Insert SVG… and Insert DXF… each pick one format, File ▸
+/// Import reference… either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Insert {
+    Svg,
+    Dxf,
+    Any,
+}
+
+impl Insert {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn label(self) -> &'static str {
+        match self {
+            Insert::Svg => "SVG",
+            Insert::Dxf => "DXF",
+            Insert::Any => "SVG or DXF",
+        }
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Insert::Svg => &["svg"],
+            Insert::Dxf => &["dxf"],
+            Insert::Any => &["svg", "dxf"],
+        }
+    }
+
+    /// The browser file input's `accept`.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    fn accept(self) -> &'static str {
+        match self {
+            Insert::Svg => ".svg",
+            Insert::Dxf => ".dxf",
+            Insert::Any => ".svg,.dxf",
+        }
+    }
+}
+
 /// One finding from an extra pre-export check: a validator plugin (#234).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtraFinding {
@@ -337,7 +377,7 @@ impl FileIo {
             )
             .clicked()
         {
-            self.begin_import_reference(canvas);
+            self.begin_import_reference(canvas, Insert::Any);
             ui.close();
         }
         ui.separator();
@@ -456,10 +496,10 @@ impl FileIo {
     /// new locked Reference layer. It doesn't replace the document, so the
     /// unsaved-changes guard doesn't apply; it is one undo step.
     #[cfg(not(target_arch = "wasm32"))]
-    fn begin_import_reference(&mut self, canvas: &mut AppState) {
+    pub fn begin_import_reference(&mut self, canvas: &mut AppState, kind: Insert) {
         use std::io::Read;
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("SVG or DXF", &["svg", "dxf"])
+            .add_filter(kind.label(), kind.extensions())
             .pick_file()
         else {
             return;
@@ -481,8 +521,8 @@ impl FileIo {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn begin_import_reference(&mut self, _canvas: &mut AppState) {
-        self.web.pick_reference();
+    pub fn begin_import_reference(&mut self, _canvas: &mut AppState, kind: Insert) {
+        self.web.pick_reference(kind.accept());
     }
 
     /// Parses `bytes` and applies the import as one undo step. Failures are
