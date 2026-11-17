@@ -636,7 +636,9 @@ pub(crate) fn validate(
             crate::offset::check_sources(doc, sources)?;
         }
         RecipeKind::Linear { dir1, dir2 } => {
-            let cl = closure(doc, sources);
+            // A direction line may be one of the copied curves (#410): the
+            // copies only read its direction, and the source line itself is
+            // never driven by the pattern, so nothing loops.
             for d in [Some(dir1), dir2.as_ref()].into_iter().flatten() {
                 if let Axis::Line(l) = d.axis {
                     let found = doc.entity(l).map_or(EntityKind::Point, |e| e.geom.kind());
@@ -646,12 +648,6 @@ pub(crate) fn validate(
                             entity: l,
                             expected: "line",
                             found,
-                        });
-                    }
-                    if cl.contains(&l) {
-                        return Err(DocError::SameEntity {
-                            what: "pattern direction",
-                            entity: l,
                         });
                     }
                 }

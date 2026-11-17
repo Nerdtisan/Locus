@@ -175,6 +175,25 @@ impl PatternDraft {
     }
 }
 
+/// `spacing` made to point the chosen way along a picked line (#410):
+/// negative towards the line's start. Expressions get a leading minus.
+fn signed_spacing(spacing: &str, towards_start: bool) -> String {
+    let t = spacing.trim();
+    let (negative, bare) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest.trim()),
+        None => (false, t),
+    };
+    if negative == towards_start {
+        return t.to_owned();
+    }
+    let simple = bare.chars().all(|c| c.is_ascii_digit() || c == '.');
+    match (towards_start, simple) {
+        (true, true) => format!("-{bare}"),
+        (true, false) => format!("-({bare})"),
+        (false, _) => bare.to_owned(),
+    }
+}
+
 /// Most copies a handle drag sets in one direction (SPEC §6.2.1 caps a
 /// whole pattern at `MAX_INSTANCES`; the recipe refuses more).
 const MAX_COUNT: usize = 1000;
@@ -454,11 +473,24 @@ impl AppState {
                             let line = hit::pick_curve(items, w, tol)
                                 .filter(|id| self.doc.sketcher.document().line(*id).is_some());
                             if let Some(id) = line {
-                                if n == 1 {
-                                    self.tools.pattern.axis1 = Axis::Line(id);
+                                // The copies run towards the end nearer the
+                                // click (#410): the line's own direction, or
+                                // against it as a negative spacing.
+                                let towards_start = self
+                                    .doc
+                                    .sketcher
+                                    .document()
+                                    .line(id)
+                                    .is_some_and(|l| w.distance(l.a) < w.distance(l.b));
+                                let d = &mut self.tools.pattern;
+                                let spacing = if n == 1 {
+                                    d.axis1 = Axis::Line(id);
+                                    &mut d.spacing1
                                 } else {
-                                    self.tools.pattern.axis2 = Axis::Line(id);
-                                }
+                                    d.axis2 = Axis::Line(id);
+                                    &mut d.spacing2
+                                };
+                                *spacing = signed_spacing(spacing, towards_start);
                                 self.tools.pattern.pick = PatternPick::Objects;
                             } else {
                                 self.doc.notice = Some("Click a line for the direction".to_owned());
@@ -1151,6 +1183,114 @@ mod tests {
         frame(&mut c, vec![btn(to, false)]);
         let spacing = parse_number(&c.tools.pattern.spacing1).expect("a number");
         assert!(spacing > 30.5, "the arrow dragged: {spacing}");
+    }
+
+    /// Regression (#410): a direction picked from a line made no copies.
+    /// Both directions along sloped lines, one of them a line of the
+    /// selected shape itself (as in the owner's screenshot), and symmetric:
+    /// the preview and the pattern put the copies along the lines.
+    #[test]
+    fn picked_line_directions_make_copies_along_them() {
+        let mut c = ready(false);
+        let selected: Vec<EntityId> = c.selection.items.iter().collect();
+        // A 3-4-5 sloped line, outside the selection.
+        c.set_tool(Tool::Line);
+        for p in [Vec2::new(0.0, 40.0), Vec2::new(30.0, 80.0)] {
+            c.tool_event(ToolEvent::Click(Pick::free(p)), None, Units::Mm);
+        }
+        c.set_tool(Tool::Select);
+        let sloped = {
+            let doc = c.doc.sketcher.document();
+            doc.entities()
+                .iter()
+                .filter(|(id, _)| doc.line(*id).is_some())
+                .map(|(id, _)| id)
+                .last()
+                .expect("the sloped line")
+        };
+        c.selection.items.set_all(selected.clone());
+        c.set_modify(Modify::Pattern(false));
+        // The rectangle's bottom edge, (0,0)→(20,0) or reversed.
+        let bottom = *selected
+            .iter()
+            .find(|id| {
+                let l = c.doc.sketcher.document().line(**id).expect("a line");
+                l.a.y.abs() < 1e-9 && l.b.y.abs() < 1e-9
+            })
+            .expect("the bottom edge");
+        let d = &mut c.tools.pattern;
+        d.axis1 = Axis::Line(sloped);
+        d.count1 = "3".to_owned();
+        d.spacing1 = "10".to_owned();
+        d.second = true;
+        d.axis2 = Axis::Line(bottom);
+        d.count2 = "2".to_owned();
+        d.spacing2 = "50".to_owned();
+        c.refresh_pattern_preview(false, Units::Mm);
+        let shapes = &c.tools.pattern.preview.as_ref().expect("a preview").1;
+        assert_eq!(shapes.len(), 4 * (3 * 2 - 1), "every copy previews");
+        assert!(c.pattern_ok(false, Units::Mm), "{:?}", c.doc.notice);
+        let doc = c.doc.sketcher.document();
+        let pts: Vec<Vec2> = doc
+            .recipes()
+            .values()
+            .find(|r| r.kind.is_pattern())
+            .expect("the pattern")
+            .instances()
+            .filter_map(|id| doc.point_pos(id))
+            .collect();
+        let bdir = {
+            let l = doc.line(bottom).expect("bottom");
+            (l.b - l.a) * (1.0 / l.length())
+        };
+        // The source corner (0,0) copied 2 × 10 mm along (0.6, 0.8), and
+        // 50 mm along the bottom edge.
+        for want in [
+            Vec2::new(12.0, 16.0),
+            bdir * 50.0,
+            Vec2::new(12.0, 16.0) + bdir * 50.0,
+        ] {
+            assert!(
+                pts.iter().any(|p| (*p - want).length() < 1e-6),
+                "a copy of the corner at {want:?}: {pts:?}"
+            );
+        }
+        // Symmetric runs both ways along the line.
+        c.undo();
+        c.set_modify(Modify::Pattern(false));
+        c.selection.items.set_all(selected);
+        let d = &mut c.tools.pattern;
+        d.second = false;
+        d.symmetric = true;
+        c.refresh_pattern_preview(false, Units::Mm);
+        let shapes = &c.tools.pattern.preview.as_ref().expect("a preview").1;
+        // A count of 3, symmetric: one copy each way.
+        assert_eq!(shapes.len(), 4 * 2, "one copy each way");
+        assert!(c.pattern_ok(false, Units::Mm), "{:?}", c.doc.notice);
+        let doc = c.doc.sketcher.document();
+        let pts: Vec<Vec2> = doc
+            .recipes()
+            .values()
+            .find(|r| r.kind.is_pattern())
+            .expect("the pattern")
+            .instances()
+            .filter_map(|id| doc.point_pos(id))
+            .collect();
+        for want in [Vec2::new(6.0, 8.0), Vec2::new(-6.0, -8.0)] {
+            assert!(
+                pts.iter().any(|p| (*p - want).length() < 1e-6),
+                "a copy of the corner at {want:?}: {pts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn picking_near_a_lines_start_runs_the_copies_back() {
+        assert_eq!(signed_spacing("20", true), "-20");
+        assert_eq!(signed_spacing("-20", true), "-20");
+        assert_eq!(signed_spacing("-20", false), "20");
+        assert_eq!(signed_spacing("pitch/2", true), "-(pitch/2)");
+        assert_eq!(signed_spacing("20", false), "20");
     }
 
     #[test]
