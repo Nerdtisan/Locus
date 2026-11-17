@@ -771,7 +771,12 @@ mod tests {
         );
         assert_eq!(
             ids(Group::Insert),
-            ["insert.svg", "insert.dxf", "insert.image"]
+            [
+                "insert.svg",
+                "insert.dxf",
+                "insert.image",
+                "sketch.calibrate"
+            ]
         );
         assert_eq!(
             ids(Group::Select),

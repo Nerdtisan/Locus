@@ -157,6 +157,106 @@ pub fn import_shapes_command(
     })
 }
 
+/// Largest calibration factor in one step (and the inverse, the smallest).
+pub const MAX_SCALE_FACTOR: f64 = 1.0e6;
+
+/// [`Command::ScaleReference`] (#391): every point on `layer` moves away
+/// from `about` by `factor`, and circle radii and the image follow. Lines,
+/// arcs and Béziers hang off their points, so they scale with them.
+pub(crate) fn scale(
+    doc: &mut Document,
+    layer: LayerId,
+    about: Vec2,
+    factor: f64,
+    patches: &mut Vec<crate::command::Patch>,
+) -> Result<(), DocError> {
+    use crate::command::{Patch, record};
+    let l = doc.layer(layer).ok_or(DocError::UnknownLayer(layer))?;
+    if !matches!(l.operation, Operation::Reference) {
+        return Err(DocError::Invalid(
+            "only a Reference layer can be calibrated".to_owned(),
+        ));
+    }
+    if !(factor.is_finite() && factor > 1.0 / MAX_SCALE_FACTOR && factor < MAX_SCALE_FACTOR) {
+        return Err(DocError::BadValue {
+            what: "calibration factor",
+            value: factor,
+        });
+    }
+    if !(about.x.is_finite() && about.y.is_finite()) {
+        return Err(DocError::BadValue {
+            what: "calibration point",
+            value: about.x,
+        });
+    }
+    let on_layer: Vec<(EntityId, crate::entity::Entity)> = doc
+        .entities()
+        .iter()
+        .filter(|(_, e)| e.layer == layer)
+        .map(|(id, e)| (id, e.clone()))
+        .collect();
+    let image = doc.image(layer).cloned();
+    if on_layer.is_empty() && image.is_none() {
+        return Err(DocError::Invalid("this reference is empty".to_owned()));
+    }
+    for (id, before) in on_layer {
+        let geom = match &before.geom {
+            Geom::Point { pos } => Geom::Point {
+                pos: about + (*pos - about) * factor,
+            },
+            Geom::Circle { center, radius } => Geom::Circle {
+                center: *center,
+                radius: radius * factor,
+            },
+            Geom::Text { .. } => {
+                return Err(DocError::Invalid(
+                    "a reference with text cannot be calibrated".to_owned(),
+                ));
+            }
+            g => g.clone(),
+        };
+        if geom == before.geom {
+            continue;
+        }
+        let after = crate::entity::Entity {
+            geom,
+            ..before.clone()
+        };
+        doc.check_entity(&after)?;
+        record(
+            doc,
+            patches,
+            Patch::Entity {
+                id,
+                before: Some(before),
+                after: Some(after),
+            },
+        );
+    }
+    if let Some(before) = image {
+        let p = before.placement;
+        let after = crate::image::RefImage {
+            placement: crate::image::ImagePlacement {
+                origin: about + (p.origin - about) * factor,
+                mm_per_px: p.mm_per_px * factor,
+                ..p
+            },
+            ..before.clone()
+        };
+        after.validate()?;
+        record(
+            doc,
+            patches,
+            Patch::Image {
+                layer,
+                before: Some(before),
+                after: Some(after),
+            },
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +270,78 @@ mod tests {
                 b: Vec2::new(b.0, b.1),
             },
             reversed: false,
+        }
+    }
+
+    /// #391: calibrating scales the reference's points, radii and image
+    /// about the first picked point, on the locked layer, as one undo step,
+    /// and is stored in the document.
+    #[test]
+    fn calibrate_scales_the_reference_about_a_point() {
+        let mut ed = Editor::new(Document::new());
+        let corner = GenPath {
+            segments: vec![
+                line((0.0, 0.0), (10.0, 0.0)),
+                line((10.0, 0.0), (10.0, 10.0)),
+            ],
+            closed: false,
+        };
+        let circle = GenPath {
+            segments: vec![GenSegment {
+                shape: GenShape::Circle {
+                    center: Vec2::new(5.0, 5.0),
+                    radius: 2.0,
+                },
+                reversed: false,
+            }],
+            closed: true,
+        };
+        let cmd = import_command(ed.document(), "plan.dxf", &[corner, circle]).unwrap();
+        let layer = ed.apply(&cmd).unwrap().layers[0];
+        assert!(ed.document().layer(layer).unwrap().locked);
+        let before = ed.document().clone();
+        // The 10 mm edge is really 25 mm: factor 2.5 about (0, 0).
+        ed.apply(&Command::ScaleReference {
+            layer,
+            about: Vec2::ZERO,
+            factor: 2.5,
+        })
+        .unwrap();
+        let doc = ed.document();
+        let pos: Vec<Vec2> = doc
+            .entities()
+            .iter()
+            .filter_map(|(id, _)| doc.point_pos(id))
+            .collect();
+        assert!(pos.contains(&Vec2::new(25.0, 0.0)), "{pos:?}");
+        assert!(pos.contains(&Vec2::new(12.5, 12.5)), "the circle's centre");
+        let radius = doc
+            .entities()
+            .iter()
+            .find_map(|(_, e)| match e.geom {
+                Geom::Circle { radius, .. } => Some(radius),
+                _ => None,
+            })
+            .unwrap();
+        assert!((radius - 5.0).abs() < 1e-12);
+        assert_eq!(ed.undo_label(), Some("Calibrate reference"));
+        ed.undo().unwrap();
+        assert_eq!(ed.document().entities(), before.entities());
+        // Only Reference layers, and only sane factors.
+        for (l, f) in [
+            (Document::default_layer(), 2.0),
+            (layer, 0.0),
+            (layer, f64::NAN),
+            (layer, -1.0),
+        ] {
+            assert!(
+                ed.apply(&Command::ScaleReference {
+                    layer: l,
+                    about: Vec2::ZERO,
+                    factor: f,
+                })
+                .is_err()
+            );
         }
     }
 

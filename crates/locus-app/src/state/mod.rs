@@ -129,6 +129,16 @@ impl AppState {
                 }
             }
             Modify::Pattern(_) => self.tools.pattern.begin(),
+            Modify::Calibrate => {
+                // On the reference picked in the Browser, if it is one.
+                let doc = self.doc.sketcher.document();
+                let layer = self.view.browser_layer.filter(|l| {
+                    doc.layer(*l)
+                        .is_some_and(|l| matches!(l.operation, locus_doc::Operation::Reference))
+                });
+                self.tools.calibrate.begin(layer);
+                self.selection.items.clear();
+            }
             Modify::Mirror => {
                 // Selection first, then the line (design §6.9).
                 self.tools.mirror.picking =

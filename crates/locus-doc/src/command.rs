@@ -222,6 +222,16 @@ pub enum Command {
         layer: LayerId,
         placement: crate::image::ImagePlacement,
     },
+    /// Calibrate a reference (#391, Fusion's Calibrate): scale everything
+    /// on Reference layer `layer` by `factor` about `about`, mm: its points,
+    /// circle radii and image. The scale is stored in the reference itself.
+    /// Allowed while the layer is locked, since that only stops editing the
+    /// reference by hand.
+    ScaleReference {
+        layer: LayerId,
+        about: Vec2,
+        factor: f64,
+    },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
         label: String,
@@ -282,6 +292,7 @@ impl Command {
             Command::EditRecipe { kind, .. } => format!("Edit {}", kind.name().to_lowercase()),
             Command::AddImage { .. } => "Add image".to_owned(),
             Command::SetImagePlacement { .. } => "Change image".to_owned(),
+            Command::ScaleReference { .. } => "Calibrate reference".to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -1007,6 +1018,11 @@ fn exec(
                 },
             );
         }
+        Command::ScaleReference {
+            layer,
+            about,
+            factor,
+        } => crate::reference::scale(doc, *layer, *about, *factor, patches)?,
         Command::MoveToLayer { entities, layer } => {
             doc.check_unlocked(*layer)?;
             if !doc.layers.contains_key(layer) {

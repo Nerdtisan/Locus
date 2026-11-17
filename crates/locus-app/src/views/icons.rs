@@ -437,6 +437,14 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.line((6.7, 6.0), (8.0, 7.3));
             d.line((8.7, 4.0), (10.0, 5.3));
         }
+        // Calibrate (#391): a picture frame with two picked points and the
+        // known distance between them.
+        "sketch.calibrate" => {
+            d.rect(1.5, 1.5, 14.5, 14.5);
+            d.line((4.0, 11.0), (12.0, 5.0));
+            d.dot((4.0, 11.0));
+            d.dot((12.0, 5.0));
+        }
         "insert.svg" | "insert.dxf" | "insert.image" => {
             // The mockup's import: an arrow down into a tray.
             d.line((8.0, 2.7), (8.0, 10.0));

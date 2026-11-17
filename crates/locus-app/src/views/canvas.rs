@@ -18,6 +18,7 @@ use locus_geom::{Aabb, Vec2};
 #[cfg(not(target_arch = "wasm32"))]
 mod ai;
 mod bed;
+mod calibrate_tool;
 mod corner_dialog;
 pub(crate) mod dialog;
 pub(crate) mod images;
@@ -32,6 +33,7 @@ pub mod plugin_objects;
 mod regions;
 mod text_dialog;
 
+pub(crate) use calibrate_tool::CalibrateDraft;
 pub(crate) use machine::MachinePath;
 pub(crate) use mirror_tool::MirrorDraft;
 pub(crate) use offset_tool::OffsetDraft;
@@ -282,6 +284,8 @@ impl AppState {
         } else if let Some(circular) = self.pattern_kind() {
             self.pattern_input(ui, &resp, rect, settings.units, circular);
             self.refresh_pattern_preview(circular, settings.units);
+        } else if self.modify() == Some(Modify::Calibrate) {
+            self.calibrate_input(ui, &resp, rect, settings.units);
         } else if self.modify() == Some(Modify::Mirror) {
             self.mirror_input(ui, &resp, rect, settings.units);
             self.refresh_mirror_preview();
@@ -373,6 +377,9 @@ impl AppState {
         if self.modify() == Some(Modify::Mirror) {
             self.draw_mirror_draft(&frame);
         }
+        if self.modify() == Some(Modify::Calibrate) {
+            self.draw_calibrate_draft(&frame, settings.units);
+        }
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -397,6 +404,9 @@ impl AppState {
         }
         if self.modify() == Some(Modify::Mirror) {
             self.mirror_dialog(ui, rect);
+        }
+        if self.modify() == Some(Modify::Calibrate) {
+            self.calibrate_dialog(ui, rect, settings.units);
         }
         self.text_dialog(ui, rect);
         self.glyph_menu(ui);

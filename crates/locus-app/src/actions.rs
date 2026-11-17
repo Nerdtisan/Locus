@@ -714,6 +714,18 @@ pub static BUILTIN: &[Action] = &[
         KeyScope::Global,
         Op::Shell(Shell::InsertReference(crate::file_io::Insert::Image)),
     ),
+    // Calibrate a reference image or imported reference (#391), beside the
+    // import, as Fusion's canvas Calibrate.
+    a(
+        "sketch.calibrate",
+        "Calibrate",
+        Group::Insert,
+        &["scale", "reference", "image", "canvas", "known distance"],
+        "Click two points on a reference and type the real distance between them",
+        &[],
+        KeyScope::Canvas,
+        Op::Modify(Modify::Calibrate),
+    ),
     // ── Select ──
     draw(
         "select.select",

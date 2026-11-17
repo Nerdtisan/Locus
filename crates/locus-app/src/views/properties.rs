@@ -208,6 +208,20 @@ impl AppState {
             (false, true) => "Hidden, locked",
         };
         row(ui, "State", |ui| ui.label(state));
+        // A reference's scale from a known distance (#391), high in the
+        // section so a short Inspector doesn't clip it.
+        if matches!(l.operation, locus_doc::Operation::Reference)
+            && ui
+                .button("Calibrate…")
+                .on_hover_text(
+                    "Click two points on this reference and type the real distance between them",
+                )
+                .clicked()
+        {
+            self.set_modify(crate::modify_tool::Modify::Calibrate);
+            self.view.browser_layer = Some(id);
+            self.tools.calibrate.begin(Some(id));
+        }
         ui.weak(
             "Operation settings: right-click the layer in the Browser, then Operation settings…",
         );
@@ -262,7 +276,7 @@ impl AppState {
             );
             p.mm_per_px = s;
         }
-        ui.weak("Type the width to set the image's scale.");
+        ui.weak("Type the width, or Calibrate from a known distance.");
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
         if p == img.placement {
             ui.data_mut(|d| d.remove::<ImagePlacement>(key));
@@ -639,6 +653,70 @@ pub(crate) fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #391: a Reference layer's Calibrate… button in the Inspector starts
+    /// the tool on that layer, clicked in real egui frames.
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn the_calibrate_button_starts_the_tool_on_the_layer() {
+        use egui::{Event, PointerButton, RawInput, accesskit::Role, pos2, vec2};
+        let mut state = AppState::default();
+        state.load(locus_doc::Document::new());
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="black"/></svg>"#;
+        let (cmd, _) = locus_import::reference_command(state.document(), "plan.svg", svg).unwrap();
+        state.apply(&cmd).unwrap();
+        let layer = *state
+            .document()
+            .layers()
+            .iter()
+            .find(|(_, l)| matches!(l.operation, locus_doc::Operation::Reference))
+            .unwrap()
+            .0;
+        state.view.browser_layer = Some(layer);
+        let mut settings = Settings::default();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut t = 0.0;
+        let mut frame = |state: &mut AppState, events: Vec<Event>| {
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    pos2(0.0, 0.0),
+                    vec2(400.0, 900.0),
+                )),
+                time: Some(t),
+                events,
+                ..RawInput::default()
+            };
+            t += 0.05;
+            ctx.run_ui(input, |ui| state.properties_ui(ui, &mut settings))
+        };
+        let _ = frame(&mut state, Vec::new());
+        let out = frame(&mut state, Vec::new());
+        let tree = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit tree");
+        let at = tree
+            .nodes
+            .iter()
+            .find(|(_, n)| {
+                n.role() == Role::Button && n.label().is_some_and(|l| l.contains("Calibrate"))
+            })
+            .and_then(|(_, n)| n.bounds())
+            .map(|b| pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32))
+            .expect("a Calibrate button");
+        let btn = |pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = frame(&mut state, vec![Event::PointerMoved(at)]);
+        let _ = frame(&mut state, vec![btn(true)]);
+        let _ = frame(&mut state, vec![btn(false)]);
+        assert_eq!(state.modify(), Some(crate::modify_tool::Modify::Calibrate));
+        assert_eq!(state.tools.calibrate.layer, Some(layer));
+    }
 
     /// #370: selecting a region shows its Fill; setting the fill of its
     /// boundary curves fills it.

@@ -361,6 +361,30 @@ mod tests {
         assert!(ed.document().image(layer).is_some());
     }
 
+    /// #391: calibrating an image scales its pixel size and moves its
+    /// corner about the picked point; undo puts it back.
+    #[test]
+    fn calibrate_scales_an_image() {
+        use crate::Command;
+        let (mut ed, layer) = with_image();
+        let before = ed.document().image(layer).cloned().unwrap();
+        ed.apply(&Command::ScaleReference {
+            layer,
+            about: Vec2::new(1.0, 2.0),
+            factor: 4.0,
+        })
+        .unwrap();
+        let after = ed.document().image(layer).unwrap();
+        assert_eq!(
+            after.placement.origin,
+            Vec2::new(1.0, 2.0),
+            "the pivot stays"
+        );
+        assert_eq!(after.size_mm(), Vec2::new(8.0, 4.0));
+        ed.undo().unwrap();
+        assert_eq!(ed.document().image(layer), Some(&before));
+    }
+
     #[test]
     fn base64_round_trips_and_bounds() {
         let i = tiny_png();

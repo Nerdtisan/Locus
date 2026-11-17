@@ -369,6 +369,7 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
 - **Browser plugin runtime** epic (run `.locusplugin` components in the web build, with the desktop's limits; [ADR 0016](adr/0016-web-plugin-runtime.md)). Moved here from "after M4" by the owner, 2026-11-11.
 - Machine profiles, stroke-edge constraints, bed bounds, import reference geometry (SVG/DXF as locked reference layer).
   - Raster references (M5, #390): PNG and JPEG images on their own locked Reference layer, drawn under the sketch at their own opacity and never exported. The document keeps the original file (base64, format v16); files are bounded (32 MB, 16 384 px a side, 64 MP, 64 images) and decoded with `image`'s pure-Rust PNG and JPEG codecs, refusing damaged files without panicking.
+  - Calibrate (M5, #391): as Fusion's, pick two points on a reference (snapping to its points, or anywhere on an image) and type the real distance; the whole reference (points, radii and image) scales about the first point as one `ScaleReference` command. The scale is stored in the reference, and the layer stays locked.
 - Packaging/installers: Windows Inno Setup installer + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`.
 - **Touch/pen input** epic (tablet and stylus interaction on the canvas).
 
