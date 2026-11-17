@@ -129,6 +129,10 @@ impl AppState {
                 }
             }
             Modify::Pattern(_) => self.tools.pattern.begin(),
+            Modify::TextOnPath => {
+                self.tools.path_text.begin();
+                self.selection.items.clear();
+            }
             Modify::Calibrate => {
                 // On the reference picked in the Browser, if it is one.
                 let doc = self.doc.sketcher.document();

@@ -174,6 +174,49 @@ impl OutlineFont {
         Ok(advance * scale + crate::tracked(placed.len(), tracking))
     }
 
+    /// `line`'s glyphs one by one (#392): each about its own origin, with
+    /// where that origin sits along the baseline and how far it advances.
+    pub(crate) fn glyph_run(
+        &self,
+        line: &str,
+        scale: f64,
+        tracking: f64,
+        size: f64,
+    ) -> Result<Vec<crate::PlacedGlyph>, TextError> {
+        let (placed, advance) = self.shape_line(line)?;
+        let glyphs = self.font.outline_glyphs();
+        let mut out = Vec::with_capacity(placed.len());
+        for (i, p) in placed.iter().enumerate() {
+            let x = p.x * scale + i as f64 * tracking;
+            let next = placed.get(i + 1).map_or(advance, |n| n.x);
+            let mut contours = Vec::new();
+            if let Some(glyph) = glyphs.get(GlyphId::new(p.gid)) {
+                let mut sink = ContourSink {
+                    out: &mut contours,
+                    scale,
+                    dx: 0.0,
+                    dy: p.y * scale,
+                    cur: None,
+                };
+                if glyph
+                    .draw(&DrawOptions::new(), DrawMemory::Scratch, &mut sink)
+                    .is_ok()
+                {
+                    sink.finish();
+                } else {
+                    sink.discard();
+                }
+            }
+            crate::overlap::merge_overlaps(&mut contours, 0, size);
+            out.push(crate::PlacedGlyph {
+                x,
+                advance: (next - p.x) * scale + tracking,
+                contours,
+            });
+        }
+        Ok(out)
+    }
+
     /// Advance of `line` in mm at `scale` mm per font unit, with `tracking`
     /// mm after every glyph but the last.
     pub(crate) fn line_width(

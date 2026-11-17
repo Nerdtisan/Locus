@@ -1861,6 +1861,7 @@ fn regenerate_one(
 ) -> Result<(), DocError> {
     crate::offset::regenerate(doc, id, patches)?;
     crate::pattern::regenerate(doc, id, patches)?;
+    crate::path_text::regenerate(doc, id, patches)?;
     crate::generated::regenerate(doc, id, patches, runner)
 }
 

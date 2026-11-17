@@ -718,6 +718,7 @@ mod tests {
                 "sketch.pen",
                 "sketch.point",
                 "sketch.text",
+                "sketch.text_path",
                 "sketch.mirror",
                 "sketch.pattern_circ",
                 "sketch.pattern_rect",

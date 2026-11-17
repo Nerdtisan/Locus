@@ -7,7 +7,7 @@ use crate::constrain::DimSpec;
 use crate::modify_tool::{CornerSettings, TransformSettings};
 use crate::tool::ToolHost;
 use crate::tools::Pick;
-use crate::views::canvas::{CalibrateDraft, MirrorDraft, OffsetDraft, PatternDraft};
+use crate::views::canvas::{CalibrateDraft, MirrorDraft, OffsetDraft, PathTextDraft, PatternDraft};
 use crate::views::text_ui::{FontCatalog, TextSettings};
 use locus_doc::{ConstraintId, EntityId, RecipeId};
 use locus_geom::Vec2;
@@ -63,6 +63,8 @@ pub struct ToolState {
     pub(crate) mirror: MirrorDraft,
     /// The Calibrate tool's picks and distance (#391).
     pub(crate) calibrate: CalibrateDraft,
+    /// The Text on path tool's path, text and placement (#392).
+    pub(crate) path_text: PathTextDraft,
     /// Fillet radius and chamfer sizes, edited in the command dialog.
     pub(crate) corner: CornerSettings,
     /// The corner picked for a fillet or chamfer, waiting for OK / Enter
@@ -101,6 +103,7 @@ impl Default for ToolState {
             pattern: PatternDraft::default(),
             mirror: MirrorDraft::default(),
             calibrate: CalibrateDraft::default(),
+            path_text: PathTextDraft::default(),
             corner: CornerSettings::default(),
             corner_pick: None,
             corner_focus: false,

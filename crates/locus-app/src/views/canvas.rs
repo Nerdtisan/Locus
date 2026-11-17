@@ -27,6 +27,7 @@ mod manipulator;
 mod mirror_tool;
 mod offset_tool;
 mod offsets;
+mod path_text_tool;
 mod pattern_labels;
 mod pattern_tool;
 pub mod plugin_objects;
@@ -37,6 +38,7 @@ pub(crate) use calibrate_tool::CalibrateDraft;
 pub(crate) use machine::MachinePath;
 pub(crate) use mirror_tool::MirrorDraft;
 pub(crate) use offset_tool::OffsetDraft;
+pub(crate) use path_text_tool::PathTextDraft;
 pub(crate) use pattern_tool::PatternDraft;
 pub(crate) use regions::RegionUi;
 
@@ -286,6 +288,9 @@ impl AppState {
             self.refresh_pattern_preview(circular, settings.units);
         } else if self.modify() == Some(Modify::Calibrate) {
             self.calibrate_input(ui, &resp, rect, settings.units);
+        } else if self.modify() == Some(Modify::TextOnPath) {
+            self.path_text_input(ui, &resp, rect, settings.units);
+            self.refresh_path_text_preview(settings.units);
         } else if self.modify() == Some(Modify::Mirror) {
             self.mirror_input(ui, &resp, rect, settings.units);
             self.refresh_mirror_preview();
@@ -380,6 +385,9 @@ impl AppState {
         if self.modify() == Some(Modify::Calibrate) {
             self.draw_calibrate_draft(&frame, settings.units);
         }
+        if self.modify() == Some(Modify::TextOnPath) {
+            self.draw_path_text_draft(&frame);
+        }
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -407,6 +415,9 @@ impl AppState {
         }
         if self.modify() == Some(Modify::Calibrate) {
             self.calibrate_dialog(ui, rect, settings.units);
+        }
+        if self.modify() == Some(Modify::TextOnPath) {
+            self.path_text_dialog(ui, rect, settings.units);
         }
         self.text_dialog(ui, rect);
         self.glyph_menu(ui);
@@ -1039,6 +1050,18 @@ impl AppState {
         {
             // Double-click placed text: edit it (design §3.1, §6.5; #222).
             self.open_text_dialog(id, true);
+        } else if resp.double_clicked_by(PointerButton::Primary)
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some(rid) = pick_at(self, p).and_then(|id| {
+                let doc = self.doc.sketcher.document();
+                doc.driven_by(id).filter(|r| {
+                    doc.recipe(*r)
+                        .is_some_and(|r| matches!(r.kind, locus_doc::RecipeKind::TextOnPath(_)))
+                })
+            })
+        {
+            // Double-click text on a path: edit it (#392).
+            self.edit_path_text(rid, units);
         } else if resp.double_clicked_by(PointerButton::Primary)
             && self.selection.regions.combine.is_none()
             && let Some(p) = resp.interact_pointer_pos()

@@ -91,6 +91,8 @@ fn detail(r: &Recipe, units: Units) -> String {
         },
         RecipeKind::Mirror { .. } => format!("{} copied", r.sources.len()),
         RecipeKind::Generated { .. } | RecipeKind::Modified { .. } => "plugin".to_owned(),
+        // The text itself, shortened (#392).
+        RecipeKind::TextOnPath(t) => t.content.chars().take(16).collect(),
     }
 }
 

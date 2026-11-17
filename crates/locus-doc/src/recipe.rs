@@ -107,6 +107,10 @@ pub enum RecipeKind {
         input_hash: u64,
         output: crate::generated::GeneratedGeometry,
     },
+    /// Text set along the source chain (#392, format v17): the glyphs are
+    /// cached in the recipe and placed along the path after each solve
+    /// (`crate::path_text`). Not solved; editing it is `EditRecipe`.
+    TextOnPath(Box<crate::path_text::PathText>),
 }
 
 impl RecipeKind {
@@ -120,7 +124,8 @@ impl RecipeKind {
             | Self::Linear { .. }
             | Self::Circular { .. }
             | Self::Generated { .. }
-            | Self::Modified { .. } => false,
+            | Self::Modified { .. }
+            | Self::TextOnPath(_) => false,
         }
     }
 
@@ -138,7 +143,8 @@ impl RecipeKind {
             Self::Mirror { .. }
             | Self::Offset { .. }
             | Self::Generated { .. }
-            | Self::Modified { .. } => 1,
+            | Self::Modified { .. }
+            | Self::TextOnPath(_) => 1,
             // Patterns: depends on the document; see `slots`.
             Self::Linear { .. } | Self::Circular { .. } => 0,
         }
@@ -149,7 +155,10 @@ impl RecipeKind {
     pub fn references(&self) -> Vec<EntityId> {
         match self {
             Self::Mirror { axis } => vec![*axis],
-            Self::Offset { .. } | Self::Generated { .. } | Self::Modified { .. } => Vec::new(),
+            Self::Offset { .. }
+            | Self::Generated { .. }
+            | Self::Modified { .. }
+            | Self::TextOnPath(_) => Vec::new(),
             Self::Linear { dir1, dir2 } => [Some(dir1), dir2.as_ref()]
                 .into_iter()
                 .flatten()
@@ -166,7 +175,10 @@ impl RecipeKind {
     #[must_use]
     pub fn expressions(&self) -> Vec<&str> {
         match self {
-            Self::Mirror { .. } | Self::Generated { .. } | Self::Modified { .. } => Vec::new(),
+            Self::Mirror { .. }
+            | Self::Generated { .. }
+            | Self::Modified { .. }
+            | Self::TextOnPath(_) => Vec::new(),
             Self::Offset { expr, .. } => expr.as_deref().into_iter().collect(),
             Self::Linear { dir1, dir2 } => [Some(dir1), dir2.as_ref()]
                 .into_iter()
@@ -186,7 +198,10 @@ impl RecipeKind {
             ..d.clone()
         };
         match self {
-            Self::Mirror { .. } | Self::Generated { .. } | Self::Modified { .. } => self.clone(),
+            Self::Mirror { .. }
+            | Self::Generated { .. }
+            | Self::Modified { .. }
+            | Self::TextOnPath(_) => self.clone(),
             Self::Offset {
                 distance,
                 sharp,
@@ -226,6 +241,7 @@ impl RecipeKind {
             Self::Circular { .. } => "Circular pattern",
             Self::Generated { .. } => "Plugin object",
             Self::Modified { .. } => "Modifier",
+            Self::TextOnPath(_) => "Text on path",
         }
     }
 }
@@ -284,7 +300,10 @@ impl Recipe {
     pub fn is_flat(&self) -> bool {
         matches!(
             self.kind,
-            RecipeKind::Offset { .. } | RecipeKind::Generated { .. } | RecipeKind::Modified { .. }
+            RecipeKind::Offset { .. }
+                | RecipeKind::Generated { .. }
+                | RecipeKind::Modified { .. }
+                | RecipeKind::TextOnPath(_)
         )
     }
 
@@ -364,7 +383,8 @@ pub(crate) fn transform(doc: &Document, kind: &RecipeKind, _k: usize) -> Result<
         | RecipeKind::Linear { .. }
         | RecipeKind::Circular { .. }
         | RecipeKind::Generated { .. }
-        | RecipeKind::Modified { .. } => Err(DocError::Invalid(
+        | RecipeKind::Modified { .. }
+        | RecipeKind::TextOnPath(_) => Err(DocError::Invalid(
             "this recipe has no single transform".to_owned(),
         )),
         RecipeKind::Mirror { axis } => {
@@ -440,7 +460,8 @@ pub(crate) fn slots(
         RecipeKind::Mirror { .. }
         | RecipeKind::Offset { .. }
         | RecipeKind::Generated { .. }
-        | RecipeKind::Modified { .. } => Ok(Vec::new()),
+        | RecipeKind::Modified { .. }
+        | RecipeKind::TextOnPath(_) => Ok(Vec::new()),
         RecipeKind::Linear { dir1, dir2 } => {
             let one = |d: &LinearDir| -> Result<(Vec2, f64, Vec<i64>), DocError> {
                 let n = eval_count(doc, &d.count)?;
@@ -667,6 +688,7 @@ pub(crate) fn validate(
             plugin.validate()?;
             output.validate()?;
         }
+        RecipeKind::TextOnPath(t) => crate::path_text::validate(doc, t, sources)?,
         RecipeKind::Circular { centre, .. } => {
             let found = doc
                 .entity(*centre)

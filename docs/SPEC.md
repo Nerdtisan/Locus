@@ -189,6 +189,8 @@ Trim, extend, break/split, fillet (adds tangent arc + constraints), chamfer, off
 
 Offsets (the offset tool, kerf and blade offsets) share one engine that keeps true arcs: `locus-region` offsets areas and open chains as an exact Minkowski sum/difference through the ADR 0008 arrangement, with round or miter joins (decided 2026-11-10, [ADR 0010](adr/0010-offsets.md)). The live offset is an ADR 0011 recipe over a chain of curves (distance signed: + grows a closed chain / goes left of an open one; a number or an expression); its curves are regenerated after every solve in the same undo step, stay out of the solver and can't take constraints until exploded (v1 limitation, like pattern instances).
 
+Text on a path (M5, #392) is a recipe of the same kind: the text, font reference, height, letter spacing, start offset, side (above or below the path) and alignment (start, centre, end) over a chain of curves (a line, arc, circle, shape outline or Bézier). The glyph outlines are laid out once with the font and cached in the recipe (format v17), then placed along the path after every solve, so the text follows the path without the font. The path runs left to right when open and clockwise when closed (a circle from its bottom, so centred text sits on its top); Flip reverses it. It stays re-editable: double-click the text, and the change is one `EditRecipe`.
+
 Auto-constraint inference while drawing (horizontal/vertical/coincident/tangent snap hints), toggleable — mirrors Fusion behaviour.
 
 ### 6.2.1 Mirror & pattern (detail)

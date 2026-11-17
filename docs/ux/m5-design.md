@@ -254,7 +254,8 @@ Click to place the anchor, then type on the canvas. The Text dialog has a live p
   - Overlapping glyph contours (Figtree's `# $ & * + ^ { }` and more) are unioned on layout, so outline text exports with no "segments intersect" warnings. Texts placed earlier pick this up when they are next edited.
   - The "stray arc": a Bézier's clockwise biarc pieces were taken with their ends swapped wherever export operations or offsets turned a path into a loop. They now follow the curve (`Cubic::to_pieces_oriented`).
   - Canvas drawing of text was checked: the flatness is 0.2 pt. The jagged look the owner saw is most likely the crossing contours, which are now merged; it is left for the owner's hand-check.
-- **Not built:** fit to box and text on a path (placement modes).
+- **Text on a path (#392):** Create ▸ Text on path. Click a line, arc, circle, shape or Bézier (its chain is the path), then set the text, font, height, letter spacing, start offset, side (Above / Below), alignment (Start / Centre / End) and Flip, with a live preview. Double-click the placed text to edit it. It is a recipe (SPEC §6.2), so it follows the path.
+- **Not built:** fit to box (placement mode).
 
 ### 6.6 Offset (#218)
 
