@@ -317,6 +317,7 @@ mod tests {
             construction: false,
             constrained: false,
             owned_point: false,
+            derived_point: false,
             ends: None,
         }
     }

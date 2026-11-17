@@ -597,11 +597,33 @@ impl AppState {
         })
     }
 
+    /// Delete the selection, with what is built on it, as one undo step
+    /// (#223). Offsets and patterns go with what they are built on (#365);
+    /// when that removes recipes the user didn't pick, they are asked first
+    /// (`confirm_delete`).
     pub fn delete_selection(&mut self) {
         let ids: Vec<EntityId> = self.selection.items.iter().collect();
-        if let Some(cmd) = locus_doc::delete::delete_entities(self.doc.sketcher.document(), &ids)
-            && self.apply_reporting(&cmd)
+        let Some(plan) = locus_doc::delete::delete_plan(self.doc.sketcher.document(), &ids) else {
+            return;
+        };
+        if plan.dependent_recipes.is_empty() {
+            self.run_delete(&plan.command);
+        } else {
+            self.tools.pending_delete = Some((plan.command, plan.dependent_recipes.len()));
+        }
+    }
+
+    /// The user's answer to a pending delete.
+    pub(crate) fn confirm_delete(&mut self, yes: bool) {
+        if let Some((cmd, _)) = self.tools.pending_delete.take()
+            && yes
         {
+            self.run_delete(&cmd);
+        }
+    }
+
+    fn run_delete(&mut self, cmd: &Command) {
+        if self.apply_reporting(cmd) {
             self.selection.items.clear();
         }
     }

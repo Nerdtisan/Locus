@@ -184,12 +184,17 @@ pub(crate) fn recipe_preview(doc: &Document, cmd: &Command) -> Vec<Shape> {
         .entities()
         .iter()
         .filter(|(id, _)| id.get() >= first_new)
-        .filter_map(|(id, e)| match e.geom {
-            Geom::Line { .. } => after.line(id).map(Shape::Line),
-            Geom::Arc { .. } => after.arc(id).map(Shape::Arc),
-            Geom::Circle { .. } => after.circle(id).map(Shape::Circle),
-            Geom::Bezier { .. } => after.cubic(id).map(Shape::Cubic),
-            _ => None,
+        .flat_map(|(id, e)| match e.geom {
+            Geom::Line { .. } => after.line(id).map(Shape::Line).into_iter().collect(),
+            Geom::Arc { .. } => after.arc(id).map(Shape::Arc).into_iter().collect(),
+            Geom::Circle { .. } => after.circle(id).map(Shape::Circle).into_iter().collect(),
+            Geom::Bezier { .. } => after.cubic(id).map(Shape::Cubic).into_iter().collect(),
+            // Copies of a text preview as their outline (#364).
+            Geom::Text { .. } => after
+                .text_geometry(id)
+                .map(|g| crate::scene::text_shapes(&g))
+                .unwrap_or_default(),
+            _ => Vec::new(),
         })
         .collect()
 }
@@ -1071,5 +1076,61 @@ mod tests {
         c.pattern_drag(Drag::CircCount, &h, w, false, Units::Mm);
         assert_eq!(c.tools.pattern.c_count, "4");
         assert!((circ_step(90f64.to_radians(), 4).to_degrees() - 30.0).abs() < 1e-9);
+    }
+
+    /// #364: placed text patterns, rectangular and circular: the preview
+    /// shows the copies' outlines and OK adds the recipe.
+    #[test]
+    fn text_patterns_preview_and_commit() {
+        use crate::tool::ToolEvent;
+        use crate::tools::{Pick, Tool};
+        for circular in [false, true] {
+            let mut c = AppState::default();
+            c.load(Document::new());
+            c.set_tool(Tool::Text);
+            c.tools.text_settings.content = "Hi".to_owned();
+            c.tool_event(ToolEvent::Click(Pick::free(Vec2::ZERO)), None, Units::Mm);
+            c.close_text_dialog();
+            let doc = c.doc.sketcher.document();
+            let t = doc
+                .entities()
+                .iter()
+                .find(|(_, e)| matches!(e.geom, Geom::Text { .. }))
+                .map(|(id, _)| id)
+                .expect("a text");
+            if circular {
+                let centre = c
+                    .apply_reporting(&Command::AddEntity {
+                        layer: Document::default_layer(),
+                        construction: false,
+                        geom: Geom::Point {
+                            pos: Vec2::new(0.0, -40.0),
+                        },
+                        style: Default::default(),
+                    })
+                    .then(|| {
+                        c.doc
+                            .sketcher
+                            .document()
+                            .entities()
+                            .iter()
+                            .last()
+                            .map(|(id, _)| id)
+                    })
+                    .flatten()
+                    .expect("a centre");
+                c.tools.pattern.centre = Some(centre);
+            }
+            c.set_modify(Modify::Pattern(circular));
+            c.selection.items.set_all([t]);
+            c.refresh_pattern_preview(circular, Units::Mm);
+            let preview = c.tools.pattern.preview.as_ref().map_or(0, |(_, s)| s.len());
+            assert!(preview > 0, "circular {circular}: a preview of the copies");
+            assert!(
+                c.pattern_ok(circular, Units::Mm),
+                "circular {circular}: committed"
+            );
+            assert_eq!(c.doc.sketcher.document().recipes().len(), 1);
+        }
     }
 }
