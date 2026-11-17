@@ -101,9 +101,9 @@ impl Web {
 
     /// Show the file picker for an SVG, DXF, PNG or JPEG to import as a
     /// reference. Images are binary, so the file comes back as bytes.
-    pub fn pick_reference(&self) {
-        self.spawn(async {
-            let res = match pick_named_bytes(".svg,.dxf,.png,.jpg,.jpeg").await {
+    pub fn pick_reference(&self, accept: &'static str) {
+        self.spawn(async move {
+            let res = match pick_named_bytes(accept).await {
                 Ok(v) => named_bytes(&v),
                 Err(_) => Err("Could not open the file picker.".to_owned()),
             };

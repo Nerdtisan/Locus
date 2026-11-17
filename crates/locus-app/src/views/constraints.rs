@@ -53,8 +53,7 @@ impl AppState {
                             }
                         }
                         let mut driven = d.driven;
-                        if ui
-                            .checkbox(&mut driven, "driven")
+                        if crate::theme::checkbox(ui, &mut driven, "driven")
                             .on_hover_text("Measured instead of enforced")
                             .changed()
                         {

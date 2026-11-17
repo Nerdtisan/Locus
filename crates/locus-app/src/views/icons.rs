@@ -283,7 +283,7 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.poly(&[(6.0, 3.0), (1.5, 13.0), (6.0, 13.0)], true);
             d.fill(&[(10.0, 3.0), (14.5, 13.0), (10.0, 13.0)]);
         }
-        "sketch.pattern_rect" => {
+        "sketch.pattern_rect" | "select.layer" => {
             for x in [3.0, 8.0, 13.0] {
                 for y in [3.0, 8.0, 13.0] {
                     d.rect(x - 1.8, y - 1.8, x + 1.8, y + 1.8);
@@ -315,7 +315,7 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.arrow_head((13.0, 8.0), (1.0, 0.0));
             d.line((14.0, 2.0), (14.0, 14.0));
         }
-        "modify.break" => {
+        "modify.break" | "modify.explode" => {
             d.line((2.0, 10.0), (6.5, 10.0));
             d.line((9.5, 10.0), (14.0, 10.0));
             d.dot((6.5, 10.0));
@@ -430,6 +430,22 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.fill(&[(8.0, 7.0), (12.0, 7.0), (7.0, 15.0)]);
         }
         // ── Inspect ──
+        "inspect.measure" => {
+            // The mockup's ruler: a slanted bar with ticks.
+            d.poly(&[(2.0, 10.7), (10.7, 2.0), (14.0, 5.3), (5.3, 14.0)], true);
+            d.line((4.7, 8.0), (6.0, 9.3));
+            d.line((6.7, 6.0), (8.0, 7.3));
+            d.line((8.7, 4.0), (10.0, 5.3));
+        }
+        "insert.svg" | "insert.dxf" | "insert.image" => {
+            // The mockup's import: an arrow down into a tray.
+            d.line((8.0, 2.7), (8.0, 10.0));
+            d.poly(&[(5.3, 7.3), (8.0, 10.0), (10.7, 7.3)], false);
+            d.poly(
+                &[(2.7, 11.3), (2.7, 13.3), (13.3, 13.3), (13.3, 11.3)],
+                false,
+            );
+        }
         "view.machine_preview" => {
             d.rect(4.0, 4.0, 12.0, 12.0);
             d.dashed((2.0, 2.0), (14.0, 2.0));
@@ -529,7 +545,7 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.line((6.0, 5.0), (11.0, 10.0));
             d.line((9.5, 6.5), (2.0, 14.0));
         }
-        "ui.eyedropper" => {
+        "ui.eyedropper" | "modify.style" => {
             // The mockup's eyedrop: a bulb on a diagonal pipette.
             d.poly(&[(9.3, 2.7), (13.3, 6.7), (11.3, 8.7), (7.3, 4.7)], true);
             d.poly(

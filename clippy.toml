@@ -1,0 +1,7 @@
+# Every check box and colour button goes through the shared, mockup-styled
+# widgets in locus-app/src/theme.rs (#384), never a per-panel egui one.
+disallowed-methods = [
+    { path = "egui::Ui::checkbox", reason = "use crate::theme::checkbox (the mockup check box, #384)" },
+    { path = "egui::Checkbox::new", reason = "use crate::theme::Checkbox (the mockup check box, #384)" },
+    { path = "egui::Ui::color_edit_button_srgb", reason = "use crate::theme::swatch (the mockup swatch, #384)" },
+]

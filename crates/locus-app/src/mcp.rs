@@ -265,7 +265,8 @@ impl Mcp {
 
     /// The network-clients controls, shown while the server is off (#272).
     fn network_settings(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(
+        crate::theme::checkbox(
+            ui,
             &mut self.saved.allow_network,
             "Allow network clients (other computers on this network)",
         )
@@ -533,7 +534,7 @@ impl Mcp {
                             ui.label("Port");
                             ui.add(egui::DragValue::new(&mut self.saved.port).range(1024..=65535));
                         });
-                        ui.checkbox(
+                        crate::theme::checkbox(ui,
                             &mut self.saved.allow_docker,
                             "Allow Docker clients (host.docker.internal)",
                         )
@@ -585,9 +586,9 @@ impl Mcp {
                 }
                 ui.separator();
                 ui.strong("Access");
-                ui.checkbox(&mut grants.read, "Read the document");
-                ui.checkbox(&mut grants.write, "Change the document");
-                ui.checkbox(&mut grants.export, "Export files");
+                crate::theme::checkbox(ui, &mut grants.read, "Read the document");
+                crate::theme::checkbox(ui, &mut grants.write, "Change the document");
+                crate::theme::checkbox(ui, &mut grants.export, "Export files");
                 ui.add_enabled_ui(grants.write, |ui| {
                     ui.label("Before a change:");
                     ui.radio_value(&mut grants.approval, ApprovalMode::AskEachWrite, "Ask every time");
@@ -599,7 +600,7 @@ impl Mcp {
                     ui.radio_value(&mut grants.approval, ApprovalMode::Allow, "Don't ask");
                 });
                 ui.add_enabled_ui(grants.export, |ui| {
-                    ui.checkbox(&mut grants.export_without_asking, "Export without asking");
+                    crate::theme::checkbox(ui, &mut grants.export_without_asking, "Export without asking");
                 });
                 if let Some(live) = &self.live {
                     ui.separator();
@@ -611,7 +612,7 @@ impl Mcp {
                         } else {
                             ui.monospace("••••••••");
                         }
-                        ui.checkbox(&mut self.show_token, "Show");
+                        crate::theme::checkbox(ui, &mut self.show_token, "Show");
                         if ui.button("Copy token").clicked() {
                             ui.ctx().copy_text(live.token.clone());
                         }
@@ -624,7 +625,7 @@ impl Mcp {
                         {
                             regen = true;
                         }
-                        ui.checkbox(&mut keep, "Keep this token after restarts")
+                        crate::theme::checkbox(ui, &mut keep, "Keep this token after restarts")
                             .on_hover_text("Stored with Locus's settings on this computer.");
                     });
                     if !keep {

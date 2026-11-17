@@ -12,7 +12,7 @@
 //! settings and never touch the document.
 
 use crate::actions::{Action, Cx, Enabled, Group, Registry, Source};
-use crate::toolbar::{RibbonTab, Toolbar, also_in};
+use crate::toolbar::{RibbonTab, SEPARATOR_BEFORE, Toolbar, also_in};
 use crate::views::icons;
 use egui::{DragAndDrop, Sense};
 
@@ -311,8 +311,10 @@ fn group(
                     // Never wrap, whatever the measured width (#387).
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.push_id(("ribbon-menu", g.title()), |ui| {
-                        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =
-                            egui::Color32::TRANSPARENT;
+                        // The mockup's `.glabel`: text only until hovered.
+                        let w = &mut ui.style_mut().visuals.widgets.inactive;
+                        w.weak_bg_fill = egui::Color32::TRANSPARENT;
+                        w.bg_stroke = egui::Stroke::NONE;
                         ui.menu_button(label, |ui| {
                             menu(ui, reg, cx, bar, g, edits);
                         })
@@ -482,18 +484,22 @@ fn menu(
     g: Group,
     edits: &mut Vec<Edit>,
 ) {
-    let all: Vec<&Action> = also_in(g)
-        .iter()
-        .filter_map(|id| reg.get(id))
-        .chain(reg.actions().iter().filter(|a| a.group == g))
-        .collect();
-    if all.is_empty() {
-        ui.weak(match g {
-            Group::Insert => "Generator plugins add their commands here",
-            _ => "Nothing here yet",
-        });
+    let rows = menu_rows(reg, g);
+    if rows.is_empty() {
+        ui.weak("Nothing here yet");
     }
-    for a in all {
+    for row in rows {
+        let a = match row {
+            MenuRow::Separator => {
+                ui.separator();
+                continue;
+            }
+            MenuRow::Header(h) => {
+                ui.label(egui::RichText::new(h).size(10.0).strong().weak());
+                continue;
+            }
+            MenuRow::Action(a) => a,
+        };
         let id = a.id.as_str();
         let pinned = bar.is_pinned(id, RibbonTab::of(g));
         ui.horizontal(|ui| {
@@ -568,6 +574,69 @@ fn menu(
     }
 }
 
+/// One row of a group's ▾ menu.
+#[derive(Debug)]
+enum MenuRow<'a> {
+    Action(&'a Action),
+    Separator,
+    /// A small capitals heading (the plugins' block).
+    Header(&'static str),
+}
+
+impl PartialEq for MenuRow<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MenuRow::Action(a), MenuRow::Action(b)) => a.id == b.id,
+            (MenuRow::Separator, MenuRow::Separator) => true,
+            (MenuRow::Header(a), MenuRow::Header(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+/// A group's ▾ menu, as the mockup lays it out (design §2, #386): the
+/// group's built-in actions in registry order, with separators between
+/// their blocks; its plugin actions under a PLUGINS heading (before Delete
+/// in MODIFY, last elsewhere); then what it lists from other groups
+/// (INSPECT's Validate for export).
+fn menu_rows(reg: &Registry, g: Group) -> Vec<MenuRow<'_>> {
+    let own = reg.actions().iter().filter(|a| a.group == g);
+    let (plugins, builtins): (Vec<&Action>, Vec<&Action>) =
+        own.partition(|a| a.source != Source::Builtin);
+    fn plugin_block<'a>(rows: &mut Vec<MenuRow<'a>>, plugins: &[&'a Action]) {
+        if !plugins.is_empty() {
+            if !rows.is_empty() {
+                rows.push(MenuRow::Separator);
+            }
+            rows.push(MenuRow::Header("PLUGINS"));
+            rows.extend(plugins.iter().map(|a| MenuRow::Action(a)));
+        }
+    }
+    let mut rows = Vec::new();
+    let mut plugins_shown = false;
+    for a in builtins {
+        let id = a.id.as_str();
+        if id == "edit.delete" && !plugins_shown {
+            plugin_block(&mut rows, &plugins);
+            plugins_shown = true;
+        }
+        if !rows.is_empty() && SEPARATOR_BEFORE.contains(&id) {
+            rows.push(MenuRow::Separator);
+        }
+        rows.push(MenuRow::Action(a));
+    }
+    if !plugins_shown {
+        plugin_block(&mut rows, &plugins);
+    }
+    rows.extend(
+        also_in(g)
+            .iter()
+            .filter_map(|id| reg.get(id))
+            .map(MenuRow::Action),
+    );
+    rows
+}
+
 fn title_case(s: &str) -> String {
     let lower = s.to_lowercase();
     let mut c = lower.chars();
@@ -613,6 +682,153 @@ mod tests {
             .collect();
         assert_eq!(buttons.len(), 1, "one button, icon and label together");
         assert!(buttons[0].1.label().is_some_and(|l| l.contains("EXPORT")));
+    }
+
+    /// #386: every SKETCH group's ▾ menu lists the mockup's tools in the
+    /// mockup's order (design §2). Window select and Selection filters are
+    /// follow-ups; Smooth (G2) is hidden until the spec has it.
+    #[test]
+    fn group_menus_match_the_mockup() {
+        let reg = Registry::default();
+        let ids = |g| {
+            menu_rows(&reg, g)
+                .into_iter()
+                .filter_map(|r| match r {
+                    MenuRow::Action(a) => Some(a.id.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(Group::Create),
+            [
+                "sketch.line",
+                "sketch.rect_2pt",
+                "sketch.rect_centre",
+                "sketch.rect_3pt",
+                "sketch.circle_centre",
+                "sketch.circle_2pt",
+                "sketch.circle_3pt",
+                "sketch.arc_3pt",
+                "sketch.arc_centre",
+                "sketch.arc_tangent",
+                "sketch.polygon",
+                "sketch.polygon_edge",
+                "sketch.slot",
+                "sketch.pen",
+                "sketch.point",
+                "sketch.text",
+                "sketch.mirror",
+                "sketch.pattern_circ",
+                "sketch.pattern_rect",
+                "modify.offset",
+            ]
+        );
+        assert_eq!(
+            ids(Group::Modify),
+            [
+                "modify.fillet",
+                "modify.chamfer",
+                "modify.trim",
+                "modify.extend",
+                "modify.break",
+                "modify.move",
+                "modify.rotate",
+                "modify.scale",
+                "modify.construction",
+                "modify.explode",
+                "modify.style",
+                "edit.delete",
+            ]
+        );
+        assert_eq!(
+            ids(Group::Constrain),
+            [
+                "constrain.dimension",
+                "constrain.coincident",
+                "constrain.collinear",
+                "constrain.concentric",
+                "constrain.midpoint",
+                "constrain.fix",
+                "constrain.parallel",
+                "constrain.perpendicular",
+                "constrain.horizontal",
+                "constrain.vertical",
+                "constrain.tangent",
+                "constrain.equal",
+                "constrain.symmetric",
+                "constrain.auto",
+            ]
+        );
+        assert_eq!(
+            ids(Group::Inspect),
+            [
+                "inspect.measure",
+                "view.machine_preview",
+                "view.stroke_width",
+                "output.validate",
+            ]
+        );
+        assert_eq!(
+            ids(Group::Insert),
+            ["insert.svg", "insert.dxf", "insert.image"]
+        );
+        assert_eq!(
+            ids(Group::Select),
+            [
+                "select.select",
+                "select.chain",
+                "select.layer",
+                "edit.select_all",
+                "edit.deselect",
+            ]
+        );
+        // The mockup's names (Fusion's).
+        let label = |id| reg.get(id).map(|a| a.label.to_string());
+        assert_eq!(label("inspect.measure").as_deref(), Some("Measure"));
+        assert_eq!(
+            label("sketch.circle_centre").as_deref(),
+            Some("Center Diameter Circle")
+        );
+        assert_eq!(
+            label("constrain.dimension").as_deref(),
+            Some("Sketch Dimension")
+        );
+        assert_eq!(
+            reg.get("inspect.measure")
+                .and_then(|a| reg.shortcut(a))
+                .map(|k| k.logical_key),
+            Some(egui::Key::I)
+        );
+    }
+
+    /// The mockup's separators, and a plugin's actions under PLUGINS before
+    /// Delete in MODIFY.
+    #[test]
+    fn menus_have_the_mockups_separators_and_plugin_block() {
+        let mut reg = Registry::default();
+        reg.sync_plugins(vec![crate::actions::PluginAction {
+            plugin: "dogbone".into(),
+            name: "Dogbone".into(),
+            kind: crate::actions::PluginKind::Modifier,
+        }]);
+        let rows = menu_rows(&reg, Group::Modify);
+        let at = |id: &str| {
+            rows.iter()
+                .position(|r| matches!(r, MenuRow::Action(a) if a.id.as_str() == id))
+        };
+        let (Some(plugin), Some(delete), Some(mv)) = (
+            at("plugin.dogbone.apply"),
+            at("edit.delete"),
+            at("modify.move"),
+        ) else {
+            panic!("rows missing: {rows:?}");
+        };
+        assert_eq!(rows[plugin - 1], MenuRow::Header("PLUGINS"));
+        assert!(plugin < delete);
+        assert_eq!(rows[delete - 1], MenuRow::Separator);
+        assert_eq!(rows[mv - 1], MenuRow::Separator);
+        assert!(!matches!(rows[0], MenuRow::Separator));
     }
 
     /// #387: no group label wraps, on any tab, however few buttons it has

@@ -159,7 +159,7 @@ impl AppState {
             let mixed = !all && flags.iter().any(|c| *c);
             let mut on = all;
             let toggled = crate::views::canvas::dialog::row(ui, "Construction", |ui| {
-                ui.add(egui::Checkbox::new(&mut on, "X").indeterminate(mixed))
+                ui.add(crate::theme::Checkbox::new(&mut on, "X").mixed(mixed))
                     .on_hover_text("Drawn dashed, takes constraints, never exported (X)")
                     .changed()
             });
@@ -187,7 +187,7 @@ impl AppState {
         row(ui, "Operation", |ui| ui.label(l.operation.kind().name()));
         let mut export = l.export_enabled;
         let toggled = row(ui, "Export", |ui| {
-            ui.checkbox(&mut export, "Include in export").changed()
+            crate::theme::checkbox(ui, &mut export, "Include in export").changed()
         });
         if toggled {
             self.apply_reporting(&Command::SetLayerProps {

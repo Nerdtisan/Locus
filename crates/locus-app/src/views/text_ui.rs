@@ -390,15 +390,15 @@ pub fn controls(
                 .changed();
             ui.end_row();
             ui.label("Alignment");
-            ui.horizontal(|ui| {
-                for (a, l) in [
-                    (Align::Left, "Left"),
-                    (Align::Center, "Centre"),
-                    (Align::Right, "Right"),
-                ] {
-                    out.style |= ui.selectable_value(&mut s.align, a, l).changed();
-                }
-            });
+            let aligns = [
+                (Align::Left, "Left"),
+                (Align::Center, "Centre"),
+                (Align::Right, "Right"),
+            ];
+            if let Some(a) = crate::theme::segmented(ui, s.align, &aligns) {
+                s.align = a;
+                out.style = true;
+            }
             ui.end_row();
             ui.label("Line spacing");
             out.style |= ui

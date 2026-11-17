@@ -316,6 +316,9 @@ impl App {
                 Shell::Export => self.files.open_export(&self.state, &self.settings),
                 Shell::ExportPng => self.files.open_export_png(&self.state),
                 Shell::Profiles => self.files.open_profiles(),
+                Shell::InsertReference(kind) => {
+                    self.files.begin_import_reference(&mut self.state, kind);
+                }
                 Shell::InstallPlugin => self.plugins.open_install(),
                 Shell::PluginManager => self.plugins.open_manager(),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -587,7 +590,7 @@ impl App {
             ui.separator();
             for tab in Tab::PANES {
                 let mut shown = self.is_shown(tab);
-                if ui.checkbox(&mut shown, tab.title()).changed() {
+                if crate::theme::checkbox(ui, &mut shown, tab.title()).changed() {
                     self.toggle_tab(tab);
                 }
             }

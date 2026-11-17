@@ -80,15 +80,30 @@ pub const RIBBON: [Group; 10] = [
     Group::Automation,
 ];
 
-/// Actions a group's ▾ menu lists although they belong to another group:
-/// OUTPUT ▸ PREVIEW shows Machine preview, which is also an Inspect toggle
-/// (design §2).
+/// Actions a group's ▾ menu lists although they belong to another group,
+/// as the mockup lists them (design §2, #386): OUTPUT ▸ PREVIEW shows
+/// Machine preview, an INSPECT toggle; INSPECT ends with Validate for
+/// export, an OUTPUT ▸ PREVIEW command. They are listed after the group's
+/// own actions.
 pub fn also_in(g: Group) -> &'static [&'static str] {
     match g {
         Group::Preview => &["view.machine_preview"],
+        Group::Inspect => &["output.validate"],
         _ => &[],
     }
 }
+
+/// A group menu draws a separator before these, as the mockup's menus do
+/// (#386): Create's recipes, Modify's transforms and its object commands,
+/// Delete, the constraint symbols and the auto-constrain toggle.
+pub const SEPARATOR_BEFORE: &[&str] = &[
+    "sketch.mirror",
+    "modify.move",
+    "modify.construction",
+    "edit.delete",
+    "constrain.coincident",
+    "constrain.auto",
+];
 
 /// Each group's default pins: its most used tools (design §2.3, §7.1).
 /// The CONSTRAIN group shows every constraint symbol, as Fusion does.
@@ -100,15 +115,15 @@ pub const DEFAULT_RIBBON: &[(Group, &[&str])] = &[
             "sketch.rect_2pt",
             "sketch.circle_centre",
             "sketch.arc_3pt",
-            "sketch.polygon",
+            "sketch.text",
             "modify.offset",
         ],
     ),
     (
         Group::Modify,
         &[
-            "modify.trim",
             "modify.fillet",
+            "modify.trim",
             "modify.move",
             "modify.construction",
         ],
@@ -133,9 +148,9 @@ pub const DEFAULT_RIBBON: &[(Group, &[&str])] = &[
     ),
     (
         Group::Inspect,
-        &["view.machine_preview", "view.stroke_width"],
+        &["inspect.measure", "view.machine_preview", "output.validate"],
     ),
-    (Group::Insert, &[]),
+    (Group::Insert, &["insert.svg"]),
     (Group::Select, &["select.select", "select.chain"]),
     // OUTPUT and UTILITIES (#325), as the mockup pins them.
     (Group::Preview, &["view.machine_preview", "output.validate"]),
@@ -447,8 +462,8 @@ mod tests {
         assert_eq!(
             t.pinned(Group::Modify),
             [
-                "modify.trim",
                 "modify.fillet",
+                "modify.trim",
                 "modify.extend",
                 "modify.move",
                 "modify.construction"

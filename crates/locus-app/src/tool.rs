@@ -193,6 +193,19 @@ fn id_of(op: &Op) -> ActionId {
         .map_or(ActionId::new("select.select"), |a| a.id.clone())
 }
 
+/// Inspect ▸ Measure's result (#386): the distance from `a` to `b`, its
+/// horizontal and vertical parts and its angle from the x axis.
+pub fn measurement(a: Vec2, b: Vec2, units: Units) -> String {
+    let d = b - a;
+    let angle = d.y.atan2(d.x).to_degrees();
+    format!(
+        "Distance {} · dx {} · dy {} · angle {angle:.2}°",
+        units.format_len(a.distance(b)),
+        units.format_len(d.x.abs()),
+        units.format_len(d.y.abs()),
+    )
+}
+
 // ── Drawing tools, text and the pen ─────────────────────────────────────
 
 /// Select and every drawing tool: a click sequence with a typed field
@@ -260,6 +273,9 @@ impl Tool for DrawTool {
                     self.draft.set_text(cx.text.clone());
                 }
                 let out = self.draft.click(pick, next);
+                if let Some((a, b)) = self.draft.take_measured() {
+                    cx.notice = Some(Some(measurement(a, b, cx.units)));
+                }
                 self.outcome(out, cx)
             }
             ToolEvent::Drag { from, to } => {
@@ -746,6 +762,45 @@ mod tests {
         );
         assert_eq!(c.corner_pick, Some((lines[0], lines[1])));
         assert!(t.commit().is_none() && !t.busy());
+    }
+
+    /// INSPECT ▸ Measure (#386): two clicks report the distance, its parts
+    /// and angle in the status bar; nothing is committed, and the next pair
+    /// measures again.
+    #[test]
+    fn measure_reports_the_distance_and_never_commits() {
+        let doc = Document::new();
+        let scene = Scene::default();
+        let mut t = DrawTool::new(DrawKind::Measure, Document::default_layer());
+        let mut c = cx(&doc, &scene);
+        assert_eq!(
+            t.event(ToolEvent::Click(Pick::free(Vec2::ZERO)), &mut c),
+            Flow::Continue
+        );
+        assert!(t.busy() && c.notice.is_none());
+        assert_eq!(t.readout(Vec2::new(3.0, 4.0)), Some(("Distance", 5.0)));
+        assert_eq!(
+            t.event(ToolEvent::Click(Pick::free(Vec2::new(3.0, 4.0))), &mut c),
+            Flow::Continue
+        );
+        assert!(t.commit().is_none() && !t.busy());
+        let Some(Some(n)) = &c.notice else {
+            panic!("no measurement shown");
+        };
+        assert!(n.starts_with("Distance 5.000 mm"), "{n}");
+        assert!(
+            n.contains("dx 3.000 mm") && n.contains("dy 4.000 mm"),
+            "{n}"
+        );
+        assert!(n.contains("53.13°"), "{n}");
+        // The measured line stays drawn until the next measurement.
+        assert_eq!(t.preview(Vec2::new(9.0, 9.0), None).len(), 1);
+        let mut c = cx(&doc, &scene);
+        t.event(ToolEvent::Click(Pick::free(Vec2::ZERO)), &mut c);
+        assert!(
+            c.notice.is_none(),
+            "a first click doesn't repeat the result"
+        );
     }
 
     #[test]

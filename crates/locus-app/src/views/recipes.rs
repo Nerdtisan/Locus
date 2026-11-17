@@ -212,8 +212,8 @@ impl RecipesView {
         } = &r.kind
         {
             let (mut s, mut ro) = (*symmetric, *rotate);
-            let a = ui.checkbox(&mut s, "symmetric").changed();
-            let b = ui.checkbox(&mut ro, "rotate copies").changed();
+            let a = crate::theme::checkbox(ui, &mut s, "symmetric").changed();
+            let b = crate::theme::checkbox(ui, &mut ro, "rotate copies").changed();
             if a || b {
                 let mut k = r.kind.clone();
                 if let RecipeKind::Circular {
@@ -231,7 +231,7 @@ impl RecipesView {
             ui.horizontal_wrapped(|ui| {
                 for k in 0..r.active.min(SHOWN_COPIES) {
                     let mut on = !r.suppressed.contains(&k);
-                    if ui.checkbox(&mut on, (k + 1).to_string()).changed() {
+                    if crate::theme::checkbox(ui, &mut on, (k + 1).to_string()).changed() {
                         cmds.push(Command::SetInstanceSuppressed {
                             id: rid,
                             index: k,

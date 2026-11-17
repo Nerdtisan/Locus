@@ -476,12 +476,12 @@ impl AppState {
                             cancel_pick = selection(ui, &text, true, false).1;
                         });
                         row(ui, "", |ui| {
-                            rechain = ui
-                                .checkbox(&mut c.offset_chain, "Chain selection")
-                                .on_hover_text(
-                                    "Offset every curve joined end to end with the picked one",
-                                )
-                                .changed();
+                            rechain =
+                                crate::theme::checkbox(ui, &mut c.offset_chain, "Chain selection")
+                                    .on_hover_text(
+                                        "Offset every curve joined end to end with the picked one",
+                                    )
+                                    .changed();
                         });
                         row(ui, "Distance", |ui| {
                             let out = egui::TextEdit::singleline(&mut c.text.offset)

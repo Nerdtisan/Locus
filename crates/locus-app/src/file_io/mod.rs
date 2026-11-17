@@ -21,6 +21,51 @@ use locus_export::{Prepared, Severity};
 use std::path::Path;
 use std::path::PathBuf;
 
+/// Which files an Insert / Import reference picker offers (#386):
+/// INSERT ▸ Insert SVG… and Insert DXF… each pick one format, File ▸
+/// Import reference… either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Insert {
+    Svg,
+    Dxf,
+    /// A PNG or JPEG to trace over (#390).
+    Image,
+    Any,
+}
+
+impl Insert {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn label(self) -> &'static str {
+        match self {
+            Insert::Svg => "SVG",
+            Insert::Dxf => "DXF",
+            Insert::Image => "PNG or JPEG",
+            Insert::Any => "SVG, DXF, PNG or JPEG",
+        }
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Insert::Svg => &["svg"],
+            Insert::Dxf => &["dxf"],
+            Insert::Image => &["png", "jpg", "jpeg"],
+            Insert::Any => &["svg", "dxf", "png", "jpg", "jpeg"],
+        }
+    }
+
+    /// The browser file input's `accept`.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    fn accept(self) -> &'static str {
+        match self {
+            Insert::Svg => ".svg",
+            Insert::Dxf => ".dxf",
+            Insert::Image => ".png,.jpg,.jpeg",
+            Insert::Any => ".svg,.dxf,.png,.jpg,.jpeg",
+        }
+    }
+}
+
 /// One finding from an extra pre-export check: a validator plugin (#234).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtraFinding {
@@ -337,7 +382,7 @@ impl FileIo {
             )
             .clicked()
         {
-            self.begin_import_reference(canvas);
+            self.begin_import_reference(canvas, Insert::Any);
             ui.close();
         }
         ui.separator();
@@ -369,7 +414,7 @@ impl FileIo {
                 ui.close();
             }
             ui.separator();
-            ui.checkbox(&mut self.export_each_layer, "Each layer as a separate file")
+            crate::theme::checkbox(ui, &mut self.export_each_layer, "Each layer as a separate file")
                 .on_hover_text(if cfg!(target_arch = "wasm32") {
                     "One file per layer on the same canvas, downloaded as a .zip."
                 } else {
@@ -456,13 +501,10 @@ impl FileIo {
     /// PNG or JPEG on a new locked Reference layer. It doesn't replace the document, so the
     /// unsaved-changes guard doesn't apply; it is one undo step.
     #[cfg(not(target_arch = "wasm32"))]
-    fn begin_import_reference(&mut self, canvas: &mut AppState) {
+    pub fn begin_import_reference(&mut self, canvas: &mut AppState, kind: Insert) {
         use std::io::Read;
         let Some(path) = rfd::FileDialog::new()
-            .add_filter(
-                "SVG, DXF, PNG or JPEG",
-                &["svg", "dxf", "png", "jpg", "jpeg"],
-            )
+            .add_filter(kind.label(), kind.extensions())
             .pick_file()
         else {
             return;
@@ -484,8 +526,8 @@ impl FileIo {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn begin_import_reference(&mut self, _canvas: &mut AppState) {
-        self.web.pick_reference();
+    pub fn begin_import_reference(&mut self, _canvas: &mut AppState, kind: Insert) {
+        self.web.pick_reference(kind.accept());
     }
 
     /// Parses `bytes` and applies the import as one undo step. Failures are
@@ -882,12 +924,16 @@ impl FileIo {
                         canvas.selected().len(),
                     );
                 }
-                ui.checkbox(&mut panel.per_layer, "Export each layer as a separate file")
-                    .on_hover_text(if cfg!(target_arch = "wasm32") {
-                        "One file per layer on the same canvas, downloaded as a .zip."
-                    } else {
-                        "One file per layer on the same canvas, written to a folder you pick."
-                    });
+                crate::theme::checkbox(
+                    ui,
+                    &mut panel.per_layer,
+                    "Export each layer as a separate file",
+                )
+                .on_hover_text(if cfg!(target_arch = "wasm32") {
+                    "One file per layer on the same canvas, downloaded as a .zip."
+                } else {
+                    "One file per layer on the same canvas, written to a folder you pick."
+                });
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
@@ -1168,7 +1214,7 @@ fn png_options(
     }
     ui.add_enabled(
         selected > 0,
-        egui::Checkbox::new(
+        crate::theme::Checkbox::new(
             selection_only,
             format!("Selection only ({selected} selected)"),
         ),
