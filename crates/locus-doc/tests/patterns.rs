@@ -832,3 +832,124 @@ fn a_circular_pattern_round_a_point_of_its_own_shape() {
         .count();
     assert_eq!(lines, 3);
 }
+
+// ── Construction on recipe outputs (#421) ──
+
+fn construction(s: &Sketcher, id: EntityId) -> bool {
+    s.document().entity(id).unwrap().construction
+}
+
+/// Regression (#421): an offset's curves can be made construction in one
+/// undo step, and stay construction when the offset regenerates.
+#[test]
+fn offset_curves_can_be_made_construction_and_keep_it() {
+    let mut s = Sketcher::new(Document::new());
+    let (lines, off) = offset_rectangle(&mut s);
+    let curves = offset_lines(&s, off);
+    let before = s.document().clone();
+    s.apply(&Command::SetConstruction {
+        entities: curves.clone(),
+        construction: true,
+    })
+    .expect("recipe outputs may be made construction");
+    assert!(curves.iter().all(|c| construction(&s, *c)));
+    assert!(lines.iter().all(|l| !construction(&s, *l)), "sources stay");
+    assert_eq!(s.editor().undo_label(), Some("Make construction"));
+    // Regenerating: a new distance, then a source edit.
+    s.apply(&Command::EditRecipe {
+        id: off,
+        kind: RecipeKind::Offset {
+            distance: 3.0,
+            sharp: true,
+            expr: None,
+        },
+    })
+    .unwrap();
+    assert!(curves.iter().all(|c| construction(&s, *c)), "kept on edit");
+    let corner = match s.document().entity(lines[1]).unwrap().geom {
+        Geom::Line { end, .. } => end,
+        _ => unreachable!(),
+    };
+    s.apply(&Command::ModifyEntity {
+        id: corner,
+        geom: Geom::Point {
+            pos: Vec2::new(25.0, 10.0),
+        },
+    })
+    .unwrap();
+    assert!(
+        offset_lines(&s, off).iter().all(|c| construction(&s, *c)),
+        "kept when the source moves"
+    );
+    // The flag round-trips through the file.
+    let text = locus_doc::file::save(s.document()).unwrap();
+    assert_eq!(&locus_doc::file::load(&text).unwrap(), s.document());
+    // One undo per step, back to where it started.
+    s.undo().unwrap();
+    s.undo().unwrap();
+    s.undo().unwrap();
+    assert_eq!(s.document().entities(), before.entities());
+    // Toggling a single offset curve works too.
+    s.apply(&Command::ToggleConstruction { id: curves[0] })
+        .unwrap();
+    assert!(construction(&s, curves[0]));
+}
+
+/// Regression (#421): a pattern copy keeps the construction it was given
+/// when the pattern regenerates; new copies take the source's.
+#[test]
+fn a_pattern_copy_keeps_construction_through_regeneration() {
+    let mut s = Sketcher::new(Document::new());
+    set(&mut s, "n", "3").unwrap();
+    let p = pt(&mut s, 5.0, 5.0);
+    let r = add(
+        &mut s,
+        RecipeKind::Linear {
+            dir1: dir(Axis::X, "n", "10"),
+            dir2: None,
+        },
+        &[p],
+    )
+    .unwrap();
+    let first = inst_pt(&s, r, 0);
+    s.apply(&Command::SetConstruction {
+        entities: vec![first],
+        construction: true,
+    })
+    .unwrap();
+    s.apply(&Command::ModifyEntity {
+        id: p,
+        geom: Geom::Point {
+            pos: Vec2::new(5.0, 8.0),
+        },
+    })
+    .unwrap();
+    set(&mut s, "n", "4").unwrap();
+    assert!(construction(&s, first), "kept through regeneration");
+    let others: Vec<EntityId> = s
+        .document()
+        .recipe(r)
+        .unwrap()
+        .instances()
+        .filter(|e| *e != first)
+        .collect();
+    assert_eq!(others.len(), 2);
+    assert!(others.iter().all(|e| !construction(&s, *e)));
+    // A source and its copies selected together all end up construction:
+    // the command is absolute, so no copy is flipped twice.
+    let mut all = vec![p, first];
+    all.extend(&others);
+    s.apply(&Command::SetConstruction {
+        entities: all.clone(),
+        construction: true,
+    })
+    .unwrap();
+    assert!(all.iter().all(|e| construction(&s, *e)));
+    // Making the source normal brings its copies with it.
+    s.apply(&Command::SetConstruction {
+        entities: vec![p],
+        construction: false,
+    })
+    .unwrap();
+    assert!(all.iter().all(|e| !construction(&s, *e)));
+}

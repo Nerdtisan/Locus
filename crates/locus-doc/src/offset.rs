@@ -505,11 +505,14 @@ pub(crate) fn write_flat(
                 radius,
             },
         };
-        // An instance keeps a style it was given; a new one takes the source's.
-        let style = doc.entity(pool[i]).map_or(style, |e| e.style);
+        // An instance keeps the style and construction it was given (#421);
+        // a new one takes the source's style and is normal.
+        let (style, construction) = doc
+            .entity(pool[i])
+            .map_or((style, false), |e| (e.style, e.construction));
         let e = Entity {
             layer,
-            construction: false,
+            construction,
             geom,
             style,
         };
