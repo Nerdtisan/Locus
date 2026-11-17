@@ -17,6 +17,8 @@ extern "C" {
     #[wasm_bindgen(catch)]
     async fn pick_text(accept: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch)]
+    async fn pick_named_bytes(accept: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(catch)]
     async fn autosave_write(text: &str) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch)]
     async fn autosave_read() -> Result<JsValue, JsValue>;
@@ -32,8 +34,9 @@ const AUTOSAVE_RETRY: f64 = 10.0;
 pub enum Msg {
     /// `Ok(None)` = the picker was cancelled.
     Picked(Result<Option<(String, String)>, String>),
-    /// File ▸ Import reference…: an SVG or DXF, name and text (#243).
-    PickedReference(Result<Option<(String, String)>, String>),
+    /// File ▸ Import reference…: an SVG, DXF, PNG or JPEG, name and bytes
+    /// (#243, #390).
+    PickedReference(Result<Option<(String, Vec<u8>)>, String>),
     /// File ▸ Machine profiles ▸ Import: a profile `.json` (#286).
     PickedProfile(Result<Option<(String, String)>, String>),
     /// The autosaved document text found at startup, if any.
@@ -96,14 +99,12 @@ impl Web {
         });
     }
 
-    /// Show the file picker for an SVG or DXF to import as a reference.
+    /// Show the file picker for an SVG, DXF, PNG or JPEG to import as a
+    /// reference. Images are binary, so the file comes back as bytes.
     pub fn pick_reference(&self, accept: &'static str) {
         self.spawn(async move {
-            let res = match pick_text(accept).await {
-                Ok(v) => match v.as_string() {
-                    None => Ok(None),
-                    Some(json) => parse_picked(&json).map(Some),
-                },
+            let res = match pick_named_bytes(accept).await {
+                Ok(v) => named_bytes(&v),
                 Err(_) => Err("Could not open the file picker.".to_owned()),
             };
             Msg::PickedReference(res)
@@ -186,6 +187,28 @@ impl Web {
                     .map_err(|_| "autosave failed".to_owned()),
             )
         });
+    }
+}
+
+/// `pick_named_bytes`' answer: `[name, Uint8Array]`, an error string, or
+/// null when cancelled.
+fn named_bytes(v: &JsValue) -> Result<Option<(String, Vec<u8>)>, String> {
+    if v.is_null() || v.is_undefined() {
+        return Ok(None);
+    }
+    if let Some(e) = v.as_string() {
+        return Err(e);
+    }
+    let pair = js_sys::Array::from(v);
+    let name = pair.get(0).as_string();
+    let bytes = pair
+        .get(1)
+        .dyn_into::<js_sys::Uint8Array>()
+        .ok()
+        .map(|b| b.to_vec());
+    match (name, bytes) {
+        (Some(n), Some(b)) => Ok(Some((n, b))),
+        _ => Err("Could not read the file.".to_owned()),
     }
 }
 

@@ -60,6 +60,8 @@ pub struct ViewState {
     /// while nothing on the canvas is selected (design §2.1). Cleared when
     /// the canvas selection changes.
     pub browser_layer: Option<locus_doc::LayerId>,
+    /// Reference images decoded for drawing, by layer (#390).
+    pub(crate) images: crate::views::canvas::images::ImageCache,
 }
 
 /// A marking menu opened by right-click or a long press (design §4).
@@ -101,6 +103,7 @@ impl Default for ViewState {
             pan_mode: false,
             shell: Vec::new(),
             browser_layer: None,
+            images: Default::default(),
         }
     }
 }

@@ -211,6 +211,70 @@ impl AppState {
         ui.weak(
             "Operation settings: right-click the layer in the Browser, then Operation settings…",
         );
+        self.image_section(ui, id);
+    }
+
+    /// A reference image's opacity and size (#390). An edit is held while
+    /// the slider is dragged or the field typed in, then applied as one
+    /// command (SPEC §11), as the style fields are.
+    fn image_section(&mut self, ui: &mut egui::Ui, id: locus_doc::LayerId) {
+        use crate::views::canvas::dialog::row;
+        use locus_doc::ImagePlacement;
+        let Some(img) = self.doc.sketcher.document().image(id).cloned() else {
+            return;
+        };
+        let key = egui::Id::new(("image-placement", id.get()));
+        let pending: Option<ImagePlacement> = ui.data(|d| d.get_temp(key));
+        let mut p = pending.unwrap_or(img.placement);
+        section(ui, "Image", |_| {});
+        row(ui, "Pixels", |ui| {
+            ui.label(format!("{} × {} px", img.width_px, img.height_px))
+        });
+        let mut opacity = p.opacity * 100.0;
+        let moved = row(ui, "Opacity", |ui| {
+            ui.add(egui::Slider::new(&mut opacity, 0.0..=100.0).suffix(" %"))
+                .changed()
+        });
+        if moved {
+            p.opacity = (opacity / 100.0).clamp(0.0, 1.0);
+        }
+        let px_w = f64::from(img.width_px);
+        let mut width = px_w * p.mm_per_px;
+        let sized = row(ui, "Width", |ui| {
+            let r = ui
+                .add(
+                    egui::DragValue::new(&mut width)
+                        .range(0.001..=1.0e6)
+                        .speed(0.1)
+                        .suffix(" mm"),
+                )
+                .on_hover_text("The image's width; its height follows");
+            ui.weak(format!(
+                "× {:.3} mm",
+                f64::from(img.height_px) * width / px_w
+            ));
+            r.changed()
+        });
+        if sized && width.is_finite() && width > 0.0 {
+            let s = (width / px_w).clamp(
+                locus_doc::image::MIN_MM_PER_PX,
+                locus_doc::image::MAX_MM_PER_PX,
+            );
+            p.mm_per_px = s;
+        }
+        ui.weak("Type the width to set the image's scale.");
+        let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
+        if p == img.placement {
+            ui.data_mut(|d| d.remove::<ImagePlacement>(key));
+        } else if settled {
+            ui.data_mut(|d| d.remove::<ImagePlacement>(key));
+            self.apply_reporting(&Command::SetImagePlacement {
+                layer: id,
+                placement: p,
+            });
+        } else {
+            ui.data_mut(|d| d.insert_temp(key, p));
+        }
     }
 
     /// Nothing selected (design §2.1): sketch status, the document's

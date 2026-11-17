@@ -437,7 +437,7 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.line((6.7, 6.0), (8.0, 7.3));
             d.line((8.7, 4.0), (10.0, 5.3));
         }
-        "insert.svg" | "insert.dxf" => {
+        "insert.svg" | "insert.dxf" | "insert.image" => {
             // The mockup's import: an arrow down into a tray.
             d.line((8.0, 2.7), (8.0, 10.0));
             d.poly(&[(5.3, 7.3), (8.0, 10.0), (10.7, 7.3)], false);

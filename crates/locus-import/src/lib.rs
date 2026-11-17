@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Parsers for reference geometry: SVG (#241) and DXF (#242).
+//! Parsers for reference geometry: SVG (#241) and DXF (#242), and PNG /
+//! JPEG reference images (#390, [`raster`]).
 //!
 //! Imports are **never** editable native documents (SPEC §1 non-goals): the
 //! parsers turn a file into [`ImportShape`]s in millimetres, and
@@ -15,6 +16,7 @@
 
 mod affine;
 mod dxf;
+pub mod raster;
 mod svg;
 
 use locus_doc::reference::ImportShape;
@@ -93,8 +95,10 @@ pub enum ImportError {
     BadDxf,
     #[error("binary DXF files are not supported; save as ASCII DXF")]
     BinaryDxf,
-    #[error("only SVG and ASCII DXF files can be imported")]
+    #[error("only SVG, ASCII DXF, PNG and JPEG files can be imported")]
     UnknownFormat,
+    #[error("the image is damaged, or larger than 16 384 pixels a side or 64 megapixels")]
+    BadImage,
     #[error("{0}")]
     Document(String),
     #[error("the file has no drawable geometry")]
@@ -144,19 +148,75 @@ pub fn reference_command(
     file_name: &str,
     bytes: &[u8],
 ) -> Result<(locus_doc::command::Command, Vec<String>), ImportError> {
+    reference_command_at(doc, file_name, bytes, locus_geom::Vec2::ZERO)
+}
+
+/// As [`reference_command`], placing a PNG or JPEG (found by its
+/// signature, #390) centred on `centre`, mm: the middle of the view. Vector
+/// files keep their own coordinates.
+pub fn reference_command_at(
+    doc: &locus_doc::document::Document,
+    file_name: &str,
+    bytes: &[u8],
+    centre: locus_geom::Vec2,
+) -> Result<(locus_doc::command::Command, Vec<String>), ImportError> {
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(ImportError::TooLarge);
+    }
+    if locus_doc::image::ImageFormat::sniff(bytes).is_some() {
+        let image = raster::reference_image(bytes, centre)?;
+        let cmd = image_command(doc, &layer_name(file_name), image);
+        let warning = "The image is placed at 96 dpi: use Calibrate to set its real scale.";
+        return Ok((cmd, vec![warning.to_owned()]));
+    }
     let imported = match detect(file_name, bytes).ok_or(ImportError::UnknownFormat)? {
         Format::Svg => import_svg(bytes)?,
         Format::Dxf => import_dxf(bytes)?,
     };
-    // The layer is named after the file, without any directory.
-    let base = file_name.rsplit(['/', '\\']).next().unwrap_or("");
-    let name: String = base.chars().take(MAX_LAYER_NAME).collect();
-    let name = if name.trim().is_empty() {
-        "Reference".to_owned()
-    } else {
-        name
-    };
+    let name = layer_name(file_name);
     let cmd = locus_doc::reference::import_shapes_command(doc, &name, &imported.shapes)
         .map_err(|e| ImportError::Document(e.to_string()))?;
     Ok((cmd, imported.warnings))
+}
+
+/// The layer is named after the file, without any directory.
+fn layer_name(file_name: &str) -> String {
+    let base = file_name.rsplit(['/', '\\']).next().unwrap_or("");
+    let name: String = base.chars().take(MAX_LAYER_NAME).collect();
+    if name.trim().is_empty() {
+        "Reference".to_owned()
+    } else {
+        name
+    }
+}
+
+/// A new locked Reference layer holding `image`, as one undo step. The
+/// layer's ID is predicted from `Document::next_id`, as
+/// `import_shapes_command` does.
+fn image_command(
+    doc: &locus_doc::document::Document,
+    name: &str,
+    image: locus_doc::image::RefImage,
+) -> locus_doc::command::Command {
+    use locus_doc::command::Command;
+    let layer = locus_doc::LayerId::new(doc.next_id());
+    Command::Compound {
+        label: format!("Import {name}"),
+        commands: vec![
+            Command::AddLayer {
+                name: name.to_owned(),
+                colour: locus_doc::reference::REFERENCE_COLOUR,
+                operation: locus_doc::Operation::Reference,
+            },
+            Command::AddImage {
+                layer,
+                image: Box::new(image),
+            },
+            // Locked last, as vector references are.
+            Command::SetLayerLocked {
+                id: layer,
+                locked: true,
+            },
+        ],
+    }
 }

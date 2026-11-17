@@ -209,6 +209,19 @@ pub enum Command {
         id: RecipeId,
         kind: RecipeKind,
     },
+    /// Put a raster reference image on a Reference layer that has none
+    /// (#390). Import adds the layer, the image and the lock as one
+    /// compound, like a vector reference.
+    AddImage {
+        layer: LayerId,
+        image: Box<crate::image::RefImage>,
+    },
+    /// Move, scale or fade a reference image (#390, Calibrate #391). It is
+    /// how the reference is drawn, not geometry, so its layer may be locked.
+    SetImagePlacement {
+        layer: LayerId,
+        placement: crate::image::ImagePlacement,
+    },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
         label: String,
@@ -267,6 +280,8 @@ impl Command {
             }
             .to_owned(),
             Command::EditRecipe { kind, .. } => format!("Edit {}", kind.name().to_lowercase()),
+            Command::AddImage { .. } => "Add image".to_owned(),
+            Command::SetImagePlacement { .. } => "Change image".to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -338,6 +353,11 @@ pub(crate) enum Patch {
         before: Option<String>,
         after: Option<String>,
     },
+    Image {
+        layer: LayerId,
+        before: Option<crate::image::RefImage>,
+        after: Option<crate::image::RefImage>,
+    },
 }
 
 impl Patch {
@@ -385,6 +405,16 @@ impl Patch {
             }
             Patch::Profile { before, after } => {
                 doc.profile = if forward { after } else { before }.clone();
+            }
+            Patch::Image {
+                layer,
+                before,
+                after,
+            } => {
+                match if forward { after } else { before }.clone() {
+                    Some(i) => doc.images.insert(*layer, i),
+                    None => doc.images.remove(layer),
+                };
             }
             Patch::Recipe { id, before, after } => {
                 match if forward { after } else { before }.clone() {
@@ -832,6 +862,11 @@ fn exec(
                 after.export_enabled = v;
             }
             Document::check_layer(&after)?;
+            if doc.image(*id).is_some() && !matches!(after.operation, Operation::Reference) {
+                return Err(DocError::Invalid(
+                    "a layer with an image stays a Reference layer".to_owned(),
+                ));
+            }
             if after != before {
                 record(
                     doc,
@@ -912,6 +947,17 @@ fn exec(
                     },
                 );
             }
+            if let Some(image) = doc.image(*id).cloned() {
+                record(
+                    doc,
+                    patches,
+                    Patch::Image {
+                        layer: *id,
+                        before: Some(image),
+                        after: None,
+                    },
+                );
+            }
             let before = doc.layer(*id).cloned();
             record(
                 doc,
@@ -920,6 +966,44 @@ fn exec(
                     id: *id,
                     before,
                     after: None,
+                },
+            );
+        }
+        Command::AddImage { layer, image } => {
+            doc.check_unlocked(*layer)?;
+            if doc.image(*layer).is_some() {
+                return Err(DocError::Invalid(
+                    "this layer already has an image".to_owned(),
+                ));
+            }
+            doc.check_image(*layer, image)?;
+            record(
+                doc,
+                patches,
+                Patch::Image {
+                    layer: *layer,
+                    before: None,
+                    after: Some((**image).clone()),
+                },
+            );
+        }
+        Command::SetImagePlacement { layer, placement } => {
+            let before = doc
+                .image(*layer)
+                .cloned()
+                .ok_or_else(|| DocError::Invalid("this layer has no image".to_owned()))?;
+            let after = crate::image::RefImage {
+                placement: *placement,
+                ..before.clone()
+            };
+            after.validate()?;
+            record(
+                doc,
+                patches,
+                Patch::Image {
+                    layer: *layer,
+                    before: Some(before),
+                    after: Some(after),
                 },
             );
         }

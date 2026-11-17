@@ -695,6 +695,25 @@ pub static BUILTIN: &[Action] = &[
         KeyScope::Global,
         Op::Shell(Shell::InsertReference(crate::file_io::Insert::Dxf)),
     ),
+    a(
+        "insert.image",
+        "Insert image…",
+        Group::Insert,
+        &[
+            "import",
+            "reference",
+            "trace",
+            "png",
+            "jpeg",
+            "picture",
+            "photo",
+            "canvas",
+        ],
+        "Add a PNG or JPEG to trace over, at its own opacity. It is never exported.",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::InsertReference(crate::file_io::Insert::Image)),
+    ),
     // ── Select ──
     draw(
         "select.select",
