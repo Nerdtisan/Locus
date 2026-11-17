@@ -409,7 +409,7 @@ impl FileIo {
                 ui.close();
             }
             ui.separator();
-            ui.checkbox(&mut self.export_each_layer, "Each layer as a separate file")
+            crate::theme::checkbox(ui, &mut self.export_each_layer, "Each layer as a separate file")
                 .on_hover_text(if cfg!(target_arch = "wasm32") {
                     "One file per layer on the same canvas, downloaded as a .zip."
                 } else {
@@ -913,12 +913,16 @@ impl FileIo {
                         canvas.selected().len(),
                     );
                 }
-                ui.checkbox(&mut panel.per_layer, "Export each layer as a separate file")
-                    .on_hover_text(if cfg!(target_arch = "wasm32") {
-                        "One file per layer on the same canvas, downloaded as a .zip."
-                    } else {
-                        "One file per layer on the same canvas, written to a folder you pick."
-                    });
+                crate::theme::checkbox(
+                    ui,
+                    &mut panel.per_layer,
+                    "Export each layer as a separate file",
+                )
+                .on_hover_text(if cfg!(target_arch = "wasm32") {
+                    "One file per layer on the same canvas, downloaded as a .zip."
+                } else {
+                    "One file per layer on the same canvas, written to a folder you pick."
+                });
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
@@ -1199,7 +1203,7 @@ fn png_options(
     }
     ui.add_enabled(
         selected > 0,
-        egui::Checkbox::new(
+        crate::theme::Checkbox::new(
             selection_only,
             format!("Selection only ({selected} selected)"),
         ),

@@ -177,37 +177,8 @@ pub(crate) fn selection(ui: &mut Ui, text: &str, filled: bool, active: bool) -> 
     (resp.clicked() && !cleared, cleared)
 }
 
-/// A segmented switch (`.seg`): one button per option, the chosen one
-/// filled. Returns the option clicked, if it differs from `current`.
-pub(crate) fn segmented<T: Copy + PartialEq>(
-    ui: &mut Ui,
-    current: T,
-    options: &[(T, &str)],
-) -> Option<T> {
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let (accent, ink) = accent(ui);
-        for &(v, label) in options {
-            let on = v == current;
-            let text = if on {
-                RichText::new(label).color(ink)
-            } else {
-                RichText::new(label)
-            };
-            let fill = if on {
-                accent
-            } else {
-                ui.visuals().extreme_bg_color
-            };
-            let b = egui::Button::new(text).fill(fill).corner_radius(0.0);
-            if ui.add(b).clicked() && !on {
-                picked = Some(v);
-            }
-        }
-    });
-    picked
-}
+/// The segmented switch (`.seg`) is the app's shared toggle (#384).
+pub(crate) use crate::theme::segmented;
 
 /// The footer (`.df`): "Enter OK · Esc cancel", Cancel, then the primary
 /// OK. `ok` is `Err(why)` while OK can't run yet (shown on hover). Returns

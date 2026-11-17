@@ -221,7 +221,7 @@ pub fn param_widget(
             ui.add(egui::DragValue::new(v).range(lo..=hi));
         }
         (ParamKind::Boolean(_), ParamValue::Boolean(b)) => {
-            ui.checkbox(b, "");
+            crate::theme::checkbox(ui, b, "");
         }
         (ParamKind::Choice(c), ParamValue::Choice(i)) => {
             let current = c.options.get(*i as usize).cloned().unwrap_or_default();

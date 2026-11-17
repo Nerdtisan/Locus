@@ -590,7 +590,7 @@ impl App {
             ui.separator();
             for tab in Tab::PANES {
                 let mut shown = self.is_shown(tab);
-                if ui.checkbox(&mut shown, tab.title()).changed() {
+                if crate::theme::checkbox(ui, &mut shown, tab.title()).changed() {
                     self.toggle_tab(tab);
                 }
             }

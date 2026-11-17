@@ -311,8 +311,10 @@ fn group(
                     // Never wrap, whatever the measured width (#387).
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.push_id(("ribbon-menu", g.title()), |ui| {
-                        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =
-                            egui::Color32::TRANSPARENT;
+                        // The mockup's `.glabel`: text only until hovered.
+                        let w = &mut ui.style_mut().visuals.widgets.inactive;
+                        w.weak_bg_fill = egui::Color32::TRANSPARENT;
+                        w.bg_stroke = egui::Stroke::NONE;
                         ui.menu_button(label, |ui| {
                             menu(ui, reg, cx, bar, g, edits);
                         })

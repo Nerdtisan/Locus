@@ -663,8 +663,7 @@ impl Plugins {
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
                                     let mut on = i.enabled;
-                                    if ui
-                                        .checkbox(&mut on, "")
+                                    if crate::theme::checkbox(ui, &mut on, "")
                                         .on_hover_text(
                                             "Enabled. A disabled plugin stays installed; \
                                              documents that use it open from their saved \

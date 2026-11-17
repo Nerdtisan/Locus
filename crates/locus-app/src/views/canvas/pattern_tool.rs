@@ -851,7 +851,7 @@ impl AppState {
                         }
                     });
                     row(ui, "", |ui| {
-                        ui.checkbox(&mut d.centre_on_grid, "Snap centre to grid")
+                        crate::theme::checkbox(ui, &mut d.centre_on_grid, "Snap centre to grid")
                             .on_hover_text(
                                 "A centre click away from any point lands on the nearest grid point",
                             )
@@ -863,7 +863,9 @@ impl AppState {
                         field(ui, &mut d.c_angle, 72.0, Drag::Angle);
                         ui.weak("°");
                     });
-                    row(ui, "", |ui| ui.checkbox(&mut d.rotate, "Rotate instances"));
+                    row(ui, "", |ui| {
+                        crate::theme::checkbox(ui, &mut d.rotate, "Rotate instances")
+                    });
                 } else {
                     // Each direction: X, Y or a picked line (#371: Y alone
                     // is one click, not a cycle).
@@ -872,7 +874,7 @@ impl AppState {
                         let picking = d.pick == PatternPick::Direction(n);
                         let (pick, x) = row(ui, label, |ui| {
                             if n == 2 {
-                                ui.checkbox(&mut d.second, "")
+                                crate::theme::checkbox(ui, &mut d.second, "")
                                     .on_hover_text("Pattern in a second direction too");
                             }
                             let on = n == 1 || d.second;
