@@ -120,6 +120,7 @@ impl AppState {
                     self.open_text_dialog(id, true);
                 }
             }
+            self.text_path_rows(ui, id, &text);
             self.layer_row(ui);
             // Text switches between normal and construction too (#363).
             self.construction_row(ui);
@@ -166,6 +167,66 @@ impl AppState {
             if toggled {
                 self.apply_reporting(&cmd);
             }
+        }
+    }
+
+    /// Text on a path (#392): its side, direction and offset, and Detach.
+    /// Each change is one command.
+    fn text_path_rows(&mut self, ui: &mut egui::Ui, id: EntityId, text: &locus_doc::TextData) {
+        use crate::views::canvas::dialog::{row, segmented};
+        use locus_doc::path_text::PathSide;
+        let Some(p) = text.path.as_deref() else {
+            return;
+        };
+        let mut next = (p.side, p.flip, p.offset);
+        row(ui, "On path", |ui| {
+            ui.label(crate::views::canvas::dialog::count(
+                p.curves.len(),
+                "curve",
+                "curves",
+            ))
+        });
+        row(ui, "Side", |ui| {
+            if let Some(s) = segmented(
+                ui,
+                p.side,
+                &[(PathSide::Above, "Above"), (PathSide::Below, "Below")],
+            ) {
+                next.0 = s;
+            }
+        });
+        row(ui, "", |ui| {
+            crate::theme::checkbox(ui, &mut next.1, "Flip direction")
+        });
+        let mut offset = p.offset;
+        let r = row(ui, "Offset", |ui| {
+            ui.add(egui::DragValue::new(&mut offset).speed(0.1).suffix(" mm"))
+                .on_hover_text("How far along the path; or drag the text on the canvas")
+        });
+        if r.drag_stopped() || (r.changed() && !r.dragged()) {
+            next.2 = offset;
+        }
+        if next != (p.side, p.flip, p.offset) {
+            let (side, flip, offset) = next;
+            match self.text_path_command(id, "Change text on path", |t| {
+                if let Some(p) = t.path.as_mut() {
+                    p.side = side;
+                    p.flip = flip;
+                    p.offset = offset;
+                }
+            }) {
+                Ok(cmd) => {
+                    self.apply_reporting(&cmd);
+                }
+                Err(why) => self.doc.notice = Some(why),
+            }
+        }
+        if ui
+            .button("Detach from path")
+            .on_hover_text("Back to straight text at its anchor")
+            .clicked()
+        {
+            self.detach_text(id);
         }
     }
 

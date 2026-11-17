@@ -169,6 +169,104 @@ impl Font {
     }
 }
 
+/// One glyph of a line of text, for text on a path (#392): its outline about
+/// its own origin on the baseline, where that origin sits along the line
+/// (mm from the line's start) and how far the pen moves past it, tracking
+/// included.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlacedGlyph {
+    pub x: f64,
+    pub advance: f64,
+    pub contours: Vec<Contour>,
+}
+
+/// A line of text as separate glyphs, and the font's ascent and descent.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct GlyphRun {
+    pub glyphs: Vec<PlacedGlyph>,
+    /// The line's advance, mm.
+    pub width: f64,
+    pub ascent: f64,
+    pub descent: f64,
+}
+
+impl Font {
+    /// `text` on one line (line breaks become spaces) as glyphs that can be
+    /// placed one by one, as text on a path does (#392). Same limits as
+    /// [`Font::layout`].
+    ///
+    /// # Errors
+    /// [`TextError`] for text that is too long or a font that can't shape it.
+    pub fn glyph_run(&self, text: &str, style: &TextStyle) -> Result<GlyphRun, TextError> {
+        if text.chars().count() > MAX_TEXT_CHARS {
+            return Err(TextError::TextTooLong(MAX_TEXT_CHARS));
+        }
+        let line: String = text
+            .chars()
+            .map(|c| if c == '\n' { ' ' } else { c })
+            .filter(|c| !c.is_control())
+            .collect();
+        let size = if style.size.is_finite() && style.size > 0.0 {
+            style.size
+        } else {
+            return Ok(GlyphRun::default());
+        };
+        let tracking = if style.tracking.is_finite() {
+            style.tracking
+        } else {
+            0.0
+        };
+        match self {
+            Font::Stroke(f) => {
+                let scale = size / f.units_per_em;
+                let mut glyphs = Vec::new();
+                let mut x = 0.0;
+                for c in line.chars() {
+                    let (advance, strokes) = match f.glyph_or_missing(c) {
+                        Some(g) => (g.advance * scale, g.strokes.as_slice()),
+                        None => (f.space_advance() * scale, &[][..]),
+                    };
+                    let mut contours = Vec::new();
+                    for stroke in strokes {
+                        let at = |p: &Vec2| Vec2::new(p.x * scale, p.y * scale);
+                        let Some(first) = stroke.first() else {
+                            continue;
+                        };
+                        let mut contour = Contour::new(at(first), false);
+                        for p in &stroke[1..] {
+                            contour.segs.push(Seg::Line { end: at(p) });
+                        }
+                        contours.push(contour);
+                    }
+                    glyphs.push(PlacedGlyph {
+                        x,
+                        advance: advance + tracking,
+                        contours,
+                    });
+                    x += advance + tracking;
+                }
+                let width = stroke_width(f, &line, scale, tracking);
+                Ok(GlyphRun {
+                    glyphs,
+                    width,
+                    ascent: f.ascent * scale,
+                    descent: f.descent * scale,
+                })
+            }
+            Font::Outline(f) => {
+                let scale = size / f.units_per_em();
+                let (a, d) = f.vertical_extents();
+                Ok(GlyphRun {
+                    glyphs: f.glyph_run(&line, scale, tracking, size)?,
+                    width: f.line_width(&line, scale, tracking)?,
+                    ascent: a * scale,
+                    descent: d * scale,
+                })
+            }
+        }
+    }
+}
+
 /// The extra advance tracking adds to a line of `n` characters, mm.
 pub(crate) fn tracked(n: usize, tracking: f64) -> f64 {
     n.saturating_sub(1) as f64 * tracking

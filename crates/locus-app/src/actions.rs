@@ -559,6 +559,17 @@ pub static BUILTIN: &[Action] = &[
         Tool::Text,
     ),
     // Mirror creates geometry too (design §2, §6.9, #215).
+    // Put an existing text on a path (#392), beside Text.
+    a(
+        "sketch.text_path",
+        "Text on path",
+        Group::Create,
+        &["text", "curve", "path", "arc", "circle", "bend", "follow"],
+        "Click a text, then a line, arc, circle, shape or Bézier for it to follow",
+        &[],
+        KeyScope::Canvas,
+        Op::Modify(Modify::TextOnPath),
+    ),
     modify("sketch.mirror", Group::Create, &[], Modify::Mirror),
     modify(
         "sketch.pattern_circ",

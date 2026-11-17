@@ -124,7 +124,7 @@ pub(crate) fn chain(
 }
 
 /// A source curve as region pieces in travel order.
-fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> {
+pub(crate) fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> {
     let mut out: Vec<Seg> = match doc.entity(id).map(|e| &e.geom) {
         Some(Geom::Line { .. }) => doc
             .line(id)

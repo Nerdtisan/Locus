@@ -27,6 +27,7 @@ mod manipulator;
 mod mirror_tool;
 mod offset_tool;
 mod offsets;
+mod path_text_tool;
 mod pattern_labels;
 mod pattern_tool;
 pub mod plugin_objects;
@@ -38,6 +39,7 @@ pub(crate) use calibrate_tool::CalibrateDraft;
 pub(crate) use machine::MachinePath;
 pub(crate) use mirror_tool::MirrorDraft;
 pub(crate) use offset_tool::OffsetDraft;
+pub(crate) use path_text_tool::{PathTextDraft, Slide};
 pub(crate) use pattern_tool::PatternDraft;
 pub(crate) use regions::RegionUi;
 
@@ -287,6 +289,8 @@ impl AppState {
             self.refresh_pattern_preview(circular, settings.units);
         } else if self.modify() == Some(Modify::Calibrate) {
             self.calibrate_input(ui, &resp, rect, settings.units);
+        } else if self.modify() == Some(Modify::TextOnPath) {
+            self.path_text_input(ui, &resp, rect);
         } else if self.modify() == Some(Modify::Mirror) {
             self.mirror_input(ui, &resp, rect, settings.units);
             self.refresh_mirror_preview();
@@ -381,6 +385,7 @@ impl AppState {
         if self.modify() == Some(Modify::Calibrate) {
             self.draw_calibrate_draft(&frame, settings.units);
         }
+        self.draw_slide(&frame);
         if let (Some(start), Some(now)) = (self.view.rubber, resp.interact_pointer_pos()) {
             draw_rubber_band(&painter, start, now);
         }
@@ -409,6 +414,9 @@ impl AppState {
         self.polygon_dialog(ui, rect);
         if self.modify() == Some(Modify::Calibrate) {
             self.calibrate_dialog(ui, rect, settings.units);
+        }
+        if self.modify() == Some(Modify::TextOnPath) {
+            self.path_text_dialog(ui, rect);
         }
         self.text_dialog(ui, rect);
         self.glyph_menu(ui);
@@ -977,7 +985,12 @@ impl AppState {
             hit::pick(&this.doc.scene.items, w, tol)
         };
 
-        if self.tools.dragging {
+        if self.tools.dragging && self.tools.slide.is_some() {
+            self.slide_frame(ui, resp, rect);
+            if self.tools.dragging || !resp.double_clicked_by(PointerButton::Primary) {
+                return;
+            }
+        } else if self.tools.dragging {
             self.drag_frame(ui, resp, rect);
             // A press on a curve starts a (still motionless) drag; its
             // release may complete a double-click, which selects the chain.
