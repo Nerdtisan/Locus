@@ -29,6 +29,41 @@ pub enum Fill {
     #[default]
     None,
     Colour([u8; 3]),
+    /// No fill, keeping the colour last chosen, so turning fill back on
+    /// restores it (#388, format v15). Draws and exports as [`Fill::None`].
+    Off([u8; 3]),
+}
+
+impl Fill {
+    /// The colour that is painted, if any.
+    #[must_use]
+    pub fn painted(self) -> Option<[u8; 3]> {
+        match self {
+            Fill::Colour(c) => Some(c),
+            Fill::None | Fill::Off(_) => None,
+        }
+    }
+
+    /// The colour shown in the fill swatch: painted or remembered.
+    #[must_use]
+    pub fn colour(self) -> Option<[u8; 3]> {
+        match self {
+            Fill::Colour(c) | Fill::Off(c) => Some(c),
+            Fill::None => None,
+        }
+    }
+
+    /// Fill turned on or off, keeping the colour (#388). Turning on a fill
+    /// that never had a colour uses `fallback`, or stays unfilled without.
+    #[must_use]
+    pub fn switched(self, on: bool, fallback: Option<[u8; 3]>) -> Fill {
+        match (on, self) {
+            (true, Fill::Off(c)) => Fill::Colour(c),
+            (true, Fill::None) => fallback.map_or(Fill::None, Fill::Colour),
+            (false, Fill::Colour(c)) => Fill::Off(c),
+            (_, f) => f,
+        }
+    }
 }
 
 /// One entity's style (SPEC §4).
@@ -105,7 +140,10 @@ impl Style {
         if let Some(p) = patch.pen {
             self.pen = p;
         }
-        if let Some(f) = patch.fill {
+        if let Some(on) = patch.fill_on {
+            let fallback = patch.fill.and_then(Fill::painted);
+            self.fill = self.fill.switched(on, fallback);
+        } else if let Some(f) = patch.fill {
             self.fill = f;
         }
         if let Some(o) = patch.opacity {
@@ -127,6 +165,10 @@ pub struct StylePatch {
     pub pen: Option<u32>,
     pub fill: Option<Fill>,
     pub opacity: Option<f64>,
+    /// Turn each object's fill on or off, keeping its own colour (#388), so
+    /// a mixed selection keeps its colours. With this set, `fill` is only
+    /// the colour for objects that never had one.
+    pub fill_on: Option<bool>,
 }
 
 impl StylePatch {
@@ -139,6 +181,7 @@ impl StylePatch {
             pen: Some(style.pen),
             fill: Some(style.fill),
             opacity: Some(style.opacity),
+            fill_on: None,
         }
     }
 
@@ -186,6 +229,43 @@ mod tests {
         ] {
             assert!(matches!(bad.validate(), Err(DocError::BadValue { .. })));
         }
+    }
+
+    /// Regression (#388): turning fill off kept no colour, so turning it
+    /// back on reset it to the default. Off now remembers it, per object.
+    #[test]
+    fn fill_off_and_on_keeps_each_colour() {
+        let red = Style {
+            fill: Fill::Colour([200, 0, 0]),
+            ..Style::default()
+        };
+        let blue = Style {
+            fill: Fill::Colour([0, 0, 200]),
+            ..Style::default()
+        };
+        let plain = Style::default();
+        let switch = |on| StylePatch {
+            fill_on: Some(on),
+            fill: Some(Fill::Colour([9, 9, 9])),
+            ..StylePatch::default()
+        };
+        let off: Vec<Style> = [red, blue, plain]
+            .iter()
+            .map(|s| s.patched(&switch(false)))
+            .collect();
+        assert_eq!(off[0].fill, Fill::Off([200, 0, 0]));
+        assert_eq!(off[0].fill.painted(), None, "draws unfilled");
+        assert_eq!(off[2].fill, Fill::None, "nothing to remember");
+        let on: Vec<Fill> = off.iter().map(|s| s.patched(&switch(true)).fill).collect();
+        assert_eq!(
+            on,
+            [
+                Fill::Colour([200, 0, 0]),
+                Fill::Colour([0, 0, 200]),
+                Fill::Colour([9, 9, 9])
+            ],
+            "each keeps its own colour; one that never had one takes the fallback"
+        );
     }
 
     #[test]

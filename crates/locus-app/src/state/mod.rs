@@ -47,7 +47,8 @@ pub struct AppState {
 }
 
 impl Default for AppState {
-    /// Opens on the demo sketch.
+    /// On the demo sketch: the fixture tests draw and constrain against.
+    /// The app itself opens on [`AppState::untitled`].
     fn default() -> Self {
         let mut st = Self {
             doc: DocState::default(),
@@ -61,6 +62,15 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// A new, empty untitled document, centred on the origin: how the app
+    /// opens, ready to draw (#383, #366), as File ▸ New leaves it.
+    pub fn untitled() -> Self {
+        let mut st = Self::default();
+        st.load(Document::new());
+        st.centre_on_origin();
+        st
+    }
+
     /// Replace the document (new / sample). Clears the undo history.
     pub fn load(&mut self, doc: Document) {
         self.doc.sketcher = Sketcher::new(doc);
@@ -118,7 +128,7 @@ impl AppState {
                     self.tools.transform.reset();
                 }
             }
-            Modify::Pattern(_) => {}
+            Modify::Pattern(_) => self.tools.pattern.begin(),
             Modify::Mirror => {
                 // Selection first, then the line (design §6.9).
                 self.tools.mirror.picking =
@@ -1054,6 +1064,20 @@ mod tests {
         assert!(c.document().recipe(rid).is_none());
         assert!(c.document().entities().get(copy).is_some());
         assert_eq!(c.undo_label(), Some("Explode"));
+    }
+
+    /// #383: the app opens on a new, empty untitled document, centred on
+    /// the origin and with nothing to undo, so it isn't "unsaved" either
+    /// (File ▸ New's baseline is an empty document).
+    #[test]
+    fn the_app_opens_on_an_empty_document_centred_on_the_origin() {
+        let st = AppState::untitled();
+        assert_eq!(st.document(), &Document::new());
+        assert!(st.document().entities().is_empty());
+        assert!(st.view.auto_fit && st.view.fit_origin);
+        let (lo, hi) = st.fit_box();
+        assert_eq!(lo + hi, Vec2::ZERO, "the origin is mid-view");
+        assert!(st.undo_label().is_none());
     }
 
     #[test]

@@ -142,7 +142,7 @@ crates/
 Each entity carries:
 - `layer: LayerId`
 - `construction: bool` — never exported, rendered dashed. Independent of layer.
-- `style` (M5, #287): stroke colour, stroke width, pen number, fill and opacity. Per object, not per layer ([ADR 0017](adr/0017-fusion-style-ui.md)).
+- `style` (M5, #287): stroke colour, stroke width, pen number, fill and opacity. Per object, not per layer ([ADR 0017](adr/0017-fusion-style-ui.md)). A fill that is turned off keeps its colour, so turning it back on restores it (`Fill::Off`, format v15, #388).
 
 ### Layers
 - Layers are **properties on geometry**, not separate sketches. One shared solver space for the whole document.
