@@ -524,7 +524,7 @@ impl Mcp {
         crate::dialog::Dialog::new("MCP server")
             .open(&mut open)
             .resizable(true)
-            .default_width(460.0)
+            .default_size([480.0, 520.0])
             .show(ctx, |ui| {
                 match &self.live {
                     None => {

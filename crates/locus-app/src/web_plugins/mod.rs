@@ -535,7 +535,7 @@ impl WebPlugins {
         self.panel_window(ctx, canvas);
         self.manage_window(ctx);
         if let Some(msg) = self.message.clone() {
-            egui::Window::new("Plugins")
+            crate::dialog::Dialog::new("Plugins")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
@@ -637,9 +637,12 @@ impl WebPlugins {
         }
         let mut open = true;
         let mut uninstall = None;
-        egui::Window::new("Plugin manager")
+        // The same size as the desktop's (#361).
+        crate::dialog::Dialog::new("Plugin manager")
             .open(&mut open)
             .collapsible(false)
+            .resizable(true)
+            .default_size([680.0, 480.0])
             .show(ctx, |ui| {
                 if self.installed.is_empty() {
                     ui.weak("No plugins installed.");

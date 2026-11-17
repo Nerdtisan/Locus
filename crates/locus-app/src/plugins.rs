@@ -643,6 +643,7 @@ impl Plugins {
         let mut toggle: Option<(String, bool)> = None;
         let mut readme: Option<String> = None;
         crate::dialog::Dialog::new("Plugin manager")
+            .default_size([680.0, 480.0])
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
@@ -788,7 +789,7 @@ impl Plugins {
         crate::dialog::Dialog::new(format!("{name}: README"))
             .open(&mut open)
             .resizable(true)
-            .default_width(520.0)
+            .default_size([560.0, 480.0])
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .max_height(480.0)

@@ -93,6 +93,7 @@ pub fn show_panel(
         Target::Edit(_) | Target::EditModifier(_) => "Apply",
     };
     crate::dialog::Dialog::new(&panel.name)
+        .default_size([420.0, 380.0])
         .collapsible(false)
         .resizable(true)
         .show(ctx, |ui| {
