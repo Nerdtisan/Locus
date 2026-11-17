@@ -442,16 +442,13 @@ fn layer_row(
             Some((i, c)) if i == id => c,
             _ => l.colour,
         };
-        ui.scope(|ui| {
-            ui.spacing_mut().interact_size = egui::vec2(14.0, 14.0);
-            if ui
-                .color_edit_button_srgb(&mut c)
-                .on_hover_text("Layer colour")
-                .changed()
-            {
-                st.colour = Some((id, c));
-            }
-        });
+        // The mockup's small row swatch (`.sw`).
+        if crate::theme::swatch_sized(ui, &mut c, 12.0)
+            .on_hover_text("Layer colour")
+            .changed()
+        {
+            st.colour = Some((id, c));
+        }
         if st.colour.is_some_and(|(i, _)| i == id)
             && !ui.input(|i| i.pointer.any_down())
             && let Some((_, c)) = st.colour.take()
@@ -736,7 +733,7 @@ fn operation_editor(
                         (&mut changed, &mut done),
                     );
                     ui.label("Crosshatch");
-                    let r = ui.checkbox(&mut p.crosshatch, "");
+                    let r = crate::theme::checkbox(ui, &mut p.crosshatch, "");
                     changed |= r.changed();
                     done |= r.changed();
                     ui.end_row();

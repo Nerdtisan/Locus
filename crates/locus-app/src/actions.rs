@@ -1444,7 +1444,7 @@ pub fn show_one(
     let clicked = match (a.op.kind(), style) {
         (ActionKind::Toggle, _) => {
             let mut on = reg.is_on(a, cx.state, cx.settings);
-            let r = ui.checkbox(&mut on, label.as_ref());
+            let r = crate::theme::checkbox(ui, &mut on, label.as_ref());
             let r = if a.hint.is_empty() {
                 r
             } else {

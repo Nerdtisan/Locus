@@ -44,7 +44,7 @@ pub fn ui(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>) {
     // The active tool's options (polygon sides, slot width…).
     ui.horizontal_wrapped(|ui| cx.state.tool_options_ui(ui));
     // Two columns as in the mockup; one when the pane is too narrow.
-    let cols = if ui.available_width() < 250.0 { 1 } else { 2 };
+    let cols = if ui.available_width() < 230.0 { 1 } else { 2 };
     egui::Grid::new("palette-checks")
         .num_columns(cols)
         .spacing([10.0, 2.0])
@@ -57,7 +57,10 @@ pub fn ui(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>) {
                     } else {
                         a.hint.to_string()
                     };
-                    if ui.checkbox(&mut on, *label).on_hover_text(hover).changed() {
+                    if crate::theme::checkbox(ui, &mut on, *label)
+                        .on_hover_text(hover)
+                        .changed()
+                    {
                         reg.run(a, cx);
                     }
                 }

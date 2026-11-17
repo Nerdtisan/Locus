@@ -521,7 +521,9 @@ impl AppState {
                         }
                     }
                 }
-                dialog::row(ui, "", |ui| ui.checkbox(&mut t.copy, "Create copy"));
+                dialog::row(ui, "", |ui| {
+                    crate::theme::checkbox(ui, &mut t.copy, "Create copy")
+                });
                 (ok, cancel) = dialog::footer(
                     ui,
                     if selected > 0 {

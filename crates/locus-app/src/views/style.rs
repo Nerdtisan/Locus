@@ -247,8 +247,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
                 ui.label("Stroke");
                 ui.horizontal(|ui| {
                     let mut by_layer = s.stroke == Some(Stroke::ByLayer);
-                    if ui
-                        .checkbox(&mut by_layer, "Layer")
+                    if crate::theme::checkbox(ui, &mut by_layer, "Layer")
                         .on_hover_text("Use the layer's colour")
                         .changed()
                     {
@@ -262,7 +261,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
                         Some(Stroke::Colour(c)) => c,
                         _ => layer_colour,
                     };
-                    if ui.color_edit_button_srgb(&mut c).changed() {
+                    if crate::theme::swatch(ui, &mut c).changed() {
                         out.stroke = Some(Stroke::Colour(c));
                     }
                     mixed(ui, s.stroke.is_none());
@@ -306,8 +305,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
             ui.horizontal(|ui| {
                 let mut on = matches!(s.fill, Some(Fill::Colour(_)));
                 let mut c = s.fill.and_then(Fill::colour).unwrap_or(layer_colour);
-                if ui
-                    .checkbox(&mut on, "")
+                if crate::theme::checkbox(ui, &mut on, "")
                     .on_hover_text("Fill closed shapes (Engrave layers hatch instead)")
                     .changed()
                 {
@@ -316,7 +314,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
                     out.fill_on = Some(on);
                     out.fill = Some(Fill::Colour(c));
                 }
-                if on && ui.color_edit_button_srgb(&mut c).changed() {
+                if on && crate::theme::swatch(ui, &mut c).changed() {
                     out.fill = Some(Fill::Colour(c));
                 }
                 mixed(ui, s.fill.is_none());

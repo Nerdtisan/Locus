@@ -255,10 +255,9 @@ impl AppState {
                     }
                 });
                 row(ui, "", |ui| {
-                    ui.checkbox(&mut d.merge, "Merge on mirror line")
-                        .on_hover_text(
-                            "Leave out curves that lie on the mirror line, so nothing is cut twice",
-                        )
+                    crate::theme::checkbox(ui, &mut d.merge, "Merge on mirror line").on_hover_text(
+                        "Leave out curves that lie on the mirror line, so nothing is cut twice",
+                    )
                 });
                 if d.picking {
                     ui.weak("Click the mirror line on the canvas (Esc to select objects)");

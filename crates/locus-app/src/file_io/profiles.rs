@@ -412,7 +412,7 @@ fn len_edit(ui: &mut egui::Ui, mm: &mut f64, units: ProfileUnits, max_mm: f64) {
 fn opt_len(ui: &mut egui::Ui, label: &str, v: &mut Option<f64>, default: f64, units: ProfileUnits) {
     ui.horizontal(|ui| {
         let mut on = v.is_some();
-        if ui.checkbox(&mut on, label).changed() {
+        if crate::theme::checkbox(ui, &mut on, label).changed() {
             *v = on.then_some(default);
         }
         if let Some(x) = v {
@@ -448,15 +448,15 @@ fn fields(ui: &mut egui::Ui, p: &mut MachineProfile, exporters: &locus_export::R
                 });
             ui.end_row();
             ui.label("Units");
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut p.units, ProfileUnits::Mm, "mm");
-                ui.selectable_value(&mut p.units, ProfileUnits::Inch, "in");
-            });
+            let units = [(ProfileUnits::Mm, "mm"), (ProfileUnits::Inch, "in")];
+            if let Some(u) = crate::theme::segmented(ui, p.units, &units) {
+                p.units = u;
+            }
             ui.end_row();
         });
     ui.separator();
     let mut has_bed = p.bed.is_some();
-    if ui.checkbox(&mut has_bed, "Bed").changed() {
+    if crate::theme::checkbox(ui, &mut has_bed, "Bed").changed() {
         p.bed = has_bed.then_some(Bed {
             width_mm: 400.0,
             height_mm: 400.0,
@@ -504,8 +504,7 @@ fn fields(ui: &mut egui::Ui, p: &mut MachineProfile, exporters: &locus_export::R
                 ui.label(op.name());
                 ui.horizontal(|ui| {
                     let mut on = p.colours.contains_key(&op);
-                    if ui
-                        .checkbox(&mut on, "")
+                    if crate::theme::checkbox(ui, &mut on, "")
                         .on_hover_text("Unticked: the layer keeps its own colour")
                         .changed()
                     {
@@ -516,7 +515,7 @@ fn fields(ui: &mut egui::Ui, p: &mut MachineProfile, exporters: &locus_export::R
                         }
                     }
                     if let Some(c) = p.colours.get_mut(&op) {
-                        ui.color_edit_button_srgb(c);
+                        crate::theme::swatch(ui, c);
                     }
                 });
                 if op == OperationKind::Draw {
