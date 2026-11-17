@@ -21,6 +21,7 @@ pub mod expr;
 pub mod file;
 pub mod generated;
 pub mod ids;
+pub mod image;
 pub mod modify;
 pub mod offset;
 pub mod operation;
@@ -48,6 +49,7 @@ pub use error::DocError;
 pub use explode::Exploded;
 pub use file::FileError;
 pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
+pub use image::{ImageFormat, ImagePlacement, RefImage};
 pub use operation::{
     Compensation, CutParams, DragKnifeParams, EngraveParams, Operation, OperationKind,
 };

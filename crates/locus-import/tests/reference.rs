@@ -143,3 +143,36 @@ fn reference_layers_are_never_exported() {
     let with_ref = locus_export::svg::to_svg(s.document());
     assert_eq!(plain, with_ref);
 }
+
+/// #390: a PNG lands as one locked Reference layer holding the image, in
+/// one undo step, centred where asked; a damaged one changes nothing.
+#[test]
+fn a_png_imports_as_a_locked_reference_image() {
+    use locus_import::reference_command_at;
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(20, 10, image::Rgba([0, 0, 0, 255]))
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    let bytes = bytes.into_inner();
+    let mut s = Sketcher::new(Document::new());
+    let centre = locus_geom::Vec2::new(50.0, 40.0);
+    let (cmd, warnings) =
+        reference_command_at(s.document(), "C:/pics/photo.png", &bytes, centre).unwrap();
+    assert!(warnings.iter().any(|w| w.contains("Calibrate")));
+    s.apply(&cmd).unwrap();
+    let doc = s.document();
+    let (layer, img) = doc.images().iter().next().unwrap();
+    let l = doc.layer(*layer).unwrap();
+    assert_eq!(l.name, "photo.png");
+    assert!(l.locked && !l.operation.is_exportable());
+    assert_eq!((img.width_px, img.height_px), (20, 10));
+    let (lo, hi) = img.rect();
+    assert!(((lo + hi) * 0.5 - centre).length() < 1e-9);
+    s.undo().unwrap();
+    assert!(s.document().images().is_empty(), "one undo step");
+    let before = s.document().clone();
+    assert_eq!(
+        reference_command_at(&before, "x.png", &bytes[..bytes.len() / 2], centre).unwrap_err(),
+        ImportError::BadImage
+    );
+}

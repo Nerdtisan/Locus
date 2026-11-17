@@ -27,11 +27,13 @@ pub enum Modify {
     Pattern(bool),
     /// Mirror the selection about a picked line (#215, design §6.9).
     Mirror,
+    /// Scale a reference from two picked points and a typed distance (#391).
+    Calibrate,
 }
 
 impl Modify {
     #[cfg(test)]
-    pub const ALL: [Modify; 12] = [
+    pub const ALL: [Modify; 13] = [
         Modify::Trim,
         Modify::Extend,
         Modify::Break,
@@ -44,6 +46,7 @@ impl Modify {
         Modify::Pattern(false),
         Modify::Pattern(true),
         Modify::Mirror,
+        Modify::Calibrate,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -58,6 +61,7 @@ impl Modify {
             Modify::Pattern(false) => "Rectangular Pattern",
             Modify::Pattern(true) => "Circular Pattern",
             Modify::Mirror => "Mirror",
+            Modify::Calibrate => "Calibrate",
         }
     }
 
@@ -83,6 +87,9 @@ impl Modify {
             }
             (Modify::Mirror, _) => {
                 "Mirror: select objects, pick the mirror line, then Enter (copies follow the source and the line)"
+            }
+            (Modify::Calibrate, _) => {
+                "Calibrate: click two points on a reference, type the real distance between them, then Enter"
             }
             (Modify::Pattern(false), _) => {
                 "Rectangular Pattern: select objects, then drag the arrow for spacing and the ring for the count (or − / +), click a handle to type; Enter applies"
@@ -113,7 +120,8 @@ impl Modify {
             | Modify::Transform(_)
             | Modify::Offset
             | Modify::Pattern(_)
-            | Modify::Mirror => Err(ModifyError::NoCorner),
+            | Modify::Mirror
+            | Modify::Calibrate => Err(ModifyError::NoCorner),
         }
     }
 

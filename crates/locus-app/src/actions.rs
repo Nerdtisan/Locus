@@ -719,6 +719,37 @@ pub static BUILTIN: &[Action] = &[
         KeyScope::Global,
         Op::Shell(Shell::InsertReference(crate::file_io::Insert::Dxf)),
     ),
+    a(
+        "insert.image",
+        "Insert image…",
+        Group::Insert,
+        &[
+            "import",
+            "reference",
+            "trace",
+            "png",
+            "jpeg",
+            "picture",
+            "photo",
+            "canvas",
+        ],
+        "Add a PNG or JPEG to trace over, at its own opacity. It is never exported.",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::InsertReference(crate::file_io::Insert::Image)),
+    ),
+    // Calibrate a reference image or imported reference (#391), beside the
+    // import, as Fusion's canvas Calibrate.
+    a(
+        "sketch.calibrate",
+        "Calibrate",
+        Group::Insert,
+        &["scale", "reference", "image", "canvas", "known distance"],
+        "Click two points on a reference and type the real distance between them",
+        &[],
+        KeyScope::Canvas,
+        Op::Modify(Modify::Calibrate),
+    ),
     // ── Select ──
     draw(
         "select.select",
