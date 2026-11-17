@@ -258,11 +258,13 @@ impl Scene {
             })
             .flat_map(|r| r.instances().collect::<Vec<_>>())
             .collect();
+        let parked = parked_baselines(doc);
         let mut items = Vec::with_capacity(doc.entities().len());
         let mut bounds: Option<Aabb> = None;
         for (id, e) in doc.entities().iter() {
             if doc.layer(e.layer).is_some_and(|l| !l.visible)
                 || hidden.contains(&id)
+                || parked.contains(&id)
                 || (!construction && e.construction)
             {
                 continue;
@@ -275,14 +277,23 @@ impl Scene {
                         continue;
                     };
                     let constrained = fully_constrained.contains(&id);
-                    for shape in text_shapes(&g) {
+                    // Text on a path (#416): its dashed alignment guide
+                    // sits on the path, standing in for the parked
+                    // baseline. It carries the text's id, so clicking it
+                    // picks the text and dragging it slides the text.
+                    let guide = doc
+                        .text_path_guide(id)
+                        .filter(|_| construction)
+                        .map(|(a, b)| (Shape::Line(Line::new(a, b)), true));
+                    let outline = text_shapes(&g).into_iter().map(|s| (s, e.construction));
+                    for (shape, construction) in outline.chain(guide) {
                         {
                             let bbox = shape.bbox();
                             bounds = Some(bounds.map_or(bbox, |b| b.union(bbox)));
                             items.push(Item {
                                 id,
                                 shape,
-                                construction: e.construction,
+                                construction,
                                 constrained,
                                 owned_point: false,
                                 derived_point: false,
@@ -342,7 +353,7 @@ impl Scene {
                         || doc.layer(e.layer).is_some_and(|l| !l.visible)
                 })
             };
-            if c.references().iter().any(off) {
+            if c.references().iter().any(|r| off(r) || parked.contains(r)) {
                 continue;
             }
             if let Some(symbol) = glyph_symbol(c) {
@@ -404,6 +415,54 @@ impl Scene {
             bounds,
         }
     }
+}
+
+/// What text on a path leaves behind (#416): the construction baseline the
+/// Text tool drew from its anchor, and the anchor and direction points when
+/// nothing else uses them. They keep the text's own placement, where Detach
+/// puts it back, so they are parked out of sight (not drawn, picked or
+/// marked) while the text is bound; the guide on the path replaces them.
+/// A text whose path is broken is drawn at its anchor and parks nothing.
+fn parked_baselines(doc: &Document) -> HashSet<EntityId> {
+    let mut users: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
+    for (id, e) in doc.entities().iter() {
+        for p in e.geom.point_refs() {
+            users.entry(p).or_default().push(id);
+        }
+    }
+    let mut out = HashSet::new();
+    for (id, e) in doc.entities().iter() {
+        let Geom::Text { anchor, dir, .. } = e.geom else {
+            continue;
+        };
+        if doc.text_path_guide(id).is_none() {
+            continue;
+        }
+        let ends = [anchor, dir];
+        let baselines: Vec<EntityId> = users
+            .get(&anchor)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&l| {
+                doc.entity(l).is_some_and(|le| {
+                    le.construction
+                        && matches!(le.geom, Geom::Line { start, end }
+                            if ends.contains(&start) && ends.contains(&end) && start != end)
+                })
+            })
+            .collect();
+        for p in ends {
+            if users
+                .get(&p)
+                .is_some_and(|u| u.iter().all(|x| *x == id || baselines.contains(x)))
+            {
+                out.insert(p);
+            }
+        }
+        out.extend(baselines);
+    }
+    out
 }
 
 fn curve_centre(doc: &Document, id: EntityId) -> Option<(Vec2, f64)> {

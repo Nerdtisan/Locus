@@ -263,7 +263,12 @@ impl AppState {
             contours: path_text::bend(&moved, t.align, t.tracking, &pts, closed),
             ..Default::default()
         };
-        frame.draw_preview(&crate::scene::text_shapes(&g));
+        let mut shapes = crate::scene::text_shapes(&g);
+        // The alignment guide slides with the text (#416).
+        if let Some((a, b)) = path_text::guide(&moved, t.align, t.size, &pts, closed) {
+            shapes.push(crate::scene::Shape::Line(locus_geom::Line::new(a, b)));
+        }
+        frame.draw_preview(&shapes);
     }
 
     /// The Text on path dialog: what is picked, and the options.
@@ -439,21 +444,158 @@ mod tests {
         assert!((xs(&c, text).0 - before).abs() < 1e-9);
     }
 
-    /// Editing the content in the text dialog keeps it on the path.
+    /// #415: editing the words in the Text dialog / Inspector (the commit
+    /// they share) keeps the text on its path: same path, side, offset and
+    /// flip, the new words laid out along it, one undo step.
     #[test]
     fn re_editing_keeps_the_path() {
         let (mut c, text, line) = ready();
         c.set_modify(Modify::TextOnPath);
         c.tools.path_text.text = Some(text);
         assert!(c.bind_text_to_path(line));
-        let cmd = c
-            .text_path_command(text, "Edit text", |t| t.content = "HELLO WORLD".into())
+        let slide = c
+            .text_path_command(text, "Slide text along path", |t| {
+                t.path.as_mut().unwrap().offset = 20.0;
+            })
             .unwrap();
-        assert!(c.apply_reporting(&cmd));
+        assert!(c.apply_reporting(&slide));
+        let (stored, anchor, dir) = c
+            .document()
+            .text(text)
+            .map(|(t, a, d)| (t.clone(), a, d))
+            .unwrap();
+        let before = stored.path.as_deref().unwrap().clone();
+        let (min_before, _) = xs(&c, text);
+        let mut s = crate::views::text_ui::TextSettings::from_data(&stored);
+        s.content = "HELLO WORLD".into();
+        c.commit_text_edit(text, anchor, dir, &stored, &s).unwrap();
         let t = c.document().text(text).unwrap().0;
-        let p = t.path.as_deref().unwrap();
+        assert_eq!(t.content, "HELLO WORLD");
+        let p = t.path.as_deref().expect("still bound");
+        assert_eq!(
+            (&p.curves, p.side, p.offset, p.flip),
+            (&before.curves, before.side, before.offset, before.flip)
+        );
         assert_eq!(p.run.glyphs.len(), "HELLO WORLD".chars().count());
         let (min_x, top) = xs(&c, text);
-        assert!(min_x >= -1e-9 && top <= 6.0, "still on the line");
+        assert!(
+            (min_x - min_before).abs() < 1e-6 && top <= 6.0,
+            "still on the line at offset 20: {min_before} → {min_x}, {top}"
+        );
+        c.undo();
+        assert_eq!(c.document().text(text).unwrap().0.content, "HELLO");
+    }
+
+    /// #415: changing the alignment of bound text keeps it bound and places
+    /// it along the path; the anchor isn't shifted.
+    #[test]
+    fn re_aligning_keeps_the_path() {
+        let (mut c, text, line) = ready();
+        c.set_modify(Modify::TextOnPath);
+        c.tools.path_text.text = Some(text);
+        assert!(c.bind_text_to_path(line));
+        let (stored, anchor, dir) = c
+            .document()
+            .text(text)
+            .map(|(t, a, d)| (t.clone(), a, d))
+            .unwrap();
+        let at = c.document().point_pos(anchor);
+        let mut s = crate::views::text_ui::TextSettings::from_data(&stored);
+        s.align = Align::Right;
+        c.commit_text_edit(text, anchor, dir, &stored, &s).unwrap();
+        assert!(c.document().text(text).unwrap().0.path.is_some());
+        assert_eq!(c.document().point_pos(anchor), at);
+        let b = c.document().text_geometry(text).unwrap().bbox().unwrap();
+        assert!(
+            b.max.x <= 100.0 + 1e-6 && b.max.x > 90.0,
+            "at the end: {b:?}"
+        );
+    }
+
+    /// #416: once text made with the Text tool is bound, its dashed guide
+    /// marks the alignment point on the path (not the old baseline), and
+    /// follows the text as it slides along.
+    #[test]
+    fn the_guide_follows_bound_text() {
+        let mut c = AppState::default();
+        c.load(Document::new());
+        c.set_tool(Tool::Line);
+        for p in [Vec2::ZERO, Vec2::new(100.0, 0.0)] {
+            c.tool_event(ToolEvent::Click(Pick::free(p)), None, Units::Mm);
+        }
+        c.set_tool(Tool::Text);
+        c.tools.text_settings.content = "HELLO".to_owned();
+        c.tools.text_settings.align = Align::Center;
+        c.tool_event(
+            ToolEvent::Click(Pick::free(Vec2::new(-50.0, 50.0))),
+            None,
+            Units::Mm,
+        );
+        c.close_text_dialog();
+        c.set_tool(Tool::Select);
+        let doc = c.document();
+        let text = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Text { .. }))
+            .map(|(id, _)| id)
+            .unwrap();
+        let (_, anchor, _) = doc.text(text).unwrap();
+        let baseline = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| e.construction && e.geom.point_refs().contains(&anchor))
+            .map(|(id, _)| id)
+            .unwrap();
+        let line = doc
+            .entities()
+            .iter()
+            .find(|(id, e)| !e.construction && doc.line(*id).is_some())
+            .map(|(id, _)| id)
+            .unwrap();
+        // Plain text: the baseline from the anchor is the guide.
+        let shown = |c: &AppState, id: EntityId| c.doc.scene.items.iter().any(|i| i.id == id);
+        assert!(shown(&c, baseline) && shown(&c, anchor));
+        // The guide: the text's one construction line.
+        let guide = |c: &AppState| {
+            let g: Vec<_> = c
+                .doc
+                .scene
+                .items
+                .iter()
+                .filter(|i| i.id == text && i.construction)
+                .filter_map(|i| match i.shape {
+                    crate::scene::Shape::Line(l) => Some(l),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(g.len(), 1, "one guide");
+            g[0]
+        };
+        c.set_modify(Modify::TextOnPath);
+        c.tools.path_text.text = Some(text);
+        assert!(c.bind_text_to_path(line));
+        assert!(!shown(&c, baseline) && !shown(&c, anchor), "parked");
+        let g = guide(&c);
+        assert!(
+            (g.a.x - 50.0).abs() < 1e-9 && (g.b.x - 50.0).abs() < 1e-9,
+            "centred on the line's middle: {g:?}"
+        );
+        assert!(g.a.y < 0.0 && g.b.y > 0.0, "across the line: {g:?}");
+        // Slide 25 mm along: the guide moves with the text.
+        assert!(c.begin_drag(text, Vec2::new(50.0, 1.0)));
+        c.tools.dragging = false;
+        let s = c.tools.slide.take().unwrap();
+        let cmd = c
+            .text_path_command(s.text, "Slide text along path", |t| {
+                t.path.as_mut().unwrap().offset = 25.0;
+            })
+            .unwrap();
+        assert!(c.apply_reporting(&cmd));
+        let g = guide(&c);
+        assert!((g.a.x - 75.0).abs() < 1e-9, "slid with the text: {g:?}");
+        // Detach: the baseline is back where the text was placed.
+        assert!(c.detach_text(text));
+        assert!(shown(&c, baseline) && shown(&c, anchor));
     }
 }

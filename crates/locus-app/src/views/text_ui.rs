@@ -74,6 +74,27 @@ impl TextSettings {
     }
 }
 
+impl TextSettings {
+    /// `stored` with these settings applied, laid out again (#415). Unlike
+    /// [`TextSettings::to_data`], which makes a new text, this keeps what
+    /// the settings don't cover: text on a path stays on its path (same
+    /// path, side, offset and flip) with its glyphs laid out anew.
+    pub fn apply_to(
+        &self,
+        stored: &TextData,
+        fonts: &dyn FontProvider,
+    ) -> Result<TextData, DocError> {
+        stored.edited(fonts, |t| {
+            t.content.clone_from(&self.content);
+            t.font = self.font.clone();
+            t.size = self.size;
+            t.align = self.align;
+            t.line_spacing = self.line_spacing;
+            t.tracking = self.tracking;
+        })
+    }
+}
+
 /// What a frame of editing changed.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Edited {

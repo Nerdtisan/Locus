@@ -254,6 +254,77 @@ pub fn along(pts: &[Vec2], p: Vec2) -> f64 {
     best.1
 }
 
+/// The point and unit direction `s` mm along `pts`, whose running lengths
+/// are `cum` (`pts` has at least two points).
+fn point_at(pts: &[Vec2], cum: &[f64], s: f64) -> (Vec2, Vec2) {
+    let i = match cum.binary_search_by(|c: &f64| c.total_cmp(&s)) {
+        Ok(i) | Err(i) => i.clamp(1, cum.len() - 1),
+    };
+    let (a, b) = (pts[i - 1], pts[i]);
+    let len = cum[i] - cum[i - 1];
+    let dir = if len > 0.0 {
+        (b - a) * (1.0 / len)
+    } else {
+        Vec2::new(1.0, 0.0)
+    };
+    (a + dir * (s - cum[i - 1]), dir)
+}
+
+/// The text's alignment point on the path (#416): where its left edge,
+/// middle or right edge sits for Left, Center or Right, as [`bend`] places
+/// it, and the path's unit direction there. Off the end of an open path it
+/// stays at that end. `None` for an empty path.
+#[must_use]
+pub fn alignment_point(
+    tp: &TextPath,
+    align: Align,
+    pts: &[Vec2],
+    closed: bool,
+) -> Option<(Vec2, Vec2)> {
+    let cum = lengths(pts);
+    let total = cum.last().copied().unwrap_or(0.0);
+    if total <= f64::EPSILON || pts.len() < 2 {
+        return None;
+    }
+    let s = match align {
+        Align::Left => 0.0,
+        Align::Center => total / 2.0,
+        Align::Right => total,
+    } + tp.offset;
+    let s = if closed {
+        s.rem_euclid(total)
+    } else {
+        s.clamp(0.0, total)
+    };
+    Some(point_at(pts, &cum, s))
+}
+
+/// The dashed alignment guide of text on a path (#416), the counterpart of
+/// a plain text's baseline from its anchor: a tick across the path at the
+/// [`alignment_point`], spanning the letters' height on the text's side.
+/// `size` is the font size, used when the run has no height (no glyphs).
+#[must_use]
+pub fn guide(
+    tp: &TextPath,
+    align: Align,
+    size: f64,
+    pts: &[Vec2],
+    closed: bool,
+) -> Option<(Vec2, Vec2)> {
+    let (p, u) = alignment_point(tp, align, pts, closed)?;
+    let n = Vec2::new(-u.y, u.x);
+    let h = if tp.run.ascent > 0.0 {
+        tp.run.ascent
+    } else {
+        size
+    };
+    let lift = match tp.side {
+        PathSide::Above => 0.0,
+        PathSide::Below => -h,
+    };
+    Some((p + n * (lift - h / 4.0), p + n * (lift + h * 1.25)))
+}
+
 /// The glyphs of `tp.run` set along `pts`, as contours in document mm. A
 /// glyph whose middle falls off an open path is left out.
 #[must_use]
@@ -275,20 +346,7 @@ pub fn bend(
         Align::Center => (total - width) / 2.0,
         Align::Right => total - width,
     } + tp.offset;
-    // The point and unit direction `s` along the path.
-    let at = |s: f64| -> (Vec2, Vec2) {
-        let i = match cum.binary_search_by(|c: &f64| c.total_cmp(&s)) {
-            Ok(i) | Err(i) => i.clamp(1, cum.len() - 1),
-        };
-        let (a, b) = (pts[i - 1], pts[i]);
-        let len = cum[i] - cum[i - 1];
-        let dir = if len > 0.0 {
-            (b - a) * (1.0 / len)
-        } else {
-            Vec2::new(1.0, 0.0)
-        };
-        (a + dir * (s - cum[i - 1]), dir)
-    };
+    let at = |s: f64| point_at(pts, &cum, s);
     let lift = match tp.side {
         PathSide::Above => 0.0,
         PathSide::Below => -tp.run.ascent,
@@ -482,6 +540,46 @@ mod tests {
         ];
         assert!((along(&pts, Vec2::new(4.0, 3.0)) - 4.0).abs() < 1e-12);
         assert!((along(&pts, Vec2::new(13.0, 6.0)) - 16.0).abs() < 1e-12);
+    }
+
+    /// #416: the guide marks the alignment point on the path (left edge,
+    /// middle or right edge) and moves with the offset.
+    #[test]
+    fn the_guide_marks_the_alignment_point_on_the_path() {
+        for (align, x) in [
+            (Align::Left, 0.0),
+            (Align::Center, 50.0),
+            (Align::Right, 100.0),
+        ] {
+            let mut ed = Editor::new(Document::new());
+            let t = text(&mut ed, "LOCUS", align);
+            let (a, q) = (point(&mut ed, 0.0, 0.0), point(&mut ed, 100.0, 0.0));
+            let line = add(&mut ed, Geom::Line { start: a, end: q });
+            assert!(ed.document().text_path_guide(t).is_none(), "plain text");
+            bind(&mut ed, t, vec![line], |_| {});
+            let (g0, g1) = ed.document().text_path_guide(t).unwrap();
+            assert!(
+                (g0.x - x).abs() < 1e-9 && (g1.x - x).abs() < 1e-9,
+                "{align:?}"
+            );
+            assert!(g0.y < 0.0 && g1.y > 3.0, "across the path, up the letters");
+            // Slide 20 mm along: the guide follows.
+            let (data, anchor, dir) = ed.document().text(t).unwrap();
+            let mut slid = data.clone();
+            slid.path.as_mut().unwrap().offset = 20.0;
+            ed.apply(&Command::ModifyEntity {
+                id: t,
+                geom: Geom::Text {
+                    anchor,
+                    dir,
+                    text: Box::new(slid),
+                },
+            })
+            .unwrap();
+            let (g0, _) = ed.document().text_path_guide(t).unwrap();
+            let want = (x + 20.0).min(100.0);
+            assert!((g0.x - want).abs() < 1e-9, "{align:?}: {g0:?}");
+        }
     }
 
     #[test]
