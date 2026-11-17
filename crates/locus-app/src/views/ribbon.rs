@@ -78,10 +78,36 @@ pub fn show(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>, bar: &mut Toolba
 fn tabs(ui: &mut egui::Ui) -> RibbonTab {
     let id = egui::Id::new("locus-ribbon-tab");
     let mut tab: RibbonTab = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
+    let tk = crate::theme::tokens(ui);
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
         for t in RibbonTab::ALL {
-            let text = egui::RichText::new(t.title()).small().strong();
-            if ui.selectable_label(tab == t, text).clicked() {
+            let on = tab == t;
+            // The mockup's tabs: muted capitals, the open one on the panel
+            // in the accent colour.
+            let text = egui::RichText::new(t.title())
+                .size(11.0)
+                .strong()
+                .color(if on { tk.accent } else { tk.muted });
+            let b = egui::Button::new(text)
+                .fill(if on {
+                    tk.panel
+                } else {
+                    egui::Color32::TRANSPARENT
+                })
+                .stroke(if on {
+                    egui::Stroke::new(1.0, tk.line)
+                } else {
+                    egui::Stroke::NONE
+                })
+                .corner_radius(egui::CornerRadius {
+                    nw: 6,
+                    ne: 6,
+                    sw: 0,
+                    se: 0,
+                })
+                .min_size(egui::vec2(0.0, 22.0));
+            if ui.add(b).clicked() {
                 tab = t;
             }
         }
@@ -98,16 +124,28 @@ fn export_end(ui: &mut egui::Ui, reg: &Registry, cx: &mut Cx<'_>) {
         return;
     };
     let tip = tooltip_plain(ui, reg, cx, a);
-    // Room on the left for the painted icon (the fonts have no glyph).
-    let r = ui
-        .add(egui::Button::new("        EXPORT").min_size(egui::vec2(0.0, 26.0)))
-        .on_hover_text(tip);
-    let icon = egui::Rect::from_center_size(
-        egui::pos2(r.rect.left() + 15.0, r.rect.center().y),
-        egui::vec2(16.0, 16.0),
-    );
+    // The mockup's finish group (#360): the icon above "EXPORT", as one
+    // button (#359).
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(56.0, 50.0), egui::Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "EXPORT"));
+    let tk = crate::theme::tokens(ui);
+    if r.hovered() {
+        ui.painter().rect_filled(rect, 5.0, tk.accent_soft);
+    }
     let color = icon_color(ui, &r, true);
+    let icon = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.top() + 18.0),
+        egui::vec2(20.0, 20.0),
+    );
     icons::paint(ui.painter(), icon, a.id.as_str(), &a.label, color);
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.bottom() - 8.0),
+        egui::Align2::CENTER_CENTER,
+        "EXPORT",
+        egui::FontId::proportional(10.0),
+        if r.hovered() { tk.accent } else { tk.muted },
+    );
+    let r = r.on_hover_text(tip);
     if r.clicked() {
         run_or_explain(reg, cx, a);
     }
@@ -124,7 +162,7 @@ fn row(
     edits: &mut Vec<Edit>,
 ) {
     for (n, &g) in tab.groups().iter().enumerate() {
-        let step = button_size(g) + ui.spacing().item_spacing.x;
+        let step = button_width(g) + 1.0;
         let shown = bar
             .pinned(g)
             .iter()
@@ -200,55 +238,80 @@ fn group(
 ) {
     let pins = bar.pinned(g).to_vec();
     let mut target = None;
-    let inner = ui.horizontal(|ui| {
-        for (i, id) in pins.iter().enumerate() {
-            // A pinned plugin action whose plugin isn't loaded stays pinned
-            // but hidden (design §7.1).
-            let Some(a) = reg.get(id) else { continue };
-            // Stable ids: auto ids would shift as pins come and go, and a
-            // menu's open state would jump to another widget.
-            let r = ui
-                .push_id(("ribbon-pin", id.as_str()), |ui| {
-                    pin_button(ui, reg, cx, a, button_size(g))
-                })
-                .inner;
-            r.dnd_set_drag_payload(Dragged {
-                id: id.clone(),
-                from_bar: true,
-            });
-            if dragging.is_some()
-                && let Some(p) = r.hover_pos().or_else(|| pointer_in(ui, r.rect))
-            {
-                let before = p.x < r.rect.center().x;
-                target = Some(if before { i } else { i + 1 });
-                let x = if before {
-                    r.rect.left()
-                } else {
-                    r.rect.right()
-                } + if before { -2.0 } else { 2.0 };
-                insertion_line(ui, x, r.rect);
-            }
-            if r.clicked() {
-                run_or_explain(reg, cx, a);
-            }
-            r.context_menu(|ui| {
-                if ui.button("Unpin").clicked() {
-                    edits.push(Edit::Unpin(id.clone(), RibbonTab::of(g)));
-                    ui.close();
+    // The mockup's group (#360): its buttons in a row, its label centred
+    // under them.
+    let inner = ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(1.0, 0.0);
+        let row = ui.horizontal(|ui| {
+            for (i, id) in pins.iter().enumerate() {
+                // A pinned plugin action whose plugin isn't loaded stays pinned
+                // but hidden (design §7.1).
+                let Some(a) = reg.get(id) else { continue };
+                // Stable ids: auto ids would shift as pins come and go, and a
+                // menu's open state would jump to another widget.
+                let r = ui
+                    .push_id(("ribbon-pin", id.as_str()), |ui| {
+                        pin_button(ui, reg, cx, a, button_width(g))
+                    })
+                    .inner;
+                r.dnd_set_drag_payload(Dragged {
+                    id: id.clone(),
+                    from_bar: true,
+                });
+                if dragging.is_some()
+                    && let Some(p) = r.hover_pos().or_else(|| pointer_in(ui, r.rect))
+                {
+                    let before = p.x < r.rect.center().x;
+                    target = Some(if before { i } else { i + 1 });
+                    let x = if before {
+                        r.rect.left()
+                    } else {
+                        r.rect.right()
+                    } + if before { -2.0 } else { 2.0 };
+                    insertion_line(ui, x, r.rect);
                 }
-            });
-        }
-        // "GROUP ▾": the fonts have no ▾, so the triangle is painted.
+                if r.clicked() {
+                    run_or_explain(reg, cx, a);
+                }
+                r.context_menu(|ui| {
+                    if ui.button("Unpin").clicked() {
+                        edits.push(Edit::Unpin(id.clone(), RibbonTab::of(g)));
+                        ui.close();
+                    }
+                });
+            }
+            if pins.iter().all(|id| reg.get(id).is_none()) {
+                // An empty group keeps its place (and takes drops).
+                ui.add_space(button_width(g));
+            }
+        });
+        // "GROUP ▾" under the buttons: small, muted, spaced capitals. The
+        // fonts have no ▾, so the triangle is painted.
+        let muted = crate::theme::tokens(ui).muted;
+        let label = egui::RichText::new(format!("{}      ", g.title()))
+            .size(10.0)
+            .strong()
+            .color(muted);
+        let width = row.response.rect.width();
         let m = ui
-            .push_id(("ribbon-menu", g.title()), |ui| {
-                ui.menu_button(format!("{}    ", g.title()), |ui| {
-                    menu(ui, reg, cx, bar, g, edits);
-                })
-            })
+            .allocate_ui_with_layout(
+                egui::vec2(width.max(60.0), 16.0),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    ui.push_id(("ribbon-menu", g.title()), |ui| {
+                        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =
+                            egui::Color32::TRANSPARENT;
+                        ui.menu_button(label, |ui| {
+                            menu(ui, reg, cx, bar, g, edits);
+                        })
+                    })
+                    .inner
+                },
+            )
             .inner;
         let r = m.response.rect;
-        let c = ui.visuals().text_color();
-        let (x, y) = (r.right() - 11.0, r.center().y);
+        let c = muted;
+        let (x, y) = (r.right() - 10.0, r.center().y);
         ui.painter().add(egui::Shape::convex_polygon(
             vec![
                 egui::pos2(x - 3.5, y - 2.0),
@@ -289,30 +352,36 @@ fn insertion_line(ui: &egui::Ui, x: f32, rect: egui::Rect) {
 /// One pinned symbol button. It is draggable, so it can't be greyed out
 /// with `add_enabled`; a disabled action is drawn weak and explains itself
 /// when clicked.
-/// Pinned buttons' size. The constraint symbols are smaller, as in Fusion
-/// and the mockup, so all twelve fit (design §2).
-fn button_size(g: Group) -> f32 {
-    if g == Group::Constrain { 22.0 } else { 26.0 }
+/// Pinned buttons' width, as the mockup's `.tb` (34 × 32). The constraint
+/// symbols are narrower (`.tb.sm`), as in Fusion, so all of them fit
+/// (design §2).
+fn button_width(g: Group) -> f32 {
+    if g == Group::Constrain { 27.0 } else { 34.0 }
 }
+
+const BUTTON_HEIGHT: f32 = 32.0;
 
 fn pin_button(
     ui: &mut egui::Ui,
     reg: &Registry,
     cx: &Cx<'_>,
     a: &Action,
-    size: f32,
+    width: f32,
 ) -> egui::Response {
     let enabled = reg.enabled(a, cx.state);
     let on = reg.is_on(a, cx.state, cx.settings);
     let r = ui.add(
         egui::Button::selectable(on, "")
-            .min_size(egui::vec2(size, size))
+            .min_size(egui::vec2(width, BUTTON_HEIGHT))
             .sense(Sense::click_and_drag()),
     );
     let color = icon_color(ui, &r, enabled.yes());
     icons::paint(
         ui.painter(),
-        r.rect.shrink(size * 0.19),
+        egui::Rect::from_center_size(
+            r.rect.center(),
+            egui::Vec2::splat(if width < 30.0 { 17.0 } else { 20.0 }),
+        ),
         a.id.as_str(),
         &a.label,
         color,

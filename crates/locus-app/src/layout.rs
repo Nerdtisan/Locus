@@ -229,8 +229,9 @@ pub fn default_layout() -> DockState<Tab> {
     let mut dock = DockState::new(vec![Tab::Canvas]);
     let tree = dock.main_surface_mut();
     // Each fraction is the share of the left or upper part.
-    let [canvas, _browser] = tree.split_left(NodeIndex::root(), 0.16, vec![Tab::Browser]);
-    let [_canvas, right] = tree.split_right(canvas, 0.80, vec![Tab::Palette]);
+    // The mockup's columns (#360): 238 | canvas | 276 of 1280 px.
+    let [canvas, _browser] = tree.split_left(NodeIndex::root(), 0.19, vec![Tab::Browser]);
+    let [_canvas, right] = tree.split_right(canvas, 0.73, vec![Tab::Palette]);
     tree.split_below(right, 0.36, vec![Tab::Inspector]);
     dock
 }
