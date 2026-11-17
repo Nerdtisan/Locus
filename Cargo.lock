@@ -1907,6 +1907,8 @@ dependencies = [
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2127,9 +2129,11 @@ dependencies = [
 name = "locus-app"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "eframe",
  "egui",
  "egui_dock",
+ "image",
  "js-sys",
  "locus-doc",
  "locus-export",
@@ -2168,6 +2172,7 @@ dependencies = [
 name = "locus-doc"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "locus-geom",
  "locus-region",
  "locus-solver",
@@ -2204,6 +2209,7 @@ dependencies = [
 name = "locus-import"
 version = "0.0.0"
 dependencies = [
+ "image",
  "locus-doc",
  "locus-export",
  "locus-geom",

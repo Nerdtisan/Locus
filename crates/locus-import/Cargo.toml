@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 locus-geom.workspace = true
 locus-doc.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 roxmltree = { version = "0.21", default-features = false, features = ["std"] }
 thiserror.workspace = true
 

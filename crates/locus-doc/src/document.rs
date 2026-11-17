@@ -152,6 +152,8 @@ pub struct Document {
     /// Selected machine profile id (SPEC §7, #236). Only the id is stored;
     /// the profile itself lives in the app (built-in or user settings).
     pub(crate) profile: Option<String>,
+    /// Raster reference images, one per Reference layer (#390).
+    pub(crate) images: BTreeMap<LayerId, crate::image::RefImage>,
 }
 
 impl Default for Document {
@@ -187,6 +189,7 @@ impl Document {
             dim_exprs: BTreeMap::new(),
             view: None,
             profile: None,
+            images: BTreeMap::new(),
         }
     }
 
@@ -270,6 +273,40 @@ impl Document {
     #[must_use]
     pub fn layers(&self) -> &BTreeMap<LayerId, Layer> {
         &self.layers
+    }
+
+    /// Raster reference images by layer (#390).
+    #[must_use]
+    pub fn images(&self) -> &BTreeMap<LayerId, crate::image::RefImage> {
+        &self.images
+    }
+
+    /// The raster reference image on `layer` (#390).
+    #[must_use]
+    pub fn image(&self, layer: LayerId) -> Option<&crate::image::RefImage> {
+        self.images.get(&layer)
+    }
+
+    /// An image's own checks plus where it may live: a Reference layer
+    /// (never exported, SPEC §7), within the per-document count.
+    pub(crate) fn check_image(
+        &self,
+        layer: LayerId,
+        image: &crate::image::RefImage,
+    ) -> Result<(), DocError> {
+        let l = self.layer(layer).ok_or(DocError::UnknownLayer(layer))?;
+        if !matches!(l.operation, Operation::Reference) {
+            return Err(DocError::Invalid(
+                "an image can only be on a Reference layer".to_owned(),
+            ));
+        }
+        if !self.images.contains_key(&layer) && self.images.len() >= crate::image::MAX_IMAGES {
+            return Err(DocError::Invalid(format!(
+                "a document holds at most {} images",
+                crate::image::MAX_IMAGES
+            )));
+        }
+        image.validate()
     }
 
     #[must_use]

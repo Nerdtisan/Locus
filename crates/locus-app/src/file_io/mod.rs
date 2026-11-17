@@ -333,7 +333,7 @@ impl FileIo {
         if ui
             .button("Import reference…")
             .on_hover_text(
-                "Add an SVG or DXF as locked reference geometry to trace, snap and constrain to. It is never exported.",
+                "Add an SVG or DXF as locked reference geometry to trace, snap and constrain to, or a PNG or JPEG image to trace over. It is never exported.",
             )
             .clicked()
         {
@@ -452,14 +452,17 @@ impl FileIo {
         self.web.pick();
     }
 
-    /// File ▸ Import reference… (SPEC §13 M4, #243): adds an SVG or DXF on a
-    /// new locked Reference layer. It doesn't replace the document, so the
+    /// File ▸ Import reference… (SPEC §13 M4, #243, #390): adds an SVG, DXF,
+    /// PNG or JPEG on a new locked Reference layer. It doesn't replace the document, so the
     /// unsaved-changes guard doesn't apply; it is one undo step.
     #[cfg(not(target_arch = "wasm32"))]
     fn begin_import_reference(&mut self, canvas: &mut AppState) {
         use std::io::Read;
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("SVG or DXF", &["svg", "dxf"])
+            .add_filter(
+                "SVG, DXF, PNG or JPEG",
+                &["svg", "dxf", "png", "jpg", "jpeg"],
+            )
             .pick_file()
         else {
             return;
@@ -488,12 +491,18 @@ impl FileIo {
     /// Parses `bytes` and applies the import as one undo step. Failures are
     /// shown and change nothing; messages never contain the file name.
     fn add_reference(&mut self, canvas: &mut AppState, name: &str, bytes: &[u8]) {
-        match locus_import::reference_command(canvas.document(), name, bytes) {
+        // An image lands in the middle of the view (#390).
+        let centre = canvas.view.camera.center;
+        match locus_import::reference_command_at(canvas.document(), name, bytes, centre) {
             Ok((cmd, warnings)) => match canvas.apply(&cmd) {
                 Ok(()) => {
-                    let mut msg = String::from(
-                        "Imported as a locked reference layer. It is never exported; snap and constrain to it.",
-                    );
+                    let image = matches!(&cmd, locus_doc::Command::Compound { commands, .. }
+                        if commands.iter().any(|c| matches!(c, locus_doc::Command::AddImage { .. })));
+                    let mut msg = String::from(if image {
+                        "Imported as a locked reference image. It is never exported; set its opacity and size in the Inspector."
+                    } else {
+                        "Imported as a locked reference layer. It is never exported; snap and constrain to it."
+                    });
                     for w in warnings {
                         msg.push('\n');
                         msg.push_str(&w);
@@ -974,8 +983,8 @@ impl FileIo {
                 },
                 web::Msg::Picked(Ok(None)) => {}
                 web::Msg::Picked(Err(msg)) => self.error = Some(msg),
-                web::Msg::PickedReference(Ok(Some((name, text)))) => {
-                    self.add_reference(canvas, &name, text.as_bytes());
+                web::Msg::PickedReference(Ok(Some((name, bytes)))) => {
+                    self.add_reference(canvas, &name, &bytes);
                 }
                 web::Msg::PickedReference(Ok(None)) => {}
                 web::Msg::PickedProfile(Ok(Some((_, text)))) => {

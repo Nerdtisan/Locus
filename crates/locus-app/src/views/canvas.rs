@@ -20,6 +20,7 @@ mod ai;
 mod bed;
 mod corner_dialog;
 pub(crate) mod dialog;
+pub(crate) mod images;
 mod machine;
 mod manipulator;
 mod mirror_tool;
@@ -301,6 +302,8 @@ impl AppState {
         if display.grid {
             grid::draw(&painter, &self.view.camera, rect, dark);
         }
+        // Reference images under everything else (#390).
+        self.draw_images(ui.ctx(), &painter, rect, dark);
         let frame = Frame {
             painter: &painter,
             view: &self.view.camera,
