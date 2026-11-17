@@ -810,6 +810,55 @@ impl AppState {
             .set_all(self.doc.scene.items.iter().map(|i| i.id));
     }
 
+    /// SELECT ▸ Select layer (#386): everything drawn on the active layer.
+    pub fn select_layer(&mut self) {
+        let layer = self.active_layer();
+        let doc = self.doc.sketcher.document();
+        let on: Vec<EntityId> = self
+            .doc
+            .scene
+            .items
+            .iter()
+            .map(|i| i.id)
+            .filter(|id| doc.entities().get(*id).is_some_and(|e| e.layer == layer))
+            .collect();
+        self.selection.items.set_all(on);
+    }
+
+    /// The recipes (pattern, mirror, offset, plugin object) that made the
+    /// selected geometry, each once (MODIFY ▸ Explode recipe, #386).
+    pub fn selected_recipes(&self) -> Vec<locus_doc::RecipeId> {
+        let doc = self.doc.sketcher.document();
+        let mut out: Vec<locus_doc::RecipeId> = self
+            .selection
+            .items
+            .iter()
+            .filter_map(|id| doc.driven_by(id))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Explode every recipe that made the selection into ordinary geometry,
+    /// as one undo step (SPEC §11).
+    pub fn explode_selected_recipes(&mut self) {
+        let ids = self.selected_recipes();
+        if ids.is_empty() {
+            self.doc.notice =
+                Some("Select geometry a pattern, mirror, offset or plugin made".to_owned());
+            return;
+        }
+        let cmd = Command::Compound {
+            label: "Explode".to_owned(),
+            commands: ids
+                .into_iter()
+                .map(|id| Command::ExplodeRecipe { id })
+                .collect(),
+        };
+        self.apply_reporting(&cmd);
+    }
+
     /// Select exactly these entities (the pre-export panel's highlight, #128).
     pub fn select_entities(&mut self, ids: &[locus_doc::EntityId]) {
         let present: Vec<_> = ids
@@ -948,6 +997,74 @@ mod tests {
     use crate::views::properties::describe;
     use crate::views::recipes::RecipesView;
     use locus_doc::RecipeKind;
+
+    /// SELECT ▸ Select layer (#386) selects what is on the active layer
+    /// and nothing else.
+    #[test]
+    fn select_layer_selects_the_active_layers_geometry() {
+        let mut c = AppState::default();
+        let layer = c.active_layer();
+        c.select_layer();
+        let doc = c.document();
+        let picked = c.selected();
+        assert!(!picked.is_empty());
+        assert!(
+            picked
+                .iter()
+                .all(|id| doc.entities().get(*id).is_some_and(|e| e.layer == layer))
+        );
+    }
+
+    /// MODIFY ▸ Explode recipe (#386): a pattern copy's recipe is exploded
+    /// as one undo step, and without a recipe's geometry selected it says
+    /// what it needs.
+    #[test]
+    fn explode_recipe_explodes_the_selections_recipe() {
+        let mut c = AppState::default();
+        c.explode_selected_recipes();
+        assert!(
+            c.doc
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("pattern"))
+        );
+        let doc = c.document();
+        let Some(line) = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Line { .. }))
+            .map(|(id, _)| id)
+        else {
+            panic!("the demo has a line");
+        };
+        let add = Command::AddRecipe {
+            sources: vec![line],
+            kind: RecipeKind::Linear {
+                dir1: locus_doc::LinearDir {
+                    axis: locus_doc::Axis::X,
+                    count: "2".to_owned(),
+                    spacing: "10".to_owned(),
+                    symmetric: false,
+                },
+                dir2: None,
+            },
+        };
+        assert!(c.apply(&add).is_ok());
+        let Some((rid, copy)) = c
+            .document()
+            .recipes()
+            .iter()
+            .find_map(|(rid, r)| r.instances().next().map(|e| (*rid, e)))
+        else {
+            panic!("the pattern made a copy");
+        };
+        c.selection.items.set_all([copy]);
+        assert_eq!(c.selected_recipes(), [rid]);
+        c.explode_selected_recipes();
+        assert!(c.document().recipe(rid).is_none());
+        assert!(c.document().entities().get(copy).is_some());
+        assert_eq!(c.undo_label(), Some("Explode"));
+    }
 
     /// #383: the app opens on a new, empty untitled document, centred on
     /// the origin and with nothing to undo, so it isn't "unsaved" either

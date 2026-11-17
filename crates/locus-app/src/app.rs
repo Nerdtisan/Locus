@@ -316,6 +316,9 @@ impl App {
                 Shell::Export => self.files.open_export(&self.state, &self.settings),
                 Shell::ExportPng => self.files.open_export_png(&self.state),
                 Shell::Profiles => self.files.open_profiles(),
+                Shell::InsertReference(kind) => {
+                    self.files.begin_import_reference(&mut self.state, kind);
+                }
                 Shell::InstallPlugin => self.plugins.open_install(),
                 Shell::PluginManager => self.plugins.open_manager(),
                 #[cfg(not(target_arch = "wasm32"))]

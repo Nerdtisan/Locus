@@ -180,6 +180,10 @@ pub enum Op {
     Repeat,
     /// Grow the selection to the chains of its curves (#220).
     SelectChain,
+    /// Select everything on the active layer (#386).
+    SelectLayer,
+    /// Explode the recipes that made the selection (#386).
+    ExplodeRecipe,
     Fit,
     Zoom(Zoom),
     /// Something only the shell can do, because it owns the dock, its
@@ -209,6 +213,9 @@ pub enum Shell {
     ExportPng,
     /// The machine profile manager (#286).
     Profiles,
+    /// INSERT ▸ Insert SVG… / Insert DXF… (#386): the file goes in as a
+    /// locked reference layer, as File ▸ Import reference… (SPEC §13 M4).
+    InsertReference(crate::file_io::Insert),
     InstallPlugin,
     PluginManager,
     /// The MCP server window (desktop only, SPEC §16).
@@ -241,12 +248,14 @@ impl Action {
             | Op::Dimension
             | Op::Delete
             | Op::ToggleConstruction
+            | Op::ExplodeRecipe
             | Op::Plugin { .. } => true,
             Op::Undo
             | Op::Redo
             | Op::Repeat
             | Op::SelectAll
             | Op::SelectChain
+            | Op::SelectLayer
             | Op::Deselect
             | Op::Fit
             | Op::Zoom(_)
@@ -416,22 +425,9 @@ const fn constraint(id: &'static str, k: Kind) -> Action {
 /// Every built-in action. Keys follow the design's shortcut map (§5) for
 /// the actions that exist today.
 pub static BUILTIN: &[Action] = &[
-    // ── Select ──
-    draw(
-        "select.select",
-        Group::Select,
-        &["pointer"],
-        &[],
-        Tool::Select,
-    ),
+    // Ribbon groups in the mockup's order (design §2, #386): each group's
+    // ▾ menu lists its actions in this order.
     // ── Create ──
-    draw(
-        "sketch.point",
-        Group::Create,
-        &[],
-        &[key(Key::P)],
-        Tool::Point,
-    ),
     draw(
         "sketch.line",
         Group::Create,
@@ -525,18 +521,26 @@ pub static BUILTIN: &[Action] = &[
         Tool::Bezier,
     ),
     draw(
+        "sketch.point",
+        Group::Create,
+        &[],
+        &[key(Key::P)],
+        Tool::Point,
+    ),
+    draw(
         "sketch.text",
         Group::Create,
         &["font", "lettering"],
         &[],
         Tool::Text,
     ),
-    // Offset creates geometry, so it sits in Create as in Fusion (design §2).
+    // Mirror creates geometry too (design §2, §6.9, #215).
+    modify("sketch.mirror", Group::Create, &[], Modify::Mirror),
     modify(
-        "modify.offset",
+        "sketch.pattern_circ",
         Group::Create,
-        &[key(Key::O)],
-        Modify::Offset,
+        &[],
+        Modify::Pattern(true),
     ),
     // Patterns create geometry, so they sit in Create as in Fusion (design
     // §2, §6.8, #221).
@@ -546,20 +550,19 @@ pub static BUILTIN: &[Action] = &[
         &[],
         Modify::Pattern(false),
     ),
+    // Offset creates geometry, so it sits in Create as in Fusion (design §2).
     modify(
-        "sketch.pattern_circ",
+        "modify.offset",
         Group::Create,
-        &[],
-        Modify::Pattern(true),
+        &[key(Key::O)],
+        Modify::Offset,
     ),
-    // Mirror creates geometry too (design §2, §6.9, #215).
-    modify("sketch.mirror", Group::Create, &[], Modify::Mirror),
     // ── Modify ──
+    modify("modify.fillet", Group::Modify, &[], Modify::Fillet),
+    modify("modify.chamfer", Group::Modify, &[], Modify::Chamfer),
     modify("modify.trim", Group::Modify, &[key(Key::T)], Modify::Trim),
     modify("modify.extend", Group::Modify, &[], Modify::Extend),
     modify("modify.break", Group::Modify, &[], Modify::Break),
-    modify("modify.fillet", Group::Modify, &[], Modify::Fillet),
-    modify("modify.chamfer", Group::Modify, &[], Modify::Chamfer),
     // Three tools sharing one dialog and manipulator (design §6.7, #219).
     modify(
         "modify.move",
@@ -580,16 +583,6 @@ pub static BUILTIN: &[Action] = &[
         Modify::Transform(TransformMode::Scale),
     ),
     a(
-        "edit.delete",
-        "Delete",
-        Group::Modify,
-        &["remove", "erase"],
-        "Delete the selection, with the constraints and recipes that depend on it",
-        &[key(Key::Delete), key(Key::Backspace)],
-        KeyScope::Canvas,
-        Op::Delete,
-    ),
-    a(
         "modify.construction",
         "Normal/Construction",
         Group::Modify,
@@ -600,19 +593,48 @@ pub static BUILTIN: &[Action] = &[
         Op::ToggleConstruction,
     ),
     a(
-        "sketch.linetype_construction",
-        "Construction linetype",
-        Group::Create,
-        &["construction", "linetype", "dashed"],
-        "New geometry is construction: drawn dashed, constrainable, never exported",
+        "modify.explode",
+        "Explode recipe",
+        Group::Modify,
+        &["recipe", "pattern", "mirror", "offset", "detach", "ungroup"],
+        "Select geometry a pattern, mirror, offset or plugin made, to turn it into ordinary, independent geometry",
+        &[],
+        KeyScope::Canvas,
+        Op::ExplodeRecipe,
+    ),
+    // The style lives in the Inspector (design §6.2); this brings it up.
+    a(
+        "modify.style",
+        "Style…",
+        Group::Modify,
+        &[
+            "colour",
+            "color",
+            "stroke",
+            "fill",
+            "pen",
+            "width",
+            "eyedropper",
+        ],
+        "Edit the selection's style, or the current style, in the Inspector",
         &[],
         KeyScope::Global,
-        Op::Toggle(Flag::ConstructionLinetype),
+        Op::Shell(Shell::ShowPane(crate::layout::Tab::Inspector)),
+    ),
+    a(
+        "edit.delete",
+        "Delete",
+        Group::Modify,
+        &["remove", "erase"],
+        "Delete the selection, with the constraints and recipes that depend on it",
+        &[key(Key::Delete), key(Key::Backspace)],
+        KeyScope::Canvas,
+        Op::Delete,
     ),
     // ── Constrain ──
     a(
         "constrain.dimension",
-        "Dimension",
+        "Sketch Dimension",
         Group::Constrain,
         &["sketch dimension", "measure", "length", "radius", "angle"],
         "Select a line, two points, a circle or arc…",
@@ -621,17 +643,17 @@ pub static BUILTIN: &[Action] = &[
         Op::Dimension,
     ),
     constraint("constrain.coincident", Kind::Coincident),
-    constraint("constrain.horizontal", Kind::Horizontal),
-    constraint("constrain.vertical", Kind::Vertical),
-    constraint("constrain.parallel", Kind::Parallel),
-    constraint("constrain.perpendicular", Kind::Perpendicular),
-    constraint("constrain.tangent", Kind::Tangent),
     constraint("constrain.collinear", Kind::Collinear),
     constraint("constrain.concentric", Kind::Concentric),
-    constraint("constrain.equal", Kind::Equal),
-    constraint("constrain.symmetric", Kind::Symmetric),
     constraint("constrain.midpoint", Kind::Midpoint),
     constraint("constrain.fix", Kind::Fix),
+    constraint("constrain.parallel", Kind::Parallel),
+    constraint("constrain.perpendicular", Kind::Perpendicular),
+    constraint("constrain.horizontal", Kind::Horizontal),
+    constraint("constrain.vertical", Kind::Vertical),
+    constraint("constrain.tangent", Kind::Tangent),
+    constraint("constrain.equal", Kind::Equal),
+    constraint("constrain.symmetric", Kind::Symmetric),
     a(
         "constrain.auto",
         "Auto-constrain while drawing (hold Alt to suppress)",
@@ -641,6 +663,96 @@ pub static BUILTIN: &[Action] = &[
         &[],
         KeyScope::Global,
         Op::Toggle(Flag::AutoConstrain),
+    ),
+    // ── Inspect ──
+    // Fusion's Inspect ▸ Measure (#386): two snapped clicks, the distance
+    // in the status bar. It never changes the document.
+    draw(
+        "inspect.measure",
+        Group::Inspect,
+        &["distance", "ruler", "tape", "length"],
+        &[key(Key::I)],
+        Tool::Measure,
+    ),
+    // ── Insert ── as locked reference geometry (SPEC §13 M4, #243).
+    a(
+        "insert.svg",
+        "Insert SVG…",
+        Group::Insert,
+        &["import", "reference", "trace"],
+        "Add an SVG as locked reference geometry to trace, snap and constrain to. It is never exported.",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::InsertReference(crate::file_io::Insert::Svg)),
+    ),
+    a(
+        "insert.dxf",
+        "Insert DXF…",
+        Group::Insert,
+        &["import", "reference", "trace", "cad"],
+        "Add a DXF as locked reference geometry to trace, snap and constrain to. It is never exported.",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::InsertReference(crate::file_io::Insert::Dxf)),
+    ),
+    // ── Select ──
+    draw(
+        "select.select",
+        Group::Select,
+        &["pointer"],
+        &[],
+        Tool::Select,
+    ),
+    a(
+        "select.chain",
+        "Select chain",
+        Group::Select,
+        &["connected", "loop", "contour", "profile"],
+        "Select curves, then add every curve joined end to end with them (or double-click a curve)",
+        &[],
+        KeyScope::Global,
+        Op::SelectChain,
+    ),
+    a(
+        "select.layer",
+        "Select layer",
+        Group::Select,
+        &["layer", "all on layer"],
+        "Select everything on the active layer",
+        &[],
+        KeyScope::Global,
+        Op::SelectLayer,
+    ),
+    a(
+        "edit.select_all",
+        "Select all",
+        Group::Select,
+        &[],
+        "",
+        &[cmd(Key::A)],
+        KeyScope::Global,
+        Op::SelectAll,
+    ),
+    a(
+        "edit.deselect",
+        "Deselect",
+        Group::Select,
+        &["clear selection"],
+        "",
+        &[],
+        KeyScope::Global,
+        Op::Deselect,
+    ),
+    // ── View: the palette's Linetype switch ──
+    a(
+        "sketch.linetype_construction",
+        "Construction linetype",
+        Group::View,
+        &["construction", "linetype", "dashed"],
+        "New geometry is construction: drawn dashed, constrainable, never exported",
+        &[],
+        KeyScope::Global,
+        Op::Toggle(Flag::ConstructionLinetype),
     ),
     // ── Edit ──
     a(
@@ -672,36 +784,6 @@ pub static BUILTIN: &[Action] = &[
         &[cmd_shift(Key::Z), cmd(Key::Y)],
         KeyScope::Global,
         Op::Redo,
-    ),
-    a(
-        "select.chain",
-        "Select chain",
-        Group::Select,
-        &["connected", "loop", "contour", "profile"],
-        "Select curves, then add every curve joined end to end with them (or double-click a curve)",
-        &[],
-        KeyScope::Global,
-        Op::SelectChain,
-    ),
-    a(
-        "edit.select_all",
-        "Select all",
-        Group::Select,
-        &[],
-        "",
-        &[cmd(Key::A)],
-        KeyScope::Global,
-        Op::SelectAll,
-    ),
-    a(
-        "edit.deselect",
-        "Deselect",
-        Group::Select,
-        &["clear selection"],
-        "",
-        &[],
-        KeyScope::Global,
-        Op::Deselect,
     ),
     // ── View ──
     a(
@@ -1237,6 +1319,9 @@ impl Registry {
                 None => Enabled::No("Nothing to repeat yet".into()),
             },
             Op::SelectChain => Enabled::when(!canvas.selection.items.is_empty(), a.hint.clone()),
+            Op::ExplodeRecipe => {
+                Enabled::when(!canvas.selected_recipes().is_empty(), a.hint.clone())
+            }
             Op::ToggleConstruction => {
                 Enabled::when(canvas.construction_toggle().is_some(), a.hint.clone())
             }
@@ -1306,6 +1391,8 @@ impl Registry {
             }
             Op::SelectAll => canvas.select_all(),
             Op::SelectChain => canvas.select_chains(),
+            Op::SelectLayer => canvas.select_layer(),
+            Op::ExplodeRecipe => canvas.explode_selected_recipes(),
             Op::Deselect => canvas.clear_selection(),
             Op::Delete => {
                 if self.enabled(a, canvas).yes() {
@@ -1505,7 +1592,9 @@ mod tests {
                     "view",
                     "output",
                     "util",
-                    "file"
+                    "file",
+                    "inspect",
+                    "insert"
                 ]
                 .contains(&ns),
                 "{}",

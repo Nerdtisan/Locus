@@ -97,9 +97,9 @@ impl Web {
     }
 
     /// Show the file picker for an SVG or DXF to import as a reference.
-    pub fn pick_reference(&self) {
-        self.spawn(async {
-            let res = match pick_text(".svg,.dxf").await {
+    pub fn pick_reference(&self, accept: &'static str) {
+        self.spawn(async move {
+            let res = match pick_text(accept).await {
                 Ok(v) => match v.as_string() {
                     None => Ok(None),
                     Some(json) => parse_picked(&json).map(Some),
