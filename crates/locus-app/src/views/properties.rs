@@ -564,18 +564,27 @@ impl AppState {
             edited.content_done = true;
         }
         if edited.commit() && s != TextSettings::from_data(stored) {
-            match s.to_data(&self.tools.fonts.library) {
-                Ok(text) => {
-                    let cmd = self.text_edit_command(id, anchor, dir, stored, text);
-                    match self.apply(&cmd) {
-                        Ok(()) => self.doc.notice = None,
-                        Err(e) => self.doc.notice = Some(e.to_string()),
-                    }
-                }
-                Err(e) => self.doc.notice = Some(e.to_string()),
-            }
+            self.doc.notice = self.commit_text_edit(id, anchor, dir, stored, &s).err();
         }
         self.tools.text_edit = Some((id, s));
+    }
+
+    /// Apply the Text dialog's / Inspector's settings `s` to the stored text
+    /// as one undo step. The stored text is edited, not rebuilt, so text on
+    /// a path keeps its binding (#415).
+    pub(crate) fn commit_text_edit(
+        &mut self,
+        id: EntityId,
+        anchor: EntityId,
+        dir: EntityId,
+        stored: &locus_doc::TextData,
+        s: &TextSettings,
+    ) -> Result<(), String> {
+        let text = s
+            .apply_to(stored, &self.tools.fonts.library)
+            .map_err(|e| e.to_string())?;
+        let cmd = self.text_edit_command(id, anchor, dir, stored, text);
+        self.apply(&cmd).map_err(|e| e.to_string())
     }
 }
 
@@ -599,6 +608,9 @@ impl AppState {
             Align::Right => -w,
         };
         let shift = left(stored.align, stored.layout.width) - left(text.align, text.layout.width);
+        // On a path the alignment places the text along the path, not
+        // about its anchor (#392), so the anchor stays put.
+        let shift = if text.path.is_some() { 0.0 } else { shift };
         let modify = Command::ModifyEntity {
             id,
             geom: Geom::Text {

@@ -263,6 +263,17 @@ impl Document {
         let f = frame(self.point_pos(anchor)?, self.point_pos(dir)?);
         Some(t.layout.transformed(&f))
     }
+
+    /// The alignment guide of a text on a path, in document mm
+    /// ([`crate::path_text::guide`], #416). `None` for plain text, whose
+    /// guide is its baseline from the anchor, or a broken path.
+    #[must_use]
+    pub fn text_path_guide(&self, id: EntityId) -> Option<(Vec2, Vec2)> {
+        let (t, _, _) = self.text(id)?;
+        let p = t.path.as_deref()?;
+        let (pts, closed) = crate::path_text::path(self, &p.curves, p.flip).ok()?;
+        crate::path_text::guide(p, t.align, t.size, &pts, closed)
+    }
 }
 
 #[cfg(test)]
