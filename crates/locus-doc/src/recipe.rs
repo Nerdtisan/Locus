@@ -298,6 +298,19 @@ impl Recipe {
     }
 }
 
+/// What each copy of a recipe of `kind` is made of, in pool order: the
+/// [`closure`], less a circular pattern's centre.
+#[must_use]
+pub fn copied(doc: &Document, kind: &RecipeKind, sources: &[EntityId]) -> BTreeSet<EntityId> {
+    let mut s = closure(doc, sources);
+    // A circular pattern round a point of its own shape (#367): every copy
+    // shares that centre, like spokes on a hub, rather than copying it.
+    if let RecipeKind::Circular { centre, .. } = kind {
+        s.remove(centre);
+    }
+    s
+}
+
 /// The sources plus the points they are built from, sorted by ID. Entities
 /// that don't exist are skipped (validated elsewhere).
 #[must_use]
@@ -666,15 +679,14 @@ pub(crate) fn validate(
                     found,
                 });
             }
-            if closure(doc, sources).contains(centre) {
-                return Err(DocError::SameEntity {
-                    what: "pattern centre",
-                    entity: *centre,
-                });
+            if copied(doc, kind, sources).is_empty() {
+                return Err(DocError::Invalid(
+                    "a circular pattern needs something besides its centre to copy".to_owned(),
+                ));
             }
         }
     }
-    let per = closure(doc, sources).len();
+    let per = copied(doc, kind, sources).len();
     let n = if kind.is_pattern() {
         slots(doc, kind, sources)?.len()
     } else {
@@ -699,7 +711,7 @@ pub(crate) fn validate(
 pub(crate) fn instances_of(doc: &Document, source: EntityId) -> Vec<(EntityId, RecipeId)> {
     let mut out = Vec::new();
     for (rid, r) in doc.recipes() {
-        let cl: Vec<EntityId> = closure(doc, &r.sources).into_iter().collect();
+        let cl: Vec<EntityId> = copied(doc, &r.kind, &r.sources).into_iter().collect();
         if r.is_flat() {
             continue;
         }
@@ -746,7 +758,7 @@ pub(crate) fn validate_all(doc: &Document) -> Result<(), DocError> {
         if (!r.is_flat() && r.active > r.pool.len()) || r.pool.len() > MAX_INSTANCES {
             return Err(bad("instance count out of range"));
         }
-        let per = closure(doc, &r.sources).len();
+        let per = copied(doc, &r.kind, &r.sources).len();
         let flat = r.is_flat();
         if flat && (r.pool.len() > 1 || r.pool.first().map_or(0, Vec::len) < r.active) {
             return Err(bad("offset instance list out of range"));
