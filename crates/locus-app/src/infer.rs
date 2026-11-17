@@ -88,6 +88,40 @@ pub fn infer(
         pick.line = Some(LineHint::Tangent(arc));
         return pick;
     }
+    // Snaps to existing geometry (#357), each creating its constraint:
+    // an intersection (on both curves), a line's midpoint, and from the
+    // line being drawn, the foot of a perpendicular or a tangent point.
+    if opts.geometry && curve_snap {
+        if let Some((a, b, pos)) = intersection(items, cursor, opts.tol) {
+            pick.pos = pos;
+            pick.on_curve = Some(a);
+            pick.on_curve2 = Some(b);
+            return pick;
+        }
+        if let Some((line, pos)) = midpoint(items, cursor, opts.tol) {
+            pick.pos = pos;
+            pick.midpoint_of = Some(line);
+            return pick;
+        }
+    }
+    if opts.geometry
+        && curve_snap
+        && tool == Tool::Line
+        && let Some(a) = anchor
+    {
+        if let Some((line, pos)) = perpendicular_foot(items, a.pos, cursor, opts.tol) {
+            pick.pos = pos;
+            pick.on_curve = Some(line);
+            pick.line = Some(LineHint::Perpendicular(line));
+            return pick;
+        }
+        if let Some((curve, pos)) = tangent_point(items, a.pos, cursor, opts.tol) {
+            pick.pos = pos;
+            pick.on_curve = Some(curve);
+            pick.line = Some(LineHint::TangentTo(curve));
+            return pick;
+        }
+    }
     if opts.geometry
         && curve_snap
         && let Some((curve, pos)) = nearest_curve(items, cursor, opts.tol)
@@ -96,14 +130,168 @@ pub fn infer(
         pick.on_curve = Some(curve);
         return pick;
     }
-    if tool == Tool::Line
-        && let Some(a) = anchor
-        && let Some((pos, hint)) = axis(a.pos, gridded)
+    // Inference along an existing line: its extension (#357).
+    if opts.geometry
+        && curve_snap
+        && let Some((line, pos, from)) = extension(items, cursor, opts.tol)
     {
         pick.pos = pos;
-        pick.line = Some(hint);
+        pick.on_curve = Some(line);
+        pick.guide = Some((from, pos));
+        return pick;
+    }
+    if tool == Tool::Line
+        && let Some(a) = anchor
+    {
+        if let Some((pos, hint)) = axis(a.pos, gridded) {
+            pick.pos = pos;
+            pick.line = Some(hint);
+        } else if opts.geometry
+            && let Some((line, pos)) = parallel(items, a.pos, gridded)
+        {
+            // Parallel to an existing line (#357).
+            pick.pos = pos;
+            pick.line = Some(LineHint::Parallel(line));
+        }
     }
     pick
+}
+
+/// The lines, circles and arcs among `items`, by id.
+fn curves(items: &[Item]) -> impl Iterator<Item = (EntityId, Shape)> + '_ {
+    items
+        .iter()
+        .filter(|i| matches!(i.shape, Shape::Line(_) | Shape::Circle(_) | Shape::Arc(_)))
+        .map(|i| (i.id, i.shape))
+}
+
+/// The intersection of two curves nearest `p`, within `tol` (#357).
+fn intersection(items: &[Item], p: Vec2, tol: f64) -> Option<(EntityId, EntityId, Vec2)> {
+    // Only curves passing near the cursor can meet there.
+    let near: Vec<(EntityId, Shape)> = curves(items)
+        .filter(|(_, s)| s.bbox().contains(p, tol))
+        .collect();
+    let mut best: Option<(f64, EntityId, EntityId, Vec2)> = None;
+    for (i, (ia, a)) in near.iter().enumerate() {
+        for (ib, b) in near.iter().skip(i + 1) {
+            if ia == ib {
+                continue;
+            }
+            let pts: Vec<Vec2> = match (a, b) {
+                (Shape::Line(x), Shape::Line(y)) => x.intersect_line(y).into_iter().collect(),
+                (Shape::Line(x), Shape::Circle(c)) | (Shape::Circle(c), Shape::Line(x)) => {
+                    x.intersect_circle(c)
+                }
+                (Shape::Line(x), Shape::Arc(c)) | (Shape::Arc(c), Shape::Line(x)) => {
+                    x.intersect_arc(c)
+                }
+                (Shape::Circle(x), Shape::Circle(y)) => x.intersect_circle(y),
+                (Shape::Circle(x), Shape::Arc(y)) | (Shape::Arc(y), Shape::Circle(x)) => {
+                    x.intersect_arc(y)
+                }
+                (Shape::Arc(x), Shape::Arc(y)) => x.intersect_arc(y),
+                _ => Vec::new(),
+            };
+            for q in pts {
+                let d = q.distance(p);
+                if d <= tol && best.is_none_or(|(bd, ..)| d < bd) {
+                    best = Some((d, *ia, *ib, q));
+                }
+            }
+        }
+    }
+    best.map(|(_, a, b, q)| (a, b, q))
+}
+
+/// A line's midpoint within `tol` of `p` (#357).
+fn midpoint(items: &[Item], p: Vec2, tol: f64) -> Option<(EntityId, Vec2)> {
+    curves(items)
+        .filter_map(|(id, s)| match s {
+            Shape::Line(l) => Some((id, l.eval(0.5))),
+            _ => None,
+        })
+        .filter(|(_, m)| m.distance(p) <= tol)
+        .min_by(|a, b| a.1.distance(p).total_cmp(&b.1.distance(p)))
+}
+
+/// The foot of the perpendicular from `from` onto a line, near `p`.
+fn perpendicular_foot(items: &[Item], from: Vec2, p: Vec2, tol: f64) -> Option<(EntityId, Vec2)> {
+    curves(items)
+        .filter_map(|(id, s)| {
+            let Shape::Line(l) = s else { return None };
+            let u = (l.b - l.a).normalized(1e-12)?;
+            let foot = l.a + u * (from - l.a).dot(u);
+            // Not from a point on the line itself, and on the segment.
+            let on = (foot - l.a).dot(u) >= -tol && (foot - l.a).dot(u) <= l.length() + tol;
+            (from.distance(foot) > tol && on && foot.distance(p) <= tol).then_some((id, foot))
+        })
+        .min_by(|a, b| a.1.distance(p).total_cmp(&b.1.distance(p)))
+}
+
+/// Where a line from `from` touches a circle or arc tangentially, near `p`.
+fn tangent_point(items: &[Item], from: Vec2, p: Vec2, tol: f64) -> Option<(EntityId, Vec2)> {
+    let mut best: Option<(f64, EntityId, Vec2)> = None;
+    for (id, s) in curves(items) {
+        let (c, r, arc) = match s {
+            Shape::Circle(c) => (c.center, c.radius, None),
+            Shape::Arc(a) => (a.center, a.radius(), Some(a)),
+            _ => continue,
+        };
+        let d = from.distance(c);
+        if d <= r + tol {
+            continue;
+        }
+        let Some(u) = (from - c).normalized(1e-12) else {
+            continue;
+        };
+        let t = (r / d).acos();
+        for q in [c + u.rotated(t) * r, c + u.rotated(-t) * r] {
+            if arc.is_some_and(|a| !a.contains_point_angle(q)) {
+                continue;
+            }
+            let dist = q.distance(p);
+            if dist <= tol && best.is_none_or(|(bd, ..)| dist < bd) {
+                best = Some((dist, id, q));
+            }
+        }
+    }
+    best.map(|(_, id, q)| (id, q))
+}
+
+/// A point on a line's extension beyond its ends near `p` (#357): the
+/// point, and the end the dashed guide starts from.
+fn extension(items: &[Item], p: Vec2, tol: f64) -> Option<(EntityId, Vec2, Vec2)> {
+    curves(items)
+        .filter_map(|(id, s)| {
+            let Shape::Line(l) = s else { return None };
+            let len = l.length();
+            let u = (l.b - l.a).normalized(1e-12)?;
+            let t = (p - l.a).dot(u);
+            let q = l.a + u * t;
+            let beyond = t < -tol || t > len + tol;
+            let from = if t < 0.0 { l.a } else { l.b };
+            (beyond && q.distance(p) <= tol).then_some((id, q, from))
+        })
+        .min_by(|a, b| a.1.distance(p).total_cmp(&b.1.distance(p)))
+}
+
+/// From `from` towards `to`, parallel to an existing line if close in
+/// angle (#357): the point projected onto that direction.
+fn parallel(items: &[Item], from: Vec2, to: Vec2) -> Option<(EntityId, Vec2)> {
+    let d = to - from;
+    if d.length() < 1e-9 {
+        return None;
+    }
+    let tol = ANGLE_TOL_DEG.to_radians().sin();
+    curves(items)
+        .filter_map(|(id, s)| {
+            let Shape::Line(l) = s else { return None };
+            let u = (l.b - l.a).normalized(1e-12)?;
+            let sin = (u.cross(d) / d.length()).abs();
+            (sin < tol).then(|| (sin, id, from + u * d.dot(u)))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id, q)| (id, q))
 }
 
 /// The curve nearest `p` within `tol`, and the closest point on it. Lines and
@@ -255,6 +443,68 @@ mod tests {
             ..ON
         };
         assert!(!infer(&[], off, Tool::Line, None, true, v(0.2, 0.2)).origin);
+    }
+
+    fn line_item(id: u64, a: Vec2, b: Vec2) -> Item {
+        item(id, Shape::Line(Line::new(a, b)))
+    }
+
+    /// #357: each snap to existing geometry, and what it designates.
+    #[test]
+    fn snaps_to_existing_geometry() {
+        // Two crossing lines: the crossing.
+        let items = [
+            line_item(1, v(-10.0, 0.0), v(10.0, 0.0)),
+            line_item(2, v(3.0, -10.0), v(3.0, 10.0)),
+        ];
+        let p = infer(&items, ON, Tool::Point, None, true, v(3.4, 0.3));
+        assert_eq!(
+            (p.on_curve, p.on_curve2),
+            (Some(EntityId::new(1)), Some(EntityId::new(2)))
+        );
+        assert!(p.pos.distance(v(3.0, 0.0)) < 1e-9);
+        // A line's midpoint.
+        let items = [line_item(1, v(0.0, 0.0), v(20.0, 0.0))];
+        let p = infer(&items, ON, Tool::Point, None, true, v(10.3, 0.4));
+        assert_eq!(p.midpoint_of, Some(EntityId::new(1)));
+        assert!(p.pos.distance(v(10.0, 0.0)) < 1e-9);
+        // Perpendicular foot from the line being drawn.
+        let items = [line_item(1, v(0.0, 0.0), v(20.0, 20.0))];
+        let p = infer(&items, ON, Tool::Line, anchor(0.0, 10.0), true, v(5.4, 4.6));
+        assert_eq!(p.line, Some(LineHint::Perpendicular(EntityId::new(1))));
+        assert!(p.pos.distance(v(5.0, 5.0)) < 1e-9);
+        // Tangent point on a circle.
+        let items = [item(1, Shape::Circle(Circle::new(v(0.0, 0.0), 5.0)))];
+        let t = (5.0f64 / 10.0).acos();
+        let touch = v(0.0, 0.0) + v(1.0, 0.0).rotated(t) * 5.0;
+        let p = infer(
+            &items,
+            ON,
+            Tool::Line,
+            anchor(10.0, 0.0),
+            true,
+            touch + v(0.3, 0.2),
+        );
+        assert_eq!(p.line, Some(LineHint::TangentTo(EntityId::new(1))));
+        assert!(p.pos.distance(touch) < 1e-9);
+        // Along a line's extension, with a guide from its end.
+        let items = [line_item(1, v(0.0, 0.0), v(10.0, 0.0))];
+        let p = infer(&items, ON, Tool::Point, None, true, v(25.0, 0.6));
+        assert_eq!(p.on_curve, Some(EntityId::new(1)));
+        assert_eq!(p.guide, Some((v(10.0, 0.0), v(25.0, 0.0))));
+        // Parallel to an existing diagonal.
+        let items = [line_item(1, v(0.0, 0.0), v(10.0, 10.0))];
+        let p = infer(
+            &items,
+            ON,
+            Tool::Line,
+            anchor(20.0, 0.0),
+            true,
+            v(30.2, 9.9),
+        );
+        assert_eq!(p.line, Some(LineHint::Parallel(EntityId::new(1))));
+        let d = p.pos - v(20.0, 0.0);
+        assert!((d.x - d.y).abs() < 1e-9);
     }
 
     /// Snap to grid rounds free picks to the step; geometry still wins,

@@ -131,6 +131,18 @@ impl Symbol {
         action: "constrain.tangent",
         name: "Tangent",
     };
+    pub const MIDPOINT: Symbol = Symbol {
+        action: "constrain.midpoint",
+        name: "Midpoint",
+    };
+    pub const PERPENDICULAR: Symbol = Symbol {
+        action: "constrain.perpendicular",
+        name: "Perpendicular",
+    };
+    pub const PARALLEL: Symbol = Symbol {
+        action: "constrain.parallel",
+        name: "Parallel",
+    };
 }
 
 /// A text's outline as drawable shapes: lines and cubics, one per segment.
