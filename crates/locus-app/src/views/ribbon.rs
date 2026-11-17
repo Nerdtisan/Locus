@@ -239,10 +239,20 @@ fn group(
     let pins = bar.pinned(g).to_vec();
     let mut target = None;
     // The mockup's group (#360): its buttons in a row, its label centred
-    // under them.
+    // under them. The group is as wide as the wider of the two, so the
+    // label never wraps (#387: one button under "AUTOMATION").
+    let shown = pins
+        .iter()
+        .filter(|id| reg.get(id).is_some())
+        .count()
+        .max(1);
+    let buttons_w = shown as f32 * (button_width(g) + 1.0) - 1.0;
+    let label_w = label_width(ui, g);
+    let width = buttons_w.max(label_w);
     let inner = ui.vertical(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(1.0, 0.0);
         let row = ui.horizontal(|ui| {
+            ui.add_space((width - buttons_w) / 2.0);
             for (i, id) in pins.iter().enumerate() {
                 // A pinned plugin action whose plugin isn't loaded stays pinned
                 // but hidden (design §7.1).
@@ -288,16 +298,18 @@ fn group(
         // "GROUP ▾" under the buttons: small, muted, spaced capitals. The
         // fonts have no ▾, so the triangle is painted.
         let muted = crate::theme::tokens(ui).muted;
-        let label = egui::RichText::new(format!("{}      ", g.title()))
-            .size(10.0)
+        let label = egui::RichText::new(label_text(g))
+            .size(LABEL_SIZE)
             .strong()
             .color(muted);
-        let width = row.response.rect.width();
+        let width = row.response.rect.width().max(width);
         let m = ui
             .allocate_ui_with_layout(
-                egui::vec2(width.max(60.0), 16.0),
+                egui::vec2(width, 16.0),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
+                    // Never wrap, whatever the measured width (#387).
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.push_id(("ribbon-menu", g.title()), |ui| {
                         ui.style_mut().visuals.widgets.inactive.weak_bg_fill =
                             egui::Color32::TRANSPARENT;
@@ -360,6 +372,29 @@ fn button_width(g: Group) -> f32 {
 }
 
 const BUTTON_HEIGHT: f32 = 32.0;
+
+/// The group label's size (the mockup's `.glabel`, 10 px capitals).
+const LABEL_SIZE: f32 = 10.0;
+
+/// "GROUP" with room after it for the painted ▾.
+fn label_text(g: Group) -> String {
+    format!("{}      ", g.title())
+}
+
+/// The width the group's label button needs on one line: the text, unwrapped,
+/// plus the button's padding.
+fn label_width(ui: &egui::Ui, g: Group) -> f32 {
+    let text = ui.fonts_mut(|f| {
+        f.layout_no_wrap(
+            label_text(g),
+            egui::FontId::proportional(LABEL_SIZE),
+            egui::Color32::WHITE,
+        )
+        .size()
+        .x
+    });
+    text + 2.0 * ui.spacing().button_padding.x
+}
 
 fn pin_button(
     ui: &mut egui::Ui,
@@ -578,6 +613,54 @@ mod tests {
             .collect();
         assert_eq!(buttons.len(), 1, "one button, icon and label together");
         assert!(buttons[0].1.label().is_some_and(|l| l.contains("EXPORT")));
+    }
+
+    /// #387: no group label wraps, on any tab, however few buttons it has
+    /// (UTILITIES ▸ AUTOMATION has one under a long word).
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn group_labels_never_wrap() {
+        use egui::accesskit::Role;
+        let reg = Registry::default();
+        let mut state = crate::state::AppState::default();
+        let mut settings = crate::settings::Settings::default();
+        let mut bar = Toolbar::default();
+        let ctx = egui::Context::default();
+        crate::fonts::install(&ctx);
+        ctx.enable_accesskit();
+        for tab in RibbonTab::ALL {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("locus-ribbon-tab"), tab));
+            let mut run = || {
+                ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let mut cx = Cx {
+                        state: &mut state,
+                        settings: &mut settings,
+                        plugins: None,
+                    };
+                    show(ui, &reg, &mut cx, &mut bar);
+                })
+            };
+            let _ = run();
+            let tree = run()
+                .platform_output
+                .accesskit_update
+                .expect("accesskit tree");
+            for &g in tab.groups() {
+                let (_, node) = tree
+                    .nodes
+                    .iter()
+                    .filter(|(_, n)| n.role() == Role::Button)
+                    .find(|(_, n)| n.label().is_some_and(|l| l.starts_with(g.title())))
+                    .unwrap_or_else(|| panic!("{} label", g.title()));
+                let b = node.bounds().expect("bounds");
+                assert!(
+                    b.height() < 20.0,
+                    "{} wraps: {:.0} px tall",
+                    g.title(),
+                    b.height()
+                );
+            }
+        }
     }
 
     #[test]
