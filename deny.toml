@@ -57,7 +57,12 @@ ignore = false
 version = 2
 # RustSec vulnerabilities and unsound crates fail the build (the v2 defaults).
 yanked = "deny"
-ignore = []
+# Owner decision 2026-11-17 (§2): chrono is unmaintained (an informational
+# advisory, not a vulnerability), pulled in by rmcp and schemars with no
+# alternative. Remove this entry when #405 drops chrono from the tree.
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained (informational); pulled in by rmcp and schemars with no alternative; tracked in #403 and #405, upstream modelcontextprotocol/rust-sdk#1469" },
+]
 
 [bans]
 # Duplicate major versions are common in GUI stacks; warn, don't fail.
