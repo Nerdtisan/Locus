@@ -394,6 +394,7 @@ impl AppState {
         }
         self.draw_offset_labels(&painter, rect, dark, settings.units);
         self.draw_pattern_labels(&painter, rect, dark, settings.units);
+        self.draw_machine_legend(&painter, rect, dark, settings);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
         if let Some(mode) = self.transform_mode() {
