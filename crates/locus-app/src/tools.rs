@@ -150,6 +150,12 @@ pub enum LineHint {
     Vertical,
     /// Tangent to this arc at the line's start point.
     Tangent(EntityId),
+    /// Ends at the foot of the perpendicular onto this line (#357).
+    Perpendicular(EntityId),
+    /// Ends where it touches this circle or arc, tangent to it (#357).
+    TangentTo(EntityId),
+    /// Runs parallel to this line (#357).
+    Parallel(EntityId),
 }
 
 impl LineHint {
@@ -159,7 +165,9 @@ impl LineHint {
         match self {
             LineHint::Horizontal => Symbol::HORIZONTAL,
             LineHint::Vertical => Symbol::VERTICAL,
-            LineHint::Tangent(_) => Symbol::TANGENT,
+            LineHint::Tangent(_) | LineHint::TangentTo(_) => Symbol::TANGENT,
+            LineHint::Perpendicular(_) => Symbol::PERPENDICULAR,
+            LineHint::Parallel(_) => Symbol::PARALLEL,
         }
     }
 }
@@ -185,6 +193,13 @@ pub struct Pick {
     pub line: Option<LineHint>,
     /// The sketch origin (0, 0), where no point exists yet (#335).
     pub origin: bool,
+    /// The midpoint of this line (#357).
+    pub midpoint_of: Option<EntityId>,
+    /// With `on_curve`: the intersection of two curves (#357).
+    pub on_curve2: Option<EntityId>,
+    /// A dashed inference guide to draw, in world mm (#357): from a line's
+    /// end along its extension to the pick.
+    pub guide: Option<(Vec2, Vec2)>,
 }
 
 impl Pick {
@@ -196,6 +211,9 @@ impl Pick {
             on_curve: None,
             line: None,
             origin: false,
+            midpoint_of: None,
+            on_curve2: None,
+            guide: None,
         }
     }
 
@@ -223,6 +241,10 @@ enum Node {
     New(Vec2),
     /// A new point constrained onto an existing curve.
     OnCurve(Vec2, EntityId),
+    /// A new point at a line's midpoint (#357).
+    Midpoint(Vec2, EntityId),
+    /// A new point on two curves: their intersection (#357).
+    OnTwo(Vec2, EntityId, EntityId),
     /// A new point on the sketch origin, fixed there: Fusion's coincident
     /// to the origin (#335). The document has no origin entity, so a point
     /// fixed at (0, 0) is the origin; later picks snap to it.
@@ -234,6 +256,12 @@ impl Node {
         match (p.point, p.on_curve) {
             (Some(id), _) => Node::Existing(id, p.pos),
             (None, _) if p.origin => Node::Origin,
+            (None, _) if p.midpoint_of.is_some() => {
+                Node::Midpoint(p.pos, p.midpoint_of.unwrap_or(EntityId::new(0)))
+            }
+            (None, Some(a)) if p.on_curve2.is_some() => {
+                Node::OnTwo(p.pos, a, p.on_curve2.unwrap_or(a))
+            }
             (None, Some(curve)) => Node::OnCurve(p.pos, curve),
             (None, None) => Node::New(p.pos),
         }
@@ -241,7 +269,11 @@ impl Node {
 
     fn pos(self) -> Vec2 {
         match self {
-            Node::Existing(_, p) | Node::New(p) | Node::OnCurve(p, _) => p,
+            Node::Existing(_, p)
+            | Node::New(p)
+            | Node::OnCurve(p, _)
+            | Node::Midpoint(p, _)
+            | Node::OnTwo(p, _, _) => p,
             Node::Origin => Vec2::ZERO,
         }
     }
@@ -249,7 +281,11 @@ impl Node {
     fn id(self) -> Option<EntityId> {
         match self {
             Node::Existing(id, _) => Some(id),
-            Node::New(_) | Node::OnCurve(..) | Node::Origin => None,
+            Node::New(_)
+            | Node::OnCurve(..)
+            | Node::Midpoint(..)
+            | Node::OnTwo(..)
+            | Node::Origin => None,
         }
     }
 }
@@ -327,6 +363,17 @@ impl Plan {
             Node::OnCurve(pos, curve) => {
                 let point = self.point(pos);
                 self.constrain(Constraint::PointOnCurve { point, curve });
+                point
+            }
+            Node::Midpoint(pos, line) => {
+                let point = self.point(pos);
+                self.constrain(Constraint::Midpoint { point, line });
+                point
+            }
+            Node::OnTwo(pos, a, b) => {
+                let point = self.point(pos);
+                self.constrain(Constraint::PointOnCurve { point, curve: a });
+                self.constrain(Constraint::PointOnCurve { point, curve: b });
                 point
             }
             Node::Origin => {
@@ -552,7 +599,13 @@ impl Draft {
         match hint {
             Some(LineHint::Horizontal) => plan.constrain(Constraint::Horizontal { line }),
             Some(LineHint::Vertical) => plan.constrain(Constraint::Vertical { line }),
-            Some(LineHint::Tangent(arc)) => plan.constrain(Constraint::Tangent { a: line, b: arc }),
+            Some(LineHint::Tangent(arc) | LineHint::TangentTo(arc)) => {
+                plan.constrain(Constraint::Tangent { a: line, b: arc });
+            }
+            Some(LineHint::Perpendicular(l)) => {
+                plan.constrain(Constraint::Perpendicular { a: line, b: l });
+            }
+            Some(LineHint::Parallel(l)) => plan.constrain(Constraint::Parallel { a: line, b: l }),
             None => {}
         }
         if let Some(d) = length {
@@ -2140,5 +2193,53 @@ mod tests {
             c,
             Constraint::Fix { point } if doc.point_pos(*point) == Some(Vec2::ZERO)
         )));
+    }
+
+    /// #357: snaps onto existing geometry create their constraints, and the
+    /// result solves: a midpoint, an intersection, a perpendicular foot.
+    #[test]
+    fn geometry_snaps_create_their_constraints() {
+        let mut s = Sketcher::new(Document::new());
+        let mut d = Draft::new(Tool::Line);
+        click(&mut d, &mut s, at(0.0, 0.0));
+        click(&mut d, &mut s, at(20.0, 0.0)).expect("a base line");
+        d.cancel();
+        let base = s
+            .document()
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Line { .. }))
+            .map(|(id, _)| id)
+            .expect("the base line");
+        let kinds = |s: &Sketcher| -> Vec<&'static str> {
+            s.document()
+                .constraints()
+                .values()
+                .map(|c| c.name())
+                .collect()
+        };
+        // From the base's midpoint, up, then a line ending perpendicular
+        // on the base from a point off it.
+        let mid = Pick {
+            midpoint_of: Some(base),
+            ..Pick::free(Vec2::new(10.0, 0.0))
+        };
+        click(&mut d, &mut s, mid);
+        click(&mut d, &mut s, at(10.0, 8.0)).expect("a line from the midpoint");
+        assert!(kinds(&s).contains(&"midpoint"), "{:?}", kinds(&s));
+        d.cancel();
+        click(&mut d, &mut s, at(4.0, 6.0));
+        let foot = Pick {
+            on_curve: Some(base),
+            line: Some(LineHint::Perpendicular(base)),
+            ..Pick::free(Vec2::new(4.0, 0.0))
+        };
+        click(&mut d, &mut s, foot).expect("a perpendicular line");
+        let k = kinds(&s);
+        assert!(
+            k.contains(&"perpendicular") && k.contains(&"point-on-curve"),
+            "{k:?}"
+        );
+        assert!(s.state().converged);
     }
 }

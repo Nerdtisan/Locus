@@ -784,8 +784,18 @@ impl AppState {
             frame.draw_snap(pick.pos);
         }
         // Inference hint glyph (#69): what the shape will be constrained to.
+        if let Some((a, b)) = pick.guide {
+            // The inference guide (#357): a line's extension to the pick.
+            let stroke = egui::Stroke::new(1.0, frame.pal.hover);
+            let pts = [
+                frame.view.to_screen(a, frame.rect),
+                frame.view.to_screen(b, frame.rect),
+            ];
+            painter.extend(egui::Shape::dashed_line(&pts, stroke, 4.0, 4.0));
+        }
         let badge = match (pick.line, pick.on_curve) {
             (Some(h), _) => Some(h.badge()),
+            (None, _) if pick.midpoint_of.is_some() => Some(crate::scene::Symbol::MIDPOINT),
             // A point on a curve, or a snap onto a point: coincident.
             (None, Some(_)) => Some(crate::scene::Symbol::COINCIDENT),
             (None, None) => {
