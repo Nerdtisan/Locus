@@ -110,6 +110,13 @@ impl AppState {
         self.doc.notice = None;
     }
 
+    /// CREATE ▸ Circumscribed / Inscribed Polygon (#389): the centre
+    /// polygon tool, with its kind set; the side count carries over.
+    pub fn set_polygon_tool(&mut self, circumscribed: bool) {
+        self.tools.host.set_polygon_kind(circumscribed);
+        self.set_tool(Tool::Polygon);
+    }
+
     /// The active modify tool (SPEC §6.2), if any.
     pub fn modify(&self) -> Option<Modify> {
         self.tools.host.modify()
@@ -1989,7 +1996,7 @@ mod tests {
         use crate::tool::ToolEvent;
         let mut c = AppState::default();
         c.set_tool(Tool::Polygon);
-        c.tools.host.tool_mut().dialog_set_polygon_for_test(7, true);
+        c.tools.host.tool_mut().set_polygon_options(7, true);
         c.set_modify(Modify::Fillet);
         assert_eq!(c.modify(), Some(Modify::Fillet));
         assert_eq!(c.tool(), Tool::Select);

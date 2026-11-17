@@ -28,6 +28,7 @@ mod offsets;
 mod pattern_labels;
 mod pattern_tool;
 pub mod plugin_objects;
+mod polygon_dialog;
 mod regions;
 mod text_dialog;
 
@@ -395,6 +396,7 @@ impl AppState {
         if self.modify() == Some(Modify::Mirror) {
             self.mirror_dialog(ui, rect);
         }
+        self.polygon_dialog(ui, rect);
         self.text_dialog(ui, rect);
         self.glyph_menu(ui);
         self.delete_prompt(ui, rect);

@@ -166,6 +166,10 @@ pub enum Op {
     Draw(Tool),
     /// Make a modify tool active.
     Modify(Modify),
+    /// The centre polygon tool, circumscribed or inscribed (#389).
+    Polygon {
+        circumscribed: bool,
+    },
     Constrain(Kind),
     Dimension,
     Undo,
@@ -243,7 +247,8 @@ impl Action {
     fn repeatable(&self) -> bool {
         match &self.op {
             Op::Draw(t) => *t != Tool::Select,
-            Op::Modify(_)
+            Op::Polygon { .. }
+            | Op::Modify(_)
             | Op::Constrain(_)
             | Op::Dimension
             | Op::Delete
@@ -268,7 +273,7 @@ impl Action {
 impl Op {
     pub fn kind(&self) -> ActionKind {
         match self {
-            Op::Draw(_) | Op::Modify(_) => ActionKind::Tool,
+            Op::Draw(_) | Op::Polygon { .. } | Op::Modify(_) => ActionKind::Tool,
             Op::Toggle(_) => ActionKind::Toggle,
             _ => ActionKind::Command,
         }
@@ -492,12 +497,31 @@ pub static BUILTIN: &[Action] = &[
         &[],
         Tool::ArcTangent,
     ),
-    draw(
-        "sketch.polygon",
+    // Fusion's three polygon tools (#389): the radius reaches a side's
+    // middle (circumscribed) or a vertex (inscribed), or one side is drawn.
+    a(
+        "sketch.polygon_circumscribed",
+        "Circumscribed Polygon",
         Group::Create,
-        &["hexagon"],
+        &["polygon", "hexagon", "apothem", "outside", "circumscribed"],
+        "Click the centre, then the middle of a side",
+        &[],
+        KeyScope::Canvas,
+        Op::Polygon {
+            circumscribed: true,
+        },
+    ),
+    a(
+        "sketch.polygon",
+        "Inscribed Polygon",
+        Group::Create,
+        &["polygon", "hexagon", "inside", "inscribed"],
+        "Click the centre, then a vertex",
         &[key(Key::G)],
-        Tool::Polygon,
+        KeyScope::Canvas,
+        Op::Polygon {
+            circumscribed: false,
+        },
     ),
     draw(
         "sketch.polygon_edge",
@@ -1341,6 +1365,10 @@ impl Registry {
     pub fn is_on(&self, a: &Action, canvas: &AppState, settings: &Settings) -> bool {
         match &a.op {
             Op::Draw(t) => canvas.tool() == *t,
+            Op::Polygon { circumscribed } => {
+                canvas.tool() == Tool::Polygon
+                    && canvas.tools.host.tool().polygon().map(|p| p.1) == Some(*circumscribed)
+            }
             Op::Modify(m) => canvas.modify() == Some(*m),
             Op::Toggle(Flag::AutoConstrain) => settings.auto_constrain,
             Op::Toggle(Flag::MachinePreview) => canvas.machine_preview(),
@@ -1380,6 +1408,7 @@ impl Registry {
                 }
             }
             Op::Draw(t) => canvas.set_tool(*t),
+            Op::Polygon { circumscribed } => canvas.set_polygon_tool(*circumscribed),
             Op::Modify(m) => canvas.set_modify(*m),
             Op::Constrain(k) => canvas.constrain(*k),
             Op::Dimension => canvas.start_dimension(cx.settings.units),
@@ -1612,6 +1641,45 @@ mod tests {
         }
     }
 
+    /// #389: CREATE lists Fusion's three polygon tools; each sets the
+    /// polygon's kind, shows as the active one, and keeps the side count.
+    #[test]
+    fn the_polygon_kinds_are_their_own_tools() {
+        let r = Registry::default();
+        let mut state = AppState::default();
+        let mut settings = Settings::default();
+        let mut run = |id: &str, state: &mut AppState| {
+            let Some(a) = r.get(id) else {
+                panic!("no {id}");
+            };
+            r.run(
+                a,
+                &mut Cx {
+                    state,
+                    settings: &mut settings,
+                    plugins: None,
+                },
+            );
+        };
+        run("sketch.polygon_circumscribed", &mut state);
+        assert_eq!(state.tool(), Tool::Polygon);
+        assert_eq!(state.tools.host.tool().polygon().map(|p| p.1), Some(true));
+        assert_eq!(
+            state.tools.host.tool().id().as_str(),
+            "sketch.polygon_circumscribed"
+        );
+        state.tools.host.tool_mut().set_polygon_options(8, true);
+        run("sketch.polygon", &mut state);
+        assert_eq!(state.tools.host.tool().polygon(), Some((8, false)));
+        let settings = Settings::default();
+        let on = |id: &str| r.get(id).is_some_and(|a| r.is_on(a, &state, &settings));
+        assert!(on("sketch.polygon") && !on("sketch.polygon_circumscribed"));
+        assert_eq!(
+            r.get("sketch.polygon").map(|a| a.label.as_ref()),
+            Some("Inscribed Polygon")
+        );
+    }
+
     #[test]
     fn constraints_have_no_keys() {
         // Owner decision (design §2, §5): symbols only.
@@ -1674,7 +1742,13 @@ mod tests {
         }
         // Every drawing tool and every constraint is reachable.
         for t in Tool::DRAWING {
-            assert!(r.actions().iter().any(|a| a.op == Op::Draw(t)), "{t:?}");
+            let reached = |a: &Action| match a.op {
+                Op::Draw(d) => d == t,
+                // The centre polygon is reached by its two kinds (#389).
+                Op::Polygon { .. } => t == Tool::Polygon,
+                _ => false,
+            };
+            assert!(r.actions().iter().any(reached), "{t:?}");
         }
         for k in Kind::ALL {
             assert!(
