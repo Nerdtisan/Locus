@@ -15,6 +15,9 @@ pub struct ViewState {
     /// resizes, until the user pans or zooms (the web canvas is not at its
     /// final size on the first frame).
     pub(crate) auto_fit: bool,
+    /// The pending auto-fit centres the origin (#366): at start and on
+    /// File ▸ New. Fit (F6) and opening a file fit the content instead.
+    pub(crate) fit_origin: bool,
     pub(crate) fit_size: egui::Vec2,
     /// Items drawn last frame (status bar).
     pub(crate) drawn: usize,
@@ -76,6 +79,7 @@ impl Default for ViewState {
         Self {
             camera: View::default(),
             auto_fit: true,
+            fit_origin: true,
             fit_size: egui::Vec2::ZERO,
             drawn: 0,
             tol_pt: super::HIT_TOL_PT,

@@ -182,7 +182,7 @@ impl AppState {
         painter.rect_filled(rect, 0.0, pal.background);
 
         if self.view.auto_fit && rect.size() != self.view.fit_size && rect.width() > 10.0 {
-            let (lo, hi) = self.bounds();
+            let (lo, hi) = self.fit_box();
             self.view.camera.fit(lo, hi, rect);
         }
         self.view.fit_size = rect.size();
@@ -1188,5 +1188,29 @@ mod chain_tests {
         // Away from any symbol, right-click is the marking menu as before.
         let away = egui::pos2(5.0, 5.0);
         assert!(c.glyph_at(away).is_none());
+    }
+
+    /// #366: at start the view is centred on the origin; F6 then fits the
+    /// content; a new document centres on the origin again.
+    #[test]
+    fn the_view_starts_and_renews_centred_on_the_origin() {
+        let ctx = egui::Context::default();
+        let mut c = AppState::default();
+        frame(&mut c, &ctx, 0.0, Vec::new());
+        assert!(
+            c.view.camera.center.length() < 1e-9,
+            "{:?}",
+            c.view.camera.center
+        );
+        c.request_fit();
+        frame(&mut c, &ctx, 0.1, Vec::new());
+        assert!(
+            c.view.camera.center.length() > 1.0,
+            "F6 fits the demo's content"
+        );
+        c.load(locus_doc::Document::new());
+        c.centre_on_origin();
+        frame(&mut c, &ctx, 0.2, Vec::new());
+        assert!(c.view.camera.center.length() < 1e-9);
     }
 }
