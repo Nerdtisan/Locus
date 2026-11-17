@@ -529,6 +529,20 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.line((6.0, 5.0), (11.0, 10.0));
             d.line((9.5, 6.5), (2.0, 14.0));
         }
+        "ui.eyedropper" => {
+            // The mockup's eyedrop: a bulb on a diagonal pipette.
+            d.poly(&[(9.3, 2.7), (13.3, 6.7), (11.3, 8.7), (7.3, 4.7)], true);
+            d.poly(
+                &[
+                    (7.3, 4.7),
+                    (2.7, 9.3),
+                    (2.7, 13.3),
+                    (6.7, 13.3),
+                    (11.3, 8.7),
+                ],
+                false,
+            );
+        }
         // ── Browser layer rows (#326) ──
         "ui.eye" | "ui.eye_off" => {
             d.arc((8.0, 13.0), 7.0, -PI * 0.86, -PI * 0.14);
@@ -760,6 +774,7 @@ mod tests {
             "ui.export_off",
             "ui.add",
             "ui.plugin",
+            "ui.eyedropper",
         ] {
             assert!(has_icon(id), "{id}");
         }

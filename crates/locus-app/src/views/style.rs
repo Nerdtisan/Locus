@@ -90,8 +90,8 @@ impl AppState {
         let picking = self.tools.eyedropper;
         let mut toggle = false;
         crate::views::properties::section(ui, "Style", |ui| {
-            toggle = ui
-                .selectable_label(picking, "💧")
+            // Painted: no bundled font has a drop or pipette (#385).
+            toggle = crate::views::nav_bar::icon_button(ui, "ui.eyedropper", "Eyedropper", picking)
                 .on_hover_text(if nothing {
                     "Eyedropper: click an object to make its style the current style"
                 } else {

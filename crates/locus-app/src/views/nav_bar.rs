@@ -105,7 +105,7 @@ fn divider(ui: &mut Ui) {
 }
 
 /// A 28 × 26 icon button, filled while `on` (mockup `.navbar .tb`).
-fn icon_button(ui: &mut Ui, icon: &str, label: &str, on: bool) -> egui::Response {
+pub(crate) fn icon_button(ui: &mut Ui, icon: &str, label: &str, on: bool) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(28.0, 26.0), Sense::click());
     let v = ui.visuals();
     let (fill, ink) = if on {
