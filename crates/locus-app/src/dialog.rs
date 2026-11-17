@@ -107,7 +107,12 @@ impl<'open> Dialog<'open> {
 
     fn show_in_app<R>(self, ctx: &Context, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
         let size = self.initial_size();
-        let mut w = egui::Window::new(self.title)
+        // A fresh id (#361): windows sized before default sizes existed had
+        // their cramped size stored under the bare title, which egui would
+        // keep reusing. From here the user's own resize is what is kept.
+        let id = Id::new(("locus-dialog", self.title.as_str()));
+        let mut w = egui::Window::new(self.title.as_str())
+            .id(id)
             .resizable(self.resizable)
             .collapsible(self.collapsible);
         if let Some((a, o)) = self.anchor {
@@ -116,13 +121,25 @@ impl<'open> Dialog<'open> {
         if self.resizable {
             // egui keeps a resized window's size (persisted with memory).
             w = w.default_size(size);
-        } else if let Some(s) = self.default_size {
-            w = w.default_size(s);
+        } else {
+            // A fixed dialog fits its content's height; its width is set,
+            // or its text would wrap into a narrow column.
+            w = w.default_width(size.x);
         }
         if let Some(open) = self.open {
             w = w.open(open);
         }
-        w.show(ctx, add).and_then(|r| r.inner)
+        let fill = self.resizable;
+        w.show(ctx, |ui| {
+            let r = add(ui);
+            // A resizable window would shrink to short content; fill it, so
+            // it opens at its size and then follows the user's (#361).
+            if fill {
+                ui.allocate_space(ui.available_size());
+            }
+            r
+        })
+        .and_then(|r| r.inner)
     }
 
     fn show_os<R>(self, ctx: &Context, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
@@ -249,6 +266,61 @@ mod tests {
             Vec2::new(MIN_SIZE.x, MAX_SIZE.y)
         );
         assert_eq!(opening_size(def, Some(Vec2::new(f32::NAN, 10.0))), def);
+    }
+
+    /// #361 on the web: an in-app resizable dialog opens at its default
+    /// size, not shrunk to its content.
+    /// A fixed dialog keeps a readable width.
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn a_fixed_in_app_dialog_is_not_a_narrow_column() {
+        let ctx = Context::default();
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                Vec2::new(1600.0, 1000.0),
+            )),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            let _ = ctx.run_ui(input(), |ui| {
+                Dialog::new("Restored")
+                    .resizable(false)
+                    .show(ui.ctx(), |ui| {
+                        ui.label("Restored your autosaved sketch from this browser.")
+                    });
+            });
+        }
+        let rect = ctx
+            .memory(|m| m.area_rect(Id::new(("locus-dialog", "Restored"))))
+            .expect("the window was drawn");
+        assert!(rect.width() >= DEFAULT_SIZE.x - 20.0, "{rect:?}");
+    }
+
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn an_in_app_dialog_opens_at_its_default_size() {
+        let ctx = Context::default();
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                Vec2::new(1600.0, 1000.0),
+            )),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            let _ = ctx.run_ui(input(), |ui| {
+                Dialog::new("Plugin manager")
+                    .resizable(true)
+                    .default_size([680.0, 480.0])
+                    .show(ui.ctx(), |ui| ui.label("No plugins installed."));
+            });
+        }
+        let rect = ctx
+            .memory(|m| m.area_rect(Id::new(("locus-dialog", "Plugin manager"))))
+            .expect("the window was drawn");
+        assert!(rect.width() >= 660.0, "{rect:?}");
+        assert!(rect.height() >= 440.0, "{rect:?}");
     }
 
     /// Where viewports are embedded (the web, tests) a dialog is an in-app
