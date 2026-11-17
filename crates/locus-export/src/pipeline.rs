@@ -7,7 +7,7 @@
 //! later stage (validation, auto-fix, ordering, writers) reads or edits this
 //! model and never the [`Document`] (SPEC §11).
 
-use locus_doc::{Document, EntityId, Fill, Geom, LayerId, Operation, Stroke, Style};
+use locus_doc::{Document, EntityId, Geom, LayerId, Operation, Stroke, Style};
 use locus_geom::{Aabb, Arc, Circle, Cubic, EXPORT_TOL, Line, Piece, Vec2};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -270,10 +270,7 @@ impl ExportLayer {
                 Stroke::Colour(c) => c,
             },
             width: s.width,
-            fill: match s.fill {
-                Fill::Colour(c) if path.closed => Some(c),
-                _ => None,
-            },
+            fill: s.fill.painted().filter(|_| path.closed),
             opacity: s.opacity,
             pen: Some(s.pen),
         }

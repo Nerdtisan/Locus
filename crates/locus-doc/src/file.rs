@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 14;
+pub const CURRENT_VERSION: u32 = 15;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -668,8 +668,49 @@ impl From<FileV13> for FileV14 {
     }
 }
 
-/// The newest on-disk shape. When adding v15, point this at `FileV15`.
-type Latest = FileV14;
+/// Version 15: a fill that is turned off keeps its colour (#388).
+/// `Fill` gains `Off([r, g, b])`, so an older build refuses a v15 file
+/// as too new instead of failing to parse it. Nothing else changes, and
+/// the migration is the identity on the data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV15 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+}
+
+impl From<FileV14> for FileV15 {
+    fn from(f: FileV14) -> Self {
+        FileV15 {
+            format_version: 15,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v16, point this at `FileV16`.
+type Latest = FileV15;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -688,8 +729,8 @@ fn finite(v: f64, what: &str) -> Result<(), FileError> {
 
 /// v9 → latest (and on to newer versions as they are added).
 fn v9_to_latest(f: FileV9) -> Latest {
-    FileV14::from(FileV13::from(FileV12::from(FileV11::from(FileV10::from(
-        f,
+    FileV15::from(FileV14::from(FileV13::from(FileV12::from(FileV11::from(
+        FileV10::from(f),
     )))))
 }
 
@@ -754,13 +795,16 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         7 => v9_to_latest(FileV9::from(FileV8::from(parse::<FileV7>(text)?))),
         8 => v9_to_latest(FileV9::from(parse::<FileV8>(text)?)),
         9 => v9_to_latest(parse::<FileV9>(text)?),
-        10 => FileV14::from(FileV13::from(FileV12::from(FileV11::from(
+        10 => FileV15::from(FileV14::from(FileV13::from(FileV12::from(FileV11::from(
             parse::<FileV10>(text)?,
+        ))))),
+        11 => FileV15::from(FileV14::from(FileV13::from(FileV12::from(
+            parse::<FileV11>(text)?,
         )))),
-        11 => FileV14::from(FileV13::from(FileV12::from(parse::<FileV11>(text)?))),
-        12 => FileV14::from(FileV13::from(parse::<FileV12>(text)?)),
-        13 => FileV14::from(parse::<FileV13>(text)?),
-        14 => parse::<FileV14>(text)?,
+        12 => FileV15::from(FileV14::from(FileV13::from(parse::<FileV12>(text)?))),
+        13 => FileV15::from(FileV14::from(parse::<FileV13>(text)?)),
+        14 => FileV15::from(parse::<FileV14>(text)?),
+        15 => parse::<FileV15>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -1367,7 +1411,7 @@ mod tests {
         assert!(text.contains("Text("));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v9());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     /// The v10 fixture is frozen; it migrates to v11 with no profile.
@@ -1383,7 +1427,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v10());
         assert_eq!(doc.profile(), None);
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     /// The v11 fixture is frozen; it migrates to v12 (no stroke edges).
@@ -1399,7 +1443,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v11());
         let out = save(&doc).unwrap();
-        assert!(out.contains("format_version: 14"));
+        assert!(out.contains("format_version: 15"));
         assert!(!out.contains("edge:"), "centreline edges are not written");
     }
 
@@ -1417,7 +1461,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v12());
         let out = save(&doc).unwrap();
-        assert!(out.contains("format_version: 14"));
+        assert!(out.contains("format_version: 15"));
         assert!(!out.contains("pen_width"), "the pen left the layer");
     }
 
@@ -1442,7 +1486,7 @@ mod tests {
         }
         assert_eq!(doc.stroke_width(EntityId::new(6)), 0.7);
         let out = save(&doc).unwrap();
-        assert!(out.contains("format_version: 14"));
+        assert!(out.contains("format_version: 15"));
         assert_eq!(
             out.matches("width: 0.7").count(),
             3,
@@ -1464,6 +1508,7 @@ mod tests {
                 pen: Some(2),
                 fill: Some(Fill::Colour([0, 0, 255])),
                 opacity: Some(0.5),
+                fill_on: None,
             },
         })
         .unwrap();
@@ -1485,9 +1530,9 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v13());
         let out = save(&doc).unwrap();
-        assert!(out.contains("format_version: 14"));
+        assert!(out.contains("format_version: 15"));
         assert_eq!(
-            out.replace("format_version: 14", "format_version: 13"),
+            out.replace("format_version: 15", "format_version: 13"),
             text
         );
     }
@@ -1534,22 +1579,67 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v14 fixture is frozen; it migrates to v15 unchanged (no fill is
+    /// turned off, which is all v15 adds).
     #[test]
-    fn v14_fixture_is_current_and_loads() {
+    fn v14_fixture_migrates_to_v15() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v14/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v14()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 14"));
         assert!(text.contains("tracking: 1.5"));
-        assert_eq!(load(&text).unwrap(), sample_v14());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v14());
+        let out = save(&doc).unwrap();
+        assert!(out.contains("format_version: 15"));
         assert_eq!(
-            save(&sample_v14()).unwrap(),
+            out.replace("format_version: 15", "format_version: 14"),
+            text
+        );
+    }
+
+    /// The v15 sample: `sample_v14()` with the blue fill turned off, its
+    /// colour kept (#388).
+    pub(crate) fn sample_v15() -> Document {
+        use crate::style::{Fill, StylePatch};
+        let doc = sample_v14();
+        let filled: Vec<EntityId> = doc
+            .entities()
+            .iter()
+            .filter(|(_, e)| e.style.fill == Fill::Colour([0, 0, 255]))
+            .map(|(id, _)| id)
+            .collect();
+        assert!(!filled.is_empty(), "sample_v13 has a blue fill");
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetStyle {
+            entities: filled,
+            patch: StylePatch {
+                fill_on: Some(false),
+                ..StylePatch::default()
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v15_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v15/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v15()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 15"));
+        assert!(text.contains("fill: Off((0, 0, 255))"), "{text}");
+        assert_eq!(load(&text).unwrap(), sample_v15());
+        assert_eq!(
+            save(&sample_v15()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
@@ -1558,7 +1648,7 @@ mod tests {
     /// Hostile letter spacing is refused on load (CLAUDE.md: untrusted input).
     #[test]
     fn bad_tracking_is_refused_on_load() {
-        let good = save(&sample_v14()).unwrap();
+        let good = save(&sample_v15()).unwrap();
         let bad = good.replacen("tracking: 1.5", "tracking: 1e300", 1);
         assert!(matches!(load(&bad), Err(FileError::Invalid(_))));
     }
@@ -1692,7 +1782,7 @@ mod tests {
         assert!(text.contains("format_version: 8"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v8());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     /// The v7 fixture is frozen; it migrates to v9.
@@ -1703,7 +1793,7 @@ mod tests {
         assert!(text.contains("format_version: 7"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v7());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     /// The v6 fixture is frozen; it migrates to v7 with crosshatch off.
@@ -1714,7 +1804,7 @@ mod tests {
         assert!(text.contains("format_version: 6"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v6());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     /// The v5 fixture is frozen; it migrates to v6 with no expressions.
@@ -1725,7 +1815,7 @@ mod tests {
         assert!(text.contains("format_version: 5"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v5());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     /// The v4 fixture is frozen; it migrates to v5 with no recipes.
@@ -1737,7 +1827,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v4());
         assert!(doc.recipes().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     /// The v3 fixture is frozen; it migrates to v4 unchanged.
@@ -1748,7 +1838,7 @@ mod tests {
         assert!(text.contains("format_version: 3"));
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v3());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     #[test]
@@ -1786,7 +1876,7 @@ mod tests {
         let doc = load(&text).unwrap();
         assert_eq!(doc, sample_v2());
         assert!(doc.booleans().is_empty());
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     #[test]
@@ -1812,7 +1902,7 @@ mod tests {
             doc.layer(L).unwrap().operation,
             Operation::Cut(CutParams::default())
         );
-        assert!(save(&doc).unwrap().contains("format_version: 14"));
+        assert!(save(&doc).unwrap().contains("format_version: 15"));
     }
 
     #[test]
@@ -1834,13 +1924,13 @@ mod tests {
             Err(FileError::Parse(_))
         ));
         // Versions.
-        let v = |n: u32| good.replacen("format_version: 14", &format!("format_version: {n}"), 1);
+        let v = |n: u32| good.replacen("format_version: 15", &format!("format_version: {n}"), 1);
         assert_eq!(load(&v(0)), Err(FileError::UnknownVersion(0)));
         assert_eq!(
-            load(&v(15)),
+            load(&v(16)),
             Err(FileError::FutureVersion {
-                found: 15,
-                supported: 14
+                found: 16,
+                supported: 15
             })
         );
         // Dangling reference: a line pointing at a missing point.

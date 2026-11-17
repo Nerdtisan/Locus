@@ -13,7 +13,7 @@ use crate::hit::Mods;
 use crate::state::AppState;
 use crate::view::View;
 use egui::{Color32, Mesh, Painter, Pos2, Rect, Stroke, Ui};
-use locus_doc::{Boolean, BooleanId, Command, EntityId, Fill};
+use locus_doc::{Boolean, BooleanId, Command, EntityId};
 use locus_geom::Vec2;
 use locus_region::{Area, BoolOp, Loop, Region, RegionKey};
 use std::collections::BTreeSet;
@@ -242,13 +242,9 @@ impl AppState {
         let doc = self.doc.sketcher.document();
         r.outer.edges.iter().find_map(|e| {
             let s = doc.entity(EntityId::new(e.source))?.style;
-            match s.fill {
-                Fill::Colour([red, g, b]) => {
-                    let a = (s.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
-                    Some(Color32::from_rgba_unmultiplied(red, g, b, a))
-                }
-                Fill::None => None,
-            }
+            let [red, g, b] = s.fill.painted()?;
+            let a = (s.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+            Some(Color32::from_rgba_unmultiplied(red, g, b, a))
         })
     }
 
@@ -767,7 +763,7 @@ mod tests {
         assert!(c.apply_reporting(&Command::SetStyle {
             entities: curves,
             patch: locus_doc::StylePatch {
-                fill: Some(Fill::Colour([10, 200, 30])),
+                fill: Some(locus_doc::Fill::Colour([10, 200, 30])),
                 opacity: Some(0.5),
                 ..Default::default()
             },

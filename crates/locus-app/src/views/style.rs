@@ -46,7 +46,12 @@ impl Shared {
         self.stroke = p.stroke.or(self.stroke);
         self.width = p.width.or(self.width);
         self.pen = p.pen.or(self.pen);
-        self.fill = p.fill.or(self.fill);
+        self.fill = match p.fill_on {
+            Some(on) => self
+                .fill
+                .map(|f| f.switched(on, p.fill.and_then(Fill::painted))),
+            None => p.fill.or(self.fill),
+        };
         self.opacity = p.opacity.or(self.opacity);
         self
     }
@@ -216,6 +221,13 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
         pen: edit.pen.or(into.pen),
         fill: edit.fill.or(into.fill),
         opacity: edit.opacity.or(into.opacity),
+        // A colour picked after a switch is the colour: the switch's
+        // keep-each-colour rule no longer applies (#388).
+        fill_on: if edit.fill.is_some() && edit.fill_on.is_none() {
+            None
+        } else {
+            edit.fill_on.or(into.fill_on)
+        },
     };
 }
 
@@ -293,16 +305,16 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
             ui.label("Fill");
             ui.horizontal(|ui| {
                 let mut on = matches!(s.fill, Some(Fill::Colour(_)));
-                let mut c = match s.fill {
-                    Some(Fill::Colour(c)) => c,
-                    _ => layer_colour,
-                };
+                let mut c = s.fill.and_then(Fill::colour).unwrap_or(layer_colour);
                 if ui
                     .checkbox(&mut on, "")
                     .on_hover_text("Fill closed shapes (Engrave layers hatch instead)")
                     .changed()
                 {
-                    out.fill = Some(if on { Fill::Colour(c) } else { Fill::None });
+                    // Each object keeps its own colour through off and on
+                    // (#388); `c` only colours one that never had a fill.
+                    out.fill_on = Some(on);
+                    out.fill = Some(Fill::Colour(c));
                 }
                 if on && ui.color_edit_button_srgb(&mut c).changed() {
                     out.fill = Some(Fill::Colour(c));
