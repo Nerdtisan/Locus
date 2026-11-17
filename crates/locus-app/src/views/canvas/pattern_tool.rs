@@ -138,6 +138,34 @@ impl PatternDraft {
         }
     }
 
+    /// A fresh run of the tool (#382): the values persist, like tool
+    /// options, but a half-finished pick, drag or focus never does. A
+    /// direction-line pick left on would keep the canvas in pick mode, so
+    /// no handle could be dragged in any later pattern.
+    pub fn begin(&mut self) {
+        self.pick = PatternPick::Objects;
+        self.drag = None;
+        self.focus = None;
+    }
+
+    /// The direction-`n` line button (#382): starts picking a line, and a
+    /// second press stops, as Fusion's selection buttons do.
+    pub fn toggle_line_pick(&mut self, n: u8) {
+        self.pick = if self.pick == PatternPick::Direction(n) {
+            PatternPick::Objects
+        } else {
+            PatternPick::Direction(n)
+        };
+    }
+
+    /// Esc: leave a centre or line pick. `false` when nothing was being
+    /// picked, so Esc closes the tool instead.
+    pub fn cancel_pick(&mut self) -> bool {
+        let picking = self.pick != PatternPick::Objects;
+        self.pick = PatternPick::Objects;
+        picking
+    }
+
     fn count_mut(&mut self, which: u8) -> &mut String {
         match which {
             1 => &mut self.count1,
@@ -362,6 +390,18 @@ impl AppState {
         circular: bool,
     ) {
         use egui::{Key, Modifiers};
+        // Esc leaves a pick wherever the pointer is, unless a field is
+        // being typed in (#382): the pick mode must never be a trap.
+        let typing = ui.ctx().memory(|m| m.focused().is_some());
+        if self.tools.pattern.pick != PatternPick::Objects
+            && !typing
+            && ui
+                .ctx()
+                .input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.tools.pattern.cancel_pick();
+            return;
+        }
         if resp.hovered() {
             let (esc, enter) = ui.ctx().input_mut(|i| {
                 (
@@ -370,9 +410,7 @@ impl AppState {
                 )
             });
             if esc {
-                if self.tools.pattern.pick != PatternPick::Objects {
-                    self.tools.pattern.pick = PatternPick::Objects;
-                } else {
+                if !self.tools.pattern.cancel_pick() {
                     self.set_tool(crate::tools::Tool::Select);
                 }
                 return;
@@ -831,13 +869,13 @@ impl AppState {
                     // is one click, not a cycle).
                     for n in [1u8, 2] {
                         let label = if n == 1 { "Direction 1" } else { "Direction 2" };
-                        row(ui, label, |ui| {
+                        let picking = d.pick == PatternPick::Direction(n);
+                        let (pick, x) = row(ui, label, |ui| {
                             if n == 2 {
                                 ui.checkbox(&mut d.second, "")
                                     .on_hover_text("Pattern in a second direction too");
                             }
                             let on = n == 1 || d.second;
-                            let picking = d.pick == PatternPick::Direction(n);
                             let axis = if n == 1 { &mut d.axis1 } else { &mut d.axis2 };
                             let now = match axis {
                                 Axis::X => 0u8,
@@ -845,15 +883,29 @@ impl AppState {
                                 Axis::Line(_) => 2,
                             };
                             ui.add_enabled_ui(on, |ui| {
-                                let shown = if picking { 2 } else { now };
-                                match segmented(ui, shown, &[(0, "X"), (1, "Y"), (2, "Line…")]) {
+                                // X / Y, or a selection box for a line, as
+                                // Fusion's Direction field (#382). The box
+                                // toggles picking; Esc or a pick ends it.
+                                match segmented(ui, now, &[(0, "X"), (1, "Y")]) {
                                     Some(0) => *axis = Axis::X,
-                                    Some(1) => *axis = Axis::Y,
-                                    Some(_) => d.pick = PatternPick::Direction(n),
+                                    Some(_) => *axis = Axis::Y,
                                     None => {}
                                 }
-                            });
+                                ui.add_space(6.0);
+                                let text = if now == 2 { "1 line" } else { "Pick line" };
+                                let (pick, x) = selection(ui, text, now == 2, picking);
+                                if x {
+                                    *axis = if n == 1 { Axis::X } else { Axis::Y };
+                                }
+                                (pick, x)
+                            })
+                            .inner
                         });
+                        if x && picking {
+                            d.pick = PatternPick::Objects;
+                        } else if pick {
+                            d.toggle_line_pick(n);
+                        }
                     }
                     row(ui, "Quantity", |ui| {
                         field(ui, &mut d.count1, 56.0, Drag::Count(1));
@@ -894,7 +946,7 @@ impl AppState {
                         ui.weak("Click a point on the canvas");
                     }
                     PatternPick::Direction(_) => {
-                        ui.weak("Click a line on the canvas");
+                        ui.weak("Direction: click a line on the canvas (Esc to stop)");
                     }
                     PatternPick::Objects => {}
                 }
@@ -1014,6 +1066,89 @@ mod tests {
             .filter(|e| doc.line(*e).is_some())
             .count();
         assert_eq!(copied_lines, 8, "the copy has the profile and its offset");
+    }
+
+    /// Regression (#382): pressing the direction Line button left the tool
+    /// in pick mode for good: it outlived the tool, so in every later
+    /// pattern the canvas only waited for a line and no handle moved. Now a
+    /// new run starts clean, a second press or Esc (pointer anywhere) stops
+    /// picking, and the handles drag again, in real egui frames.
+    #[test]
+    fn a_direction_line_pick_never_traps_the_tool() {
+        use egui::{Event, Key, PointerButton as B, RawInput, pos2, vec2};
+        let mut c = ready(false);
+        c.tools.pattern.toggle_line_pick(1);
+        assert_eq!(c.tools.pattern.pick, PatternPick::Direction(1));
+        c.tools.pattern.toggle_line_pick(1);
+        assert_eq!(c.tools.pattern.pick, PatternPick::Objects, "pressed again");
+        // Pick mode on, then the tool closes without a pick.
+        c.tools.pattern.toggle_line_pick(1);
+        c.set_tool(Tool::Select);
+        c.set_modify(Modify::Pattern(false));
+        assert_eq!(c.tools.pattern.pick, PatternPick::Objects, "a new run");
+
+        let ctx = egui::Context::default();
+        let settings = crate::settings::Settings::default();
+        let mut t = 0.0;
+        let mut frame = |c: &mut AppState, events: Vec<Event>| {
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    pos2(0.0, 0.0),
+                    vec2(800.0, 600.0),
+                )),
+                time: Some(t),
+                events,
+                ..RawInput::default()
+            };
+            t += 0.03;
+            let mut status = crate::app::Status::default();
+            let _ = ctx.run_ui(input, |ui| c.canvas_ui(ui, &settings, &mut status));
+        };
+        let key = |key| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Esc stops picking even with the pointer off the canvas.
+        c.tools.pattern.toggle_line_pick(2);
+        frame(&mut c, Vec::new());
+        frame(&mut c, vec![Event::PointerGone, key(Key::Escape)]);
+        assert_eq!(c.tools.pattern.pick, PatternPick::Objects, "Esc");
+        assert_eq!(c.modify(), Some(Modify::Pattern(false)), "still patterning");
+
+        // And the spacing arrow drags.
+        c.tools.pattern.count1 = "3".to_owned();
+        c.tools.pattern.spacing1 = "30".to_owned();
+        // The copies on screen, to the right of the dialog.
+        c.view.camera.center = Vec2::new(20.0, 5.0);
+        c.view.camera.pt_per_mm = 4.0;
+        frame(&mut c, Vec::new());
+        frame(&mut c, Vec::new());
+        let h = c.pattern_handles(false, Units::Mm).expect("handles");
+        let tip = c
+            .pattern_spots(&h, c.view.rect)
+            .iter()
+            .find(|s| s.0 == Some(Drag::Spacing(1)))
+            .map(|s| s.2)
+            .expect("the spacing arrow");
+        let to = tip + vec2(40.0, 0.0);
+        let btn = |pos, pressed| Event::PointerButton {
+            pos,
+            button: B::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&mut c, vec![Event::PointerMoved(tip)]);
+        frame(&mut c, vec![btn(tip, true)]);
+        for i in 1..=8 {
+            let f = i as f32 / 8.0;
+            frame(&mut c, vec![Event::PointerMoved(tip + (to - tip) * f)]);
+        }
+        frame(&mut c, vec![btn(to, false)]);
+        let spacing = parse_number(&c.tools.pattern.spacing1).expect("a number");
+        assert!(spacing > 30.5, "the arrow dragged: {spacing}");
     }
 
     #[test]
