@@ -403,7 +403,7 @@ impl AppState {
                 TransformMode::Rotate => "Angle",
                 TransformMode::Scale => "Factor",
             };
-            format!("{what} {}▏", self.tools.typed)
+            format!("{what} {}|", self.tools.typed)
         };
         frame.painter.text(
             g.origin + EVec2::new(SQUARE_PT + 6.0, SQUARE_PT + 6.0),

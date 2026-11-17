@@ -847,7 +847,7 @@ impl AppState {
             f.iter()
                 .map(|x| {
                     let v = if x.active && !self.tools.typed.is_empty() {
-                        format!("{}▏", self.tools.typed)
+                        format!("{}|", self.tools.typed)
                     } else if x.count {
                         format!("{:.0}", x.mm)
                     } else {
@@ -874,7 +874,7 @@ impl AppState {
                 .map(|(what, mm)| format!("{what} {}", frame.units.format_len(mm)))
         } else {
             let what = tool.readout(pick.pos).map_or("Value", |(w, _)| w);
-            Some(format!("{what} {}▏", self.tools.typed))
+            Some(format!("{what} {}|", self.tools.typed))
         };
         if let Some(text) = label {
             let at = frame.view.to_screen(pick.pos, frame.rect) + egui::vec2(14.0, -14.0);
