@@ -12,6 +12,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 locus-geom.workspace = true
 locus-region.workspace = true
 locus-solver.workspace = true

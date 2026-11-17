@@ -42,6 +42,30 @@ export function pick_text(accept) {
   });
 }
 
+// Import reference: a binary file picker (#390). Resolves to [name,
+// Uint8Array], a string (an error), or null (cancelled). Matches
+// locus_import::MAX_INPUT_BYTES.
+const MAX_IMPORT_BYTES = 32 * 1024 * 1024;
+export function pick_named_bytes(accept) {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.onchange = async () => {
+      const f = input.files && input.files[0];
+      if (!f) return resolve(null);
+      if (f.size > MAX_IMPORT_BYTES) return resolve("The file is too large to import.");
+      try {
+        resolve([f.name, new Uint8Array(await f.arrayBuffer())]);
+      } catch (_) {
+        resolve("Could not read the file.");
+      }
+    };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
 // ── Autosave: OPFS first, IndexedDB fallback (Safari has no OPFS writable on
 // the main thread). Each copy carries a timestamp so the newest wins on read.
 // Neither write can lose the previous copy: an OPFS writable stream swaps in

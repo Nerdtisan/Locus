@@ -770,7 +770,15 @@ mod tests {
                 "output.validate",
             ]
         );
-        assert_eq!(ids(Group::Insert), ["insert.svg", "insert.dxf"]);
+        assert_eq!(
+            ids(Group::Insert),
+            [
+                "insert.svg",
+                "insert.dxf",
+                "insert.image",
+                "sketch.calibrate"
+            ]
+        );
         assert_eq!(
             ids(Group::Select),
             [

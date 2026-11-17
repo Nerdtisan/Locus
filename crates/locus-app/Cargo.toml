@@ -47,3 +47,6 @@ locus-mcp = { path = "../locus-mcp" }
 # Drives an MCP call from another thread in the canvas test (#230).
 tokio = { version = "1", features = ["rt"] }
 
+# Encode test images and damage them inside a `.locus` file (#390).
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.23"
