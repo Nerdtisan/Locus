@@ -911,6 +911,14 @@ impl AppState {
             let d = |p: EntityId| doc.point_pos(p).map_or(f64::MAX, |q| q.distance(at));
             if d(a) <= d(b) { a } else { b }
         };
+        // Text moves as a whole: its direction point rides along with the
+        // anchor (#411). Dragged by the anchor alone, the solver left the
+        // direction point where it was, so the baseline turned round once
+        // the anchor passed it and the text showed upside down.
+        let followers: Vec<EntityId> = match doc.entity(grabbed).map(|e| &e.geom) {
+            Some(Geom::Text { dir, .. }) => vec![*dir],
+            _ => Vec::new(),
+        };
         let point = match doc.entity(grabbed).map(|e| &e.geom) {
             Some(Geom::Point { .. }) => grabbed,
             Some(Geom::Line { start, end }) => near(*start, *end),
@@ -921,7 +929,7 @@ impl AppState {
             Some(Geom::Text { anchor, .. }) => *anchor,
             None => return false,
         };
-        match self.doc.sketcher.begin_drag(point) {
+        match self.doc.sketcher.begin_drag_with(point, &followers) {
             Ok(()) => {
                 self.tools.dragging = true;
                 self.doc.notice = None;
@@ -1867,6 +1875,102 @@ mod tests {
         assert_eq!(c.undo_label(), Some("Add fix constraint"));
         c.undo();
         assert_eq!(c.doc.sketcher.document().constraints().len(), before);
+    }
+
+    /// Regression (#411): dragging text moved only its anchor, so the
+    /// direction point stayed behind and the baseline turned round once the
+    /// anchor passed it: the text showed upside down and back to front. Now
+    /// the text translates; dragged far into every quadrant (past its own
+    /// direction point too), it keeps its baseline direction and length.
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)] // test fixtures
+    fn dragging_text_only_translates_it() {
+        use locus_text::{Align, BundledFont, BundledProvider, FontRef};
+        let place = || {
+            let mut c = AppState::default();
+            c.load(locus_doc::Document::new());
+            let text = locus_doc::TextData::new(
+                "testing text",
+                FontRef::bundled(BundledFont::HersheySans),
+                5.0,
+                Align::Left,
+                1.0,
+                &BundledProvider,
+            )
+            .unwrap();
+            // As the Text tool places it: anchor, direction point, a
+            // construction baseline held horizontal, then the text.
+            let layer = c.active_layer();
+            let point = |c: &mut AppState, x: f64| {
+                let id = EntityId::new(c.doc.sketcher.document().next_id());
+                assert!(c.apply_reporting(&Command::AddEntity {
+                    layer,
+                    construction: false,
+                    geom: Geom::Point {
+                        pos: Vec2::new(x, 10.0),
+                    },
+                    style: Default::default(),
+                }));
+                id
+            };
+            let (a, d) = (point(&mut c, 10.0), point(&mut c, 25.0));
+            let base = EntityId::new(c.doc.sketcher.document().next_id());
+            assert!(c.apply_reporting(&Command::AddEntity {
+                layer,
+                construction: true,
+                geom: Geom::Line { start: a, end: d },
+                style: Default::default(),
+            }));
+            assert!(c.apply_reporting(&Command::AddConstraint {
+                constraint: locus_doc::Constraint::Horizontal { line: base },
+            }));
+            assert!(c.apply_reporting(&Command::AddEntity {
+                layer,
+                construction: false,
+                geom: Geom::Text {
+                    anchor: a,
+                    dir: d,
+                    text: Box::new(text),
+                },
+                style: Default::default(),
+            }));
+            let doc = c.doc.sketcher.document();
+            let (id, anchor, dir) = doc
+                .entities()
+                .iter()
+                .find_map(|(id, e)| match e.geom {
+                    Geom::Text { anchor, dir, .. } => Some((id, anchor, dir)),
+                    _ => None,
+                })
+                .expect("placed text");
+            (c, id, anchor, dir)
+        };
+        for target in [
+            Vec2::new(120.0, 80.0),
+            Vec2::new(-150.0, 60.0),
+            Vec2::new(-90.0, -110.0),
+            Vec2::new(200.0, -70.0),
+        ] {
+            let (mut c, id, anchor, dir) = place();
+            let pos = |c: &AppState, p| c.doc.sketcher.document().point_pos(p).unwrap();
+            let offset = pos(&c, dir) - pos(&c, anchor);
+            assert!(offset.x > 0.0, "the baseline runs left to right");
+            let from = pos(&c, anchor);
+            assert!(c.begin_drag(id, from));
+            for k in 1..=20 {
+                let t = f64::from(k) / 20.0;
+                assert!(c.doc.sketcher.drag_to(from + (target - from) * t).is_ok());
+            }
+            assert!(c.doc.sketcher.end_drag().is_ok());
+            c.tools.dragging = false;
+            let now = pos(&c, dir) - pos(&c, anchor);
+            assert!(
+                (now - offset).length() < 1e-6,
+                "to {target:?}: baseline {now:?}, was {offset:?}"
+            );
+            assert!((pos(&c, anchor) - target).length() < 1e-6, "it got there");
+            assert_eq!(c.undo_label(), Some("Drag"));
+        }
     }
 
     #[test]
