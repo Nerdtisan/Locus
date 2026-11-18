@@ -268,7 +268,7 @@ fn bed_canvas(
         });
     }
 
-    for p in paths {
+    for p in paths.iter().filter(|p| p.shown_at(scale)) {
         let c = crate::views::op_chip::colour(p.kind, dark);
         let pts: Vec<Pos2> = p.points.iter().map(|q| to(*q + shift)).collect();
         if p.band * scale >= 1.0 {
@@ -277,7 +277,12 @@ fn bed_canvas(
                 Stroke::new((p.band * scale) as f32, c.gamma_multiply(0.3)),
             ));
         }
-        let width = if p.hatch { 0.6 } else { 1.25 };
+        // Faint engrave fill (#455): its spacing reads, fills show through.
+        let (width, c) = if p.hatch {
+            (0.6, c.gamma_multiply(0.45))
+        } else {
+            (1.25, c)
+        };
         painter.add(egui::Shape::line(pts, Stroke::new(width, c)));
     }
     if let Some(b) = visual {
@@ -581,6 +586,7 @@ mod tests {
             kind: OperationKind::Draw,
             hatch: false,
             band: 4.0,
+            row: None,
         };
         let geom = job_bounds(std::slice::from_ref(&line)).unwrap();
         assert!(fit_message(geom, &bed, Units::Mm).is_none());

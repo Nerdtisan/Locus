@@ -223,6 +223,13 @@ pub(crate) fn summary(p: &MachineProfile) -> String {
     format!("{} · {} · {bed}", p.machine.name(), p.format.to_uppercase())
 }
 
+/// A length in mm without trailing zeros: `0.1`, `2`, `0.25`.
+pub(crate) fn trim_mm(v: f64) -> String {
+    let s = format!("{v:.3}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    s.to_owned()
+}
+
 fn trim(v: f64) -> String {
     let s = format!("{v:.1}");
     s.strip_suffix(".0").map_or(s.clone(), str::to_owned)

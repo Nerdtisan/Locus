@@ -125,6 +125,9 @@ fn document() -> Document {
             hatch_spacing: 1.0,
             hatch_angle: 45.0,
             crosshatch: true,
+            // The pre-#455 behaviour: outline and hatch.
+            mode: locus_doc::EngraveMode::LineFill,
+            overlap: locus_doc::Overlap::EvenOdd,
         }),
     );
     b.rect(engrave, 100.0, 0.0, 120.0, 20.0);

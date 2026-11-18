@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="15.1mm" height="15.1mm" viewBox="0 0 15.1 15.1">
+  <g id="layer-1" data-name="Layer 1" data-operation="Engrave">
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 0.05 9.05 L 15.05 9.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 15.05 8.05 L 0.05 8.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 0.05 7.05 L 15.05 7.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 15.05 6.05 L 0.05 6.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 0.05 10.05 L 5.05 10.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 0.05 11.05 L 10.05 11.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 10.05 12.05 L 0.05 12.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 0.05 13.05 L 10.05 13.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 10.05 14.05 L 0.05 14.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 5.05 4.05 L 15.05 4.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 15.05 5.05 L 10.05 5.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 5.05 3.05 L 15.05 3.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 15.05 2.05 L 5.05 2.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 5.05 1.05 L 15.05 1.05"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 15.05 0.05 L 5.05 0.05 L 5.05 10.05 L 15.05 10.05 L 15.05 0.05 Z"/>
+    <path fill="none" stroke="#000000" stroke-width="0.1" d="M 10.05 5.05 L 0.05 5.05 L 0.05 15.05 L 10.05 15.05 L 10.05 5.05 Z"/>
+  </g>
+</svg>
