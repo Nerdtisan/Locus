@@ -38,6 +38,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | UI (M5) | Fusion-style sketch UI: ribbon grouped Create / Modify / Constrain / Inspect / Insert / Select, browser, sketch palette, context inspector, right-click marking menu (pan on middle-drag / Space+drag), Fusion's sketch keys, one pick → drag/type → Enter/Esc → editable-dimension tool model; built on an action registry and a tool trait. Style (stroke colour, width, pen number, fill, opacity) belongs to each object, not the layer; placed text stays re-editable. Owner decisions 2026-11-13, #293, [ADR 0017](adr/0017-fusion-style-ui.md). |
 | Machine profile per document (M5) | **Decided** (owner, #419, 2026-11-18): the document's machine profile drives more than export. A profile names its machine kind (laser, pen plotter, vinyl cutter or generic), which sets the operation new layers get (Cut, Draw, Drag knife; Draw when generic or no profile) and the operations layer pickers offer. Its bed is drawn on the canvas, Machine preview uses it, and every export defaults to it, `locus-cli export` included. It is chosen from the app bar, File ▸ Machine profile and the Inspector. Changing it is one undoable `SetProfile`, and layers are never rewritten silently: the app offers to update them, as one more undo step. The document still stores only the id (format v11), so no format change. The machine kind lives in the profile JSON and defaults to generic. |
 | Job placement on the bed (M5) | **Decided** (owner, #443, 2026-11-18): Machine preview became a dockable pane (it can also float in its own window). It shows the profile's bed at true proportion with the job drawn as the machine makes it. The job can be dragged on the bed, snapping to the edges, centre and corners, or placed by numeric X / Y from the machine origin. The placement is a document offset (format **v18**) set by one undoable `SetPlacement`. Once placed, export moves the design by that offset and writes the whole bed as the page. Until then, export frames the design itself, as before. The export dialog shows the same bed view. |
+| Fills belong to regions (M5) | **Decided** (owner, #451, 2026-11-18, supersedes the paint-order part of #422): every closed region (a `locus-region` face) has its own fill colour and opacity. Objects have no fill. Strokes always draw above every fill, on the canvas and in SVG, PDF and PNG, so no fill can hide a line. A region's fill is set by selecting the region (#370) and using the Inspector's Fill section. Format **v19**: object fills migrate to the regions whose outer boundary they formed, the regions the canvas showed filled since #338. Holes stay open. Fills stay visual: only Draw layers export them, and machine output and Engrave hatch are unchanged. |
 
 ---
 
@@ -144,7 +145,7 @@ crates/
 Each entity carries:
 - `layer: LayerId`
 - `construction: bool` — never exported, rendered dashed. Independent of layer.
-- `style` (M5, #287): stroke colour, stroke width, pen number, fill and opacity. Per object, not per layer ([ADR 0017](adr/0017-fusion-style-ui.md)). A fill that is turned off keeps its colour, so turning it back on restores it (`Fill::Off`, format v15, #388).
+- `style` (M5, #287): stroke colour, stroke width, pen number and opacity. Per object, not per layer ([ADR 0017](adr/0017-fusion-style-ui.md)). **Objects have no fill since format v19 (#451):** fills belong to regions (§6.3). The style keeps a `fill` field only for older files, which migrate it to regions; commands and files refuse a non-empty object fill.
 
 ### Layers
 - Layers are **properties on geometry**, not separate sketches. One shared solver space for the whole document.
@@ -230,6 +231,11 @@ All are **associative**: stored as a recipe (source entity IDs + parameters), re
 
 ### 6.3 Regions & booleans
 - Automatic closed-profile detection from sketch geometry (as Fusion does), producing **regions**.
+- **Region fills (M5, #451).** Each region has its own fill: a colour, or none while remembering the last colour (#388), plus an opacity from 0 to 100 %. Fills are keyed by the region's stable key, the entities on its outer boundary (ADR 0008). A fill whose region disappears is kept and comes back with the region. Nested or overlapping shapes give separate regions, filled independently. For example, the ring between a rectangle and an inner loop is its own region, apart from the loop's inside.
+  - Setting a fill: select regions (click inside a closed shape, #370), then use the Inspector's **Fill** section (on/off, colour, opacity). Each change is one undoable step (`SetRegionFill`).
+  - Drawing: the canvas draws fills under all geometry, at their opacity, while Show fills is on.
+  - Export: SVG, PDF and PNG write every fill, even-odd so holes stay open, before any stroke. SVG puts them in one `fills` group, with `fill-opacity`; PDF and PNG use alpha.
+  - Machine output: fills stay visual. Only regions on Draw layers export a fill, because machine software reads every path as a cut. Engrave hatch is unchanged: it already fills the faces enclosed by the Engrave layer's paths, holes respected.
 - Non-destructive boolean result objects (union/subtract/intersect of regions), stored as recipes referencing entity IDs and recomputed on solve.
 - **Known tension:** most Rust boolean libs flatten to polylines; DXF/laser output strongly prefers true arcs. Approach: perform booleans on flattened geometry, then **arc-refit** the result (or use `cavalier_contours` for arc-preserving cases). Spike in Milestone 2.
 - **Decided ([ADR 0008](adr/0008-booleans-and-arcs.md), 2026-11-05):** `locus-region` owns an exact line/arc arrangement (split at intersections and overlaps with `SOLVER_TOL` snapping, de-duplicate, classify edges by winding number, trace loops, merge pieces on one line or circle). Region detection and booleans share it; no flattening, no refit, no new dependencies. Measured: 15,000/15,000 random cases within tolerance (flatten + `i_overlay` + refit 99.6 %, `cavalier_contours` 98.9 %, failing on shared edges); deviation below 1e-7 mm; minimal arc counts; 28 KB gzipped in wasm32.
@@ -342,6 +348,7 @@ Export is always one-way. Native file is the source of truth.
 - Entities carry their style (format v13, #287): omitted while it is the default, so points and unstyled curves add nothing to the file.
 - Text entities (format v9, #179) store content, a font reference and the laid-out geometry, so a file opens and exports without the font ([ADR-0012](adr/0012-text-entity.md)).
 - Text letter spacing (`tracking`, mm; format v14, #222) is omitted while zero, so older files load unchanged.
+- Region fills (`region_fills`, region key → fill and opacity; format v19, #451) are omitted while empty. Loading an older file moves each object fill onto the regions whose outer boundary that object formed, at the object's opacity, then clears the object fills.
 - The job's placement on the machine bed (`placement`, an offset in mm; format v18, #443) is omitted while unset, so a v17 file migrates unchanged.
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
 - Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.

@@ -35,7 +35,9 @@ pub use layers::{LayerFile, file_names, split_layers};
 pub use ops::apply_operations;
 pub use order::{order, travel_length};
 pub use pdf::{to_pdf, to_pdf_model};
-pub use pipeline::{ExportLayer, ExportModel, ExportPath, PathSeg, Shape, chain, collect};
+pub use pipeline::{
+    ExportFill, ExportLayer, ExportModel, ExportPath, PathSeg, Shape, chain, collect,
+};
 pub use png::{Background, PngExporter, PngOptions, Resolution, to_png_model};
 pub use prepare::{Prepared, prepare, prepare_for};
 pub use profile::{Bed, Defaults, MachineProfile, Origin, ProfileError, ProfileUnits};

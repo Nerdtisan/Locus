@@ -16,15 +16,15 @@ use std::collections::{BTreeMap, VecDeque};
 /// (SPEC §7, #284).
 pub const DEFAULT_HAIRLINE_MM: f64 = 0.1;
 
-/// How one path is written (SPEC §7, §8; #284): resolved from the object's
-/// style on a Draw layer, or the layer colour and hairline on a machine layer.
+/// How one path's stroke is written (SPEC §7, §8; #284): resolved from the
+/// object's style on a Draw layer, or the layer colour and hairline on a
+/// machine layer. Paths have no fill: fills belong to regions (#451,
+/// [`ExportFill`]) and are written under every stroke.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Paint {
     pub stroke: [u8; 3],
     /// Stroke width, mm.
     pub width: f64,
-    /// Only for closed paths on Draw layers.
-    pub fill: Option<[u8; 3]>,
     /// `0..=1`.
     pub opacity: f64,
     /// The plotter pen, on Draw layers.
@@ -255,7 +255,6 @@ impl ExportLayer {
             return Paint {
                 stroke: self.colour,
                 width: self.hairline,
-                fill: None,
                 opacity: 1.0,
                 pen: None,
             };
@@ -270,7 +269,6 @@ impl ExportLayer {
                 Stroke::Colour(c) => c,
             },
             width: s.width,
-            fill: s.fill.painted().filter(|_| path.closed),
             opacity: s.opacity,
             pen: Some(s.pen),
         }
@@ -311,10 +309,25 @@ impl ExportLayer {
     }
 }
 
+/// One filled region (SPEC §6.3, #451): its outer loop and holes as closed
+/// paths, filled even-odd so the holes stay open, written under every stroke.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportFill {
+    /// The layer of the region's outline: the file and group it goes in.
+    pub layer: LayerId,
+    /// Outer loop first, then the holes; each closed.
+    pub paths: Vec<ExportPath>,
+    pub colour: [u8; 3],
+    /// `0..=1`.
+    pub opacity: f64,
+}
+
 /// Everything the exporters need, layers in export order.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ExportModel {
     pub layers: Vec<ExportLayer>,
+    /// Region fills (#451), written before any stroke so no fill hides a line.
+    pub fills: Vec<ExportFill>,
     /// Overrides the bounds the writers place the drawing in. Per-layer export
     /// (#291) sets it to the whole design's bounds, so every layer's file has
     /// the same origin and canvas and the files line up when re-imported.
@@ -388,8 +401,20 @@ impl ExportModel {
                 out
             })
             .collect();
+        let fills = self
+            .fills
+            .iter()
+            .filter(|f| {
+                f.paths
+                    .iter()
+                    .flat_map(|p| &p.segs)
+                    .all(|s| keep.contains(&s.entity))
+            })
+            .cloned()
+            .collect();
         ExportModel {
             layers,
+            fills,
             frame: None,
         }
     }
@@ -407,24 +432,15 @@ impl ExportModel {
             .flat_map(|l| l.paths.iter_mut())
             .flat_map(|p| p.segs.iter_mut())
         {
-            seg.shape = match seg.shape {
-                Shape::Line(l) => Shape::Line(Line::new(l.a + d, l.b + d)),
-                Shape::Arc(a) => Shape::Arc(Arc {
-                    center: a.center + d,
-                    start: a.start + d,
-                    end: a.end + d,
-                }),
-                Shape::Circle(c) => Shape::Circle(Circle {
-                    center: c.center + d,
-                    radius: c.radius,
-                }),
-                Shape::Cubic(c) => Shape::Cubic(Cubic {
-                    p0: c.p0 + d,
-                    c0: c.c0 + d,
-                    c1: c.c1 + d,
-                    p1: c.p1 + d,
-                }),
-            };
+            seg.shape = translated(seg.shape, d);
+        }
+        for seg in self
+            .fills
+            .iter_mut()
+            .flat_map(|f| f.paths.iter_mut())
+            .flat_map(|p| p.segs.iter_mut())
+        {
+            seg.shape = translated(seg.shape, d);
         }
         if let Some(f) = &mut self.frame {
             *f = Aabb::from_points(f.min + d, f.max + d);
@@ -510,23 +526,127 @@ pub fn collect(doc: &Document) -> ExportModel {
         }
     }
 
+    let layers: Vec<ExportLayer> = layers
+        .into_iter()
+        .filter_map(|(mut l, segs)| {
+            l.paths = l.chain(segs);
+            let id = l.id;
+            l.paths.extend(
+                text_paths
+                    .iter()
+                    .filter(|(layer, _)| *layer == id)
+                    .map(|(_, p)| p.clone()),
+            );
+            (!l.paths.is_empty() || !l.degenerate.is_empty()).then_some(l)
+        })
+        .collect();
+    let fills = collect_fills(doc, &layers);
     ExportModel {
-        layers: layers
-            .into_iter()
-            .filter_map(|(mut l, segs)| {
-                l.paths = l.chain(segs);
-                let id = l.id;
-                l.paths.extend(
-                    text_paths
-                        .iter()
-                        .filter(|(layer, _)| *layer == id)
-                        .map(|(_, p)| p.clone()),
-                );
-                (!l.paths.is_empty() || !l.degenerate.is_empty()).then_some(l)
-            })
-            .collect(),
+        layers,
+        fills,
         ..Default::default()
     }
+}
+
+/// `shape` moved by `d`.
+fn translated(shape: Shape, d: Vec2) -> Shape {
+    match shape {
+        Shape::Line(l) => Shape::Line(Line::new(l.a + d, l.b + d)),
+        Shape::Arc(a) => Shape::Arc(Arc {
+            center: a.center + d,
+            start: a.start + d,
+            end: a.end + d,
+        }),
+        Shape::Circle(c) => Shape::Circle(Circle {
+            center: c.center + d,
+            radius: c.radius,
+        }),
+        Shape::Cubic(c) => Shape::Cubic(Cubic {
+            p0: c.p0 + d,
+            c0: c.c0 + d,
+            c1: c.c1 + d,
+            p1: c.p1 + d,
+        }),
+    }
+}
+
+/// A region loop as a closed export path (#451). Region arcs carry a signed
+/// sweep; a clockwise one is the counter-clockwise arc travelled backwards.
+fn loop_path(l: &locus_region::Loop) -> Option<ExportPath> {
+    let segs: Vec<PathSeg> = l
+        .edges
+        .iter()
+        .map(|e| {
+            let entity = EntityId::new(e.source);
+            let (shape, reversed) = match e.seg {
+                locus_region::Seg::Line { a, b } => (Shape::Line(Line::new(a, b)), false),
+                locus_region::Seg::Arc {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                } => {
+                    let at = |t: f64| center + Vec2::from_angle(t) * radius;
+                    if sweep.abs() >= core::f64::consts::TAU - 1e-9 {
+                        (Shape::Circle(Circle { center, radius }), false)
+                    } else if sweep >= 0.0 {
+                        (
+                            Shape::Arc(Arc {
+                                center,
+                                start: at(start),
+                                end: at(start + sweep),
+                            }),
+                            false,
+                        )
+                    } else {
+                        (
+                            Shape::Arc(Arc {
+                                center,
+                                start: at(start + sweep),
+                                end: at(start),
+                            }),
+                            true,
+                        )
+                    }
+                }
+            };
+            PathSeg {
+                entity,
+                shape,
+                reversed,
+            }
+        })
+        .collect();
+    (!segs.is_empty()).then_some(ExportPath { segs, closed: true })
+}
+
+/// The document's region fills (#451) on exported Draw layers. Machine
+/// layers write no fills: their software reads every path as a cut, and
+/// fills stay visual (SPEC §7).
+fn collect_fills(doc: &Document, layers: &[ExportLayer]) -> Vec<ExportFill> {
+    if doc.region_fills().is_empty() {
+        return Vec::new();
+    }
+    locus_doc::regions::regions(doc)
+        .into_iter()
+        .filter_map(|r| {
+            let fill = doc.region_fill(&r.key)?;
+            let colour = fill.painted()?;
+            let first = r.outer.edges.first()?;
+            let layer = doc.entity(EntityId::new(first.source))?.layer;
+            layers
+                .iter()
+                .find(|l| l.id == layer && l.uses_object_style())?;
+            let mut paths: Vec<ExportPath> = loop_path(&r.outer).into_iter().collect();
+            paths.extend(r.holes.iter().filter_map(loop_path));
+            Some(ExportFill {
+                layer,
+                paths,
+                colour,
+                opacity: fill.opacity.clamp(0.0, 1.0),
+            })
+        })
+        .collect()
 }
 
 /// One cached text contour as an export path (SPEC §9). Zero-length or

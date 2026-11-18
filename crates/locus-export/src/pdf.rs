@@ -67,6 +67,11 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
             }
         }
     }
+    for f in &model.fills {
+        if f.opacity < 1.0 && !alphas.contains(&f.opacity) {
+            alphas.push(f.opacity);
+        }
+    }
     if !alphas.is_empty() {
         alphas.insert(0, 1.0);
     }
@@ -79,6 +84,34 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
     let mut width = DEFAULT_HAIRLINE_MM;
     let _ = writeln!(content, "{} w 1 J 1 j", num(width * PT_PER_MM));
     let mut alpha = 1.0;
+    // Fills first, each under its layer's optional content group, so no
+    // fill hides a line (#451); even-odd keeps the holes open.
+    for (i, l) in layers.iter().enumerate() {
+        let fills: Vec<_> = model.fills.iter().filter(|f| f.layer == l.id).collect();
+        if fills.is_empty() {
+            continue;
+        }
+        let _ = writeln!(content, "/OC /L{i} BDC");
+        for f in fills {
+            if f.opacity != alpha
+                && let Some(k) = alphas.iter().position(|a| *a == f.opacity)
+            {
+                alpha = f.opacity;
+                let _ = writeln!(content, "/GS{k} gs");
+            }
+            let _ = writeln!(content, "{} rg", rgb(f.colour));
+            for p in &f.paths {
+                let s = map(p.start());
+                let _ = writeln!(content, "{} {} m", num(s.x), num(s.y));
+                for seg in &p.segs {
+                    write_seg(&mut content, seg, &map);
+                }
+                content.push_str("h\n");
+            }
+            content.push_str("f*\n");
+        }
+        content.push_str("EMC\n");
+    }
     for (i, l) in layers.iter().enumerate() {
         let _ = writeln!(content, "/OC /L{i} BDC");
         let _ = writeln!(content, "{} RG", rgb(l.colour));
@@ -100,19 +133,12 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
                 alpha = paint.opacity;
                 let _ = writeln!(content, "/GS{k} gs");
             }
-            if let Some(f) = paint.fill {
-                let _ = writeln!(content, "{} rg", rgb(f));
-            }
             let s = map(p.start());
             let _ = writeln!(content, "{} {} m", num(s.x), num(s.y));
             for seg in &p.segs {
                 write_seg(&mut content, seg, &map);
             }
-            content.push_str(match (p.closed, paint.fill.is_some()) {
-                (true, true) => "b\n",
-                (true, false) => "h S\n",
-                (false, _) => "S\n",
-            });
+            content.push_str(if p.closed { "h S\n" } else { "S\n" });
         }
         content.push_str("EMC\n");
     }

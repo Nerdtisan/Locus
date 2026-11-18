@@ -175,6 +175,9 @@ pub struct Document {
     /// mm, added to the design's coordinates on export. `None` until the
     /// user places it; then the export page is the profile's bed.
     pub(crate) placement: Option<Vec2>,
+    /// Each region's fill (SPEC §4, §6.3, #451), by region key. A key whose
+    /// region is gone keeps its fill, which comes back with the region.
+    pub(crate) region_fills: BTreeMap<locus_region::RegionKey, crate::region_fill::RegionFill>,
 }
 
 impl Default for Document {
@@ -212,6 +215,7 @@ impl Document {
             profile: None,
             images: BTreeMap::new(),
             placement: None,
+            region_fills: BTreeMap::new(),
         }
     }
 
@@ -274,6 +278,23 @@ impl Document {
     #[must_use]
     pub fn profile(&self) -> Option<&str> {
         self.profile.as_deref()
+    }
+
+    /// A region's fill, if it has one (#451).
+    #[must_use]
+    pub fn region_fill(
+        &self,
+        k: &locus_region::RegionKey,
+    ) -> Option<&crate::region_fill::RegionFill> {
+        self.region_fills.get(k)
+    }
+
+    /// Every region fill, by key (#451).
+    #[must_use]
+    pub fn region_fills(
+        &self,
+    ) -> &BTreeMap<locus_region::RegionKey, crate::region_fill::RegionFill> {
+        &self.region_fills
     }
 
     /// The job's placement on the machine bed, if the user set one (SPEC §7,

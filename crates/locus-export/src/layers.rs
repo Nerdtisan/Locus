@@ -38,6 +38,13 @@ pub fn split_layers(model: &ExportModel) -> Vec<LayerFile> {
             layer_name: l.name.clone(),
             model: ExportModel {
                 layers: vec![l.clone()],
+                // A layer's file carries the fills of its own regions (#451).
+                fills: model
+                    .fills
+                    .iter()
+                    .filter(|f| f.layer == l.id)
+                    .cloned()
+                    .collect(),
                 frame,
             },
         })

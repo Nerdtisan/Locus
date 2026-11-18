@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Export paint order matches the canvas (#422, SPEC §8): the canvas draws
-//! every fill under the geometry, so a filled shape must never be written
-//! after, and painted over, a stroke or a smaller fill inside it.
+//! Export paint order matches the canvas (#422, #451, SPEC §8): fills
+//! belong to regions and are all written before any stroke, so no fill can
+//! hide a line, and each region is filled on its own (a ring is not its
+//! hole).
 //!
 //! Regenerate after an intended change with
 //! `LOCUS_UPDATE_GOLDEN=1 cargo test -p locus-export --test paint_order_golden`
@@ -48,9 +49,27 @@ fn square(ed: &mut Editor, x0: f64, x1: f64, style: Style) {
     }
 }
 
+/// Fill the region around `at` (#451): fills belong to regions.
+fn fill_at(ed: &mut Editor, at: Vec2, colour: [u8; 3], opacity: f64) {
+    let key = locus_doc::regions::regions(ed.document())
+        .into_iter()
+        .find(|r| r.contains(at))
+        .expect("a region there")
+        .key;
+    ed.apply(&Command::SetRegionFill {
+        regions: vec![key],
+        fill: Some(locus_doc::region_fill::RegionFill {
+            fill: Fill::Colour(colour),
+            opacity,
+        }),
+    })
+    .unwrap();
+}
+
 /// The owner's file in miniature, in the order it was drawn: a thick
-/// unfilled loop (the offset), then a large white-filled rectangle around
-/// it, then a small red-filled square inside both.
+/// unfilled loop (the offset), then a large rectangle around it, then a
+/// small square inside both. The outer ring is filled white and the small
+/// square red; the ring between the loop and the square stays open.
 fn doc() -> Document {
     let mut ed = Editor::new(Document::new());
     square(
@@ -62,24 +81,10 @@ fn doc() -> Document {
             ..Style::default()
         },
     );
-    square(
-        &mut ed,
-        0.0,
-        100.0,
-        Style {
-            fill: Fill::Colour([255, 255, 255]),
-            ..Style::default()
-        },
-    );
-    square(
-        &mut ed,
-        40.0,
-        60.0,
-        Style {
-            fill: Fill::Colour([255, 0, 0]),
-            ..Style::default()
-        },
-    );
+    square(&mut ed, 0.0, 100.0, Style::default());
+    square(&mut ed, 40.0, 60.0, Style::default());
+    fill_at(&mut ed, Vec2::new(10.0, 50.0), [255, 255, 255], 1.0);
+    fill_at(&mut ed, Vec2::new(50.0, 50.0), [255, 0, 0], 1.0);
     ed.into_document()
 }
 
@@ -113,7 +118,7 @@ fn svg_and_pdf_match_their_goldens() {
     golden("overlap.pdf", &to_pdf_model(&model));
 }
 
-/// Fills are written outermost first, and before every unfilled stroke.
+/// Every fill is written before every stroke (#451).
 #[test]
 fn fills_are_written_first_outermost_first() {
     let svg = String::from_utf8(to_svg_model(&prepare(&doc(), false).model)).unwrap();
@@ -153,4 +158,8 @@ fn png_shows_the_stroke_and_the_inner_fill() {
     );
     let white = px(10, 50);
     assert!(white.red() > 224 && white.green() > 224, "{white:?}");
+    // The ring between the thick loop and the red square is its own
+    // region, left unfilled: no other fill covers it (#451).
+    let open = px(30, 50);
+    assert_eq!(open.alpha(), 0, "the open ring: {open:?}");
 }

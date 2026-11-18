@@ -55,9 +55,26 @@ impl B {
     }
 }
 
-/// A Draw layer with a 0.5 mm line, a thin red line, a filled half-opaque
-/// square on pen 2, and a Cut layer with a styled square (whose style the
-/// machine layer ignores).
+/// Fill the region around `at` (#451): fills belong to regions.
+fn fill_at(ed: &mut Editor, at: Vec2, colour: [u8; 3], opacity: f64) {
+    let key = locus_doc::regions::regions(ed.document())
+        .into_iter()
+        .find(|r| r.contains(at))
+        .expect("a region there")
+        .key;
+    ed.apply(&Command::SetRegionFill {
+        regions: vec![key],
+        fill: Some(locus_doc::region_fill::RegionFill {
+            fill: Fill::Colour(colour),
+            opacity,
+        }),
+    })
+    .unwrap();
+}
+
+/// A Draw layer with a 0.5 mm line, a thin red line, a half-opaque square on
+/// pen 2 whose region is filled blue at 50 % (#451), and a Cut layer with a
+/// styled square (whose style the machine layer ignores).
 fn doc() -> Document {
     let mut b = B {
         ed: Editor::new(Document::new()),
@@ -91,12 +108,12 @@ fn doc() -> Document {
         &[(0.0, 10.0), (10.0, 10.0), (10.0, 20.0), (0.0, 20.0)],
         true,
         Style {
-            fill: Fill::Colour([0, 0, 255]),
             opacity: 0.5,
             pen: 2,
             ..Style::default()
         },
     );
+    fill_at(&mut b.ed, Vec2::new(5.0, 15.0), [0, 0, 255], 0.5);
     b.poly(
         cut,
         &[(20.0, 10.0), (30.0, 10.0), (30.0, 20.0), (20.0, 20.0)],
@@ -166,7 +183,11 @@ fn draw_objects_keep_their_width_and_machine_layers_their_hairline() {
     let svg = String::from_utf8(to_svg_model(&prepare_for(&d, false, None).model)).unwrap();
     assert!(svg.contains("stroke-width=\"0.5\""), "{svg}");
     assert!(svg.contains("stroke=\"#ff0000\" stroke-width=\"0.25\""));
-    assert!(svg.contains("fill=\"#0000ff\""));
+    assert!(
+        svg.contains("fill=\"#0000ff\" fill-rule=\"evenodd\""),
+        "{svg}"
+    );
+    assert!(svg.contains("fill-opacity=\"0.5\""), "{svg}");
     assert!(svg.contains("opacity=\"0.5\" data-pen=\"2\""));
     // The Cut square ignores its green 2 mm style: layer colour, hairline.
     assert!(svg.contains("stroke=\"#0a141e\" stroke-width=\"0.1\""));

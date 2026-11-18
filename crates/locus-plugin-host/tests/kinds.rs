@@ -263,7 +263,7 @@ fn validator_failures_never_hide_other_findings() {
             [0, 0, 255],
             locus_doc::Operation::Score,
         )],
-        frame: None,
+        ..Default::default()
     };
     let found = validators::run(&[&bad, &good], &export);
     assert_eq!(found.len(), 2);

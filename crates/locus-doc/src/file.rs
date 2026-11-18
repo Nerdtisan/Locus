@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 18;
+pub const CURRENT_VERSION: u32 = 19;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -843,8 +843,60 @@ impl From<FileV17> for FileV18 {
     }
 }
 
-/// The newest on-disk shape. When adding v19, point this at `FileV19`.
-type Latest = FileV18;
+/// Version 19: fills belong to regions (#451, SPEC §4, §6.3). Each region's
+/// fill colour and opacity, by region key, omitted while empty. Object
+/// fills are moved onto the regions they enclosed when an older file loads
+/// ([`crate::region_fill::migrate_object_fills`]), so the data changes:
+/// object styles lose their fill.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV19 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+}
+
+impl From<FileV18> for FileV19 {
+    fn from(f: FileV18) -> Self {
+        FileV19 {
+            format_version: 19,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            // Filled from the object fills once the document is built.
+            region_fills: Vec::new(),
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v20, point this at `FileV20`.
+type Latest = FileV19;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -870,7 +922,7 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV18::from(FileV17::from(FileV16::from(f)))
+    FileV19::from(FileV18::from(FileV17::from(FileV16::from(f))))
 }
 
 /// Serialise to `.locus` text.
@@ -895,6 +947,11 @@ pub fn save(doc: &Document) -> Result<String, FileError> {
         profile: doc.profile.clone(),
         images: doc.images.clone(),
         placement: doc.placement,
+        region_fills: doc
+            .region_fills
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect(),
     };
     let mut text = ron::ser::to_string_pretty(&file, pretty())
         .map_err(|e| FileError::Unsaveable(e.to_string()))?;
@@ -948,9 +1005,10 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV18::from(FileV17::from(parse::<FileV16>(text)?)),
-        17 => FileV18::from(parse::<FileV17>(text)?),
-        18 => parse::<FileV18>(text)?,
+        16 => FileV19::from(FileV18::from(FileV17::from(parse::<FileV16>(text)?))),
+        17 => FileV19::from(FileV18::from(parse::<FileV17>(text)?)),
+        18 => FileV19::from(parse::<FileV18>(text)?),
+        19 => parse::<FileV19>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -959,15 +1017,19 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         }
         v => return Err(FileError::UnknownVersion(v)),
     };
-    into_document(latest)
+    // Before v19 fills were on objects: move them onto their regions (#451).
+    into_document(latest, header.format_version < 19)
 }
 
 fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, FileError> {
     ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))
 }
 
-fn into_document(f: Latest) -> Result<Document, FileError> {
-    let doc = Document {
+fn into_document(f: Latest, migrate_fills: bool) -> Result<Document, FileError> {
+    if f.region_fills.len() > crate::region_fill::MAX_REGION_FILLS {
+        return Err(FileError::Invalid("too many region fills".to_owned()));
+    }
+    let mut doc = Document {
         units: f.units,
         next_id: f.next_id,
         parameters: f.parameters,
@@ -987,7 +1049,11 @@ fn into_document(f: Latest) -> Result<Document, FileError> {
         profile: f.profile,
         images: f.images,
         placement: f.placement,
+        region_fills: f.region_fills.into_iter().collect(),
     };
+    if migrate_fills {
+        crate::region_fill::migrate_object_fills(&mut doc);
+    }
     validate(&doc)?;
     Ok(doc)
 }
@@ -1028,6 +1094,20 @@ pub(crate) fn validate(doc: &Document) -> Result<(), FileError> {
     }
     if let Some(p) = doc.placement {
         crate::document::check_placement(p)?;
+    }
+    for (k, fill) in &doc.region_fills {
+        crate::region_fill::check_key(k)?;
+        fill.validate()?;
+    }
+    // Objects have no fill since v19 (#451).
+    if doc
+        .entities
+        .iter()
+        .any(|(_, e)| e.style.fill != crate::style::Fill::None)
+    {
+        return Err(FileError::Invalid(
+            "an object has a fill; fills belong to regions".to_owned(),
+        ));
     }
     if doc.next_id > MAX_ID {
         return Err(FileError::Invalid(format!(
@@ -1658,7 +1738,16 @@ mod tests {
         assert_eq!(save(&load(&out).unwrap()).unwrap(), out);
     }
 
+    /// What an older sample loads as since v19 (#451): its object fills
+    /// moved onto the regions they enclosed.
+    pub(crate) fn migrated(mut d: Document) -> Document {
+        crate::region_fill::migrate_object_fills(&mut d);
+        d
+    }
+
     /// The v13 sample: `sample_v12()` with a styled line (SPEC §4, #287).
+    /// Its blue fill is set on the object directly, as a v13 file stored it:
+    /// commands refuse object fills since v19 (#451).
     pub(crate) fn sample_v13() -> Document {
         use crate::style::{Fill, Stroke, StylePatch};
         let mut ed = Editor::new(sample_v12());
@@ -1668,13 +1757,15 @@ mod tests {
                 stroke: Some(Stroke::Colour([200, 10, 10])),
                 width: Some(0.5),
                 pen: Some(2),
-                fill: Some(Fill::Colour([0, 0, 255])),
+                fill: None,
                 opacity: Some(0.5),
                 fill_on: None,
             },
         })
         .unwrap();
-        ed.into_document()
+        let mut d = ed.into_document();
+        d.entities.get_mut(EntityId::new(6)).unwrap().style.fill = Fill::Colour([0, 0, 255]);
+        d
     }
 
     /// The v13 fixture is frozen; it migrates to v14 unchanged (no text
@@ -1690,10 +1781,12 @@ mod tests {
         assert!(text.contains("edge: Outside"));
         assert!(text.contains("style: ("));
         let doc = load(&text).unwrap();
-        assert_eq!(doc, sample_v13());
+        assert_eq!(doc, migrated(sample_v13()));
+        // The object fill moved onto its region (#451), so the file changes;
+        // the document survives save then load.
         let out = save(&doc).unwrap();
         assert!(out.contains(&current()));
-        assert_eq!(out.replace(&current(), "format_version: 13"), text);
+        assert_eq!(load(&out).unwrap(), doc);
     }
 
     /// The v14 sample: `sample_v13()` with letter-spaced text (#222).
@@ -1750,16 +1843,18 @@ mod tests {
         assert!(text.contains("format_version: 14"));
         assert!(text.contains("tracking: 1.5"));
         let doc = load(&text).unwrap();
-        assert_eq!(doc, sample_v14());
+        assert_eq!(doc, migrated(sample_v14()));
+        // The object fill moved onto its region (#451), so the file changes;
+        // the document survives save then load.
         let out = save(&doc).unwrap();
         assert!(out.contains(&current()));
-        assert_eq!(out.replace(&current(), "format_version: 14"), text);
+        assert_eq!(load(&out).unwrap(), doc);
     }
 
     /// The v15 sample: `sample_v14()` with the blue fill turned off, its
     /// colour kept (#388).
     pub(crate) fn sample_v15() -> Document {
-        use crate::style::{Fill, StylePatch};
+        use crate::style::Fill;
         let doc = sample_v14();
         let filled: Vec<EntityId> = doc
             .entities()
@@ -1768,16 +1863,13 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert!(!filled.is_empty(), "sample_v13 has a blue fill");
-        let mut ed = Editor::new(doc);
-        ed.apply(&Command::SetStyle {
-            entities: filled,
-            patch: StylePatch {
-                fill_on: Some(false),
-                ..StylePatch::default()
-            },
-        })
-        .unwrap();
-        ed.into_document()
+        // Set directly, as a v15 file stored it (#451: no object fills now).
+        let mut doc = doc;
+        for id in filled {
+            let e = doc.entities.get_mut(id).unwrap();
+            e.style.fill = e.style.fill.switched(false, None);
+        }
+        doc
     }
 
     /// The v15 fixture is frozen; it migrates to the current version
@@ -1792,9 +1884,12 @@ mod tests {
         assert!(text.contains("format_version: 15"));
         assert!(text.contains("fill: Off((0, 0, 255))"));
         let doc = load(&text).unwrap();
-        assert_eq!(doc, sample_v15());
+        assert_eq!(doc, migrated(sample_v15()));
+        // The object fill moved onto its region (#451), so the file changes;
+        // the document survives save then load.
         let out = save(&doc).unwrap();
-        assert_eq!(out.replace(&current(), "format_version: 15"), text);
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
     }
 
     /// The v16 sample: `sample_v15()` with a reference image (#390).
@@ -1836,9 +1931,12 @@ mod tests {
         assert!(text.contains("format_version: 16"));
         assert!(text.contains("images: {"));
         let doc = load(&text).unwrap();
-        assert_eq!(doc, sample_v16());
+        assert_eq!(doc, migrated(sample_v16()));
+        // The object fill moved onto its region (#451), so the file changes;
+        // the document survives save then load.
         let out = save(&doc).unwrap();
-        assert_eq!(out.replace(&current(), "format_version: 16"), text);
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
     }
 
     /// The v17 sample: `sample_v16()` with its letter-spaced text bound to
@@ -1891,10 +1989,13 @@ mod tests {
         assert!(text.contains("format_version: 17"));
         assert!(text.contains("path: Some(("), "{text}");
         let doc = load(&text).unwrap();
-        assert_eq!(doc, sample_v17());
+        assert_eq!(doc, migrated(sample_v17()));
         assert_eq!(doc.placement(), None);
+        // The object fill moved onto its region (#451), so the file changes;
+        // the document survives save then load.
         let out = save(&doc).unwrap();
-        assert_eq!(out.replace(&current(), "format_version: 17"), text);
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
     }
 
     /// The v18 sample: `sample_v17()` placed on the bed (#443).
@@ -1907,31 +2008,141 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v18 fixture is frozen; it migrates to the current version with
+    /// its object fill moved onto the region it enclosed (#451).
     #[test]
-    fn v18_fixture_is_current_and_loads() {
+    fn v18_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v18/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v18()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 18"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, migrated(sample_v18()));
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// #451: a v13-era blue fill on one edge of the plate fills the plate's
+    /// region (at the object's 50 % opacity), as the canvas showed it; the
+    /// hole and the regions inside it stay open, and no object keeps a fill.
+    #[test]
+    fn object_fills_move_onto_the_regions_they_enclose() {
+        use crate::style::Fill;
+        let doc = migrated(sample_v13());
         assert!(
-            text.contains(
-                "placement: Some((
-    x: 12.5,"
-            ),
-            "{text}"
+            doc.entities()
+                .iter()
+                .all(|(_, e)| e.style.fill == Fill::None)
         );
-        assert_eq!(load(&text).unwrap(), sample_v18());
+        let regions = crate::regions::regions(&doc);
+        let filled: Vec<_> = regions
+            .iter()
+            .filter_map(|r| doc.region_fill(&r.key).map(|f| (r, f)))
+            .collect();
+        assert_eq!(filled.len(), 1, "{filled:?}");
+        let (r, f) = filled[0];
+        assert_eq!(f.fill, Fill::Colour([0, 0, 255]));
+        assert!((f.opacity - 0.5).abs() < 1e-12);
+        assert!(r.key.bounds.contains(&6), "the plate, around edge 6");
+        assert!(!r.holes.is_empty(), "the hole is not filled");
+    }
+
+    /// The v19 sample: `sample_v18()` migrated, with a second region filled
+    /// red at 40 % (#451).
+    pub(crate) fn sample_v19() -> Document {
+        let doc = migrated(sample_v18());
+        let regions = crate::regions::regions(&doc);
+        let free = regions
+            .iter()
+            .find(|r| doc.region_fill(&r.key).is_none())
+            .expect("an unfilled region")
+            .key
+            .clone();
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetRegionFill {
+            regions: vec![free],
+            fill: Some(crate::region_fill::RegionFill {
+                fill: crate::style::Fill::Colour([255, 0, 0]),
+                opacity: 0.4,
+            }),
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v19_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v19/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v19()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 19"));
+        assert!(text.contains("region_fills: ["), "{text}");
+        assert_eq!(load(&text).unwrap(), sample_v19());
         assert_eq!(
-            save(&sample_v18()).unwrap(),
+            save(&sample_v19()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    /// Region fills: one undo step for many regions, bad opacity refused,
+    /// object fills refused (#451).
+    #[test]
+    fn region_fills_are_undoable_and_checked() {
+        use crate::region_fill::RegionFill;
+        use crate::style::{Fill, StylePatch};
+        let doc = sample_v19();
+        let keys: Vec<_> = crate::regions::regions(&doc)
+            .into_iter()
+            .map(|r| r.key)
+            .collect();
+        let mut ed = Editor::new(doc.clone());
+        ed.apply(&Command::SetRegionFill {
+            regions: keys.clone(),
+            fill: Some(RegionFill::colour([0, 200, 0])),
+        })
+        .unwrap();
+        assert!(
+            keys.iter()
+                .all(|k| ed.document().region_fill(k) == Some(&RegionFill::colour([0, 200, 0])))
+        );
+        ed.undo().unwrap();
+        assert_eq!(ed.document(), &doc);
+        assert!(
+            ed.apply(&Command::SetRegionFill {
+                regions: keys.clone(),
+                fill: Some(RegionFill {
+                    fill: Fill::Colour([1, 2, 3]),
+                    opacity: 1.5,
+                }),
+            })
+            .is_err()
+        );
+        assert!(
+            ed.apply(&Command::SetStyle {
+                entities: vec![EntityId::new(6)],
+                patch: StylePatch {
+                    fill: Some(Fill::Colour([0, 0, 255])),
+                    ..StylePatch::default()
+                },
+            })
+            .is_err(),
+            "objects have no fill"
+        );
+        let good = save(&sample_v19()).unwrap();
+        assert!(load(&good).is_ok());
+        let bad = good.replacen("opacity: 0.4", "opacity: 7.0", 1);
+        assert_ne!(bad, good);
+        assert!(load(&bad).is_err());
     }
 
     /// Placing the job is one undoable step; hostile offsets are refused,
@@ -1956,7 +2167,8 @@ mod tests {
         assert_eq!(ed.document().placement(), None);
         ed.redo().unwrap();
         assert_eq!(ed.document().placement(), Some(at));
-        let good = save(&sample_v18()).unwrap();
+        let good = save(&sample_v19()).unwrap();
+        assert!(load(&good).is_ok());
         let bad = good.replacen(
             "placement: Some((
     x: 12.5,",
@@ -1971,7 +2183,8 @@ mod tests {
     /// A hostile text path is refused on load (CLAUDE.md: untrusted input).
     #[test]
     fn bad_text_paths_are_refused_on_load() {
-        let good = save(&sample_v17()).unwrap();
+        let good = save(&migrated(sample_v17())).unwrap();
+        assert!(load(&good).is_ok());
         for (from, to) in [
             ("offset: 2.0", "offset: 1e300"),
             ("curves: [", "curves: [], x: ["),
@@ -1985,7 +2198,8 @@ mod tests {
     /// A hostile image is refused on load (CLAUDE.md: untrusted input).
     #[test]
     fn bad_images_are_refused_on_load() {
-        let good = save(&sample_v16()).unwrap();
+        let good = save(&migrated(sample_v16())).unwrap();
+        assert!(load(&good).is_ok());
         for (from, to) in [
             ("width_px: 4", "width_px: 0"),
             ("mm_per_px: 0.5", "mm_per_px: -1.0"),
@@ -2007,7 +2221,8 @@ mod tests {
     /// Hostile letter spacing is refused on load (CLAUDE.md: untrusted input).
     #[test]
     fn bad_tracking_is_refused_on_load() {
-        let good = save(&sample_v15()).unwrap();
+        let good = save(&migrated(sample_v15())).unwrap();
+        assert!(load(&good).is_ok());
         let bad = good.replacen("tracking: 1.5", "tracking: 1e300", 1);
         assert!(matches!(load(&bad), Err(FileError::Invalid(_))));
     }
@@ -2015,7 +2230,8 @@ mod tests {
     /// A hostile style is refused on load, not stored (CLAUDE.md: untrusted input).
     #[test]
     fn bad_styles_are_refused_on_load() {
-        let good = save(&sample_v13()).unwrap();
+        let good = save(&migrated(sample_v13())).unwrap();
+        assert!(load(&good).is_ok());
         for (from, to) in [
             ("width: 0.5", "width: -1.0"),
             ("pen: 2", "pen: 0"),
