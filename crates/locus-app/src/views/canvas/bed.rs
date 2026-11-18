@@ -18,7 +18,16 @@ impl AppState {
         else {
             return;
         };
-        let b = bed.rect();
+        // A placed job (#443) sits on the bed at its offset, so on the
+        // sketch the bed is drawn back by that offset.
+        let back = self
+            .doc
+            .sketcher
+            .document()
+            .placement()
+            .unwrap_or(Vec2::ZERO);
+        let r = bed.rect();
+        let b = locus_geom::Aabb::from_points(r.min - back, r.max - back);
         let a = self
             .view
             .camera
@@ -34,7 +43,7 @@ impl AppState {
             Color32::from_rgb(0, 110, 190)
         };
         painter.rect_stroke(screen, 0.0, Stroke::new(1.5, colour), StrokeKind::Middle);
-        let origin: Pos2 = self.view.camera.to_screen(bed.origin_point(), rect);
+        let origin: Pos2 = self.view.camera.to_screen(bed.origin_point() - back, rect);
         painter.rect_filled(
             Rect::from_center_size(origin, egui::vec2(6.0, 6.0)),
             0.0,

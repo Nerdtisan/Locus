@@ -10,6 +10,7 @@ pub mod canvas;
 pub mod constraints;
 pub mod icons;
 pub mod layers;
+pub mod machine_panel;
 pub mod machine_profile;
 pub mod marking_menu;
 pub mod nav_bar;

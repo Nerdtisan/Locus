@@ -53,17 +53,21 @@ pub enum Tab {
     /// The shortcut map (#299, design §5.1). Not in the default layout;
     /// `?` adds it.
     Shortcuts,
+    /// The machine bed at scale with the job on it (#443). Not in the
+    /// default layout; Machine preview opens it.
+    MachinePreview,
 }
 
 impl Tab {
     /// Every pane but the canvas, in View ▸ Panes order.
-    pub const PANES: [Tab; 6] = [
+    pub const PANES: [Tab; 7] = [
         Tab::Browser,
         Tab::Palette,
         Tab::Inspector,
         Tab::Parameters,
         Tab::Constraints,
         Tab::Shortcuts,
+        Tab::MachinePreview,
     ];
 
     pub fn title(self) -> &'static str {
@@ -75,6 +79,7 @@ impl Tab {
             Tab::Parameters => "Parameters",
             Tab::Constraints => "Constraints",
             Tab::Shortcuts => "Shortcuts",
+            Tab::MachinePreview => "Machine preview",
         }
     }
 
@@ -95,6 +100,8 @@ impl Tab {
                 Place::Below(Tab::Inspector),
                 Place::RightOfCanvas,
             ],
+            // Beside the sketch, so the bed gets room at a useful size.
+            Tab::MachinePreview => &[Place::RightOfCanvas],
         }
     }
 }

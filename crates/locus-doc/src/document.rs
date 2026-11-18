@@ -120,6 +120,23 @@ pub const MAX_PROFILE_ID: usize = 64;
 ///
 /// # Errors
 /// [`DocError::Invalid`] when the id is empty, too long or has other characters.
+/// Largest job offset accepted, mm: a 10 m bed reached from either side.
+pub const MAX_PLACEMENT_MM: f64 = 20_000.0;
+
+/// A placement must be finite and within [`MAX_PLACEMENT_MM`] (untrusted
+/// files and commands).
+pub fn check_placement(p: Vec2) -> Result<(), DocError> {
+    if p.x.is_finite()
+        && p.y.is_finite()
+        && p.x.abs() <= MAX_PLACEMENT_MM
+        && p.y.abs() <= MAX_PLACEMENT_MM
+    {
+        Ok(())
+    } else {
+        Err(DocError::Invalid("job placement out of range".to_owned()))
+    }
+}
+
 pub fn check_profile_id(id: &str) -> Result<(), DocError> {
     let ok = !id.is_empty()
         && id.len() <= MAX_PROFILE_ID
@@ -154,6 +171,10 @@ pub struct Document {
     pub(crate) profile: Option<String>,
     /// Raster reference images, one per Reference layer (#390).
     pub(crate) images: BTreeMap<LayerId, crate::image::RefImage>,
+    /// Where the job sits on the machine bed (SPEC §7, #443): the offset,
+    /// mm, added to the design's coordinates on export. `None` until the
+    /// user places it; then the export page is the profile's bed.
+    pub(crate) placement: Option<Vec2>,
 }
 
 impl Default for Document {
@@ -190,6 +211,7 @@ impl Document {
             view: None,
             profile: None,
             images: BTreeMap::new(),
+            placement: None,
         }
     }
 
@@ -252,6 +274,13 @@ impl Document {
     #[must_use]
     pub fn profile(&self) -> Option<&str> {
         self.profile.as_deref()
+    }
+
+    /// The job's placement on the machine bed, if the user set one (SPEC §7,
+    /// #443): the offset, mm, from sketch to bed coordinates.
+    #[must_use]
+    pub fn placement(&self) -> Option<Vec2> {
+        self.placement
     }
 
     #[must_use]

@@ -56,6 +56,11 @@ pub fn prepare_for(doc: &Document, auto_fix: bool, profile: Option<&MachineProfi
     // SPEC §8: operation transforms before validation, so what is checked
     // is what will be cut.
     apply_operations(&mut model);
+    // The job placed on the bed (SPEC §7, #443), before the bed check.
+    if let Some((offset, bed)) = placement(doc, profile) {
+        model.translate(offset);
+        model.frame = Some(bed.rect());
+    }
     // Validate before ordering: the order stage only permutes and re-starts paths.
     let report = validate_for(&model, profile.and_then(|p| p.bed.as_ref()));
     order(&mut model);
@@ -66,9 +71,88 @@ pub fn prepare_for(doc: &Document, auto_fix: bool, profile: Option<&MachineProfi
     }
 }
 
+/// The job's placement, when it applies: the document has one and the
+/// profile has a bed (SPEC §7, #443). Export then moves the design by the
+/// offset and writes the whole bed as the page, so the job lands where it
+/// was placed.
+#[must_use]
+pub fn placement(
+    doc: &Document,
+    profile: Option<&MachineProfile>,
+) -> Option<(locus_geom::Vec2, crate::profile::Bed)> {
+    Some((doc.placement()?, profile?.bed?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #443: a placed job is moved onto the bed, the page is the bed, and
+    /// the bed check sees the moved geometry; unplaced, nothing changes.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_placed_job_lands_on_the_bed() {
+        use locus_doc::{Command, Editor, Geom};
+        use locus_geom::Vec2;
+        let mut ed = Editor::new(Document::new());
+        let l = Document::default_layer();
+        let c = ed
+            .apply(&Command::AddEntity {
+                layer: l,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Point {
+                    pos: Vec2::new(0.0, 0.0),
+                },
+            })
+            .unwrap()
+            .entities[0];
+        ed.apply(&Command::AddEntity {
+            layer: l,
+            construction: false,
+            style: Default::default(),
+            geom: Geom::Circle {
+                center: c,
+                radius: 10.0,
+            },
+        })
+        .unwrap();
+        let lb = crate::profile::find("lightburn", &[]).unwrap();
+        // Unplaced: the design's own bounds, centred on the sketch origin.
+        let free = prepare_for(ed.document(), false, Some(&lb));
+        let b = free.model.bounds().unwrap();
+        assert!((b.min.x + 10.0).abs() < 1e-9);
+        assert!(free.report.issues.iter().any(|i| i.message.contains("bed")));
+        // Placed 50 mm in: inside the bed, which is now the page.
+        ed.apply(&Command::SetPlacement {
+            offset: Some(Vec2::new(50.0, 60.0)),
+        })
+        .unwrap();
+        let placed = prepare_for(ed.document(), false, Some(&lb));
+        assert_eq!(placed.model.bounds(), Some(lb.bed.unwrap().rect()));
+        let shapes: Vec<_> = placed.model.layers[0].paths[0].segs.clone();
+        assert!(matches!(
+            shapes[0].shape,
+            crate::pipeline::Shape::Circle(c) if (c.center - Vec2::new(50.0, 60.0)).length() < 1e-9
+        ));
+        assert!(
+            !placed
+                .report
+                .issues
+                .iter()
+                .any(|i| i.message.contains("bed"))
+        );
+        // Without a bed the placement has nothing to place on.
+        assert!(
+            placement(
+                ed.document(),
+                crate::profile::find("generic-svg", &[]).as_ref()
+            )
+            .is_none()
+        );
+        let svg = String::from_utf8(crate::to_svg_model(&placed.model)).unwrap();
+        assert!(svg.contains("width=\"400mm\" height=\"400mm\""), "{svg}");
+    }
 
     #[test]
     fn empty_document_prepares_cleanly() {
