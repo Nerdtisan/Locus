@@ -155,6 +155,12 @@ pub enum Command {
     SetProfile {
         id: Option<String>,
     },
+    /// Place the job on the machine bed (SPEC §7, #443): the offset, mm,
+    /// added to the design on export. `None` clears it (export frames the
+    /// design itself again).
+    SetPlacement {
+        offset: Option<Vec2>,
+    },
     /// Delete a parameter. Refused with [`DocError::ParameterInUse`] (listing
     /// the users) while an expression refers to it.
     RemoveParameter {
@@ -289,6 +295,7 @@ impl Command {
             Command::RemoveBoolean { .. } => "Remove boolean".to_owned(),
             Command::SetParameter { name, .. } => format!("Set parameter {name}"),
             Command::SetProfile { .. } => "Set machine profile".to_owned(),
+            Command::SetPlacement { .. } => "Place job on bed".to_owned(),
             Command::RemoveParameter { name } => format!("Remove parameter {name}"),
             Command::RenameParameter { from, .. } => format!("Rename parameter {from}"),
             Command::SetDimensionExpr { .. } => "Set dimension expression".to_owned(),
@@ -380,6 +387,10 @@ pub(crate) enum Patch {
         before: Option<String>,
         after: Option<String>,
     },
+    Placement {
+        before: Option<Vec2>,
+        after: Option<Vec2>,
+    },
     Image {
         layer: LayerId,
         before: Option<crate::image::RefImage>,
@@ -432,6 +443,9 @@ impl Patch {
             }
             Patch::Profile { before, after } => {
                 doc.profile = if forward { after } else { before }.clone();
+            }
+            Patch::Placement { before, after } => {
+                doc.placement = if forward { *after } else { *before };
             }
             Patch::Image {
                 layer,
@@ -723,6 +737,18 @@ fn exec(
                 after: id.clone(),
             };
             record(doc, patches, p);
+        }
+        Command::SetPlacement { offset } => {
+            if let Some(p) = offset {
+                crate::document::check_placement(*p)?;
+            }
+            if *offset != doc.placement {
+                let p = Patch::Placement {
+                    before: doc.placement,
+                    after: *offset,
+                };
+                record(doc, patches, p);
+            }
         }
         Command::SetParameter { name, expr } => {
             params::check_name(name)?;

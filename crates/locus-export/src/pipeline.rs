@@ -366,6 +366,38 @@ impl ExportModel {
     pub fn is_empty(&self) -> bool {
         self.layers.iter().all(|l| l.paths.is_empty())
     }
+
+    /// Move every path (and the frame) by `d`, mm: the job placement (#443).
+    pub fn translate(&mut self, d: Vec2) {
+        for seg in self
+            .layers
+            .iter_mut()
+            .flat_map(|l| l.paths.iter_mut())
+            .flat_map(|p| p.segs.iter_mut())
+        {
+            seg.shape = match seg.shape {
+                Shape::Line(l) => Shape::Line(Line::new(l.a + d, l.b + d)),
+                Shape::Arc(a) => Shape::Arc(Arc {
+                    center: a.center + d,
+                    start: a.start + d,
+                    end: a.end + d,
+                }),
+                Shape::Circle(c) => Shape::Circle(Circle {
+                    center: c.center + d,
+                    radius: c.radius,
+                }),
+                Shape::Cubic(c) => Shape::Cubic(Cubic {
+                    p0: c.p0 + d,
+                    c0: c.c0 + d,
+                    c1: c.c1 + d,
+                    p1: c.p1 + d,
+                }),
+            };
+        }
+        if let Some(f) = &mut self.frame {
+            *f = Aabb::from_points(f.min + d, f.max + d);
+        }
+    }
 }
 
 /// Is this layer written at all? (SPEC §7, §8: export-disabled and Reference

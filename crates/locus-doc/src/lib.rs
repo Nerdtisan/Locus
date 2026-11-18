@@ -43,7 +43,8 @@ pub use boolean::{Boolean, BooleanError};
 pub use command::{Applied, Command, Editor, LayerProps};
 pub use constraint::{Constraint, Dimension, Edge};
 pub use document::{
-    Document, EntityStore, Layer, LayerDeletion, Parameter, View, check_profile_id,
+    Document, EntityStore, Layer, LayerDeletion, MAX_PLACEMENT_MM, Parameter, View,
+    check_placement, check_profile_id,
 };
 pub use entity::{Entity, EntityKind, Geom};
 pub use error::DocError;

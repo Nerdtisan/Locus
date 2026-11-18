@@ -13,7 +13,7 @@
 //! Cut's default kerf is 0, so turning it on changed nothing and said nothing.
 
 use crate::state::AppState;
-use egui::{Color32, Painter, Pos2, Rect, Stroke};
+use egui::{Painter, Pos2, Rect, Stroke};
 use locus_doc::{Compensation, Document, Operation, OperationKind};
 use locus_export::{ExportModel, MachineProfile, PathSeg, Shape};
 use locus_geom::{EXPORT_TOL, Vec2};
@@ -157,11 +157,14 @@ impl AppState {
             let doc = self.doc.sketcher.document();
             let profile = self.view.machine_profile.as_ref();
             let model = locus_export::prepare_for(doc, false, profile).model;
+            self.view.machine_offset =
+                locus_export::prepare::placement(doc, profile).map_or(Vec2::ZERO, |(o, _)| o);
             self.view.machine = paths(&model);
             self.view.machine_notes = notes(profile, &model);
         } else {
             self.view.machine = Vec::new();
             self.view.machine_notes = Vec::new();
+            self.view.machine_offset = Vec2::ZERO;
         }
     }
 
@@ -170,12 +173,14 @@ impl AppState {
             return;
         }
         let pt_per_mm = self.view.camera.pt_per_mm;
+        // The paths are placed on the bed (#443); the canvas is the sketch.
+        let back = self.view.machine_offset;
         for p in &self.view.machine {
             let colour = crate::views::op_chip::colour(p.kind, dark);
             let pts: Vec<Pos2> = p
                 .points
                 .iter()
-                .map(|q| self.view.camera.to_screen(*q, rect))
+                .map(|q| self.view.camera.to_screen(*q - back, rect))
                 .collect();
             // The true width the machine makes. A kerf is a fraction of a
             // pixel at normal zoom, so it gets at least 6 px to stay visible
@@ -207,7 +212,8 @@ pub(crate) struct LegendRow {
     pub idle: bool,
 }
 
-/// The legend's rows: every layer in export order with its operation (#420).
+/// The legend's rows: every layer in export order with its operation (#420),
+/// shown in the Machine preview pane (#443).
 pub(crate) fn legend(doc: &Document) -> Vec<LegendRow> {
     let mut layers: Vec<_> = doc.layers().iter().collect();
     layers.sort_by_key(|(id, l)| (l.export_order, id.get()));
@@ -222,135 +228,6 @@ pub(crate) fn legend(doc: &Document) -> Vec<LegendRow> {
             }
         })
         .collect()
-}
-
-impl AppState {
-    /// The operation legend, top left of the canvas while Machine preview
-    /// is on (#420): which colour is which operation, and on which layer.
-    pub(crate) fn draw_machine_legend(
-        &self,
-        painter: &Painter,
-        rect: Rect,
-        dark: bool,
-        settings: &crate::settings::Settings,
-    ) {
-        if !self.view.machine_on {
-            return;
-        }
-        let doc = self.document();
-        let title = crate::views::machine_profile::current(doc, settings).map_or_else(
-            || "MACHINE PREVIEW · no machine profile".to_owned(),
-            |p| format!("MACHINE PREVIEW · {}", p.name),
-        );
-        let rows = legend(doc);
-        let (ink, weak, bg, line) = if dark {
-            (
-                Color32::from_gray(225),
-                Color32::from_gray(140),
-                Color32::from_rgba_unmultiplied(28, 30, 34, 235),
-                Color32::from_gray(70),
-            )
-        } else {
-            (
-                Color32::from_gray(30),
-                Color32::from_gray(120),
-                Color32::from_rgba_unmultiplied(250, 250, 252, 240),
-                Color32::from_gray(200),
-            )
-        };
-        let small = egui::FontId::proportional(10.5);
-        let body = egui::FontId::proportional(12.0);
-        let title = painter.layout_no_wrap(title, small.clone(), weak);
-        let lines: Vec<_> = rows
-            .iter()
-            .map(|r| {
-                let c = crate::views::op_chip::colour(r.kind, dark);
-                let label = painter.layout_no_wrap(
-                    crate::views::op_chip::short(r.kind).to_owned(),
-                    small.clone(),
-                    if r.idle { c.gamma_multiply(0.5) } else { c },
-                );
-                let name = painter.layout_no_wrap(
-                    if r.idle && r.kind != OperationKind::Reference {
-                        format!("{} (not exported)", r.layer)
-                    } else {
-                        r.layer.clone()
-                    },
-                    body.clone(),
-                    if r.idle { weak } else { ink },
-                );
-                (c, r.idle, label, name)
-            })
-            .collect();
-        const PAD: f32 = 8.0;
-        const ROW: f32 = 18.0;
-        const NAME_X: f32 = 76.0;
-        // Why the preview may look like the sketch (#423), wrapped.
-        let notes: Vec<_> = self
-            .view
-            .machine_notes
-            .iter()
-            .map(|n| painter.layout(n.clone(), small.clone(), weak, 300.0))
-            .collect();
-        let width = lines
-            .iter()
-            .map(|(.., n)| NAME_X + n.size().x)
-            .chain(notes.iter().map(|n| n.size().x))
-            .fold(title.size().x, f32::max)
-            + 2.0 * PAD;
-        let notes_h: f32 = notes.iter().map(|n| n.size().y + 3.0).sum();
-        let height = PAD * 2.0
-            + title.size().y
-            + 4.0
-            + ROW * lines.len() as f32
-            + if notes.is_empty() { 0.0 } else { notes_h + 6.0 };
-        // Clear of the rulers along the top and left edges.
-        let at = rect.min + egui::vec2(28.0, 28.0);
-        let frame = Rect::from_min_size(at, egui::vec2(width, height));
-        painter.rect(
-            frame,
-            6.0,
-            bg,
-            Stroke::new(1.0, line),
-            egui::StrokeKind::Inside,
-        );
-        let mut y = at.y + PAD;
-        painter.galley(egui::pos2(at.x + PAD, y), title, weak);
-        y += 16.0;
-        for (c, idle, label, name) in lines {
-            let mid = y + ROW / 2.0;
-            let dot = egui::pos2(at.x + PAD + 5.0, mid);
-            if idle {
-                painter.circle_stroke(dot, 4.0, Stroke::new(1.2, c));
-            } else {
-                painter.circle_filled(dot, 4.5, c);
-            }
-            painter.galley(
-                egui::pos2(at.x + PAD + 16.0, mid - label.size().y / 2.0),
-                label,
-                c,
-            );
-            painter.galley(
-                egui::pos2(at.x + PAD + NAME_X - 6.0, mid - name.size().y / 2.0),
-                name,
-                ink,
-            );
-            y += ROW;
-        }
-        if !notes.is_empty() {
-            y += 6.0;
-            painter.hline(
-                (at.x + PAD)..=(at.x + width - PAD),
-                y - 3.0,
-                Stroke::new(1.0, line),
-            );
-        }
-        for n in notes {
-            let h = n.size().y;
-            painter.galley(egui::pos2(at.x + PAD, y), n, weak);
-            y += h + 3.0;
-        }
-    }
 }
 
 #[cfg(test)]

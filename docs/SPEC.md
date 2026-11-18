@@ -37,6 +37,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Raster export (M5) | PNG joins SVG, PDF and DXF as a built-in export format, in the export dialog, the OUTPUT ribbon tab and `locus-cli` (§8 Formats). Rasteriser `tiny-skia` (BSD-3-Clause) with its `png` encoder, pure Rust without SIMD so the core crates still build for wasm32. Owner request 2026-11-14, #332. |
 | UI (M5) | Fusion-style sketch UI: ribbon grouped Create / Modify / Constrain / Inspect / Insert / Select, browser, sketch palette, context inspector, right-click marking menu (pan on middle-drag / Space+drag), Fusion's sketch keys, one pick → drag/type → Enter/Esc → editable-dimension tool model; built on an action registry and a tool trait. Style (stroke colour, width, pen number, fill, opacity) belongs to each object, not the layer; placed text stays re-editable. Owner decisions 2026-11-13, #293, [ADR 0017](adr/0017-fusion-style-ui.md). |
 | Machine profile per document (M5) | **Decided** (owner, #419, 2026-11-18): the document's machine profile drives more than export. A profile names its machine kind (laser, pen plotter, vinyl cutter or generic), which sets the operation new layers get (Cut, Draw, Drag knife; Draw when generic or no profile) and the operations layer pickers offer. Its bed is drawn on the canvas, Machine preview uses it, and every export defaults to it, `locus-cli export` included. It is chosen from the app bar, File ▸ Machine profile and the Inspector. Changing it is one undoable `SetProfile`, and layers are never rewritten silently: the app offers to update them, as one more undo step. The document still stores only the id (format v11), so no format change. The machine kind lives in the profile JSON and defaults to generic. |
+| Job placement on the bed (M5) | **Decided** (owner, #443, 2026-11-18): Machine preview became a dockable pane (it can also float in its own window). It shows the profile's bed at true proportion with the job drawn as the machine makes it. The job can be dragged on the bed, snapping to the edges, centre and corners, or placed by numeric X / Y from the machine origin. The placement is a document offset (format **v18**) set by one undoable `SetPlacement`. Once placed, export moves the design by that offset and writes the whole bed as the page. Until then, export frames the design itself, as before. The export dialog shows the same bed view. |
 
 ---
 
@@ -269,6 +270,22 @@ A new layer also gets the profile's default kerf or blade offset. A layer whose 
 
 Each is tinted in its operation's editor colour, and a legend lists every layer's operation (#420). When the preview adds nothing, the legend says why. Examples: no machine profile; nothing exported; a Cut layer without kerf compensation; a Drag knife with no blade offset; "Draw layers have no machine compensation".
 
+**Job placement (M5, #443).** Machine preview is a dockable pane, and it can also float in its own window; the View toggle opens and closes it. It shows the profile's bed at true proportion, with:
+- its 10 mm grid;
+- the origin corner;
+- the machine paths, as above;
+- the job's bounding box, red when it leaves the bed.
+
+The legend and the "why" notes sit below the bed. The canvas keeps the tinted paths but no longer has the legend box.
+
+The user places the job in one of these ways:
+- Drag it. It snaps, within 8 points, to the bed's edges and centre on each axis, which includes the corners.
+- Type **X / Y**: the distance from the machine's origin corner to the job's nearest corner, positive into the bed, in the display units.
+- Press **Centre** or **To origin**.
+- Press **Unplace** to clear the placement.
+
+Each change is one undoable `SetPlacement`. The placement is a document offset in mm, stored in the file (§10, v18), bounded to ±20 m and finite. It applies only when the profile has a bed. The canvas draws the bed moved back by that offset, so the sketch stays where it was drawn. The pane says when the job doesn't fit: either larger than the bed, or reaching past an edge, and by how much. The export dialog shows the same bed view with the same controls.
+
 ---
 
 ## 8. Export pipeline
@@ -297,7 +314,7 @@ Document → Solve → Collect exportable geometry (exclude construction, refere
 - **HPGL** — v2 / optional.
 - **PNG** — raster image of the export geometry (#332): resolution as DPI (default 300) or pixel width, transparent or white background, the whole sketch or the selection, one file per layer like the vector formats. Same paint as SVG (§7); strokes under a pixel draw one pixel wide. Rasterised in `locus-export` with `tiny-skia` (no SIMD, so wasm32 builds); image size bounded (20 000 px a side, 100 MP). Also `locus-cli export --format png [--dpi n | --width-px n] [--background transparent|white]`.
 
-**Default profile (#419).** Every export starts from the document's machine profile: the export dialog preselects it, a direct format export (File ▸ Export ▸ SVG…, PNG…) still applies its colours, hairlines and bed check, and `locus-cli export` uses it when no `--format`, `--profile` or `--profile-file` is given. The CLI knows only the built-in presets, so a document whose profile is a user profile needs `--profile-file`.
+**Default profile (#419).** Every export starts from the document's machine profile: the export dialog preselects it, a direct format export (File ▸ Export ▸ SVG…, PNG…) still applies its colours, hairlines and bed check, and `locus-cli export` uses it when no `--format`, `--profile` or `--profile-file` is given. The CLI knows only the built-in presets, so a document whose profile is a user profile needs `--profile-file`. **Placed jobs (#443):** when the document has a placement and the profile a bed, `prepare_for` moves the design by the placement (after the operation transforms, before validation, so the bed check sees the placed job) and sets the page to the whole bed, for every writer and for per-layer files. Without a placement the page is the design's own bounds, as before.
 
 Export is always one-way. Native file is the source of truth.
 
@@ -323,6 +340,7 @@ Export is always one-way. Native file is the source of truth.
 - Entities carry their style (format v13, #287): omitted while it is the default, so points and unstyled curves add nothing to the file.
 - Text entities (format v9, #179) store content, a font reference and the laid-out geometry, so a file opens and exports without the font ([ADR-0012](adr/0012-text-entity.md)).
 - Text letter spacing (`tracking`, mm; format v14, #222) is omitted while zero, so older files load unchanged.
+- The job's placement on the machine bed (`placement`, an offset in mm; format v18, #443) is omitted while unset, so a v17 file migrates unchanged.
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
 - Versioned migrations in `locus-doc` (`v1 → v2 …`), tested with fixture files.
 - Deterministic serialisation (stable ordering) so unchanged documents produce identical files.

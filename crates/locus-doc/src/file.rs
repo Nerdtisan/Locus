@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 17;
+pub const CURRENT_VERSION: u32 = 18;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -796,8 +796,55 @@ impl From<FileV16> for FileV17 {
     }
 }
 
-/// The newest on-disk shape. When adding v18, point this at `FileV18`.
-type Latest = FileV17;
+/// Version 18: the job's placement on the machine bed (#443, SPEC §7). An
+/// optional offset, omitted while unset, so the migration is the identity on
+/// the data and a file without a placement differs from v17 only in its
+/// version.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV18 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+}
+
+impl From<FileV17> for FileV18 {
+    fn from(f: FileV17) -> Self {
+        FileV18 {
+            format_version: 18,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: None,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v19, point this at `FileV19`.
+type Latest = FileV18;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -823,7 +870,7 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV17::from(FileV16::from(f))
+    FileV18::from(FileV17::from(FileV16::from(f)))
 }
 
 /// Serialise to `.locus` text.
@@ -847,6 +894,7 @@ pub fn save(doc: &Document) -> Result<String, FileError> {
         view: doc.view,
         profile: doc.profile.clone(),
         images: doc.images.clone(),
+        placement: doc.placement,
     };
     let mut text = ron::ser::to_string_pretty(&file, pretty())
         .map_err(|e| FileError::Unsaveable(e.to_string()))?;
@@ -900,8 +948,9 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV17::from(parse::<FileV16>(text)?),
-        17 => parse::<FileV17>(text)?,
+        16 => FileV18::from(FileV17::from(parse::<FileV16>(text)?)),
+        17 => FileV18::from(parse::<FileV17>(text)?),
+        18 => parse::<FileV18>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -937,6 +986,7 @@ fn into_document(f: Latest) -> Result<Document, FileError> {
         view: f.view,
         profile: f.profile,
         images: f.images,
+        placement: f.placement,
     };
     validate(&doc)?;
     Ok(doc)
@@ -975,6 +1025,9 @@ fn check_finite(doc: &Document) -> Result<(), FileError> {
 pub(crate) fn validate(doc: &Document) -> Result<(), FileError> {
     if let Some(id) = &doc.profile {
         crate::document::check_profile_id(id)?;
+    }
+    if let Some(p) = doc.placement {
+        crate::document::check_placement(p)?;
     }
     if doc.next_id > MAX_ID {
         return Err(FileError::Invalid(format!(
@@ -1826,25 +1879,93 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v17 fixture is frozen; it migrates to the current version
+    /// unchanged (no placement, which is all v18 adds).
     #[test]
-    fn v17_fixture_is_current_and_loads() {
+    fn v17_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v17/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v17()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 17"));
         assert!(text.contains("path: Some(("), "{text}");
-        assert_eq!(load(&text).unwrap(), sample_v17());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v17());
+        assert_eq!(doc.placement(), None);
+        let out = save(&doc).unwrap();
+        assert_eq!(out.replace(&current(), "format_version: 17"), text);
+    }
+
+    /// The v18 sample: `sample_v17()` placed on the bed (#443).
+    pub(crate) fn sample_v18() -> Document {
+        let mut ed = Editor::new(sample_v17());
+        ed.apply(&Command::SetPlacement {
+            offset: Some(locus_geom::Vec2::new(12.5, 30.0)),
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v18_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v18/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v18()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 18"));
+        assert!(
+            text.contains(
+                "placement: Some((
+    x: 12.5,"
+            ),
+            "{text}"
+        );
+        assert_eq!(load(&text).unwrap(), sample_v18());
         assert_eq!(
-            save(&sample_v17()).unwrap(),
+            save(&sample_v18()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    /// Placing the job is one undoable step; hostile offsets are refused,
+    /// from a command and from a file (SPEC §7, #443).
+    #[test]
+    fn placement_is_undoable_and_checked() {
+        let mut ed = Editor::new(Document::new());
+        let at = locus_geom::Vec2::new(5.0, -2.0);
+        ed.apply(&Command::SetPlacement { offset: Some(at) })
+            .unwrap();
+        assert_eq!(ed.document().placement(), Some(at));
+        for bad in [f64::NAN, 1e9] {
+            assert!(
+                ed.apply(&Command::SetPlacement {
+                    offset: Some(locus_geom::Vec2::new(bad, 0.0))
+                })
+                .is_err()
+            );
+        }
+        assert_eq!(ed.document().placement(), Some(at));
+        ed.undo().unwrap();
+        assert_eq!(ed.document().placement(), None);
+        ed.redo().unwrap();
+        assert_eq!(ed.document().placement(), Some(at));
+        let good = save(&sample_v18()).unwrap();
+        let bad = good.replacen(
+            "placement: Some((
+    x: 12.5,",
+            "placement: Some((
+    x: 1e300,",
+            1,
+        );
+        assert_ne!(bad, good);
+        assert!(load(&bad).is_err());
     }
 
     /// A hostile text path is refused on load (CLAUDE.md: untrusted input).

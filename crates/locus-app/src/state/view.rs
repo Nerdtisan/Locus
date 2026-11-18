@@ -33,6 +33,9 @@ pub struct ViewState {
     pub(crate) machine_notes: Vec<String>,
     /// The document's profile as the preview last used it (#423).
     pub(crate) machine_profile: Option<locus_export::MachineProfile>,
+    /// The job placement the preview's paths were made with (#443): the
+    /// canvas draws them back at the sketch, the pane on the bed.
+    pub(crate) machine_offset: locus_geom::Vec2,
     /// After a profile change: the offer to update layers the machine
     /// can't run (#419). Never applied without the user's yes.
     pub(crate) profile_offer: Option<crate::views::machine_profile::LayerOffer>,
@@ -98,6 +101,7 @@ impl Default for ViewState {
             machine: Vec::new(),
             machine_notes: Vec::new(),
             machine_profile: None,
+            machine_offset: locus_geom::Vec2::ZERO,
             profile_offer: None,
             stroke_on: false,
             dim_rects: Vec::new(),

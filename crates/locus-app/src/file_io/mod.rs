@@ -140,6 +140,8 @@ pub struct FileIo {
     exporters: locus_export::Registry,
     /// The machine profile manager (#286, design §6.4).
     profiles: profiles::Manager,
+    /// The export dialog's bed view (#443).
+    bed_view: crate::views::machine_panel::BedView,
     checks: Option<ExtraChecks>,
     allow_close: bool,
     last_title: String,
@@ -170,6 +172,7 @@ impl FileIo {
             png_selection: false,
             exporters: locus_export::Registry::builtin(),
             profiles: profiles::Manager::default(),
+            bed_view: Default::default(),
             checks: None,
             allow_close: false,
             last_title: String::new(),
@@ -873,11 +876,43 @@ impl FileIo {
                         &mut picked_error,
                         &mut self.profiles,
                     );
-                    // A new profile re-prepared the model: re-run the plugin checks.
-                    if panel.profile_changed {
-                        panel.profile_changed = false;
-                        panel.extra = extra_for(&panel.prepared);
-                    }
+                }
+                // Where the job lands on the bed (#443): the same view and
+                // placement as the Machine preview pane.
+                if let Some(bed) = panel.profile.as_ref().and_then(|p| p.bed) {
+                    egui::CollapsingHeader::new("Placement on the bed")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            let paths = crate::views::canvas::machine_paths(&panel.prepared.model);
+                            let offset = locus_export::prepare::placement(
+                                canvas.document(),
+                                panel.profile.as_ref(),
+                            )
+                            .map_or(locus_geom::Vec2::ZERO, |(o, _)| o);
+                            if crate::views::machine_panel::placement_ui(
+                                ui,
+                                &mut self.bed_view,
+                                canvas,
+                                settings.units,
+                                &bed,
+                                &paths,
+                                offset,
+                                200.0,
+                            ) {
+                                panel.prepared = locus_export::prepare_for(
+                                    canvas.document(),
+                                    panel.fixed,
+                                    panel.profile.as_ref(),
+                                );
+                                panel.profile_changed = true;
+                            }
+                        });
+                }
+                // A new profile or placement re-prepared the model: re-run
+                // the plugin checks.
+                if panel.profile_changed {
+                    panel.profile_changed = false;
+                    panel.extra = extra_for(&panel.prepared);
                 }
                 let counts = panel.prepared.report.counts();
                 let extra_errors = panel.extra.iter().filter(|f| f.error).count();
@@ -1281,18 +1316,8 @@ fn profile_picker(
             });
     });
     if let Some(p) = &panel.profile {
-        let bed = p.bed.map_or_else(
-            || "no bed size".to_owned(),
-            |b| {
-                format!(
-                    "bed {} × {} mm, origin {}",
-                    b.width_mm,
-                    b.height_mm,
-                    b.origin.name().to_lowercase()
-                )
-            },
-        );
-        ui.weak(format!("{} — {bed}", p.format.to_uppercase()));
+        // Rounded: an inch bed is 304.8 mm, not 304.79999999999995.
+        ui.weak(crate::views::machine_profile::summary(p));
         if exporters.get(&p.format).is_none() {
             ui.colored_label(
                 ui.visuals().warn_fg_color,

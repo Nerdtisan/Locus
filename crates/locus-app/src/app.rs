@@ -47,6 +47,7 @@ struct Panes {
     browser: BrowserView,
     parameters: ParametersView,
     shortcuts: ShortcutsView,
+    machine: crate::views::machine_panel::MachinePanel,
 }
 
 /// A pane in its own OS window (#285, design §2.2). The builder keeps the
@@ -87,6 +88,8 @@ pub struct App {
     state: AppState,
     /// The panes' transient widget state (design §7.3).
     panes: Panes,
+    /// Machine preview as last seen, to tell the toggle from the pane (#443).
+    machine_seen: bool,
     status: Status,
     files: FileIo,
     #[cfg(not(target_arch = "wasm32"))]
@@ -131,6 +134,7 @@ impl App {
             toolbar,
             search: ToolSearch::default(),
             panes: Panes::default(),
+            machine_seen: false,
             settings,
             state: {
                 let mut c = AppState::untitled();
@@ -166,6 +170,23 @@ impl App {
     }
 
     /// Is `tab` showing, docked or in its own window?
+    /// Machine preview is the Machine preview pane (#443): the toggle opens
+    /// or closes it, and closing the pane turns the preview off.
+    fn sync_machine_pane(&mut self) {
+        let shown = self.is_shown(Tab::MachinePreview);
+        let on = self.state.machine_preview();
+        if on != self.machine_seen {
+            // The action changed the flag: follow it with the pane.
+            if on != shown {
+                self.toggle_tab(Tab::MachinePreview);
+            }
+        } else if shown != on {
+            // The pane was opened or closed from the dock or View ▸ Panes.
+            self.state.set_machine_preview(shown);
+        }
+        self.machine_seen = self.state.machine_preview();
+    }
+
     fn is_shown(&self, tab: Tab) -> bool {
         self.dock.find_tab(&tab).is_some() || self.windows.iter().any(|w| w.saved.tab == tab)
     }
@@ -850,6 +871,12 @@ impl TabViewer for Viewer<'_> {
             Tab::Constraints => self.state.constraints_ui(ui, self.settings),
             Tab::Parameters => self.panes.parameters.ui(ui, self.state),
             Tab::Shortcuts => self.panes.shortcuts.ui(ui, self.registry),
+            Tab::MachinePreview => {
+                let manage = self.panes.machine.ui(ui, self.state, self.settings);
+                if manage {
+                    self.state.view.shell.push(crate::actions::Shell::Profiles);
+                }
+            }
         }
     }
 
@@ -922,6 +949,7 @@ impl eframe::App for App {
             egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
         }
         self.shell_requests(ui.ctx());
+        self.sync_machine_pane();
         egui::Panel::bottom("status")
             .frame(crate::theme::bar(ui, tk.panel_2))
             .show(ui, |ui| self.status_bar(ui));

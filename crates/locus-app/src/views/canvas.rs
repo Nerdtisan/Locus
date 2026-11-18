@@ -38,7 +38,7 @@ mod text_dialog;
 
 pub(crate) use calibrate_tool::CalibrateDraft;
 pub(crate) use corner_handle::{CornerHandle, ResizePreview};
-pub(crate) use machine::MachinePath;
+pub(crate) use machine::{MachinePath, legend, paths as machine_paths};
 pub(crate) use mirror_tool::MirrorDraft;
 pub(crate) use offset_tool::OffsetDraft;
 pub(crate) use path_text_tool::{PathTextDraft, Slide};
@@ -407,7 +407,6 @@ impl AppState {
         }
         self.draw_offset_labels(&painter, rect, dark, settings.units);
         self.draw_pattern_labels(&painter, rect, dark, settings.units);
-        self.draw_machine_legend(&painter, rect, dark, settings);
         self.dimension_editor(ui, rect, settings.units);
         self.refusal_banner(ui, rect);
         if let Some(mode) = self.transform_mode() {
