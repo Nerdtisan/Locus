@@ -106,6 +106,8 @@ impl AppState {
         self.tools.host.set_draw(tool, layer);
         self.tools.typed.clear();
         self.tools.corner_pick = None;
+        self.tools.corner_edit = None;
+        self.tools.corner_drag = None;
         self.tools.offset_draft = None;
         self.doc.notice = None;
     }
@@ -220,11 +222,14 @@ impl AppState {
             select: None,
             offset: None,
             corner_pick: None,
+            corner_edit: None,
         };
         let flow = self.tools.host.tool_mut().event(ev, &mut cx);
         let (notice, select, offset) = (cx.notice, cx.select, cx.offset);
+        let corner_edit = cx.corner_edit;
         if let Some(pair) = cx.corner_pick {
             self.tools.corner_pick = Some(pair);
+            self.tools.corner_edit = None;
             self.tools.corner_focus = true;
         }
         if let Some(n) = notice {
@@ -235,6 +240,9 @@ impl AppState {
         }
         if let Some((id, at)) = offset {
             self.offset_click(id, at, units);
+        }
+        if let Some(id) = corner_edit {
+            self.corner_edit_begin(id, units);
         }
         match flow {
             Flow::Commit => self.commit_tool(),

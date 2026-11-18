@@ -69,6 +69,16 @@ impl Modify {
         }
     }
 
+    /// Is `id` a fillet (for Fillet) or a chamfer (for Chamfer) that a click
+    /// with the tool resizes (#418)?
+    pub fn resizes(self, doc: &Document, id: EntityId) -> bool {
+        match self {
+            Modify::Fillet => corner::fillet_dims(doc, id).is_some(),
+            Modify::Chamfer => corner::chamfer_dims(doc, id).is_some(),
+            _ => false,
+        }
+    }
+
     /// Fillet and chamfer take two curves; the rest one.
     pub fn takes_two(self) -> bool {
         matches!(self, Modify::Fillet | Modify::Chamfer)
@@ -82,8 +92,11 @@ impl Modify {
             (Modify::Break, _) => {
                 "Break: click a curve to split it where others cross (Esc to finish)"
             }
-            (Modify::Fillet | Modify::Chamfer, false) => {
-                "Click the first curve, or the corner point two curves share (Esc to finish)"
+            (Modify::Fillet, false) => {
+                "Click the first curve, the corner point two curves share, or a fillet to resize it; drag the handle to size it (Esc to finish)"
+            }
+            (Modify::Chamfer, false) => {
+                "Click the first curve, the corner point two curves share, or a chamfer to resize it; drag the handles to size it (Esc to finish)"
             }
             (Modify::Fillet | Modify::Chamfer, true) => "Click the second curve at the corner",
             (Modify::Offset, _) => {

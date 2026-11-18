@@ -8,7 +8,8 @@ use crate::modify_tool::{CornerSettings, TransformSettings};
 use crate::tool::ToolHost;
 use crate::tools::Pick;
 use crate::views::canvas::{
-    CalibrateDraft, MirrorDraft, OffsetDraft, PathTextDraft, PatternDraft, Slide,
+    CalibrateDraft, CornerHandle, MirrorDraft, OffsetDraft, PathTextDraft, PatternDraft,
+    ResizePreview, Slide,
 };
 use crate::views::text_ui::{FontCatalog, TextSettings};
 use locus_doc::{ConstraintId, EntityId, RecipeId};
@@ -75,6 +76,11 @@ pub struct ToolState {
     /// (#217), and whether its size field should take focus.
     pub(crate) corner_pick: Option<(EntityId, EntityId)>,
     pub(crate) corner_focus: bool,
+    /// An existing fillet arc or chamfer line being resized (#418), its
+    /// preview, and the corner handle being dragged.
+    pub(crate) corner_edit: Option<EntityId>,
+    pub(crate) corner_resize: ResizePreview,
+    pub(crate) corner_drag: Option<CornerHandle>,
     /// Move/rotate/scale values, edited in the tool options.
     pub(crate) transform: TransformSettings,
     /// Settings for the next text the Text tool places, and the fonts it can use (#180).
@@ -112,6 +118,9 @@ impl Default for ToolState {
             corner: CornerSettings::default(),
             corner_pick: None,
             corner_focus: false,
+            corner_edit: None,
+            corner_resize: ResizePreview::default(),
+            corner_drag: None,
             transform: TransformSettings::default(),
             text_settings: TextSettings::default(),
             fonts: FontCatalog::headless(),
