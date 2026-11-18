@@ -73,6 +73,28 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
         w = num(w),
         h = num(h)
     );
+    // Fills first, in one group under every layer, so no fill ever hides a
+    // line (#451). Each region fills even-odd, so its holes stay open.
+    if !model.fills.is_empty() {
+        out.push_str("  <g id=\"fills\" data-name=\"Fills\">\n");
+        for f in &model.fills {
+            let mut d = String::new();
+            for p in &f.paths {
+                write_loop(&mut d, p, &map);
+            }
+            let hex = |[r, g, b]: [u8; 3]| format!("#{r:02x}{g:02x}{b:02x}");
+            let mut attrs = format!(
+                "fill=\"{}\" fill-rule=\"evenodd\" stroke=\"none\" data-layer=\"{}\"",
+                hex(f.colour),
+                f.layer
+            );
+            if f.opacity < 1.0 {
+                let _ = write!(attrs, " fill-opacity=\"{}\"", num(f.opacity));
+            }
+            let _ = writeln!(out, "    <path {attrs} d=\"{}\"/>", d.trim_start());
+        }
+        out.push_str("  </g>\n");
+    }
     for layer in &model.layers {
         if layer.paths.is_empty() {
             continue;
@@ -127,8 +149,7 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
 fn paint_attrs(p: &Paint) -> String {
     let hex = |[r, g, b]: [u8; 3]| format!("#{r:02x}{g:02x}{b:02x}");
     let mut s = format!(
-        "fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\"",
-        p.fill.map_or_else(|| "none".to_owned(), hex),
+        "fill=\"none\" stroke=\"{}\" stroke-width=\"{}\"",
         hex(p.stroke),
         num(p.width)
     );
@@ -139,6 +160,33 @@ fn paint_attrs(p: &Paint) -> String {
         let _ = write!(s, " data-pen=\"{pen}\"");
     }
     s
+}
+
+/// One closed loop of a region fill as path data: a lone circle as two
+/// half arcs, anything else segment by segment.
+fn write_loop(d: &mut String, p: &crate::pipeline::ExportPath, map: &impl Fn(Vec2) -> Vec2) {
+    if let [seg] = p.segs.as_slice()
+        && let Shape::Circle(c) = seg.shape
+    {
+        let a = map(c.center + Vec2::new(c.radius, 0.0));
+        let b = map(c.center - Vec2::new(c.radius, 0.0));
+        let r = num(c.radius);
+        let _ = write!(
+            d,
+            " M {ax} {ay} A {r} {r} 0 1 0 {bx} {by} A {r} {r} 0 1 0 {ax} {ay} Z",
+            ax = num(a.x),
+            ay = num(a.y),
+            bx = num(b.x),
+            by = num(b.y),
+        );
+        return;
+    }
+    let start = map(p.start());
+    let _ = write!(d, " M {} {}", num(start.x), num(start.y));
+    for s in &p.segs {
+        write_seg(d, s, map);
+    }
+    d.push_str(" Z");
 }
 
 fn write_seg(d: &mut String, s: &PathSeg, map: &impl Fn(Vec2) -> Vec2) {

@@ -164,6 +164,31 @@ pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, E
         let f = v as f32;
         f
     };
+    // Fills first (#451): every region fill under every stroke, even-odd so
+    // the holes stay open.
+    for f in &model.fills {
+        let mut pb = PathBuilder::new();
+        for p in &f.paths {
+            push(&mut pb, p, &map, k, &to32);
+        }
+        let Some(skpath) = pb.finish() else {
+            continue;
+        };
+        let alpha = (f.opacity.clamp(0.0, 1.0) * 255.0).round();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let a = alpha as u8;
+        let [r, g, b] = f.colour;
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(r, g, b, a);
+        paint.anti_alias = true;
+        pixmap.fill_path(
+            &skpath,
+            &paint,
+            FillRule::EvenOdd,
+            Transform::identity(),
+            None,
+        );
+    }
     for layer in &model.layers {
         for path in &layer.paths {
             let Some(skpath) = build(path, &map, k, &to32) else {
@@ -173,20 +198,6 @@ pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, E
             let alpha = (p.opacity.clamp(0.0, 1.0) * 255.0).round();
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let a = alpha as u8;
-            if let Some([r, g, b]) = p.fill
-                && path.closed
-            {
-                let mut paint = Paint::default();
-                paint.set_color_rgba8(r, g, b, a);
-                paint.anti_alias = true;
-                pixmap.fill_path(
-                    &skpath,
-                    &paint,
-                    FillRule::EvenOdd,
-                    Transform::identity(),
-                    None,
-                );
-            }
             let [r, g, b] = p.stroke;
             let mut paint = Paint::default();
             paint.set_color_rgba8(r, g, b, a);
@@ -214,6 +225,19 @@ fn build(
     to32: &impl Fn(f64) -> f32,
 ) -> Option<tiny_skia::Path> {
     let mut pb = PathBuilder::new();
+    push(&mut pb, path, map, k, to32);
+    pb.finish()
+}
+
+/// Append one export path to `pb` as a sub-path, in pixels (a region fill
+/// is its outer loop and holes in one path, #451).
+fn push(
+    pb: &mut PathBuilder,
+    path: &crate::pipeline::ExportPath,
+    map: &impl Fn(Vec2) -> (f64, f64),
+    k: f64,
+    to32: &impl Fn(f64) -> f32,
+) {
     let pt = |p: Vec2| {
         let (x, y) = map(p);
         (to32(x), to32(y))
@@ -223,7 +247,7 @@ fn build(
     {
         let (x, y) = pt(c.center);
         pb.push_circle(x, y, to32(c.radius * k));
-        return pb.finish();
+        return;
     }
     let (x, y) = pt(path.start());
     pb.move_to(x, y);
@@ -278,7 +302,6 @@ fn build(
     if path.closed {
         pb.close();
     }
-    pb.finish()
 }
 
 #[cfg(test)]

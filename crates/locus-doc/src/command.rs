@@ -161,6 +161,12 @@ pub enum Command {
     SetPlacement {
         offset: Option<Vec2>,
     },
+    /// Fill regions (SPEC §6.3, #451): each listed region gets `fill`, or
+    /// loses its fill with `None`. One undo step for the lot.
+    SetRegionFill {
+        regions: Vec<locus_region::RegionKey>,
+        fill: Option<crate::region_fill::RegionFill>,
+    },
     /// Delete a parameter. Refused with [`DocError::ParameterInUse`] (listing
     /// the users) while an expression refers to it.
     RemoveParameter {
@@ -296,6 +302,8 @@ impl Command {
             Command::SetParameter { name, .. } => format!("Set parameter {name}"),
             Command::SetProfile { .. } => "Set machine profile".to_owned(),
             Command::SetPlacement { .. } => "Place job on bed".to_owned(),
+            Command::SetRegionFill { fill: Some(_), .. } => "Fill region".to_owned(),
+            Command::SetRegionFill { fill: None, .. } => "Remove region fill".to_owned(),
             Command::RemoveParameter { name } => format!("Remove parameter {name}"),
             Command::RenameParameter { from, .. } => format!("Rename parameter {from}"),
             Command::SetDimensionExpr { .. } => "Set dimension expression".to_owned(),
@@ -391,6 +399,11 @@ pub(crate) enum Patch {
         before: Option<Vec2>,
         after: Option<Vec2>,
     },
+    RegionFill {
+        key: locus_region::RegionKey,
+        before: Option<crate::region_fill::RegionFill>,
+        after: Option<crate::region_fill::RegionFill>,
+    },
     Image {
         layer: LayerId,
         before: Option<crate::image::RefImage>,
@@ -446,6 +459,12 @@ impl Patch {
             }
             Patch::Placement { before, after } => {
                 doc.placement = if forward { *after } else { *before };
+            }
+            Patch::RegionFill { key, before, after } => {
+                match if forward { after } else { before } {
+                    Some(f) => doc.region_fills.insert(key.clone(), *f),
+                    None => doc.region_fills.remove(key),
+                };
             }
             Patch::Image {
                 layer,
@@ -737,6 +756,32 @@ fn exec(
                 after: id.clone(),
             };
             record(doc, patches, p);
+        }
+        Command::SetRegionFill { regions, fill } => {
+            if regions.len() > crate::region_fill::MAX_REGION_FILLS {
+                return Err(DocError::Invalid("too many regions".to_owned()));
+            }
+            if let Some(f) = fill {
+                f.validate()?;
+            }
+            let mut keys = regions.clone();
+            keys.sort();
+            keys.dedup();
+            for key in keys {
+                crate::region_fill::check_key(&key)?;
+                let before = doc.region_fills.get(&key).copied();
+                if before != *fill {
+                    record(
+                        doc,
+                        patches,
+                        Patch::RegionFill {
+                            key,
+                            before,
+                            after: *fill,
+                        },
+                    );
+                }
+            }
         }
         Command::SetPlacement { offset } => {
             if let Some(p) = offset {

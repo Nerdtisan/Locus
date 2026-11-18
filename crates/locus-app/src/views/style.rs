@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The Inspector's Style section (design §2.1, §6.2; #287): stroke colour,
-//! stroke width, pen, fill and opacity of the selection, or the current
-//! style new geometry gets while nothing is selected.
+//! stroke width, pen and opacity of the selection, or the current style new
+//! geometry gets while nothing is selected. Objects have no fill: a selected
+//! region's Fill section sets its own fill and opacity (#451).
 //!
 //! Edits to the selection are held until the pointer is released and no
 //! field has focus, then applied as one `SetStyle` command, so dragging a
@@ -11,10 +12,12 @@
 
 use crate::state::AppState;
 use egui::{DragValue, Ui};
+use locus_doc::region_fill::RegionFill;
 use locus_doc::{
     Command, Document, EntityId, Fill, Geom, OperationKind, Stroke, Style, StylePatch,
     operation::MAX_PEN,
 };
+use locus_region::RegionKey;
 
 /// One field across the selection: `None` when the objects differ.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -22,7 +25,6 @@ pub(crate) struct Shared {
     pub stroke: Option<Stroke>,
     pub width: Option<f64>,
     pub pen: Option<u32>,
-    pub fill: Option<Fill>,
     pub opacity: Option<f64>,
 }
 
@@ -37,7 +39,6 @@ impl Shared {
             stroke: same(styles.iter().map(|s| s.stroke)),
             width: same(styles.iter().map(|s| s.width)),
             pen: same(styles.iter().map(|s| s.pen)),
-            fill: same(styles.iter().map(|s| s.fill)),
             opacity: same(styles.iter().map(|s| s.opacity)),
         }
     }
@@ -46,12 +47,6 @@ impl Shared {
         self.stroke = p.stroke.or(self.stroke);
         self.width = p.width.or(self.width);
         self.pen = p.pen.or(self.pen);
-        self.fill = match p.fill_on {
-            Some(on) => self
-                .fill
-                .map(|f| f.switched(on, p.fill.and_then(Fill::painted))),
-            None => p.fill.or(self.fill),
-        };
         self.opacity = p.opacity.or(self.opacity);
         self
     }
@@ -110,7 +105,7 @@ impl AppState {
         if nothing {
             let mut s = self.doc.current_style;
             let shared = Shared::of(&[s]);
-            let patch = fields(ui, shared, [0, 0, 0], false);
+            let patch = fields(ui, shared, [0, 0, 0]);
             s = s.patched(&patch);
             if s.validate().is_ok() {
                 self.doc.current_style = s;
@@ -122,13 +117,12 @@ impl AppState {
             ui.weak("Points have no style.");
             return;
         }
-        self.edit_styles(ui, ids, false);
+        self.edit_styles(ui, ids);
     }
 
     /// Edit the style of `ids`, held until the pointer is released and no
     /// field has focus, then applied as one `SetStyle` (one undo step).
-    /// `fill_only` shows Fill and Opacity alone (a region's fill, #370).
-    fn edit_styles(&mut self, ui: &mut Ui, ids: Vec<EntityId>, fill_only: bool) {
+    fn edit_styles(&mut self, ui: &mut Ui, ids: Vec<EntityId>) {
         let doc = self.doc.sketcher.document();
         let styles: Vec<Style> = ids
             .iter()
@@ -148,7 +142,7 @@ impl AppState {
             .map(|(_, p)| p)
             .unwrap_or_default();
         let shown = Shared::of(&styles).with(&pending);
-        let edit = fields(ui, shown, layer_colour, fill_only);
+        let edit = fields(ui, shown, layer_colour);
         merge(&mut pending, &edit);
         if machine {
             ui.weak("Cut, Score, Engrave and Drag-knife layers export in the machine profile's colour and hairline.");
@@ -167,19 +161,56 @@ impl AppState {
         }
     }
 
-    /// Selected regions (#370, design §2.1): their Fill. A region is filled
-    /// with the style fill of the curves around it (#338), so editing it
-    /// sets the fill of the curves on the regions' outer boundaries, as one
-    /// command; holes stay open.
+    /// Selected regions (#370, #451, design §2.1): their own Fill and
+    /// Opacity. Each region is filled on its own; holes stay open and
+    /// strokes always draw above every fill. An edit is held like a style
+    /// edit and applied as one command (one undo step).
     pub(crate) fn region_style_ui(&mut self, ui: &mut Ui, fills_shown: bool) {
-        let ids = self.region_boundary_curves();
+        let keys: Vec<RegionKey> = self.selection.regions.selected.iter().cloned().collect();
         crate::views::properties::section(ui, "Fill", |_| {});
-        if ids.is_empty() {
-            ui.weak("This region's outline has no curves to fill from.");
+        if keys.is_empty() {
             return;
         }
-        self.edit_styles(ui, ids, true);
-        ui.weak("A region takes the fill of the curves around it; holes stay open.");
+        let doc = self.doc.sketcher.document();
+        let fills: Vec<Option<RegionFill>> =
+            keys.iter().map(|k| doc.region_fill(k).copied()).collect();
+        let fallback = self.region_layer_colour(&keys[0]);
+        let key = egui::Id::new(REGION_PENDING);
+        let mut pending: FillPatch = ui
+            .data(|d| d.get_temp::<(Vec<RegionKey>, FillPatch)>(key))
+            .filter(|(sel, _)| *sel == keys)
+            .map(|(_, p)| p)
+            .unwrap_or_default();
+        let shown: Vec<Option<RegionFill>> =
+            fills.iter().map(|f| pending.apply(*f, fallback)).collect();
+        let edit = region_fields(ui, &shown, fallback);
+        pending.merge(edit);
+        let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
+        if pending != FillPatch::default() && settled {
+            ui.data_mut(|d| d.remove::<(Vec<RegionKey>, FillPatch)>(key));
+            let commands: Vec<Command> = keys
+                .iter()
+                .zip(&fills)
+                .filter_map(|(k, f)| {
+                    let next = pending.apply(*f, fallback);
+                    (next != *f).then(|| Command::SetRegionFill {
+                        regions: vec![k.clone()],
+                        fill: next,
+                    })
+                })
+                .collect();
+            if !commands.is_empty() {
+                self.apply_reporting(&Command::Compound {
+                    label: "Fill region".to_owned(),
+                    commands,
+                });
+            }
+        } else if pending == FillPatch::default() {
+            ui.data_mut(|d| d.remove::<(Vec<RegionKey>, FillPatch)>(key));
+        } else {
+            ui.data_mut(|d| d.insert_temp(key, (keys, pending)));
+        }
+        ui.weak("Each region has its own fill; lines always draw above fills.");
         if !fills_shown {
             ui.weak("Fills are hidden on the canvas: turn on Show fills in the Sketch palette.");
         }
@@ -213,6 +244,103 @@ impl AppState {
     }
 }
 
+const REGION_PENDING: &str = "locus.region_fill.pending";
+
+/// A held edit of selected regions' fills (#451): fill on or off, a colour,
+/// an opacity. `None` leaves that part as each region has it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+struct FillPatch {
+    on: Option<bool>,
+    colour: Option<[u8; 3]>,
+    opacity: Option<f64>,
+}
+
+impl FillPatch {
+    /// The region's fill with this edit. Turning a fill on keeps its own
+    /// colour (#388); one that never had a colour gets `fallback`. A fill
+    /// that is off and opaque is no fill at all.
+    fn apply(self, f: Option<RegionFill>, fallback: [u8; 3]) -> Option<RegionFill> {
+        let mut r = f.unwrap_or(RegionFill {
+            fill: Fill::None,
+            opacity: 1.0,
+        });
+        if let Some(on) = self.on {
+            r.fill = r.fill.switched(on, Some(fallback));
+        }
+        if let Some(c) = self.colour {
+            r.fill = Fill::Colour(c);
+        }
+        if let Some(o) = self.opacity {
+            r.opacity = o.clamp(0.0, 1.0);
+        }
+        (r.fill != Fill::None || r.opacity < 1.0).then_some(r)
+    }
+
+    /// Keep what was edited before and add this frame's edits; a colour
+    /// picked after a switch is the colour.
+    fn merge(&mut self, edit: FillPatch) {
+        if edit.on.is_some() {
+            self.on = edit.on;
+            self.colour = None;
+        }
+        self.colour = edit.colour.or(self.colour);
+        self.opacity = edit.opacity.or(self.opacity);
+    }
+}
+
+/// The region Fill fields: on/off, colour and opacity, "—" where the
+/// selected regions differ. Returns this frame's edits.
+fn region_fields(ui: &mut Ui, shown: &[Option<RegionFill>], fallback: [u8; 3]) -> FillPatch {
+    fn same<T: PartialEq + Copy>(v: impl Iterator<Item = T>) -> Option<T> {
+        let mut v = v.peekable();
+        let first = *v.peek()?;
+        v.all(|x| x == first).then_some(first)
+    }
+    let painted = |f: &Option<RegionFill>| f.and_then(|f| f.painted());
+    let on = same(shown.iter().map(|f| painted(f).is_some()));
+    let colour = same(shown.iter().map(|f| f.and_then(|f| f.fill.colour())));
+    let opacity = same(shown.iter().map(|f| f.map_or(1.0, |f| f.opacity)));
+    let mut out = FillPatch::default();
+    egui::Grid::new("region-fill-fields")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Fill");
+            ui.horizontal(|ui| {
+                let mut v = on.unwrap_or(false);
+                if crate::theme::checkbox(ui, &mut v, "")
+                    .on_hover_text("Fill this region (lines always draw above it)")
+                    .changed()
+                {
+                    out.on = Some(v);
+                }
+                let mut c = colour.flatten().unwrap_or(fallback);
+                if v && crate::theme::swatch(ui, &mut c).changed() {
+                    out.colour = Some(c);
+                }
+                if on.is_none() || colour.is_none() {
+                    ui.weak("—").on_hover_text("The selected regions differ");
+                }
+            });
+            ui.end_row();
+            ui.label("Opacity");
+            ui.horizontal(|ui| {
+                let mut o = opacity.unwrap_or(1.0) * 100.0;
+                if ui
+                    .add(DragValue::new(&mut o).range(0.0..=100.0).suffix(" %"))
+                    .on_hover_text("The fill's opacity")
+                    .changed()
+                {
+                    out.opacity = Some((o / 100.0).clamp(0.0, 1.0));
+                }
+                if opacity.is_none() {
+                    ui.weak("—").on_hover_text("The selected regions differ");
+                }
+            });
+            ui.end_row();
+        });
+    out
+}
+
 /// Keep what was edited before and add this frame's edits.
 fn merge(into: &mut StylePatch, edit: &StylePatch) {
     *into = StylePatch {
@@ -231,9 +359,9 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
     };
 }
 
-/// Draw the fields; returns what the user changed this frame.
-/// `fill_only` shows just Fill and Opacity (a region's fill, #370).
-fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> StylePatch {
+/// Draw the fields; returns what the user changed this frame. Objects
+/// have no Fill: regions do (#451).
+fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
     let mut out = StylePatch::default();
     let mixed = |ui: &mut Ui, m: bool| {
         if m {
@@ -243,7 +371,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
     egui::Grid::new("style-fields")
         .num_columns(2)
         .show(ui, |ui| {
-            if !fill_only {
+            {
                 ui.label("Stroke");
                 ui.horizontal(|ui| {
                     let mut by_layer = s.stroke == Some(Stroke::ByLayer);
@@ -301,26 +429,6 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
                 ui.end_row();
             }
 
-            ui.label("Fill");
-            ui.horizontal(|ui| {
-                let mut on = matches!(s.fill, Some(Fill::Colour(_)));
-                let mut c = s.fill.and_then(Fill::colour).unwrap_or(layer_colour);
-                if crate::theme::checkbox(ui, &mut on, "")
-                    .on_hover_text("Fill closed shapes (Engrave layers hatch instead)")
-                    .changed()
-                {
-                    // Each object keeps its own colour through off and on
-                    // (#388); `c` only colours one that never had a fill.
-                    out.fill_on = Some(on);
-                    out.fill = Some(Fill::Colour(c));
-                }
-                if on && crate::theme::swatch(ui, &mut c).changed() {
-                    out.fill = Some(Fill::Colour(c));
-                }
-                mixed(ui, s.fill.is_none());
-            });
-            ui.end_row();
-
             ui.label("Opacity");
             ui.horizontal(|ui| {
                 let mut o = s.opacity.unwrap_or(1.0) * 100.0;
@@ -340,6 +448,54 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3], fill_only: bool) -> Sty
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #451, #388: a region's fill goes off and on keeping its colour; one
+    /// that never had a colour gets the fallback; a colour picked after a
+    /// switch is the colour; opacity alone makes a fill entry.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn region_fill_edits_keep_each_colour() {
+        let red = Some(RegionFill {
+            fill: Fill::Colour([200, 0, 0]),
+            opacity: 0.5,
+        });
+        let off = FillPatch {
+            on: Some(false),
+            ..FillPatch::default()
+        };
+        let on = FillPatch {
+            on: Some(true),
+            ..FillPatch::default()
+        };
+        let hidden = off.apply(red, [9, 9, 9]);
+        assert_eq!(hidden.unwrap().fill, Fill::Off([200, 0, 0]));
+        assert_eq!(on.apply(hidden, [9, 9, 9]), red);
+        assert_eq!(
+            on.apply(None, [9, 9, 9]).unwrap().fill,
+            Fill::Colour([9, 9, 9])
+        );
+        let mut p = on;
+        p.merge(FillPatch {
+            colour: Some([0, 0, 255]),
+            ..FillPatch::default()
+        });
+        assert_eq!(
+            p.apply(None, [9, 9, 9]).unwrap().fill,
+            Fill::Colour([0, 0, 255])
+        );
+        let faint = FillPatch {
+            opacity: Some(0.3),
+            ..FillPatch::default()
+        };
+        assert_eq!(
+            faint.apply(None, [9, 9, 9]),
+            Some(RegionFill {
+                fill: Fill::None,
+                opacity: 0.3
+            })
+        );
+        assert_eq!(off.apply(None, [9, 9, 9]), None);
+    }
     use locus_geom::Vec2;
 
     fn line(c: &mut AppState, y: f64, style: Style) -> EntityId {

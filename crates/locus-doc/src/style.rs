@@ -125,6 +125,13 @@ impl Style {
                 value: self.opacity,
             });
         }
+        // Fills belong to regions since format v19 (#451): an object has
+        // none, so no fill can hide another object's line.
+        if self.fill != Fill::None {
+            return Err(DocError::Invalid(
+                "objects have no fill: fill a region instead (SetRegionFill)".to_owned(),
+            ));
+        }
         Ok(())
     }
 

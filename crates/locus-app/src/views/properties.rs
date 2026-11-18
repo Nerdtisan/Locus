@@ -803,13 +803,13 @@ mod tests {
         assert_eq!(state.tools.calibrate.layer, Some(layer));
     }
 
-    /// #370: selecting a region shows its Fill; setting the fill of its
-    /// boundary curves fills it.
+    /// #370, #451: selecting a region shows its own Fill; setting it fills
+    /// the region and no object.
     #[test]
     #[allow(clippy::unwrap_used, clippy::expect_used)]
     fn a_selected_region_shows_and_takes_its_fill() {
         use egui::accesskit::Role;
-        use locus_doc::{Command, Fill, StylePatch};
+        use locus_doc::{Command, Fill};
         let mut state = AppState::default();
         let mut settings = Settings::default();
         let key = state
@@ -840,42 +840,35 @@ mod tests {
         };
         assert!(has(Role::Label, "fill"), "a Fill section");
         assert!(has(Role::CheckBox, ""), "the fill on/off box");
-        // The fill comes from the boundary curves: set theirs, and the
-        // region is filled.
-        let ids = state.region_boundary_curves();
-        assert!(!ids.is_empty());
+        // The region has its own fill (#451): set it, and it is filled.
         let region = state.region(&key).unwrap().clone();
         assert!(state.region_fill(&region).is_none());
-        assert!(state.apply_reporting(&Command::SetStyle {
-            entities: ids,
-            patch: StylePatch {
-                fill: Some(Fill::Colour([200, 40, 40])),
-                ..StylePatch::default()
-            },
+        assert!(state.apply_reporting(&Command::SetRegionFill {
+            regions: vec![key.clone()],
+            fill: Some(locus_doc::region_fill::RegionFill {
+                fill: Fill::Colour([200, 40, 40]),
+                opacity: 0.6,
+            }),
         }));
         let region = state.region(&key).unwrap().clone();
         let c = state.region_fill(&region).expect("filled");
-        assert_eq!((c.r(), c.g(), c.b()), (200, 40, 40));
-        // Regression (#388): untick Fill, then tick it again, as the Fill
-        // box does (the default colour is only for curves that never had
-        // one): the chosen colour comes back.
-        let switch = |state: &mut AppState, on: bool| {
-            let ids = state.region_boundary_curves();
-            assert!(state.apply_reporting(&Command::SetStyle {
-                entities: ids,
-                patch: StylePatch {
-                    fill_on: Some(on),
-                    fill: Some(Fill::Colour([0, 0, 0])),
-                    ..StylePatch::default()
-                },
-            }));
-            let region = state.region(&key).unwrap().clone();
-            state.region_fill(&region)
-        };
-        assert!(switch(&mut state, false).is_none(), "unfilled");
-        let c = switch(&mut state, true).expect("filled again");
-        assert_eq!((c.r(), c.g(), c.b()), (200, 40, 40), "the colour is kept");
-        assert_eq!(state.undo_label(), Some("Set style"));
+        assert_eq!(c, egui::Color32::from_rgba_unmultiplied(200, 40, 40, 153));
+        assert_eq!(state.undo_label(), Some("Fill region"));
+        // The panel still draws with the fill set, and no object got one.
+        frame_again(&mut state, &mut settings, &ctx);
+        assert!(
+            state
+                .document()
+                .entities()
+                .iter()
+                .all(|(_, e)| e.style.fill == Fill::None)
+        );
+    }
+
+    fn frame_again(state: &mut AppState, settings: &mut Settings, ctx: &egui::Context) {
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            state.properties_ui(ui, settings);
+        });
     }
 
     /// The Inspector draws each context of design §2.1 without panicking:

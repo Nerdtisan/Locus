@@ -221,6 +221,7 @@ S opens a search box at the cursor (Fusion's shortcut box). It shows recent and 
 ### 6.2 Style panel and eyedropper (#287)
 
 - The Inspector's Style section edits the selection: stroke colour, stroke width, pen number, fill (none or a colour), opacity, and a dash pattern where the export formats support one. Fill applies to closed shapes; on Engrave layers it still means hatch (§7).
+- **Fills belong to regions (#451, owner direction 2026-11-18).** Objects no longer have a Fill row. To fill a region, click inside a closed shape to select it (#370). The Inspector then shows a **Fill** section for the selected regions: on/off, colour and opacity, with "—" where they differ. Each region fills on its own: a ring and the shape inside it are separate. Lines always draw above fills, on the canvas and in exports. Files from before format v19 move each object fill onto the regions it outlined, which is how the canvas already showed them.
 - **Eyedropper** (in the Style header): click it, then click any object. Its style is copied to the selection in one command. With nothing selected, it sets the current style.
 - New geometry takes the **current style**, shown in the Inspector when nothing is selected (default, §9 #5).
 - Pen width now comes from each object for the stroke-width preview, hatch spacing on Draw layers and stroke-edge dimensions (ADR 0014).

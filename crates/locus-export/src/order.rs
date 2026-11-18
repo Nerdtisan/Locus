@@ -57,22 +57,14 @@ fn order_layer(layer: &mut ExportLayer, pen: &mut Vec2) {
         })
         .collect();
 
-    // Lowest rank first: filled paths outermost first, then the rest deepest
-    // first (see the module docs).
-    let rank: Vec<(bool, isize)> = paths
-        .iter()
-        .zip(depth)
-        .map(|(p, d)| {
-            let d = isize::try_from(d).unwrap_or(isize::MAX);
-            if layer.paint(p).fill.is_some() {
-                (false, d)
-            } else {
-                (true, -d)
-            }
-        })
+    // Lowest rank first: deepest first (see the module docs). Paths carry
+    // no fill (fills are regions, written before every stroke, #451).
+    let rank: Vec<isize> = depth
+        .into_iter()
+        .map(|d| -isize::try_from(d).unwrap_or(isize::MAX))
         .collect();
 
-    let mut remaining: Vec<((bool, isize), ExportPath)> = rank.into_iter().zip(paths).collect();
+    let mut remaining: Vec<(isize, ExportPath)> = rank.into_iter().zip(paths).collect();
     let mut out = Vec::with_capacity(remaining.len());
     while !remaining.is_empty() {
         // Lowest rank first; nearest neighbour inside the level.

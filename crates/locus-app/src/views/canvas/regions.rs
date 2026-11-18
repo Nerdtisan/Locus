@@ -236,32 +236,23 @@ impl AppState {
             .map(|r| r.key.clone())
     }
 
-    /// A region's style fill (#338): the fill of the first curve on its
-    /// outer boundary that has one, at that curve's opacity.
+    /// A region's own fill (#451), at its opacity.
     pub(crate) fn region_fill(&self, r: &Region) -> Option<Color32> {
-        let doc = self.doc.sketcher.document();
-        r.outer.edges.iter().find_map(|e| {
-            let s = doc.entity(EntityId::new(e.source))?.style;
-            let [red, g, b] = s.fill.painted()?;
-            let a = (s.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
-            Some(Color32::from_rgba_unmultiplied(red, g, b, a))
-        })
+        let f = self.doc.sketcher.document().region_fill(&r.key)?;
+        let [red, g, b] = f.painted()?;
+        let a = (f.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+        Some(Color32::from_rgba_unmultiplied(red, g, b, a))
     }
 
-    /// The curves on the outer boundaries of the selected regions, which
-    /// give them their fill (#338, #370): sorted, once each, no points.
-    pub(crate) fn region_boundary_curves(&self) -> Vec<EntityId> {
-        let mut ids: Vec<EntityId> = self
-            .selection
-            .regions
-            .selected
-            .iter()
-            .filter_map(|k| self.region(k))
-            .flat_map(|r| r.outer.edges.iter().map(|e| EntityId::new(e.source)))
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        crate::views::style::styled(self.doc.sketcher.document(), &ids)
+    /// The colour a region's outline is drawn in: the layer colour of its
+    /// first curve, the swatch a new fill starts from.
+    pub(crate) fn region_layer_colour(&self, k: &RegionKey) -> [u8; 3] {
+        let doc = self.doc.sketcher.document();
+        self.region(k)
+            .and_then(|r| r.outer.edges.first())
+            .and_then(|e| doc.entity(EntityId::new(e.source)))
+            .and_then(|e| doc.layer(e.layer))
+            .map_or([128, 128, 128], |l| l.colour)
     }
 
     pub(crate) fn region(&self, k: &RegionKey) -> Option<&Region> {
@@ -735,11 +726,10 @@ mod tests {
         assert_eq!(xs, vec![(5.0, 1)]);
     }
 
-    /// #338: a closed shape's region takes its style fill, at its opacity;
-    /// without a fill it has none.
+    /// #451: a region has its own fill and opacity; without one it has none.
     #[test]
     #[allow(clippy::expect_used)]
-    fn a_region_takes_its_objects_fill() {
+    fn a_region_has_its_own_fill() {
         use crate::settings::Units;
         use crate::tool::ToolEvent;
         use crate::tools::{Pick, Tool};
@@ -751,22 +741,12 @@ mod tests {
         }
         let r = c.regions().first().cloned().expect("a region");
         assert_eq!(c.region_fill(&r), None);
-        let curves: Vec<EntityId> = c
-            .doc
-            .sketcher
-            .document()
-            .entities()
-            .iter()
-            .filter(|(_, e)| !matches!(e.geom, locus_doc::Geom::Point { .. }))
-            .map(|(id, _)| id)
-            .collect();
-        assert!(c.apply_reporting(&Command::SetStyle {
-            entities: curves,
-            patch: locus_doc::StylePatch {
-                fill: Some(locus_doc::Fill::Colour([10, 200, 30])),
-                opacity: Some(0.5),
-                ..Default::default()
-            },
+        assert!(c.apply_reporting(&Command::SetRegionFill {
+            regions: vec![r.key.clone()],
+            fill: Some(locus_doc::region_fill::RegionFill {
+                fill: locus_doc::Fill::Colour([10, 200, 30]),
+                opacity: 0.5,
+            }),
         }));
         let r = c.regions().first().cloned().expect("a region");
         assert_eq!(

@@ -30,6 +30,7 @@ pub mod path_text;
 pub mod pattern;
 pub mod recipe;
 pub mod reference;
+pub mod region_fill;
 pub mod regions;
 pub mod solve;
 pub mod style;
