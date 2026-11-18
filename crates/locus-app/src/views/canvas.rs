@@ -20,6 +20,7 @@ mod ai;
 mod bed;
 mod calibrate_tool;
 mod corner_dialog;
+mod corner_handle;
 pub(crate) mod dialog;
 pub(crate) mod images;
 mod machine;
@@ -36,6 +37,7 @@ mod regions;
 mod text_dialog;
 
 pub(crate) use calibrate_tool::CalibrateDraft;
+pub(crate) use corner_handle::{CornerHandle, ResizePreview};
 pub(crate) use machine::MachinePath;
 pub(crate) use mirror_tool::MirrorDraft;
 pub(crate) use offset_tool::OffsetDraft;
@@ -295,12 +297,18 @@ impl AppState {
             self.mirror_input(ui, &resp, rect, settings.units);
             self.refresh_mirror_preview();
         } else if self.modify().is_some() {
-            if !(self.modify() == Some(Modify::Offset)
-                && self.offset_pointer(ui, &resp, rect, settings.units))
-            {
+            let used = match self.modify() {
+                Some(Modify::Offset) => self.offset_pointer(ui, &resp, rect, settings.units),
+                Some(m) if m.takes_two() => self.corner_pointer(ui, &resp, rect, m, settings.units),
+                _ => false,
+            };
+            if !used {
                 self.modify_input(ui, &resp, rect, settings.units);
             }
             self.refresh_offset_preview(settings.units);
+            if let Some(m) = self.modify().filter(|m| m.takes_two()) {
+                self.refresh_corner_resize(m, settings.units);
+            }
         } else if self.tool() == Tool::Select {
             self.pick_and_select(ui, &resp, rect, settings.units, true);
         } else {
@@ -374,6 +382,7 @@ impl AppState {
         }
         if let Some(m) = self.modify().filter(|m| m.takes_two()) {
             self.draw_corner_preview(&frame, m);
+            self.draw_corner_handles(&frame, m);
         }
         self.draw_offset_draft(&frame);
         if let Some(circular) = self.pattern_kind() {
@@ -661,7 +670,9 @@ impl AppState {
                 }
                 return;
             }
-            if self.tools.corner_pick.is_some() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if (self.tools.corner_pick.is_some() || self.tools.corner_edit.is_some())
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            {
                 if let Some(m) = self.modify() {
                     self.corner_ok(m, units);
                 }

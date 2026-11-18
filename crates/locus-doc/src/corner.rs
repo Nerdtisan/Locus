@@ -18,7 +18,7 @@ use crate::command::Command;
 use crate::constraint::{Constraint, Dimension};
 use crate::document::Document;
 use crate::entity::{EntityKind, Geom};
-use crate::ids::EntityId;
+use crate::ids::{ConstraintId, EntityId};
 use crate::modify::{Builder, ModifyError, Plan};
 use core::f64::consts::{PI, TAU};
 use locus_geom::{SOLVER_TOL, Vec2};
@@ -441,6 +441,88 @@ pub fn with_exprs(plan: Plan, exprs: &[Option<String>]) -> Plan {
     }
 }
 
+/// The dimensions of a chamfer made by [`chamfer`], found again so it can be
+/// resized (#418).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChamferDims {
+    /// The virtual sharp both set-backs are measured from.
+    pub corner: EntityId,
+    /// The set-back to the chamfer line's start (along the first line).
+    pub first: ConstraintId,
+    /// The set-back to its end, or the angle when `angle` is set.
+    pub second: ConstraintId,
+    pub angle: bool,
+}
+
+fn driving(c: &Constraint) -> bool {
+    c.dimension().is_some_and(|d| !d.driven)
+}
+
+/// The radius dimension of a fillet: `arc` is an arc with a driving radius,
+/// tangent to two curves, as [`fillet`] leaves it (#418). `None` for any
+/// other curve.
+#[must_use]
+pub fn fillet_dims(doc: &Document, arc: EntityId) -> Option<ConstraintId> {
+    doc.arc(arc)?;
+    let mut radius = None;
+    let mut tangents = 0;
+    for (id, c) in doc.constraints() {
+        match c {
+            Constraint::Radius { curve, .. } if *curve == arc && driving(c) => {
+                radius = Some(*id);
+            }
+            Constraint::Tangent { a, b } if *a == arc || *b == arc => tangents += 1,
+            _ => {}
+        }
+    }
+    radius.filter(|_| tangents >= 2)
+}
+
+/// The dimensions of a chamfer: `line` runs between two set-back points,
+/// each measured from the same corner point, or the first set-back and an
+/// angle to the line, as [`chamfer`] leaves it (#418). `None` for any other
+/// line.
+#[must_use]
+pub fn chamfer_dims(doc: &Document, line: EntityId) -> Option<ChamferDims> {
+    let Geom::Line { start, end } = doc.entity(line)?.geom else {
+        return None;
+    };
+    let other = |a: EntityId, b: EntityId, p: EntityId| {
+        if a == p {
+            Some(b)
+        } else if b == p {
+            Some(a)
+        } else {
+            None
+        }
+    };
+    let cons = doc.constraints();
+    // The first set-back: start to a point that is not the line's own.
+    let (first, corner) = cons.iter().find_map(|(id, c)| match c {
+        Constraint::Distance { a, b, .. } if driving(c) => other(*a, *b, start)
+            .filter(|o| *o != end && doc.point_pos(*o).is_some())
+            .map(|o| (*id, o)),
+        _ => None,
+    })?;
+    cons.iter().find_map(|(id, c)| match c {
+        Constraint::Distance { a, b, .. } if driving(c) && other(*a, *b, end) == Some(corner) => {
+            Some(ChamferDims {
+                corner,
+                first,
+                second: *id,
+                angle: false,
+            })
+        }
+        Constraint::Angle { b, .. } if driving(c) && *b == line => Some(ChamferDims {
+            corner,
+            first,
+            second: *id,
+            angle: true,
+        }),
+        _ => None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,5 +776,55 @@ mod tests {
             chamfer(&d, a, arc, ChamferSize::Equal(1.0)),
             Err(ModifyError::Unsupported(EntityKind::Arc))
         );
+    }
+
+    /// #418: a fillet and a chamfer are found again by their curve, with
+    /// the dimensions that size them; other curves are not.
+    #[test]
+    fn fillets_and_chamfers_are_found_by_their_curve() {
+        let (d, a, b, _) = corner_doc();
+        let mut sk = Sketcher::new(d);
+        sk.apply(&fillet(sk.document(), a, b, 3.0).unwrap().command)
+            .unwrap();
+        let (arc, _) = arc_of(sk.document());
+        let r = fillet_dims(sk.document(), arc).unwrap();
+        assert!(matches!(
+            sk.document().constraint(r),
+            Some(Constraint::Radius { curve, .. }) if *curve == arc
+        ));
+        assert!(fillet_dims(sk.document(), a).is_none());
+        assert!(chamfer_dims(sk.document(), a).is_none());
+
+        for size in [
+            ChamferSize::Distances(2.0, 4.0),
+            ChamferSize::DistanceAngle(2.0, 1.0),
+        ] {
+            let (d, a, b, o) = corner_doc();
+            let mut sk = Sketcher::new(d);
+            sk.apply(&chamfer(sk.document(), a, b, size).unwrap().command)
+                .unwrap();
+            let doc = sk.document();
+            let line = doc
+                .entities()
+                .iter()
+                .map(|(id, _)| id)
+                .filter(|id| *id != a && *id != b && doc.line(*id).is_some())
+                .last()
+                .unwrap();
+            let dims = chamfer_dims(doc, line).unwrap();
+            assert_eq!(dims.corner, o);
+            assert_eq!(dims.angle, matches!(size, ChamferSize::DistanceAngle(..)));
+            let value = |id| {
+                doc.constraint(id)
+                    .and_then(Constraint::dimension)
+                    .unwrap()
+                    .value
+            };
+            assert!((value(dims.first) - 2.0).abs() < 1e-9);
+            if !dims.angle {
+                assert!((value(dims.second) - 4.0).abs() < 1e-9);
+            }
+            assert!(chamfer_dims(doc, a).is_none() && fillet_dims(doc, line).is_none());
+        }
     }
 }
