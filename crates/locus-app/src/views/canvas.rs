@@ -26,6 +26,7 @@ pub(crate) mod images;
 mod machine;
 mod manipulator;
 mod mirror_tool;
+mod offset_handle;
 mod offset_tool;
 mod offsets;
 mod path_text_tool;
@@ -40,6 +41,7 @@ pub(crate) use calibrate_tool::CalibrateDraft;
 pub(crate) use corner_handle::{CornerHandle, ResizePreview};
 pub(crate) use machine::MachinePath;
 pub(crate) use mirror_tool::MirrorDraft;
+pub(crate) use offset_handle::{OffsetArrow, OffsetAxis, OffsetEdit};
 pub(crate) use offset_tool::OffsetDraft;
 pub(crate) use path_text_tool::{PathTextDraft, Slide};
 pub(crate) use pattern_tool::PatternDraft;
@@ -298,7 +300,14 @@ impl AppState {
             self.refresh_mirror_preview();
         } else if self.modify().is_some() {
             let used = match self.modify() {
-                Some(Modify::Offset) => self.offset_pointer(ui, &resp, rect, settings.units),
+                Some(Modify::Offset) => {
+                    let used = self.offset_pointer(ui, &resp, rect, settings.units)
+                        || self.offset_edit_pointer(ui, &resp, rect);
+                    if !used {
+                        self.offset_note_click(&resp, rect);
+                    }
+                    used
+                }
                 Some(m) if m.takes_two() => self.corner_pointer(ui, &resp, rect, m, settings.units),
                 _ => false,
             };
@@ -310,11 +319,16 @@ impl AppState {
                 self.refresh_corner_resize(m, settings.units);
             }
         } else if self.tool() == Tool::Select {
-            self.pick_and_select(ui, &resp, rect, settings.units, true);
+            // An existing offset's arrow takes its drags first (#444).
+            if !self.offset_edit_pointer(ui, &resp, rect) {
+                self.offset_note_click(&resp, rect);
+                self.pick_and_select(ui, &resp, rect, settings.units, true);
+            }
         } else {
             self.tool_input(ui, &resp, rect, settings);
         }
 
+        self.refresh_offset_edit();
         self.sync_machine_profile(settings);
         let painter = painter.with_clip_rect(rect);
         if display.grid {
@@ -388,6 +402,7 @@ impl AppState {
             self.draw_corner_handles(&frame, m);
         }
         self.draw_offset_draft(&frame);
+        self.draw_offset_edit(&frame);
         if let Some(circular) = self.pattern_kind() {
             self.draw_pattern_draft(&frame, circular);
         }

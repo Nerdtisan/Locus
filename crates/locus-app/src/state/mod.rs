@@ -109,6 +109,7 @@ impl AppState {
         self.tools.corner_edit = None;
         self.tools.corner_drag = None;
         self.tools.offset_draft = None;
+        self.tools.offset_edit = None;
         self.doc.notice = None;
     }
 
