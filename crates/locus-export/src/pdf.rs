@@ -35,12 +35,18 @@ pub fn to_pdf(doc: &Document) -> Vec<u8> {
 /// Write a prepared model as a one-page PDF 1.5.
 #[must_use]
 pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
-    let (min, w, h) = match model.bounds() {
-        Some(b) => (b.min, b.width(), b.height()),
-        None => (Vec2::ZERO, 0.0, 0.0),
-    };
-    let (w, h) = (w.max(MIN_PAGE_MM), h.max(MIN_PAGE_MM));
+    // Coordinates from the anchor; the page (half of every stroke included,
+    // #450) is the MediaBox, whose origin takes any padding so a placed job
+    // (#443) keeps its coordinates.
+    let zero = locus_geom::Aabb::from_points(Vec2::ZERO, Vec2::ZERO);
+    let (anchor, page) = model.page().unwrap_or((zero, zero));
+    let min = anchor.min;
+    let (w, h) = (
+        page.width().max(MIN_PAGE_MM),
+        page.height().max(MIN_PAGE_MM),
+    );
     let map = |p: Vec2| Vec2::new((p.x - min.x) * PT_PER_MM, (p.y - min.y) * PT_PER_MM);
+    let origin = map(page.min);
 
     let layers: Vec<_> = model
         .layers
@@ -134,9 +140,11 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
         ),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
         format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Contents 4 0 R /Resources << /Properties << {props}>> {ext_g_state}>> >>",
-            num(w * PT_PER_MM),
-            num(h * PT_PER_MM)
+            "<< /Type /Page /Parent 2 0 R /MediaBox [{} {} {} {}] /Contents 4 0 R /Resources << /Properties << {props}>> {ext_g_state}>> >>",
+            num(origin.x),
+            num(origin.y),
+            num(origin.x + w * PT_PER_MM),
+            num(origin.y + h * PT_PER_MM)
         ),
         format!(
             "<< /Length {} >>\nstream\n{content}endstream",
@@ -312,8 +320,9 @@ mod tests {
         };
         let t = text(&to_pdf_model(&m));
         assert!(t.starts_with("%PDF-1.5"));
-        // 100 x 50 mm = 283.4646 x 141.7323 pt
-        assert!(t.contains("/MediaBox [0 0 283.4646 141.7323]"), "{t}");
+        // 100 x 50 mm plus half the 0.1 mm hairline each side (#450):
+        // 100.1 x 50.1 mm = 283.748 x 142.0157 pt
+        assert!(t.contains("/MediaBox [0 0 283.748 142.0157]"), "{t}");
         assert_eq!(t.matches("/Type /OCG").count(), 1);
         assert!(t.contains("/OC /L0 BDC"));
         assert_eq!(t.matches("h S").count(), 2);

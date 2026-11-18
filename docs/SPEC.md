@@ -316,6 +316,8 @@ Document → Solve → Collect exportable geometry (exclude construction, refere
 
 **Default profile (#419).** Every export starts from the document's machine profile: the export dialog preselects it, a direct format export (File ▸ Export ▸ SVG…, PNG…) still applies its colours, hairlines and bed check, and `locus-cli export` uses it when no `--format`, `--profile` or `--profile-file` is given. The CLI knows only the built-in presets, so a document whose profile is a user profile needs `--profile-file`. **Placed jobs (#443):** when the document has a placement and the profile a bed, `prepare_for` moves the design by the placement (after the operation transforms, before validation, so the bed check sees the placed job) and sets the page to the whole bed, for every writer and for per-layer files. Without a placement the page is the design's own bounds, as before.
 
+**Page bounds include strokes (#450).** The SVG, PDF and PNG page is the *visual* bounds: the geometry plus half of each path's stroke width (the hairline on machine layers, the object's width on Draw), so a thick stroke is never cut off at the edge. Coordinates are measured from an anchor: the frame when there is one (the #443 bed, or the whole design's page for per-layer files), otherwise the visual bounds. Padding that reaches past the anchor is written as a negative `viewBox` origin (SVG) or a `MediaBox` origin (PDF), so a placed job keeps its coordinates. Per-layer files share the whole design's page. Cap and join extents follow when M6 adds caps and joins. DXF has no page and is unchanged.
+
 Export is always one-way. Native file is the source of truth.
 
 ---

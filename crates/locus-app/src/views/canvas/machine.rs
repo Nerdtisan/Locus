@@ -513,11 +513,12 @@ mod tests {
                 .all(|p| (p.distance(Vec2::new(20.0, 15.0)) - 4.9).abs() < 1e-9)
         );
         // Same model, same numbers in the exported file: the SVG is shifted
-        // to the origin, so its 40.2 mm width is the preview's span and the
-        // hole keeps its 4.9 mm radius about the shifted centre.
+        // to the origin, so its width is the preview's 40.2 mm span plus the
+        // 0.1 mm hairline (half each side, #450), and the hole keeps its
+        // 4.9 mm radius about the shifted centre.
         let svg = String::from_utf8(locus_export::to_svg_model(&model)).unwrap();
         assert!(((hi - lo) - 40.2).abs() < 1e-9);
-        assert!(svg.contains("width=\"40.2mm\""), "{svg}");
-        assert!(svg.contains("cx=\"20.1\" cy=\"15.1\" r=\"4.9\""), "{svg}");
+        assert!(svg.contains("width=\"40.3mm\""), "{svg}");
+        assert!(svg.contains("cx=\"20.15\" cy=\"15.15\" r=\"4.9\""), "{svg}");
     }
 }

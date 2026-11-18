@@ -49,9 +49,10 @@ fn exported_layers_only_each_get_a_file_named_after_them() {
 #[test]
 fn every_file_shares_the_whole_designs_canvas() {
     let (fs, whole) = files();
-    let want = whole.bounds().unwrap();
+    // The whole design's page, strokes included (#450).
+    let want = whole.page().unwrap().1;
     for f in &fs {
-        assert_eq!(f.model.bounds(), Some(want), "{}", f.layer_name);
+        assert_eq!(f.model.page(), Some((want, want)), "{}", f.layer_name);
         assert_eq!(f.model.layers.len(), 1);
     }
     // The same size line in the SVG header of every file and of the whole.
