@@ -307,6 +307,7 @@ impl AppState {
             self.tool_input(ui, &resp, rect, settings);
         }
 
+        self.sync_machine_profile(settings);
         let painter = painter.with_clip_rect(rect);
         if display.grid {
             grid::draw(&painter, &self.view.camera, rect, dark);
@@ -324,7 +325,6 @@ impl AppState {
         let (flag_constraints, flag_entities) = self.flagged();
         self.draw_regions(&painter, rect, dark);
         self.draw_bed(&painter, rect, dark, settings);
-        self.draw_machine(&painter, rect, dark);
         self.draw_stroke_preview(&frame, dark);
         self.view.drawn = frame.draw_items(&self.doc.scene, |item| {
             if flag_entities.contains(&item.id) {
@@ -341,6 +341,9 @@ impl AppState {
                 Emphasis::None
             }
         });
+        // Over the sketch (#423): a Draw or uncompensated Cut path lies on
+        // its sketch line, so drawn underneath it would never show.
+        self.draw_machine(&painter, rect, dark);
         let doc = self.doc.sketcher.document();
         let guides: Vec<(Vec2, Vec2)> = self
             .selection

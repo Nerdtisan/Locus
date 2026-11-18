@@ -260,6 +260,15 @@ Machine profiles (M4, #236): a profile bundles an export format (an exporter id)
 
 A new layer also gets the profile's default kerf or blade offset. A layer whose operation the machine doesn't run keeps it, and its picker still lists it. The document's profile is chosen from the app bar (next to the document name), File ▸ Machine profile, the Inspector's Document section or the export dialog. Choosing one is a single undoable `SetProfile` (§11). It **never rewrites layers silently**. If some layers don't fit the machine, the app lists them with the operation each would get: the same operation if offered, Cut ↔ Drag knife for a through-cut, otherwise the machine's default. Accepting changes them all as one undo step. The profile's bed (size and origin corner) is drawn on the canvas, and Machine preview uses the profile (§8).
 
+**Machine preview (#423).** The preview draws every exported layer's machine result over the sketch. It comes from the same `prepare_for` call, with the document's profile, that the exporters use:
+- Cut: the kerf-compensated path with a band of the true kerf width (#224).
+- Drag knife: the blade-offset path with its swivel arcs.
+- Engrave: the outline and its hatch.
+- Score: the hairline.
+- Draw: each object's stroke at its pen width.
+
+Each is tinted in its operation's editor colour, and a legend lists every layer's operation (#420). When the preview adds nothing, the legend says why. Examples: no machine profile; nothing exported; a Cut layer without kerf compensation; a Drag knife with no blade offset; "Draw layers have no machine compensation".
+
 ---
 
 ## 8. Export pipeline
