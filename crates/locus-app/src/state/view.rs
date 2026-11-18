@@ -29,6 +29,10 @@ pub struct ViewState {
     /// Machine preview on, and its polylines (#176).
     pub(crate) machine_on: bool,
     pub(crate) machine: Vec<MachinePath>,
+    /// Why the preview looks as it does, shown in its legend (#423).
+    pub(crate) machine_notes: Vec<String>,
+    /// The document's profile as the preview last used it (#423).
+    pub(crate) machine_profile: Option<locus_export::MachineProfile>,
     /// After a profile change: the offer to update layers the machine
     /// can't run (#419). Never applied without the user's yes.
     pub(crate) profile_offer: Option<crate::views::machine_profile::LayerOffer>,
@@ -92,6 +96,8 @@ impl Default for ViewState {
             pointer_over: false,
             machine_on: false,
             machine: Vec::new(),
+            machine_notes: Vec::new(),
+            machine_profile: None,
             profile_offer: None,
             stroke_on: false,
             dim_rects: Vec::new(),

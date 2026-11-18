@@ -1,36 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Machine preview (#176, SPEC §7, §8): the kerf- and blade-compensated
-//! paths and hatch fills, drawn over the sketch from the same `prepare` call
-//! the exporters use, so what is shown is what will be cut.
+//! Machine preview (#176, #423, SPEC §7, §8): every layer's machine result,
+//! drawn over the sketch from the same `prepare_for` call the exporters use
+//! with the document's machine profile, so what is shown is what will be
+//! cut: kerf-compensated Cut paths with their kerf band (#224), blade-offset
+//! Drag-knife paths, Engrave hatch, Score hairlines and Draw strokes at each
+//! object's pen width, each tinted by its operation (#420). When the preview
+//! adds nothing to the sketch, its legend says why.
+//!
+//! #423: the preview used to draw only layers whose output differs from the
+//! sketch (a compensated Cut, a Drag knife with an offset, Engrave), from a
+//! model prepared without the profile. A new document has one Draw layer and
+//! Cut's default kerf is 0, so turning it on changed nothing and said nothing.
 
 use crate::state::AppState;
 use egui::{Color32, Painter, Pos2, Rect, Stroke};
 use locus_doc::{Compensation, Document, Operation, OperationKind};
-use locus_export::{ExportModel, PathSeg, Shape};
+use locus_export::{ExportModel, MachineProfile, PathSeg, Shape};
 use locus_geom::{EXPORT_TOL, Vec2};
 
-/// One polyline to draw, and whether it is a hatch line (drawn thinner).
-#[derive(Debug, Clone, Default)]
+/// One polyline to draw: its operation, its true width and whether it is a
+/// hatch line (drawn thinner).
+#[derive(Debug, Clone)]
 pub(crate) struct MachinePath {
     pub points: Vec<Vec2>,
+    pub kind: OperationKind,
     pub hatch: bool,
-    /// The kerf the path was offset for, mm (0 off a Cut layer): drawn as a
-    /// band of that true width around the path (#224).
-    pub kerf: f64,
+    /// The width the machine makes, mm, drawn as a band of that true width:
+    /// the kerf on a Cut layer (#224), the pen on a Draw layer; 0 for a
+    /// hairline.
+    pub band: f64,
 }
 
 /// Arc flattening step for the preview, radians.
 const STEP: f64 = 0.05;
-
-/// Layers whose output differs from the sketch (SPEC §7).
-fn transformed(op: &Operation) -> bool {
-    match op {
-        Operation::Cut(p) => p.compensation != Compensation::None && p.kerf_width > 0.0,
-        Operation::DragKnife(p) => p.blade_offset > 0.0,
-        Operation::Engrave(_) => true,
-        _ => false,
-    }
-}
 
 fn push_seg(s: &PathSeg, out: &mut Vec<Vec2>) {
     let mut pts: Vec<Vec2> = Vec::new();
@@ -57,28 +59,73 @@ fn push_seg(s: &PathSeg, out: &mut Vec<Vec2>) {
     out.extend(pts);
 }
 
-/// The preview polylines of a prepared model.
+/// The preview polylines of a prepared model: every exported layer.
 pub(crate) fn paths(model: &ExportModel) -> Vec<MachinePath> {
     let mut out = Vec::new();
-    for layer in model.layers.iter().filter(|l| transformed(&l.operation)) {
-        let engrave = matches!(layer.operation, Operation::Engrave(_));
-        let kerf = match &layer.operation {
-            Operation::Cut(p) => p.kerf_width,
-            _ => 0.0,
-        };
+    for layer in &model.layers {
+        let kind = layer.operation.kind();
+        if kind == OperationKind::Reference {
+            continue;
+        }
         for p in &layer.paths {
             let mut points = Vec::new();
             for s in &p.segs {
                 push_seg(s, &mut points);
             }
-            if points.len() >= 2 {
-                out.push(MachinePath {
-                    points,
-                    hatch: engrave && !p.closed,
-                    kerf,
-                });
+            if points.len() < 2 {
+                continue;
             }
+            let band = match &layer.operation {
+                Operation::Cut(c) => c.kerf_width,
+                Operation::Draw => layer.paint(p).width,
+                _ => 0.0,
+            };
+            out.push(MachinePath {
+                points,
+                kind,
+                hatch: kind == OperationKind::Engrave && !p.closed,
+                band,
+            });
         }
+    }
+    out
+}
+
+/// Why the preview may look like the sketch, for the legend (#423).
+pub(crate) fn notes(profile: Option<&MachineProfile>, model: &ExportModel) -> Vec<String> {
+    let mut out = Vec::new();
+    if profile.is_none() {
+        out.push(
+            "No machine profile set: choose one next to the document name for its bed and hairlines."
+                .to_owned(),
+        );
+    }
+    if model.layers.iter().all(|l| l.paths.is_empty()) {
+        out.push("Nothing to show: no exported layer has geometry.".to_owned());
+        return out;
+    }
+    let mut draw = false;
+    for layer in model.layers.iter().filter(|l| !l.paths.is_empty()) {
+        match &layer.operation {
+            Operation::Cut(c) if c.compensation == Compensation::None || c.kerf_width <= 0.0 => {
+                out.push(format!(
+                    "{}: no kerf compensation, so the cut follows the sketch.",
+                    layer.name
+                ));
+            }
+            Operation::DragKnife(k) if k.blade_offset <= 0.0 => out.push(format!(
+                "{}: blade offset 0, so the knife follows the sketch.",
+                layer.name
+            )),
+            Operation::Draw => draw = true,
+            _ => {}
+        }
+    }
+    if draw {
+        out.push(
+            "Draw layers have no machine compensation: shown at each object's pen width."
+                .to_owned(),
+        );
     }
     out
 }
@@ -94,41 +141,58 @@ impl AppState {
         self.refresh_machine();
     }
 
+    /// Keep the preview's profile in step with the document and settings.
+    /// The canvas calls this every frame; it recomputes only on a change.
+    pub(crate) fn sync_machine_profile(&mut self, settings: &crate::settings::Settings) {
+        let p = crate::views::machine_profile::current(self.document(), settings);
+        if p != self.view.machine_profile {
+            self.view.machine_profile = p;
+            self.refresh_machine();
+        }
+    }
+
     /// Recompute the preview from the document (after every change).
     pub(crate) fn refresh_machine(&mut self) {
-        self.view.machine = if self.view.machine_on {
-            paths(&locus_export::prepare(self.doc.sketcher.document(), false).model)
+        if self.view.machine_on {
+            let doc = self.doc.sketcher.document();
+            let profile = self.view.machine_profile.as_ref();
+            let model = locus_export::prepare_for(doc, false, profile).model;
+            self.view.machine = paths(&model);
+            self.view.machine_notes = notes(profile, &model);
         } else {
-            Vec::new()
-        };
+            self.view.machine = Vec::new();
+            self.view.machine_notes = Vec::new();
+        }
     }
 
     pub(crate) fn draw_machine(&self, painter: &Painter, rect: Rect, dark: bool) {
         if !self.view.machine_on || self.tools.dragging {
             return;
         }
-        let colour = if dark {
-            Color32::from_rgb(255, 120, 220)
-        } else {
-            Color32::from_rgb(200, 0, 150)
-        };
+        let pt_per_mm = self.view.camera.pt_per_mm;
         for p in &self.view.machine {
+            let colour = crate::views::op_chip::colour(p.kind, dark);
             let pts: Vec<Pos2> = p
                 .points
                 .iter()
                 .map(|q| self.view.camera.to_screen(*q, rect))
                 .collect();
-            // The kerf itself is a fraction of a pixel at normal zoom, so the
-            // offset path would vanish into the sketch line: a translucent
-            // band (true kerf width, at least 6 px) marks where the cut goes.
-            if p.kerf > 0.0 {
-                let band = (p.kerf * self.view.camera.pt_per_mm).max(6.0) as f32;
+            // The true width the machine makes. A kerf is a fraction of a
+            // pixel at normal zoom, so it gets at least 6 px to stay visible
+            // next to the sketch line (#224); a pen is drawn at its width.
+            if p.band > 0.0 {
+                let min = if p.kind == OperationKind::Cut {
+                    6.0
+                } else {
+                    1.0
+                };
+                let band = (p.band * pt_per_mm).max(min) as f32;
                 painter.add(egui::Shape::line(
                     pts.clone(),
                     Stroke::new(band, colour.gamma_multiply(0.3)),
                 ));
             }
-            let w = if p.hatch { 0.75 } else { 2.0 };
+            let w = if p.hatch { 0.75 } else { 1.75 };
             painter.add(egui::Shape::line(pts, Stroke::new(w, colour)));
         }
     }
@@ -221,12 +285,25 @@ impl AppState {
         const PAD: f32 = 8.0;
         const ROW: f32 = 18.0;
         const NAME_X: f32 = 76.0;
+        // Why the preview may look like the sketch (#423), wrapped.
+        let notes: Vec<_> = self
+            .view
+            .machine_notes
+            .iter()
+            .map(|n| painter.layout(n.clone(), small.clone(), weak, 300.0))
+            .collect();
         let width = lines
             .iter()
             .map(|(.., n)| NAME_X + n.size().x)
+            .chain(notes.iter().map(|n| n.size().x))
             .fold(title.size().x, f32::max)
             + 2.0 * PAD;
-        let height = PAD * 2.0 + title.size().y + 4.0 + ROW * lines.len() as f32;
+        let notes_h: f32 = notes.iter().map(|n| n.size().y + 3.0).sum();
+        let height = PAD * 2.0
+            + title.size().y
+            + 4.0
+            + ROW * lines.len() as f32
+            + if notes.is_empty() { 0.0 } else { notes_h + 6.0 };
         // Clear of the rulers along the top and left edges.
         let at = rect.min + egui::vec2(28.0, 28.0);
         let frame = Rect::from_min_size(at, egui::vec2(width, height));
@@ -260,6 +337,19 @@ impl AppState {
             );
             y += ROW;
         }
+        if !notes.is_empty() {
+            y += 6.0;
+            painter.hline(
+                (at.x + PAD)..=(at.x + width - PAD),
+                y - 3.0,
+                Stroke::new(1.0, line),
+            );
+        }
+        for n in notes {
+            let h = n.size().y;
+            painter.galley(egui::pos2(at.x + PAD, y), n, weak);
+            y += h + 3.0;
+        }
     }
 }
 
@@ -286,6 +376,133 @@ mod tests {
         assert!(!rows[0].idle);
         assert_eq!(rows[1].layer, "Trace");
         assert!(rows[1].idle);
+    }
+
+    /// #423: a new document (one Draw layer, no profile) shows its strokes
+    /// at their pen width and says why nothing is compensated.
+    #[test]
+    fn a_new_document_shows_its_draw_strokes_and_says_why() {
+        let mut ed = Editor::new(Document::new());
+        let l = Document::default_layer();
+        let c = ed
+            .apply(&Command::AddEntity {
+                layer: l,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Point {
+                    pos: Vec2::new(0.0, 0.0),
+                },
+            })
+            .unwrap()
+            .entities[0];
+        ed.apply(&Command::AddEntity {
+            layer: l,
+            construction: false,
+            style: Default::default(),
+            geom: Geom::Circle {
+                center: c,
+                radius: 10.0,
+            },
+        })
+        .unwrap();
+        let model = locus_export::prepare(ed.document(), false).model;
+        let ps = paths(&model);
+        assert_eq!(ps.len(), 1, "the Draw layer is shown, not skipped");
+        assert_eq!(ps[0].kind, OperationKind::Draw);
+        let pen = locus_doc::Style::default().width;
+        assert!((ps[0].band - pen).abs() < 1e-12, "drawn at the pen width");
+        let n = notes(None, &model);
+        assert!(n.iter().any(|s| s.contains("No machine profile")), "{n:?}");
+        assert!(n.iter().any(|s| s.contains("Draw layers")), "{n:?}");
+        // With a profile, no profile note.
+        let lb = locus_export::profile::find("lightburn", &[]).unwrap();
+        assert!(
+            !notes(Some(&lb), &model)
+                .iter()
+                .any(|s| s.contains("No machine profile"))
+        );
+        // An empty document says there is nothing to show.
+        let empty = locus_export::prepare(&Document::new(), false).model;
+        assert!(paths(&empty).is_empty());
+        assert!(
+            notes(Some(&lb), &empty)
+                .iter()
+                .any(|s| s.contains("Nothing to show"))
+        );
+    }
+
+    /// #423: drag-knife and engrave layers show their machine paths: the
+    /// blade-offset path and the hatch lines, tinted by operation.
+    #[test]
+    fn knife_and_engrave_show_their_machine_paths() {
+        let square = |ed: &mut Editor, l: locus_doc::LayerId, x0: f64| {
+            let pts: Vec<_> = [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)]
+                .iter()
+                .map(|(x, y)| {
+                    ed.apply(&Command::AddEntity {
+                        layer: l,
+                        construction: false,
+                        style: Default::default(),
+                        geom: Geom::Point {
+                            pos: Vec2::new(x0 + x, *y),
+                        },
+                    })
+                    .unwrap()
+                    .entities[0]
+                })
+                .collect();
+            for i in 0..4 {
+                ed.apply(&Command::AddEntity {
+                    layer: l,
+                    construction: false,
+                    style: Default::default(),
+                    geom: Geom::Line {
+                        start: pts[i],
+                        end: pts[(i + 1) % 4],
+                    },
+                })
+                .unwrap();
+            }
+        };
+        let mut ed = Editor::new(Document::new());
+        let knife = Document::default_layer();
+        ed.apply(&Command::SetLayerProps {
+            id: knife,
+            props: LayerProps {
+                operation: Some(OperationKind::DragKnife.default_operation()),
+                ..LayerProps::default()
+            },
+        })
+        .unwrap();
+        square(&mut ed, knife, 0.0);
+        let engrave = ed
+            .apply(&Command::AddLayer {
+                name: "Fill".to_owned(),
+                colour: [0; 3],
+                operation: OperationKind::Engrave.default_operation(),
+            })
+            .unwrap()
+            .layers[0];
+        square(&mut ed, engrave, 50.0);
+        let model = locus_export::prepare(ed.document(), false).model;
+        let ps = paths(&model);
+        let k: Vec<_> = ps
+            .iter()
+            .filter(|p| p.kind == OperationKind::DragKnife)
+            .collect();
+        assert!(!k.is_empty());
+        // Swivel arcs at the corners add points beyond the square's four.
+        assert!(k.iter().map(|p| p.points.len()).sum::<usize>() > 5);
+        let hatch = ps
+            .iter()
+            .filter(|p| p.kind == OperationKind::Engrave && p.hatch)
+            .count();
+        assert!(hatch > 3, "hatch lines: {hatch}");
+        assert!(
+            ps.iter()
+                .any(|p| p.kind == OperationKind::Engrave && !p.hatch),
+            "outline kept"
+        );
     }
 
     #[test]
@@ -335,10 +552,8 @@ mod tests {
                 .iter()
                 .all(|p| (p.length() - 10.5).abs() < 1e-9)
         );
-        // A layer without compensation shows nothing extra.
-        let mut plain = model.clone();
-        plain.layers[0].operation = Operation::Cut(CutParams::default());
-        assert!(paths(&plain).is_empty());
+        assert!((ps[0].band - 1.0).abs() < 1e-12, "the kerf band");
+        assert_eq!(ps[0].kind, OperationKind::Cut);
     }
 
     /// #224: the preview is drawn from the very model the exporters write, so
@@ -400,7 +615,7 @@ mod tests {
         let model = locus_export::prepare(ed.document(), false).model;
         let ps = paths(&model);
         assert_eq!(ps.len(), 2, "outline and hole");
-        assert!(ps.iter().all(|p| (p.kerf - 0.2).abs() < 1e-12));
+        assert!(ps.iter().all(|p| (p.band - 0.2).abs() < 1e-12));
         let all: Vec<Vec2> = ps.iter().flat_map(|p| p.points.iter().copied()).collect();
         let (lo, hi) = all
             .iter()
