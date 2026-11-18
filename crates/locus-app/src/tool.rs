@@ -107,6 +107,9 @@ pub struct ToolCx<'a> {
     /// A fillet or chamfer corner was picked: the two curves, for the
     /// command dialog to size and commit (#217).
     pub corner_pick: Option<(EntityId, EntityId)>,
+    /// An existing fillet or chamfer was clicked with its tool: the curve,
+    /// to resize (#418).
+    pub corner_edit: Option<EntityId>,
 }
 
 /// What a commit left behind, for the host to show.
@@ -434,9 +437,24 @@ impl Tool for ModifyTool {
         let doc = cx.doc;
         if self.m.takes_two() {
             // A corner point shared by exactly two curves picks both.
-            let corner = hit::pick_point(&cx.scene.items, at, cx.tol)
+            let point = hit::pick_point(&cx.scene.items, at, cx.tol);
+            let corner = point
                 .map(|(p, _)| doc.dependents(p).0)
                 .filter(|users| users.len() == 2);
+            // A fillet or chamfer the tool made is clicked to resize it
+            // (#418). A small one's end points lie within the pick radius
+            // of its middle, so only a click right on a point picks that
+            // corner instead.
+            let on_point = point.is_some_and(|(_, q)| q.distance(at) <= cx.tol * 0.5);
+            if !(corner.is_some() && on_point)
+                && self.first.is_none()
+                && let Some(id) = cx.hover.filter(|id| self.m.resizes(doc, *id))
+            {
+                cx.select = Some(vec![id]);
+                cx.notice = Some(None);
+                cx.corner_edit = Some(id);
+                return Flow::Continue;
+            }
             let pair = match (corner, self.first, cx.hover) {
                 (Some(users), _, _) => (users[0], users[1]),
                 (None, None, Some(id)) => {
@@ -661,6 +679,7 @@ mod tests {
             select: None,
             offset: None,
             corner_pick: None,
+            corner_edit: None,
         }
     }
 

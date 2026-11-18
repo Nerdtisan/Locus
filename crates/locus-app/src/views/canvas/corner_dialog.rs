@@ -14,8 +14,8 @@ use crate::render::Frame;
 use crate::scene::Shape;
 use crate::settings::Units;
 use crate::state::{AppState, parse_number, to_stored};
+use locus_doc::Document;
 use locus_doc::modify::Plan;
-use locus_doc::{Document, Editor, EntityId, Geom};
 
 /// A size field's value in mm (or degrees, for an angle), and the
 /// expression to keep when it wasn't a plain number.
@@ -97,6 +97,22 @@ impl AppState {
     /// OK / Enter: run the corner as one undo step. The tool stays active
     /// for the next corner, as Fusion's does.
     pub(crate) fn corner_ok(&mut self, m: Modify, units: Units) -> bool {
+        if self.tools.corner_edit.is_some() {
+            return match self.corner_edit_command(m, units) {
+                Ok(cmd) => {
+                    let ok = cmd.is_none_or(|cmd| self.apply_reporting(&cmd));
+                    if ok {
+                        self.tools.corner_edit = None;
+                        self.selection.items.clear();
+                    }
+                    ok
+                }
+                Err(why) => {
+                    self.doc.notice = Some(why);
+                    false
+                }
+            };
+        }
         match self.corner_plan(m, units) {
             Ok(plan) => {
                 let ok = self.apply_reporting(&plan.command);
@@ -113,10 +129,11 @@ impl AppState {
         }
     }
 
-    /// Esc with a corner picked drops the pick (the tool stays). Returns
-    /// whether there was one.
+    /// Esc with a corner picked, or a fillet or chamfer being resized, drops
+    /// it (the tool stays). Returns whether there was one.
     pub(crate) fn corner_esc(&mut self) -> bool {
-        let had = self.tools.corner_pick.take().is_some();
+        self.tools.corner_drag = None;
+        let had = self.tools.corner_pick.take().is_some() | self.tools.corner_edit.take().is_some();
         if had {
             self.selection.items.clear();
             self.doc.notice = None;
@@ -130,21 +147,14 @@ impl AppState {
         let Some((a, b)) = self.tools.corner_pick else {
             return;
         };
-        let Ok(plan) = self.corner_plan(m, frame.units) else {
+        let Some((after, first_new)) = self.corner_draft_after(m, frame.units) else {
             return;
         };
-        let doc = self.doc.sketcher.document();
-        let first_new = doc.next_id();
-        let mut ed = Editor::new(doc.clone());
-        if ed.apply(&plan.command).is_err() {
-            return;
-        }
-        let after = ed.document();
         let shapes: Vec<Shape> = after
             .entities()
             .iter()
             .filter(|(id, _)| *id == a || *id == b || id.get() >= first_new)
-            .filter_map(|(id, e)| shape(after, id, &e.geom))
+            .filter_map(|(id, _)| super::corner_handle::curve_shape(&after, id))
             .collect();
         frame.draw_preview(&shapes);
     }
@@ -157,9 +167,17 @@ impl AppState {
         m: Modify,
         units: Units,
     ) {
-        let picked = self.tools.corner_pick.is_some();
+        let editing = self.tools.corner_edit.is_some();
+        let picked = self.tools.corner_pick.is_some() || editing;
         let focus = std::mem::take(&mut self.tools.corner_focus);
-        let preview = self.corner_plan(m, units).err().filter(|_| picked);
+        let preview = if editing {
+            self.corner_edit_command(m, units).err()
+        } else {
+            self.corner_plan(m, units).err().filter(|_| picked)
+        };
+        // A resized chamfer keeps its kind: two set-backs, or a set-back
+        // and an angle (the dimensions it has).
+        let angle_chamfer = editing && self.tools.corner.mode == ChamferMode::DistanceAngle;
         let (mut ok, mut cancel) = (false, false);
         let unit = units.label();
         let icon = if m == Modify::Chamfer {
@@ -177,7 +195,13 @@ impl AppState {
             |ui| {
                 use super::dialog::row;
                 row(ui, "Corner", |ui| {
-                    let text = if picked {
+                    let text = if editing {
+                        if m == Modify::Chamfer {
+                            "1 chamfer (resize)"
+                        } else {
+                            "1 fillet (resize)"
+                        }
+                    } else if picked {
                         "1 corner"
                     } else {
                         "Click two curves or their point"
@@ -188,10 +212,17 @@ impl AppState {
                 let c = &mut self.tools.corner;
                 if m == Modify::Chamfer {
                     row(ui, "Type", |ui| {
+                        if angle_chamfer {
+                            ui.label(c.mode.label());
+                            return;
+                        }
                         egui::ComboBox::from_id_salt("chamfer-mode")
                             .selected_text(c.mode.label())
                             .show_ui(ui, |ui| {
                                 for mode in ChamferMode::ALL {
+                                    if editing && mode == ChamferMode::DistanceAngle {
+                                        continue;
+                                    }
                                     ui.selectable_value(&mut c.mode, mode, mode.label());
                                 }
                             });
@@ -275,21 +306,12 @@ pub(crate) fn focus_all(
     state.store(ui.ctx(), r.id);
 }
 
-/// A curve's shape from its geometry in `doc`, for previews.
-fn shape(doc: &Document, id: EntityId, geom: &Geom) -> Option<Shape> {
-    match geom {
-        Geom::Line { .. } => doc.line(id).map(Shape::Line),
-        Geom::Arc { .. } => doc.arc(id).map(Shape::Arc),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tool::ToolEvent;
     use crate::tools::{Pick, Tool};
-    use locus_doc::{Command, Constraint};
+    use locus_doc::{Command, Constraint, EntityId};
     use locus_geom::Vec2;
 
     /// A blank editor with one rectangle from the Rectangle tool, and the
