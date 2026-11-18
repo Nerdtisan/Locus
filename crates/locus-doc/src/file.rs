@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 19;
+pub const CURRENT_VERSION: u32 = 20;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -895,8 +895,60 @@ impl From<FileV18> for FileV19 {
     }
 }
 
-/// The newest on-disk shape. When adding v20, point this at `FileV20`.
-type Latest = FileV19;
+/// Version 20: Engrave modes and the overlap rule (#455, SPEC §7).
+/// `EngraveParams` gains `mode` and `overlap`; an older Engrave layer has
+/// neither and reads as Line + Fill with even-odd overlaps, which is what
+/// it exported, so the migration is the identity on the output. The shape
+/// is v19's; the version stops an older build from dropping the new
+/// fields.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV20 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+}
+
+impl From<FileV19> for FileV20 {
+    fn from(f: FileV19) -> Self {
+        FileV20 {
+            format_version: 20,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v21, point this at `FileV21`.
+type Latest = FileV20;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -922,7 +974,9 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV19::from(FileV18::from(FileV17::from(FileV16::from(f))))
+    FileV20::from(FileV19::from(FileV18::from(FileV17::from(FileV16::from(
+        f,
+    )))))
 }
 
 /// Serialise to `.locus` text.
@@ -1005,10 +1059,13 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV19::from(FileV18::from(FileV17::from(parse::<FileV16>(text)?))),
-        17 => FileV19::from(FileV18::from(parse::<FileV17>(text)?)),
-        18 => FileV19::from(parse::<FileV18>(text)?),
-        19 => parse::<FileV19>(text)?,
+        16 => FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+            parse::<FileV16>(text)?,
+        )))),
+        17 => FileV20::from(FileV19::from(FileV18::from(parse::<FileV17>(text)?))),
+        18 => FileV20::from(FileV19::from(parse::<FileV18>(text)?)),
+        19 => FileV20::from(parse::<FileV19>(text)?),
+        20 => parse::<FileV20>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -1362,6 +1419,9 @@ mod tests {
                 hatch_spacing: 0.25,
                 hatch_angle: 45.0,
                 crosshatch: false,
+                // What every older file loads as (#455): Line + Fill.
+                mode: crate::operation::EngraveMode::LineFill,
+                overlap: crate::operation::Overlap::EvenOdd,
             }),
             Operation::Draw,
             Operation::DragKnife(DragKnifeParams { blade_offset: 0.5 }),
@@ -2073,22 +2133,86 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v19 fixture is frozen; it migrates to the current version
+    /// unchanged: its Engrave layer reads as Line + Fill, even-odd, which is
+    /// what it exported (#455).
     #[test]
-    fn v19_fixture_is_current_and_loads() {
+    fn v19_fixture_migrates_to_current() {
+        use crate::operation::{EngraveMode, Overlap};
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v19/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v19()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 19"));
-        assert!(text.contains("region_fills: ["), "{text}");
-        assert_eq!(load(&text).unwrap(), sample_v19());
+        assert!(!text.contains("mode:"), "v19 had no engrave mode");
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v19());
+        let engrave: Vec<_> = doc
+            .layers()
+            .values()
+            .filter_map(|l| match l.operation {
+                Operation::Engrave(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert!(!engrave.is_empty(), "the sample has an Engrave layer");
+        assert!(
+            engrave
+                .iter()
+                .all(|p| p.mode == EngraveMode::LineFill && p.overlap == Overlap::EvenOdd)
+        );
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// The v20 sample: `sample_v19()` with its Engrave layer set to Offset
+    /// fill with overlaps unioned (#455).
+    pub(crate) fn sample_v20() -> Document {
+        use crate::operation::{EngraveMode, Overlap};
+        let doc = sample_v19();
+        let (id, p) = doc
+            .layers()
+            .iter()
+            .find_map(|(id, l)| match l.operation {
+                Operation::Engrave(p) => Some((*id, p)),
+                _ => None,
+            })
+            .expect("an Engrave layer");
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetLayerProps {
+            id,
+            props: crate::command::LayerProps {
+                operation: Some(Operation::Engrave(EngraveParams {
+                    mode: EngraveMode::OffsetFill,
+                    overlap: Overlap::Union,
+                    ..p
+                })),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v20_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v20/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v20()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 20"));
+        assert!(text.contains("mode: OffsetFill"), "{text}");
+        assert!(text.contains("overlap: Union"), "{text}");
+        assert_eq!(load(&text).unwrap(), sample_v20());
         assert_eq!(
-            save(&sample_v19()).unwrap(),
+            save(&sample_v20()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );

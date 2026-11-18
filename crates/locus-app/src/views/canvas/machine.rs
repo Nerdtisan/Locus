@@ -29,6 +29,28 @@ pub(crate) struct MachinePath {
     /// the kerf on a Cut layer (#224), the pen on a Draw layer; 0 for a
     /// hairline.
     pub band: f64,
+    /// For an engrave fill line or ring (#455): its row (hatch lines on the
+    /// global grid, rings counted inward) and the spacing, so the preview
+    /// can thin out rows too close to see apart.
+    pub row: Option<(u64, f64)>,
+}
+
+impl MachinePath {
+    /// Is this row drawn at `pt_per_mm`? Rows closer than 4 points are
+    /// thinned to every k-th, so the spacing reads at any zoom (#455).
+    pub(crate) fn shown_at(&self, pt_per_mm: f64) -> bool {
+        let Some((row, spacing)) = self.row else {
+            return true;
+        };
+        let gap = spacing * pt_per_mm;
+        if !(gap.is_finite() && gap > 0.0) {
+            return true;
+        }
+        let k = (4.0 / gap).ceil().max(1.0);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let k = k as u64;
+        row % k == 0
+    }
 }
 
 /// Arc flattening step for the preview, radians.
@@ -67,6 +89,7 @@ pub(crate) fn paths(model: &ExportModel) -> Vec<MachinePath> {
         if kind == OperationKind::Reference {
             continue;
         }
+        let mut ring = 0u64;
         for p in &layer.paths {
             let mut points = Vec::new();
             for s in &p.segs {
@@ -80,11 +103,37 @@ pub(crate) fn paths(model: &ExportModel) -> Vec<MachinePath> {
                 Operation::Draw => layer.paint(p).width,
                 _ => 0.0,
             };
+            // The engrave fill (#455): hatch lines, or the rings of an
+            // offset fill (whose outlines are all rings).
+            let fill = match &layer.operation {
+                Operation::Engrave(e) => !p.closed || e.mode == locus_doc::EngraveMode::OffsetFill,
+                _ => false,
+            };
+            let row = match &layer.operation {
+                Operation::Engrave(e) if fill && e.hatch_spacing > 0.0 => {
+                    if p.closed {
+                        ring += 1;
+                        Some((ring, e.hatch_spacing))
+                    } else {
+                        // Hatch rows sit on a global grid: the distance from
+                        // the origin across the line, in spacings.
+                        let (a, b) = (points[0], points[points.len() - 1]);
+                        let n = (b - a).normalized(0.0).map(Vec2::perp);
+                        n.map(|n| {
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let r = (a.dot(n) / e.hatch_spacing).round().abs() as u64;
+                            (r, e.hatch_spacing)
+                        })
+                    }
+                }
+                _ => None,
+            };
             out.push(MachinePath {
                 points,
                 kind,
-                hatch: kind == OperationKind::Engrave && !p.closed,
+                hatch: fill,
                 band,
+                row,
             });
         }
     }
@@ -118,6 +167,27 @@ pub(crate) fn notes(profile: Option<&MachineProfile>, model: &ExportModel) -> Ve
                 layer.name
             )),
             Operation::Draw => draw = true,
+            Operation::Engrave(e) => {
+                let what = match e.mode {
+                    locus_doc::EngraveMode::Line => "the outline only, no fill".to_owned(),
+                    locus_doc::EngraveMode::OffsetFill => format!(
+                        "rings {} mm apart, drawn faint",
+                        crate::views::machine_profile::trim_mm(e.hatch_spacing)
+                    ),
+                    m => format!(
+                        "{}hatch lines {} mm apart, drawn faint",
+                        if m.line() { "the outline and " } else { "" },
+                        crate::views::machine_profile::trim_mm(e.hatch_spacing)
+                    ),
+                };
+                out.push(format!(
+                    "{}: Engrave {} ({}): {what}, so each region's own fill still shows. Overlaps: {}.",
+                    layer.name,
+                    e.mode.name(),
+                    if e.mode.line() { "edge traced" } else { "no edge" },
+                    e.overlap.name().to_lowercase(),
+                ));
+            }
             _ => {}
         }
     }
@@ -175,7 +245,7 @@ impl AppState {
         let pt_per_mm = self.view.camera.pt_per_mm;
         // The paths are placed on the bed (#443); the canvas is the sketch.
         let back = self.view.machine_offset;
-        for p in &self.view.machine {
+        for p in self.view.machine.iter().filter(|p| p.shown_at(pt_per_mm)) {
             let colour = crate::views::op_chip::colour(p.kind, dark);
             let pts: Vec<Pos2> = p
                 .points
@@ -197,8 +267,14 @@ impl AppState {
                     Stroke::new(band, colour.gamma_multiply(0.3)),
                 ));
             }
-            let w = if p.hatch { 0.75 } else { 1.75 };
-            painter.add(egui::Shape::line(pts, Stroke::new(w, colour)));
+            // The engrave fill is faint, so its spacing reads and the
+            // region's own fill shows through (#455).
+            let (w, c) = if p.hatch {
+                (0.75, colour.gamma_multiply(0.45))
+            } else {
+                (1.75, colour)
+            };
+            painter.add(egui::Shape::line(pts, Stroke::new(w, c)));
         }
     }
 }
@@ -356,7 +432,11 @@ mod tests {
             .apply(&Command::AddLayer {
                 name: "Fill".to_owned(),
                 colour: [0; 3],
-                operation: OperationKind::Engrave.default_operation(),
+                // Line + Fill: the outline is kept too.
+                operation: locus_doc::Operation::Engrave(locus_doc::EngraveParams {
+                    mode: locus_doc::EngraveMode::LineFill,
+                    ..Default::default()
+                }),
             })
             .unwrap()
             .layers[0];
@@ -380,6 +460,88 @@ mod tests {
                 .any(|p| p.kind == OperationKind::Engrave && !p.hatch),
             "outline kept"
         );
+    }
+
+    /// #455: the preview marks the engrave fill (hatch lines, or offset
+    /// rings) so it can be drawn faint, keeps the outline only where the
+    /// mode traces it, and the legend says what the faint lines are.
+    /// #455: hatch rows closer than 4 points are thinned to every k-th on
+    /// screen, so the spacing reads; zoomed in, every row shows.
+    #[test]
+    fn dense_hatch_rows_are_thinned_on_screen() {
+        let row = |r: u64| MachinePath {
+            points: vec![Vec2::ZERO, Vec2::new(1.0, 0.0)],
+            kind: OperationKind::Engrave,
+            hatch: true,
+            band: 0.0,
+            row: Some((r, 0.1)),
+        };
+        // 0.1 mm at 10 pt/mm is 1 pt apart: every 4th row.
+        let shown: Vec<u64> = (0..12).filter(|r| row(*r).shown_at(10.0)).collect();
+        assert_eq!(shown, vec![0, 4, 8]);
+        // At 50 pt/mm, 5 pt apart: all of them.
+        assert!((0..12).all(|r| row(r).shown_at(50.0)));
+    }
+
+    #[test]
+    fn engrave_fill_is_marked_and_explained_per_mode() {
+        use locus_doc::{EngraveMode, EngraveParams};
+        let doc = |mode: EngraveMode| {
+            let mut ed = Editor::new(Document::new());
+            let l = Document::default_layer();
+            ed.apply(&Command::SetLayerProps {
+                id: l,
+                props: LayerProps {
+                    operation: Some(Operation::Engrave(EngraveParams {
+                        hatch_spacing: 1.0,
+                        mode,
+                        ..EngraveParams::default()
+                    })),
+                    ..LayerProps::default()
+                },
+            })
+            .unwrap();
+            let c = ed
+                .apply(&Command::AddEntity {
+                    layer: l,
+                    construction: false,
+                    style: Default::default(),
+                    geom: Geom::Point {
+                        pos: Vec2::new(0.0, 0.0),
+                    },
+                })
+                .unwrap()
+                .entities[0];
+            ed.apply(&Command::AddEntity {
+                layer: l,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Circle {
+                    center: c,
+                    radius: 5.0,
+                },
+            })
+            .unwrap();
+            ed.into_document()
+        };
+        for (mode, outline, fill) in [
+            (EngraveMode::Fill, false, true),
+            (EngraveMode::Line, true, false),
+            (EngraveMode::LineFill, true, true),
+            (EngraveMode::OffsetFill, false, true),
+        ] {
+            let d = doc(mode);
+            let model = locus_export::prepare(&d, false).model;
+            let ps = paths(&model);
+            assert_eq!(ps.iter().any(|p| !p.hatch), outline, "{mode:?} outline");
+            assert_eq!(ps.iter().any(|p| p.hatch), fill, "{mode:?} fill");
+            let n = notes(None, &model);
+            assert!(
+                n.iter()
+                    .any(|s| s.contains(mode.name()) && s.contains("still shows")),
+                "{mode:?}: {n:?}"
+            );
+        }
     }
 
     #[test]

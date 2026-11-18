@@ -54,7 +54,8 @@ pub use file::FileError;
 pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 pub use image::{ImageFormat, ImagePlacement, RefImage};
 pub use operation::{
-    Compensation, CutParams, DragKnifeParams, EngraveParams, Operation, OperationKind,
+    Compensation, CutParams, DragKnifeParams, EngraveMode, EngraveParams, Operation, OperationKind,
+    Overlap,
 };
 pub use recipe::{Axis, LinearDir, MAX_INSTANCE_ENTITIES, MAX_INSTANCES, Recipe, RecipeKind};
 pub use solve::{ConstraintGroup, DragFrame, LockReport, Sketcher, SolveState, Status};

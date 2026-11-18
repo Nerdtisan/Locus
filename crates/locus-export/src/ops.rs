@@ -10,7 +10,7 @@
 
 use crate::pipeline::{ExportLayer, ExportModel, ExportPath, PathSeg, Shape};
 use core::f64::consts::TAU;
-use locus_doc::{Compensation, EntityId, Operation};
+use locus_doc::{Compensation, EngraveMode, EngraveParams, EntityId, Operation, Overlap};
 use locus_geom::{Arc, Circle, EXPORT_TOL, Line, Piece, Vec2};
 use locus_region::{Area, Edge, Join, Loop, Seg};
 
@@ -22,9 +22,7 @@ pub fn apply_operations(model: &mut ExportModel) {
                 kerf(layer, p.kerf_width / 2.0, p.compensation);
             }
             Operation::DragKnife(p) if p.blade_offset > 0.0 => blade(layer, p.blade_offset),
-            Operation::Engrave(p) if p.hatch_spacing > 0.0 => {
-                hatch(layer, p.hatch_spacing, p.hatch_angle, p.crosshatch);
-            }
+            Operation::Engrave(p) if p.hatch_spacing > 0.0 => engrave(layer, &p),
             _ => {}
         }
     }
@@ -305,44 +303,112 @@ fn blade_path(p: &ExportPath, o: f64) -> ExportPath {
 
 // ── Hatch fill (#175) ───────────────────────────────────────────────────
 
-/// Hatch fill (SPEC §7 Engrave): the closed paths, combined even-odd by
-/// nesting (holes stay empty, islands in holes are filled again), are
-/// crossed by parallel lines `spacing` apart at `angle_deg`, and again at
-/// +90° for a crosshatch. Lines sit on a global grid (multiples of the
-/// spacing from the origin), so neighbouring shapes line up. Alternate lines
-/// run in opposite directions; the order stage then minimises travel. The
-/// outlines are kept.
-fn hatch(layer: &mut ExportLayer, spacing: f64, angle_deg: f64, cross: bool) {
+/// Engrave (SPEC §7, #175, #455), by mode: **Fill** hatches the inside,
+/// **Line** keeps only the outline, **Line + Fill** both, **Offset fill**
+/// fills with concentric rings. Open paths can't be filled and are always
+/// kept. The closed paths form one area by the layer's overlap rule
+/// ([`engrave_area`]).
+///
+/// The hatch: parallel lines `spacing` apart at the hatch angle, and again
+/// at +90° for a crosshatch, on a global grid (multiples of the spacing from
+/// the origin) so neighbouring shapes line up. Alternate lines run in
+/// opposite directions; the order stage then minimises travel.
+fn engrave(layer: &mut ExportLayer, p: &EngraveParams) {
     let loops: Vec<Loop> = layer
         .paths
         .iter()
-        .filter(|p| p.closed)
+        .filter(|q| q.closed)
         .map(loop_of)
+        .map(|l| if l.area() >= 0.0 { l } else { l.reversed() })
         .collect();
+    if !p.mode.line() {
+        layer.paths.retain(|q| !q.closed);
+    }
     if loops.is_empty() {
         return;
     }
-    let depth = depths(&loops);
-    let area = Area {
-        loops: loops
-            .iter()
-            .zip(depth)
-            .map(|(l, d)| {
-                let ccw = l.area() >= 0.0;
-                if ccw == (d % 2 == 0) {
-                    l.clone()
-                } else {
-                    l.reversed()
-                }
-            })
-            .collect(),
+    let shape = Fillable {
+        area: Area { loops },
+        overlap: p.overlap,
     };
-    let a = angle_deg.to_radians();
-    let mut lines = scan(&area, spacing, a);
-    if cross {
-        lines.extend(scan(&area, spacing, a + core::f64::consts::FRAC_PI_2));
+    match p.mode {
+        EngraveMode::Line => {}
+        EngraveMode::Fill | EngraveMode::LineFill => {
+            let a = p.hatch_angle.to_radians();
+            let mut lines = scan(&shape, p.hatch_spacing, a);
+            if p.crosshatch {
+                lines.extend(scan(
+                    &shape,
+                    p.hatch_spacing,
+                    a + core::f64::consts::FRAC_PI_2,
+                ));
+            }
+            layer.paths.extend(lines);
+        }
+        EngraveMode::OffsetFill => layer.paths.extend(rings(&shape.area(), p.hatch_spacing)),
     }
-    layer.paths.extend(lines);
+}
+
+/// An Engrave layer's closed outlines (each counter-clockwise) and its
+/// overlap rule (#455). **Even-odd**: a point is engraved when an odd number
+/// of outlines hold it, so holes stay empty, islands in holes are engraved
+/// again and two crossing shapes leave their overlap empty (LightBurn's
+/// default). **Union**: a point inside any outline is engraved.
+struct Fillable {
+    area: Area,
+    overlap: Overlap,
+}
+
+impl Fillable {
+    fn contains(&self, q: Vec2) -> bool {
+        let n = self.area.loops.iter().filter(|l| l.winding(q) != 0).count();
+        match self.overlap {
+            Overlap::EvenOdd => n % 2 == 1,
+            Overlap::Union => n > 0,
+        }
+    }
+
+    /// The engraved area as one region set, for offset fill: the outlines
+    /// exclusive-or'd (even-odd) or unioned.
+    fn area(&self) -> Area {
+        let one = |l: &Loop| Area {
+            loops: vec![l.clone()],
+        };
+        match self.overlap {
+            Overlap::Union => {
+                locus_region::union_all(&self.area.loops.iter().map(one).collect::<Vec<_>>())
+            }
+            Overlap::EvenOdd => self.area.loops.iter().fold(Area::default(), |acc, l| {
+                let b = one(l);
+                let left = locus_region::boolean(&acc, &b, locus_region::BoolOp::Subtract);
+                let right = locus_region::boolean(&b, &acc, locus_region::BoolOp::Subtract);
+                locus_region::union_all(&[left, right])
+            }),
+        }
+    }
+}
+
+/// Most offset-fill rings in one fill (untrusted input, CLAUDE.md): over
+/// it, no rings are made.
+pub const MAX_RINGS: usize = 2_000;
+
+/// Offset fill (#455): the area's boundary moved inward by `spacing`, then
+/// `2·spacing`, … until nothing is left, each ring a closed path.
+fn rings(area: &Area, spacing: f64) -> Vec<ExportPath> {
+    let mut out = Vec::new();
+    for k in 1..=MAX_RINGS {
+        #[allow(clippy::cast_precision_loss)]
+        let inner = locus_region::offset(area, -spacing * k as f64, Join::Round);
+        if inner.is_empty() {
+            return out;
+        }
+        out.extend(inner.loops.iter().map(path_of));
+        if out.len() > MAX_HATCH_LINES {
+            break;
+        }
+    }
+    // Too many rings for this spacing: none, like the hatch's limit.
+    Vec::new()
 }
 
 /// Most hatch lines in one fill, so a tiny spacing on a large part can't
@@ -371,7 +437,8 @@ fn crossings(l: &Line, s: &Seg) -> Vec<Vec2> {
     }
 }
 
-fn scan(area: &Area, spacing: f64, angle: f64) -> Vec<ExportPath> {
+fn scan(shape: &Fillable, spacing: f64, angle: f64) -> Vec<ExportPath> {
+    let area = &shape.area;
     let dir = Vec2::from_angle(angle);
     let nrm = dir.perp();
     let Some(bb) = area
@@ -427,7 +494,7 @@ fn scan(area: &Area, spacing: f64, angle: f64) -> Vec<ExportPath> {
             let on_edge = edges
                 .iter()
                 .any(|e| e.seg.distance(mid) <= EXPORT_TOL / 2.0);
-            if t1 - t0 <= EXPORT_TOL || on_edge || !area.contains(mid) {
+            if t1 - t0 <= EXPORT_TOL || on_edge || !shape.contains(mid) {
                 continue;
             }
             match spans.last_mut() {
@@ -696,6 +763,8 @@ mod tests {
             hatch_spacing: spacing,
             hatch_angle: angle,
             crosshatch: cross,
+            mode: EngraveMode::LineFill,
+            overlap: Overlap::EvenOdd,
         })
     }
 

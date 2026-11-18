@@ -799,9 +799,63 @@ fn operation_editor(
                     ui.end_row();
                 }
                 Operation::Engrave(p) => {
+                    // Mode and overlap rule (#455), as LightBurn has them.
+                    ui.label("Mode");
+                    let before = (p.mode, p.overlap);
+                    egui::ComboBox::from_id_salt(("engrave-mode", id.get()))
+                        .selected_text(p.mode.name())
+                        .show_ui(ui, |ui| {
+                            for m in locus_doc::EngraveMode::ALL {
+                                let tip = match m {
+                                    locus_doc::EngraveMode::Fill => "Hatch the inside, no outline",
+                                    locus_doc::EngraveMode::Line => {
+                                        "Trace the outline only: mark an edge"
+                                    }
+                                    locus_doc::EngraveMode::LineFill => "The outline and the hatch",
+                                    locus_doc::EngraveMode::OffsetFill => {
+                                        "Concentric rings, the spacing apart"
+                                    }
+                                };
+                                ui.selectable_value(&mut p.mode, m, m.name())
+                                    .on_hover_text(tip);
+                            }
+                        });
+                    ui.end_row();
+                    ui.label("Overlaps");
+                    egui::ComboBox::from_id_salt(("engrave-overlap", id.get()))
+                        .selected_text(p.overlap.name())
+                        .show_ui(ui, |ui| {
+                            for o in locus_doc::Overlap::ALL {
+                                let tip = match o {
+                                    locus_doc::Overlap::EvenOdd => {
+                                        "Overlaps and shapes in shapes are left empty"
+                                    }
+                                    locus_doc::Overlap::Union => {
+                                        "Overlapping shapes are engraved as one area"
+                                    }
+                                };
+                                ui.selectable_value(&mut p.overlap, o, o.name())
+                                    .on_hover_text(tip);
+                            }
+                        });
+                    ui.end_row();
+                    if (p.mode, p.overlap) != before {
+                        changed = true;
+                        done = true;
+                    }
+                    ui.label("");
+                    ui.weak("To mark just an edge: set Mode to Line, or use a Score layer.");
+                    ui.end_row();
+                    if p.mode == locus_doc::EngraveMode::Line {
+                        return;
+                    }
                     f(
                         ui,
-                        "Hatch spacing",
+                        if p.mode == locus_doc::EngraveMode::OffsetFill {
+                            "Ring spacing"
+                        } else {
+                            "Hatch spacing"
+                        },
                         &mut p.hatch_spacing,
                         (0.001, 1000.0),
                         " mm",
@@ -815,11 +869,13 @@ fn operation_editor(
                         "°",
                         (&mut changed, &mut done),
                     );
-                    ui.label("Crosshatch");
-                    let r = crate::theme::checkbox(ui, &mut p.crosshatch, "");
-                    changed |= r.changed();
-                    done |= r.changed();
-                    ui.end_row();
+                    if p.mode != locus_doc::EngraveMode::OffsetFill {
+                        ui.label("Crosshatch");
+                        let r = crate::theme::checkbox(ui, &mut p.crosshatch, "");
+                        changed |= r.changed();
+                        done |= r.changed();
+                        ui.end_row();
+                    }
                 }
                 Operation::Draw => {
                     // Draw layers have no pen settings since M5: the pen is

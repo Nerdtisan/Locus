@@ -86,16 +86,92 @@ impl Default for CutParams {
     }
 }
 
+/// What an Engrave layer engraves (SPEC §7, #455), as LightBurn names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EngraveMode {
+    /// Hatch the inside; no outline.
+    #[default]
+    Fill,
+    /// The outline only: mark an edge.
+    Line,
+    /// The outline and the hatch. What every Engrave layer did before
+    /// format v20, so older layers migrate to it and export unchanged.
+    LineFill,
+    /// Concentric rings inside the shape, `hatch_spacing` apart.
+    OffsetFill,
+}
+
+impl EngraveMode {
+    pub const ALL: [EngraveMode; 4] = [
+        EngraveMode::Fill,
+        EngraveMode::Line,
+        EngraveMode::LineFill,
+        EngraveMode::OffsetFill,
+    ];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            EngraveMode::Fill => "Fill",
+            EngraveMode::Line => "Line",
+            EngraveMode::LineFill => "Line + Fill",
+            EngraveMode::OffsetFill => "Offset fill",
+        }
+    }
+
+    /// Does this mode trace the outline?
+    #[must_use]
+    pub const fn line(self) -> bool {
+        matches!(self, EngraveMode::Line | EngraveMode::LineFill)
+    }
+}
+
+/// How overlapping shapes on an Engrave layer combine (SPEC §7, #455).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Overlap {
+    /// Overlaps and shapes inside shapes are holes (LightBurn's default).
+    #[default]
+    EvenOdd,
+    /// Overlapping shapes are engraved as one area.
+    Union,
+}
+
+impl Overlap {
+    pub const ALL: [Overlap; 2] = [Overlap::EvenOdd, Overlap::Union];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Overlap::EvenOdd => "Even-odd (holes)",
+            Overlap::Union => "Union",
+        }
+    }
+}
+
+/// Engrave layers saved before format v20 traced the outline and hatched
+/// it: that is [`EngraveMode::LineFill`], so they export unchanged.
+fn legacy_mode() -> EngraveMode {
+    EngraveMode::LineFill
+}
+
 /// Engrave (fill) parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EngraveParams {
-    /// Hatch line spacing, mm, `>0..=MAX_LENGTH`.
+    /// Hatch line spacing, mm, `>0..=MAX_LENGTH`. Also the ring spacing of
+    /// [`EngraveMode::OffsetFill`].
     pub hatch_spacing: f64,
     /// Hatch angle, degrees, `-360..=360`.
     pub hatch_angle: f64,
     /// Also hatch at `hatch_angle + 90°` (file format v7; absent = off).
     #[serde(default)]
     pub crosshatch: bool,
+    /// Fill, Line, Line + Fill or Offset fill (format v20, #455; absent =
+    /// Line + Fill, what older files did).
+    #[serde(default = "legacy_mode")]
+    pub mode: EngraveMode,
+    /// How overlaps combine (format v20; absent = even-odd).
+    #[serde(default)]
+    pub overlap: Overlap,
 }
 
 impl Default for EngraveParams {
@@ -104,6 +180,8 @@ impl Default for EngraveParams {
             hatch_spacing: 0.1,
             hatch_angle: 0.0,
             crosshatch: false,
+            mode: EngraveMode::Fill,
+            overlap: Overlap::EvenOdd,
         }
     }
 }
@@ -230,13 +308,12 @@ mod tests {
             cut(0.0, MAX_PASSES + 1),
             Operation::Engrave(EngraveParams {
                 hatch_spacing: 0.0,
-                hatch_angle: 0.0,
-                crosshatch: false,
+                ..EngraveParams::default()
             }),
             Operation::Engrave(EngraveParams {
                 hatch_spacing: 1.0,
                 hatch_angle: 400.0,
-                crosshatch: false,
+                ..EngraveParams::default()
             }),
             Operation::DragKnife(DragKnifeParams { blade_offset: -1.0 }),
         ];
