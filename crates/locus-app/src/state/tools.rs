@@ -8,8 +8,8 @@ use crate::modify_tool::{CornerSettings, TransformSettings};
 use crate::tool::ToolHost;
 use crate::tools::Pick;
 use crate::views::canvas::{
-    CalibrateDraft, CornerHandle, MirrorDraft, OffsetDraft, PathTextDraft, PatternDraft,
-    ResizePreview, Slide,
+    CalibrateDraft, CornerHandle, MirrorDraft, OffsetArrow, OffsetAxis, OffsetDraft, OffsetEdit,
+    PathTextDraft, PatternDraft, ResizePreview, Slide,
 };
 use crate::views::text_ui::{FontCatalog, TextSettings};
 use locus_doc::{ConstraintId, EntityId, RecipeId};
@@ -60,6 +60,14 @@ pub struct ToolState {
     pub(crate) offset_pick: Option<RecipeId>,
     /// An offset being set up with the Offset tool, before Enter (#218).
     pub(crate) offset_draft: Option<OffsetDraft>,
+    /// An existing offset's arrow (#444): its cached axis, this frame's
+    /// arrow, and the drag in progress.
+    pub(crate) offset_axis: Option<OffsetAxis>,
+    pub(crate) offset_arrow: Option<OffsetArrow>,
+    pub(crate) offset_edit: Option<OffsetEdit>,
+    /// Where the last click landed (world mm): an offset's arrow stands on
+    /// the source nearest it.
+    pub(crate) offset_anchor: Option<Vec2>,
     /// The Pattern tools' values (#221), kept between uses.
     pub(crate) pattern: PatternDraft,
     /// The Mirror tool's line and options (#215).
@@ -113,6 +121,10 @@ impl Default for ToolState {
             dragging: false,
             offset_pick: None,
             offset_draft: None,
+            offset_axis: None,
+            offset_arrow: None,
+            offset_edit: None,
+            offset_anchor: None,
             pattern: PatternDraft::default(),
             mirror: MirrorDraft::default(),
             calibrate: CalibrateDraft::default(),

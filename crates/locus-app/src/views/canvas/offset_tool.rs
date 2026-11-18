@@ -25,8 +25,8 @@ use locus_geom::Vec2;
 
 /// The arrow head's length on the offset curve, and the handle's grab
 /// radius (screen points).
-const HEAD_PT: f32 = 22.0;
-const GRAB_PT: f32 = 12.0;
+pub(super) const HEAD_PT: f32 = 22.0;
+pub(super) const GRAB_PT: f32 = 12.0;
 /// The ⇅ flip control sits this far behind the arrow's base.
 const FLIP_PT: f32 = 22.0;
 
@@ -50,7 +50,7 @@ pub struct OffsetDraft {
 }
 
 /// The point of `s` nearest `p`.
-fn closest(s: &Shape, p: Vec2) -> Vec2 {
+pub(super) fn closest(s: &Shape, p: Vec2) -> Vec2 {
     match s {
         Shape::Point(q) => *q,
         Shape::Line(l) => l.closest_point(p),
@@ -62,7 +62,12 @@ fn closest(s: &Shape, p: Vec2) -> Vec2 {
 
 /// The curves an offset recipe over `sources` would make, from a scratch
 /// copy of the document (nothing is committed).
-fn offset_shapes(doc: &Document, sources: &[EntityId], distance: f64, sharp: bool) -> Vec<Shape> {
+pub(super) fn offset_shapes(
+    doc: &Document,
+    sources: &[EntityId],
+    distance: f64,
+    sharp: bool,
+) -> Vec<Shape> {
     let cmd = Command::AddRecipe {
         kind: RecipeKind::Offset {
             distance,
@@ -78,7 +83,12 @@ fn offset_shapes(doc: &Document, sources: &[EntityId], distance: f64, sharp: boo
 /// with a small positive distance. The recipe's own sign rule (closed
 /// chains grow, open ones go left) decides, so the arrow always agrees with
 /// the result.
-fn plus_direction(doc: &Document, sources: &[EntityId], base: Vec2, picked: &Shape) -> Vec2 {
+pub(super) fn plus_direction(
+    doc: &Document,
+    sources: &[EntityId],
+    base: Vec2,
+    picked: &Shape,
+) -> Vec2 {
     let probe = (picked.bbox().max - picked.bbox().min).length().max(1.0) * 0.01;
     let shapes = offset_shapes(doc, sources, probe, true);
     shapes
@@ -96,7 +106,12 @@ fn plus_direction(doc: &Document, sources: &[EntityId], base: Vec2, picked: &Sha
 /// rectangles, polygons, slots, Béziers, open and closed chains) has a
 /// result, so the handle is always on the curve it moves. Before the
 /// preview exists, or at zero distance, it is that moved point.
-fn handle_point(base: Vec2, plus: Vec2, distance: f64, preview: Option<&[Shape]>) -> Vec2 {
+pub(super) fn handle_point(
+    base: Vec2,
+    plus: Vec2,
+    distance: f64,
+    preview: Option<&[Shape]>,
+) -> Vec2 {
     let target = base + plus * distance;
     if distance == 0.0 {
         return base;
@@ -107,6 +122,62 @@ fn handle_point(base: Vec2, plus: Vec2, distance: f64, preview: Option<&[Shape]>
         .map(|s| closest(s, target))
         .min_by(|a, b| a.distance(target).total_cmp(&b.distance(target)))
         .unwrap_or(target)
+}
+
+/// The offset arrow (#336): a thin leader from `base` (on the source) to
+/// the handle `tip` (on the result), a filled arrow standing on the result
+/// and the distance read-out beyond it. Returns the screen direction the
+/// arrow points.
+pub(super) fn draw_offset_arrow(
+    frame: &Frame<'_>,
+    base_w: Vec2,
+    plus_w: Vec2,
+    distance: f64,
+    base: Pos2,
+    tip: Pos2,
+    dragging: bool,
+) -> EVec2 {
+    let c = frame.pal.selected;
+    let p = frame.painter;
+    // The direction a growing distance moves the handle.
+    let ahead = frame.view.to_screen(base_w + plus_w, frame.rect) - base;
+    let plus = if ahead.length() > 0.0 {
+        ahead.normalized()
+    } else {
+        EVec2::Y
+    };
+    let dir = if distance < 0.0 { -plus } else { plus };
+    p.line_segment([base, tip], Stroke::new(1.0, c));
+    p.circle_filled(base, 2.5, c);
+    let w = if dragging { 3.0 } else { 2.0 };
+    let head_tip = tip + dir * HEAD_PT;
+    p.line_segment([tip, head_tip - dir * 8.0], Stroke::new(w, c));
+    let side = EVec2::new(-dir.y, dir.x) * 6.0;
+    p.add(egui::Shape::convex_polygon(
+        vec![
+            head_tip,
+            head_tip - dir * 10.0 + side,
+            head_tip - dir * 10.0 - side,
+        ],
+        c,
+        Stroke::NONE,
+    ));
+    p.circle_filled(tip, if dragging { 5.0 } else { 4.0 }, c);
+    p.circle_stroke(tip, GRAB_PT - 2.0, Stroke::new(1.0, c.gamma_multiply(0.5)));
+    // The read-out beyond the tip, on the side the arrow points to.
+    let anchor = if dir.x < -0.3 {
+        Align2::RIGHT_CENTER
+    } else {
+        Align2::LEFT_CENTER
+    };
+    p.text(
+        head_tip + dir * 8.0,
+        anchor,
+        format!("offset {}", frame.units.format_len(distance)),
+        FontId::monospace(13.0),
+        frame.pal.hover,
+    );
+    dir
 }
 
 impl AppState {
@@ -211,6 +282,8 @@ impl AppState {
         };
         let ok = self.apply_reporting(&cmd);
         if ok {
+            // The new offset's arrow stays where the draft's was (#444).
+            self.tools.offset_anchor = Some(draft.base);
             self.tools.offset_draft = None;
             self.selection.items.clear();
             self.tools.offset_pick = self
@@ -371,34 +444,7 @@ impl AppState {
         let (base, tip, flip) = self.offset_arrow(d, distance, frame.rect);
         let c = frame.pal.selected;
         let p = frame.painter;
-        // The direction a growing distance moves the handle.
-        let ahead = frame.view.to_screen(d.base + d.plus, frame.rect) - base;
-        let plus = if ahead.length() > 0.0 {
-            ahead.normalized()
-        } else {
-            EVec2::Y
-        };
-        let dir = if distance < 0.0 { -plus } else { plus };
-        // A thin leader from the source to the handle, then the handle: a
-        // filled arrow standing on the offset curve (Fusion's offset arrow).
-        p.line_segment([base, tip], Stroke::new(1.0, c));
-        p.circle_filled(base, 2.5, c);
-        let w = if d.dragging { 3.0 } else { 2.0 };
-        let head_base = tip;
-        let head_tip = tip + dir * HEAD_PT;
-        p.line_segment([head_base, head_tip - dir * 8.0], Stroke::new(w, c));
-        let side = EVec2::new(-dir.y, dir.x) * 6.0;
-        p.add(egui::Shape::convex_polygon(
-            vec![
-                head_tip,
-                head_tip - dir * 10.0 + side,
-                head_tip - dir * 10.0 - side,
-            ],
-            c,
-            Stroke::NONE,
-        ));
-        p.circle_filled(tip, if d.dragging { 5.0 } else { 4.0 }, c);
-        p.circle_stroke(tip, GRAB_PT - 2.0, Stroke::new(1.0, c.gamma_multiply(0.5)));
+        let dir = draw_offset_arrow(frame, d.base, d.plus, distance, base, tip, d.dragging);
         // ⇅ drawn as two opposed arrowheads along the arrow's axis (the
         // default fonts have no such glyph).
         p.circle_stroke(flip, 9.0, Stroke::new(1.5, c));
@@ -415,19 +461,6 @@ impl AppState {
                 Stroke::NONE,
             ));
         }
-        // The read-out beyond the tip, on the side the arrow points to.
-        let anchor = if dir.x < -0.3 {
-            Align2::RIGHT_CENTER
-        } else {
-            Align2::LEFT_CENTER
-        };
-        p.text(
-            head_tip + dir * 8.0,
-            anchor,
-            format!("offset {}", units.format_len(distance)),
-            FontId::monospace(13.0),
-            frame.pal.hover,
-        );
     }
 
     /// The Offset command dialog: the draft's fields, or the picked offset's.
@@ -448,7 +481,20 @@ impl AppState {
         let mut remove = None;
         let mut edited = None;
         let unit = units.label();
-        let params = picked.and_then(|rid| self.offset_params(rid));
+        // While its arrow is dragged, the field shows the dragged distance
+        // (#444).
+        let params = picked
+            .and_then(|rid| self.offset_params(rid))
+            .map(|(d, sharp)| {
+                (
+                    self.tools
+                        .offset_edit
+                        .as_ref()
+                        .filter(|e| Some(e.rid) == picked)
+                        .map_or(d, |e| e.distance),
+                    sharp,
+                )
+            });
         let header = super::dialog::Header::new("modify.offset", "Offset");
         super::dialog::command_dialog(
             ui,
