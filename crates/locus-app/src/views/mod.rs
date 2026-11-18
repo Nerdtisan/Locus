@@ -13,6 +13,7 @@ pub mod layers;
 pub mod machine_profile;
 pub mod marking_menu;
 pub mod nav_bar;
+pub mod op_chip;
 pub mod palette;
 pub mod parameters;
 pub mod properties;

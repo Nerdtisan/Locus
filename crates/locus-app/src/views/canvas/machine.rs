@@ -5,7 +5,7 @@
 
 use crate::state::AppState;
 use egui::{Color32, Painter, Pos2, Rect, Stroke};
-use locus_doc::{Compensation, Operation};
+use locus_doc::{Compensation, Document, Operation, OperationKind};
 use locus_export::{ExportModel, PathSeg, Shape};
 use locus_geom::{EXPORT_TOL, Vec2};
 
@@ -134,11 +134,159 @@ impl AppState {
     }
 }
 
+/// One legend line: the operation, then the layer it belongs to.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LegendRow {
+    pub kind: OperationKind,
+    pub layer: String,
+    /// Not exported (Reference, or export turned off): drawn dim.
+    pub idle: bool,
+}
+
+/// The legend's rows: every layer in export order with its operation (#420).
+pub(crate) fn legend(doc: &Document) -> Vec<LegendRow> {
+    let mut layers: Vec<_> = doc.layers().iter().collect();
+    layers.sort_by_key(|(id, l)| (l.export_order, id.get()));
+    layers
+        .into_iter()
+        .map(|(_, l)| {
+            let kind = l.operation.kind();
+            LegendRow {
+                kind,
+                layer: l.name.clone(),
+                idle: kind == OperationKind::Reference || !l.export_enabled,
+            }
+        })
+        .collect()
+}
+
+impl AppState {
+    /// The operation legend, top left of the canvas while Machine preview
+    /// is on (#420): which colour is which operation, and on which layer.
+    pub(crate) fn draw_machine_legend(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        dark: bool,
+        settings: &crate::settings::Settings,
+    ) {
+        if !self.view.machine_on {
+            return;
+        }
+        let doc = self.document();
+        let title = crate::views::machine_profile::current(doc, settings).map_or_else(
+            || "MACHINE PREVIEW · no machine profile".to_owned(),
+            |p| format!("MACHINE PREVIEW · {}", p.name),
+        );
+        let rows = legend(doc);
+        let (ink, weak, bg, line) = if dark {
+            (
+                Color32::from_gray(225),
+                Color32::from_gray(140),
+                Color32::from_rgba_unmultiplied(28, 30, 34, 235),
+                Color32::from_gray(70),
+            )
+        } else {
+            (
+                Color32::from_gray(30),
+                Color32::from_gray(120),
+                Color32::from_rgba_unmultiplied(250, 250, 252, 240),
+                Color32::from_gray(200),
+            )
+        };
+        let small = egui::FontId::proportional(10.5);
+        let body = egui::FontId::proportional(12.0);
+        let title = painter.layout_no_wrap(title, small.clone(), weak);
+        let lines: Vec<_> = rows
+            .iter()
+            .map(|r| {
+                let c = crate::views::op_chip::colour(r.kind, dark);
+                let label = painter.layout_no_wrap(
+                    crate::views::op_chip::short(r.kind).to_owned(),
+                    small.clone(),
+                    if r.idle { c.gamma_multiply(0.5) } else { c },
+                );
+                let name = painter.layout_no_wrap(
+                    if r.idle && r.kind != OperationKind::Reference {
+                        format!("{} (not exported)", r.layer)
+                    } else {
+                        r.layer.clone()
+                    },
+                    body.clone(),
+                    if r.idle { weak } else { ink },
+                );
+                (c, r.idle, label, name)
+            })
+            .collect();
+        const PAD: f32 = 8.0;
+        const ROW: f32 = 18.0;
+        const NAME_X: f32 = 76.0;
+        let width = lines
+            .iter()
+            .map(|(.., n)| NAME_X + n.size().x)
+            .fold(title.size().x, f32::max)
+            + 2.0 * PAD;
+        let height = PAD * 2.0 + title.size().y + 4.0 + ROW * lines.len() as f32;
+        // Clear of the rulers along the top and left edges.
+        let at = rect.min + egui::vec2(28.0, 28.0);
+        let frame = Rect::from_min_size(at, egui::vec2(width, height));
+        painter.rect(
+            frame,
+            6.0,
+            bg,
+            Stroke::new(1.0, line),
+            egui::StrokeKind::Inside,
+        );
+        let mut y = at.y + PAD;
+        painter.galley(egui::pos2(at.x + PAD, y), title, weak);
+        y += 16.0;
+        for (c, idle, label, name) in lines {
+            let mid = y + ROW / 2.0;
+            let dot = egui::pos2(at.x + PAD + 5.0, mid);
+            if idle {
+                painter.circle_stroke(dot, 4.0, Stroke::new(1.2, c));
+            } else {
+                painter.circle_filled(dot, 4.5, c);
+            }
+            painter.galley(
+                egui::pos2(at.x + PAD + 16.0, mid - label.size().y / 2.0),
+                label,
+                c,
+            );
+            painter.galley(
+                egui::pos2(at.x + PAD + NAME_X - 6.0, mid - name.size().y / 2.0),
+                name,
+                ink,
+            );
+            y += ROW;
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use locus_doc::{Command, CutParams, Document, Editor, Geom, LayerProps};
+
+    /// #420: the legend lists every layer's operation in export order and
+    /// dims the ones that are not exported.
+    #[test]
+    fn legend_names_each_layers_operation() {
+        let mut ed = Editor::new(Document::new());
+        ed.apply(&Command::AddLayer {
+            name: "Trace".to_owned(),
+            colour: [0; 3],
+            operation: Operation::Reference,
+        })
+        .unwrap();
+        let rows = legend(ed.document());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].kind, OperationKind::Draw);
+        assert!(!rows[0].idle);
+        assert_eq!(rows[1].layer, "Trace");
+        assert!(rows[1].idle);
+    }
 
     #[test]
     fn preview_comes_from_the_compensated_model() {

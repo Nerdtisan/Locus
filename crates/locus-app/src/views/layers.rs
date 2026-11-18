@@ -13,7 +13,7 @@
 use crate::constrain;
 use crate::settings::Settings;
 use crate::state::AppState;
-use crate::views::icons;
+use crate::views::{icons, op_chip};
 use egui::{DragValue, Sense, Ui};
 use locus_doc::{
     Command, Compensation, ConstraintId, Document, EntityId, LayerDeletion, LayerId, LayerProps,
@@ -522,12 +522,7 @@ fn layer_row(
                     ..LayerProps::default()
                 }));
             }
-            let kind = l.operation.kind();
-            let open = st.expanded == Some(id);
-            let tip = format!("{}: click for its settings", kind.name());
-            if icon_toggle(ui, icons::operation(kind), true, true, &tip).clicked() {
-                st.expanded = if open { None } else { Some(id) };
-            }
+            operation_chip(ui, l, st, want, id, row.machine);
             // The name gets the space the icons leave, truncated, so a
             // narrow Browser never draws the icons over it (#358).
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -580,6 +575,77 @@ fn layer_row(
             operation_editor(ui, st, want, id, l.operation, row.machine);
         });
     }
+}
+
+/// The row's operation chip (#420): the operation's colour and short name,
+/// outlined when the machine can't run it. One click opens the operations
+/// the machine offers; picking one changes the layer (one undo step), as in
+/// LightBurn's layer list. Settings… opens the parameters under the row.
+fn operation_chip(
+    ui: &mut Ui,
+    l: &locus_doc::Layer,
+    st: &mut LayersView,
+    want: &mut Wants,
+    id: LayerId,
+    machine: Option<&locus_export::MachineProfile>,
+) {
+    let kind = l.operation.kind();
+    let foreign = machine.filter(|p| !p.machine.offers(kind));
+    let tip = match foreign {
+        Some(p) => format!(
+            "{}: {} can't run this operation. Click to change it",
+            kind.name(),
+            p.name
+        ),
+        None => format!(
+            "{}: click to change the operation or its settings",
+            kind.name()
+        ),
+    };
+    let r = op_chip::chip(ui, kind, foreign.is_some()).on_hover_text(tip);
+    egui::Popup::menu(&r)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(150.0);
+            ui.weak("OPERATION");
+            for k in crate::views::machine_profile::offered(machine, kind) {
+                let picked = ui
+                    .horizontal(|ui| {
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+                        ui.painter().circle_filled(
+                            dot.center(),
+                            4.0,
+                            op_chip::colour(k, ui.visuals().dark_mode),
+                        );
+                        ui.add(egui::Button::selectable(k == kind, k.name()))
+                            .clicked()
+                    })
+                    .inner;
+                if picked {
+                    if k != kind {
+                        want.commands.push(Command::SetLayerProps {
+                            id,
+                            props: LayerProps {
+                                operation: Some(operation_for(k, machine)),
+                                ..LayerProps::default()
+                            },
+                        });
+                        st.op = None;
+                    }
+                    ui.close();
+                }
+            }
+            ui.separator();
+            let open = st.expanded == Some(id);
+            if ui
+                .button(if open { "Hide settings" } else { "Settings…" })
+                .clicked()
+            {
+                st.expanded = if open { None } else { Some(id) };
+                ui.close();
+            }
+        });
 }
 
 /// A layer row's menu: rename, settings, order and delete (design §2).
