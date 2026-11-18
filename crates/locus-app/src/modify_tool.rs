@@ -79,6 +79,16 @@ impl Modify {
         }
     }
 
+    /// The fillet (for Fillet) or chamfer (for Chamfer) a click on point `p`
+    /// means: one of its end points, or the corner kept for it (#445).
+    pub fn resizable_at(self, doc: &Document, p: EntityId) -> Option<EntityId> {
+        match self {
+            Modify::Fillet => corner::fillet_at_point(doc, p),
+            Modify::Chamfer => corner::chamfer_at_point(doc, p),
+            _ => None,
+        }
+    }
+
     /// Fillet and chamfer take two curves; the rest one.
     pub fn takes_two(self) -> bool {
         matches!(self, Modify::Fillet | Modify::Chamfer)
