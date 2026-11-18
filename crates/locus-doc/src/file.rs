@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 20;
+pub const CURRENT_VERSION: u32 = 21;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -947,8 +947,59 @@ impl From<FileV19> for FileV20 {
     }
 }
 
-/// The newest on-disk shape. When adding v21, point this at `FileV21`.
-type Latest = FileV20;
+/// Version 21: regions are per layer (#457, SPEC §6.3). The shape is v20's,
+/// but region keys (fills and boolean recipes) now name per-layer faces;
+/// loading an older file moves each key that named a face cut by another
+/// layer's shape onto the per-layer region in the same place
+/// ([`crate::region_fill::migrate_region_keys`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV21 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+}
+
+impl From<FileV20> for FileV21 {
+    fn from(f: FileV20) -> Self {
+        FileV21 {
+            format_version: 21,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v22, point this at `FileV22`.
+type Latest = FileV21;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -974,8 +1025,8 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV20::from(FileV19::from(FileV18::from(FileV17::from(FileV16::from(
-        f,
+    FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+        FileV16::from(f),
     )))))
 }
 
@@ -1059,13 +1110,16 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+        16 => FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
             parse::<FileV16>(text)?,
+        ))))),
+        17 => FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+            parse::<FileV17>(text)?,
         )))),
-        17 => FileV20::from(FileV19::from(FileV18::from(parse::<FileV17>(text)?))),
-        18 => FileV20::from(FileV19::from(parse::<FileV18>(text)?)),
-        19 => FileV20::from(parse::<FileV19>(text)?),
-        20 => parse::<FileV20>(text)?,
+        18 => FileV21::from(FileV20::from(FileV19::from(parse::<FileV18>(text)?))),
+        19 => FileV21::from(FileV20::from(parse::<FileV19>(text)?)),
+        20 => FileV21::from(parse::<FileV20>(text)?),
+        21 => parse::<FileV21>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -1075,14 +1129,23 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         v => return Err(FileError::UnknownVersion(v)),
     };
     // Before v19 fills were on objects: move them onto their regions (#451).
-    into_document(latest, header.format_version < 19)
+    // Before v21 region keys were built across layers: move them (#457).
+    into_document(
+        latest,
+        header.format_version < 19,
+        (19..21).contains(&header.format_version),
+    )
 }
 
 fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, FileError> {
     ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))
 }
 
-fn into_document(f: Latest, migrate_fills: bool) -> Result<Document, FileError> {
+fn into_document(
+    f: Latest,
+    migrate_fills: bool,
+    migrate_keys: bool,
+) -> Result<Document, FileError> {
     if f.region_fills.len() > crate::region_fill::MAX_REGION_FILLS {
         return Err(FileError::Invalid("too many region fills".to_owned()));
     }
@@ -1110,6 +1173,9 @@ fn into_document(f: Latest, migrate_fills: bool) -> Result<Document, FileError> 
     };
     if migrate_fills {
         crate::region_fill::migrate_object_fills(&mut doc);
+    }
+    if migrate_keys {
+        crate::region_fill::migrate_region_keys(&mut doc);
     }
     validate(&doc)?;
     Ok(doc)
@@ -1243,6 +1309,7 @@ mod tests {
     use crate::command::{Command, Editor};
     use crate::constraint::Dimension;
     use locus_geom::Vec2;
+    use locus_region::RegionKey;
 
     const L: LayerId = Document::default_layer();
 
@@ -2196,26 +2263,222 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v20 fixture is frozen; it migrates to the current version
+    /// unchanged: none of its region keys named a face another layer cut.
     #[test]
-    fn v20_fixture_is_current_and_loads() {
+    fn v20_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v20/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v20()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 20"));
-        assert!(text.contains("mode: OffsetFill"), "{text}");
-        assert!(text.contains("overlap: Union"), "{text}");
-        assert_eq!(load(&text).unwrap(), sample_v20());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v20());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// The v21 sample is `sample_v20()`: v21 changes what region keys mean,
+    /// not the shape of the file.
+    pub(crate) fn sample_v21() -> Document {
+        sample_v20()
+    }
+
+    #[test]
+    fn v21_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v21/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v21()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 21"));
+        assert_eq!(load(&text).unwrap(), sample_v21());
         assert_eq!(
-            save(&sample_v20()).unwrap(),
+            save(&sample_v21()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    /// The owner's file (#457): a filled circle on Layer 1, then an
+    /// overlapping circle on Layer 2.
+    fn two_layer_circles(fill_before_overlap: bool) -> (Document, RegionKey) {
+        let mut ed = Editor::new(Document::new());
+        let l1 = Document::default_layer();
+        let l2 = ed
+            .apply(&Command::AddLayer {
+                name: "Layer 2".to_owned(),
+                colour: [0, 0, 255],
+                operation: Operation::Draw,
+            })
+            .unwrap()
+            .layers[0];
+        let circle = |ed: &mut Editor, layer, x: f64| {
+            let c = ed
+                .apply(&Command::AddEntity {
+                    layer,
+                    construction: false,
+                    geom: Geom::Point {
+                        pos: Vec2::new(x, 0.0),
+                    },
+                    style: Default::default(),
+                })
+                .unwrap()
+                .entities[0];
+            ed.apply(&Command::AddEntity {
+                layer,
+                construction: false,
+                geom: Geom::Circle {
+                    center: c,
+                    radius: 10.0,
+                },
+                style: Default::default(),
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let c1 = circle(&mut ed, l1, 0.0);
+        let key = RegionKey {
+            bounds: vec![c1.get()],
+            index: 0,
+        };
+        let red = crate::region_fill::RegionFill {
+            fill: crate::style::Fill::Colour([243, 94, 94]),
+            opacity: 1.0,
+        };
+        let fill = |ed: &mut Editor| {
+            ed.apply(&Command::SetRegionFill {
+                regions: vec![key.clone()],
+                fill: Some(red),
+            })
+            .unwrap();
+        };
+        if fill_before_overlap {
+            fill(&mut ed);
+        }
+        circle(&mut ed, l2, 12.0);
+        if !fill_before_overlap {
+            fill(&mut ed);
+        }
+        (ed.into_document(), key)
+    }
+
+    /// #457: another layer's shape never splits, hides or recolours a
+    /// layer's region; the canvas and export resolve the same red fill.
+    #[test]
+    fn another_layers_overlap_keeps_the_fill() {
+        let (doc, key) = two_layer_circles(true);
+        let regions = crate::regions::regions(&doc);
+        // One region per circle, each from its own layer.
+        assert_eq!(regions.len(), 2, "{regions:?}");
+        let fills = crate::region_fill::resolve(&doc, &regions);
+        let i = regions
+            .iter()
+            .position(|r| r.key == key)
+            .expect("still there");
+        assert_eq!(
+            fills[i].and_then(|f| f.painted()),
+            Some([243, 94, 94]),
+            "the red fill survives"
+        );
+        assert!(
+            fills.iter().filter(|f| f.is_some()).count() == 1,
+            "Layer 2 stays unfilled"
+        );
+    }
+
+    /// #457: a v20 file whose fill was keyed to a face cut by another
+    /// layer's circle migrates to the per-layer region in the same place.
+    #[test]
+    fn cross_layer_keys_migrate_to_the_per_layer_region() {
+        let (mut doc, key) = two_layer_circles(true);
+        // The key a v20 build made: Layer 1's circle minus Layer 2's.
+        let old = crate::regions::regions_across_layers(&doc);
+        let crescent = old
+            .iter()
+            .find(|r| r.key.bounds.len() == 2 && r.contains(Vec2::new(-5.0, 0.0)))
+            .expect("the crescent")
+            .key
+            .clone();
+        let red = doc.region_fills.remove(&key).unwrap();
+        doc.region_fills.insert(crescent, red);
+        let mut text = save(&doc).unwrap();
+        text = text.replace(&current(), "format_version: 20");
+        let back = load(&text).unwrap();
+        assert_eq!(
+            back.region_fill(&key),
+            Some(&red),
+            "moved to Layer 1's circle"
+        );
+        assert_eq!(back.region_fills().len(), 1);
+    }
+
+    /// #457: a split within one layer keeps the fill on every piece; a new
+    /// region outside the old one doesn't take it.
+    #[test]
+    fn a_split_on_the_same_layer_keeps_the_fill_inside_only() {
+        let (doc, key) = two_layer_circles(true);
+        let mut ed = Editor::new(doc);
+        let l1 = Document::default_layer();
+        let point = |ed: &mut Editor, x: f64, y: f64| {
+            ed.apply(&Command::AddEntity {
+                layer: l1,
+                construction: false,
+                geom: Geom::Point {
+                    pos: Vec2::new(x, y),
+                },
+                style: Default::default(),
+            })
+            .unwrap()
+            .entities[0]
+        };
+        // A line across the circle, and a square beside it touching nothing.
+        let (a, b) = (point(&mut ed, 0.0, -20.0), point(&mut ed, 0.0, 20.0));
+        ed.apply(&Command::AddEntity {
+            layer: l1,
+            construction: false,
+            geom: Geom::Line { start: a, end: b },
+            style: Default::default(),
+        })
+        .unwrap();
+        let sq: Vec<_> = [(-40.0, -5.0), (-30.0, -5.0), (-30.0, 5.0), (-40.0, 5.0)]
+            .iter()
+            .map(|&(x, y)| point(&mut ed, x, y))
+            .collect();
+        for i in 0..4 {
+            ed.apply(&Command::AddEntity {
+                layer: l1,
+                construction: false,
+                geom: Geom::Line {
+                    start: sq[i],
+                    end: sq[(i + 1) % 4],
+                },
+                style: Default::default(),
+            })
+            .unwrap();
+        }
+        let doc = ed.into_document();
+        let regions = crate::regions::regions(&doc);
+        assert!(regions.iter().all(|r| r.key != key), "the circle was split");
+        let fills = crate::region_fill::resolve(&doc, &regions);
+        let at = |x: f64| {
+            let i = regions
+                .iter()
+                .position(|r| {
+                    crate::regions::layer_of(&doc, r) == Some(l1) && r.contains(Vec2::new(x, 0.0))
+                })
+                .unwrap();
+            fills[i].and_then(|f| f.painted())
+        };
+        assert_eq!(at(-5.0), Some([243, 94, 94]), "left half");
+        assert_eq!(at(5.0), Some([243, 94, 94]), "right half");
+        assert_eq!(at(-35.0), None, "the square outside stays open");
     }
 
     /// Region fills: one undo step for many regions, bad opacity refused,

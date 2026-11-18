@@ -228,17 +228,38 @@ impl AppState {
         self.doc.sketcher.regions()
     }
 
-    /// The region under a world point (faces are disjoint: at most one).
+    /// The region under a world point. Regions are per layer (#457), so
+    /// layers' regions may overlap: the active layer's wins, then the
+    /// innermost.
     pub(crate) fn region_at(&self, w: Vec2) -> Option<RegionKey> {
+        let doc = self.doc.sketcher.document();
+        let active = self.doc.active_layer;
         self.regions()
             .iter()
-            .find(|r| r.contains(w))
+            .filter(|r| r.contains(w))
+            .min_by(|a, b| {
+                let off = |r: &Region| locus_doc::regions::layer_of(doc, r) != Some(active);
+                off(a)
+                    .cmp(&off(b))
+                    .then(a.area().abs().total_cmp(&b.area().abs()))
+            })
             .map(|r| r.key.clone())
+    }
+
+    /// A region's fill as resolved for the canvas, Inspector and export
+    /// alike (#457): stored, or kept from a region an edit split.
+    pub(crate) fn resolved_fill(
+        &self,
+        k: &RegionKey,
+    ) -> Option<locus_doc::region_fill::RegionFill> {
+        let rs = self.regions();
+        let i = rs.binary_search_by(|r| r.key.cmp(k)).ok()?;
+        self.doc.sketcher.region_fills().get(i).copied().flatten()
     }
 
     /// A region's own fill (#451), at its opacity.
     pub(crate) fn region_fill(&self, r: &Region) -> Option<Color32> {
-        let f = self.doc.sketcher.document().region_fill(&r.key)?;
+        let f = self.resolved_fill(&r.key)?;
         let [red, g, b] = f.painted()?;
         let a = (f.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
         Some(Color32::from_rgba_unmultiplied(red, g, b, a))
