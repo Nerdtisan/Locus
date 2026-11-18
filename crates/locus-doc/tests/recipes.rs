@@ -360,3 +360,39 @@ fn mirroring_an_arc_is_not_redundant() {
     );
     assert!(f.s.state().redundant.is_empty());
 }
+
+/// Regression (#421): a mirror copy can be made construction on its own,
+/// and keeps it when the source moves.
+#[test]
+fn a_mirror_copy_can_be_made_construction() {
+    let mut f = fx();
+    let rid = {
+        let src = [f.line];
+        mirror(&mut f, &src)
+    }
+    .unwrap();
+    let il =
+        f.s.document()
+            .recipe(rid)
+            .unwrap()
+            .instances()
+            .find(|e| matches!(f.s.document().entity(*e).unwrap().geom, Geom::Line { .. }))
+            .unwrap();
+    f.s.apply(&Command::SetConstruction {
+        entities: vec![il],
+        construction: true,
+    })
+    .unwrap();
+    f.s.apply(&Command::ModifyEntity {
+        id: f.b,
+        geom: Geom::Point {
+            pos: Vec2::new(6.0, 3.0),
+        },
+    })
+    .unwrap();
+    assert!(f.s.document().entity(il).unwrap().construction);
+    assert!(!f.s.document().entity(f.line).unwrap().construction);
+    f.s.undo().unwrap();
+    f.s.undo().unwrap();
+    assert!(!f.s.document().entity(il).unwrap().construction);
+}

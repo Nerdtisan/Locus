@@ -55,6 +55,16 @@ pub enum Command {
     ToggleConstruction {
         id: EntityId,
     },
+    /// Make every entity in `entities` construction (`true`) or normal, as
+    /// one undo step (#289, #421). Absolute rather than a toggle, so a
+    /// selection holding both a source and its copies can't flip a copy
+    /// twice. Construction never moves geometry, so recipe outputs (offset,
+    /// pattern and mirror copies) may be set too, and keep it when their
+    /// recipe regenerates; copies of a source follow it (SPEC §6.2.1).
+    SetConstruction {
+        entities: Vec<EntityId>,
+        construction: bool,
+    },
     /// Change the style of every entity in `entities` (SPEC §4, #287), as one
     /// undo step. Only the fields set in `patch` change, so a mixed selection
     /// keeps what it doesn't share. Pattern and mirror copies follow their
@@ -254,6 +264,12 @@ impl Command {
             Command::ModifyEntity { .. } => "Modify entity".to_owned(),
             Command::DeleteEntity { .. } => "Delete entity".to_owned(),
             Command::ToggleConstruction { .. } => "Toggle construction".to_owned(),
+            Command::SetConstruction { construction, .. } => if *construction {
+                "Make construction"
+            } else {
+                "Make normal"
+            }
+            .to_owned(),
             Command::SetStyle { .. } => "Set style".to_owned(),
             Command::AddConstraint { constraint } => {
                 format!("Add {} constraint", constraint.name())
@@ -538,8 +554,9 @@ fn exec(
             );
         }
         Command::ToggleConstruction { id } => {
+            // Construction never moves geometry: a recipe's output may be
+            // toggled too, and keeps it on regeneration (#421).
             let before = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?.clone();
-            doc.check_not_driven(*id)?;
             doc.check_unlocked(before.layer)?;
             let construction = !before.construction;
             let after = Entity {
@@ -572,6 +589,45 @@ fn exec(
                         },
                     );
                 }
+            }
+        }
+        Command::SetConstruction {
+            entities,
+            construction,
+        } => {
+            if entities.is_empty() {
+                return Err(DocError::NothingToDo("set construction"));
+            }
+            let mut targets: Vec<EntityId> = Vec::new();
+            for id in entities {
+                let e = doc.entity(*id).ok_or(DocError::UnknownEntity(*id))?;
+                doc.check_unlocked(e.layer)?;
+                targets.push(*id);
+                // Instances follow their source (SPEC §6.2.1: associative).
+                targets.extend(recipe::instances_of(doc, *id).into_iter().map(|(i, _)| i));
+            }
+            targets.sort_unstable();
+            targets.dedup();
+            for id in targets {
+                let Some(before) = doc.entity(id).cloned() else {
+                    continue;
+                };
+                if before.construction == *construction {
+                    continue;
+                }
+                let after = Entity {
+                    construction: *construction,
+                    ..before.clone()
+                };
+                record(
+                    doc,
+                    patches,
+                    Patch::Entity {
+                        id,
+                        before: Some(before),
+                        after: Some(after),
+                    },
+                );
             }
         }
         Command::SetStyle { entities, patch } => {
