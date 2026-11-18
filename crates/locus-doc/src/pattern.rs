@@ -118,11 +118,14 @@ pub(crate) fn regenerate(
                 continue;
             };
             let id = set[*i];
-            // A copy keeps a style it was given; a new copy takes its source's.
-            let style = doc.entity(id).map_or(src.style, |e| e.style);
+            // A copy keeps the style and construction it was given (#421);
+            // a new copy takes its source's.
+            let (style, construction) = doc
+                .entity(id)
+                .map_or((src.style, src.construction), |e| (e.style, e.construction));
             let e = Entity {
                 layer: src.layer,
-                construction: src.construction,
+                construction,
                 geom: recipe::copy_geom(&src.geom, xf, &map),
                 style,
             };

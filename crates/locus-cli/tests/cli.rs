@@ -347,6 +347,49 @@ fn export_with_a_profile_uses_its_format_and_colours() {
     assert!(std::fs::read_to_string(&dxf).unwrap().contains("SECTION"));
 }
 
+/// #419: with no --format or --profile, export uses the document's own
+/// machine profile; an explicit --format still gets its colours.
+#[test]
+fn export_defaults_to_the_documents_profile() {
+    let text = std::fs::read_to_string(fixture("plate.locus")).unwrap();
+    let mut ed = locus_doc::Editor::new(locus_doc::file::load(&text).unwrap());
+    ed.apply(&locus_doc::Command::SetProfile {
+        id: Some("lightburn".to_owned()),
+    })
+    .unwrap();
+    let input = scratch("plate-lightburn.locus");
+    std::fs::write(&input, locus_doc::file::save(ed.document()).unwrap()).unwrap();
+    let run = |extra: &[&str], out: &std::path::Path| {
+        let mut a: Vec<&std::ffi::OsStr> = vec![s("export"), input.as_os_str()];
+        a.extend(extra.iter().map(|x| s(x)));
+        a.extend([s("--out"), out.as_os_str()]);
+        cli(&a)
+    };
+    let svg = scratch("plate-lightburn.svg");
+    let out = run(&[], &svg);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        std::fs::read_to_string(&svg)
+            .unwrap()
+            .contains("stroke=\"#ff0000\"")
+    );
+    let pdf = scratch("plate-lightburn.pdf");
+    assert!(run(&["--format", "pdf"], &pdf).status.success());
+    // A document without a profile still needs one of the options.
+    let x = scratch("x.svg");
+    let f = fixture("plate.locus");
+    assert_eq!(
+        cli(&[s("export"), f.as_os_str(), s("--out"), x.as_os_str()])
+            .status
+            .code(),
+        Some(2)
+    );
+}
+
 #[test]
 fn profile_usage_errors_exit_2() {
     let x = scratch("never.out");

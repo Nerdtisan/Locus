@@ -230,6 +230,8 @@ S opens a search box at the cursor (Fusion's shortcut box). It shows recent and 
 
 A two-pane dialog. On the left are user profiles, then built-in presets marked with a lock, and New, Duplicate, Rename, Delete, Import .json and Export .json. On the right is the editor: name, format (exporter), units, bed size, origin corner (a 2×2 picker), X/Y offsets, and an operations table (colour, hairline width and default parameters per operation). Built-in presets are read-only and show "Duplicate to edit". Imported files are untrusted: size-bounded and validated (§7).
 
+**Machine per document (#419, owner test 2026-11-18).** The editor also has a **Machine** field: laser cutter, pen plotter, vinyl cutter or generic. The document's profile is a picker in three places: the app bar (the profile name next to the document name, with ▾), File ▸ Machine profile and the Inspector's Document section. It sets new layers' operation, the operations layer pickers offer, the bed on the canvas and Machine preview, and export uses it by default. After a change, a small window lists the layers the machine can't run (for example "Layer 1  Draw → Cut"). Update applies them all as one undo step; Keep leaves them alone (SPEC §7).
+
 ### 6.5 Text (#222)
 
 Click to place the anchor, then type on the canvas. The Text dialog has a live preview and holds:

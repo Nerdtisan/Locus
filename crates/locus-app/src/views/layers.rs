@@ -108,6 +108,7 @@ impl LayersView {
             ..Wants::default()
         };
         let selected: Vec<EntityId> = app.selection.items.iter().collect();
+        let machine = crate::views::machine_profile::current(app.document(), settings);
         {
             let doc = app.doc.sketcher.document();
             let st = &mut *self;
@@ -115,6 +116,7 @@ impl LayersView {
                 active: app.doc.active_layer,
                 picked: app.view.browser_layer,
                 selected: &selected,
+                machine: machine.as_ref(),
             };
             let order = sorted(doc);
             for (pos, id) in order.iter().enumerate() {
@@ -132,7 +134,8 @@ impl LayersView {
             app.view.browser_layer = Some(id);
         }
         if want.add {
-            let cmd = new_layer(app.doc.sketcher.document());
+            let machine = crate::views::machine_profile::current(app.document(), settings);
+            let cmd = new_layer(app.doc.sketcher.document(), machine.as_ref());
             app.apply_reporting(&cmd);
             if app.doc.notice.is_none()
                 && let Some(&newest) = app.doc.sketcher.document().layers().keys().next_back()
@@ -327,13 +330,24 @@ impl AppState {
     }
 }
 
-/// The command behind "+ Add layer": a Draw layer (#288), next palette colour.
-fn new_layer(doc: &Document) -> Command {
+/// The command behind "+ Add layer": the machine profile's operation (a
+/// laser Cut, a plotter Draw, a vinyl cutter Drag knife; Draw without a
+/// profile, #288, #419), next palette colour.
+fn new_layer(doc: &Document, machine: Option<&locus_export::MachineProfile>) -> Command {
     Command::AddLayer {
         name: unique_name(doc),
         colour: PALETTE[doc.layers().len() % PALETTE.len()],
-        operation: OperationKind::Draw.default_operation(),
+        operation: crate::views::machine_profile::new_layer_operation(machine),
     }
+}
+
+/// A fresh operation of `kind`, with the machine profile's default kerf or
+/// blade offset (SPEC §7).
+pub(crate) fn operation_for(
+    kind: OperationKind,
+    machine: Option<&locus_export::MachineProfile>,
+) -> Operation {
+    machine.map_or_else(|| kind.default_operation(), |p| p.defaults.operation(kind))
 }
 
 /// Layer IDs in export order (ties by ID).
@@ -397,6 +411,8 @@ struct Row<'a> {
     /// The layer picked in the Browser, if any.
     picked: Option<LayerId>,
     selected: &'a [EntityId],
+    /// The document's machine profile: the operations offered (#419).
+    machine: Option<&'a locus_export::MachineProfile>,
 }
 
 /// A small icon button for a layer row; dim when off or disabled.
@@ -561,7 +577,7 @@ fn layer_row(
     });
     if st.expanded == Some(id) {
         ui.indent(("layer-op", id), |ui| {
-            operation_editor(ui, st, want, id, l.operation);
+            operation_editor(ui, st, want, id, l.operation, row.machine);
         });
     }
 }
@@ -634,6 +650,7 @@ fn operation_editor(
     want: &mut Wants,
     id: LayerId,
     current: Operation,
+    machine: Option<&locus_export::MachineProfile>,
 ) {
     let mut op = match st.op {
         Some((i, o)) if i == id => o,
@@ -649,7 +666,7 @@ fn operation_editor(
             egui::ComboBox::from_id_salt(("opkind", id.get()))
                 .selected_text(kind.name())
                 .show_ui(ui, |ui| {
-                    for k in OperationKind::ALL {
+                    for k in crate::views::machine_profile::offered(machine, op.kind()) {
                         ui.selectable_value(&mut kind, k, k.name());
                     }
                 });
@@ -657,7 +674,7 @@ fn operation_editor(
                 want.commands.push(Command::SetLayerProps {
                     id,
                     props: LayerProps {
-                        operation: Some(kind.default_operation()),
+                        operation: Some(operation_for(kind, machine)),
                         ..LayerProps::default()
                     },
                 });
@@ -894,9 +911,33 @@ mod tests {
     fn add_layer_defaults_to_draw() {
         let doc = Document::new();
         assert!(matches!(
-            new_layer(&doc),
+            new_layer(&doc, None),
             Command::AddLayer {
                 operation: Operation::Draw,
+                ..
+            }
+        ));
+    }
+
+    /// #419: a new layer takes the machine profile's operation and defaults.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn add_layer_follows_the_machine_profile() {
+        let doc = Document::new();
+        let mut cricut = locus_export::profile::find("cricut", &[]).unwrap();
+        cricut.defaults.blade_offset_mm = Some(0.3);
+        match new_layer(&doc, Some(&cricut)) {
+            Command::AddLayer {
+                operation: Operation::DragKnife(p),
+                ..
+            } => assert!((p.blade_offset - 0.3).abs() < 1e-12),
+            other => panic!("{other:?}"),
+        }
+        let laser = locus_export::profile::find("lightburn", &[]).unwrap();
+        assert!(matches!(
+            new_layer(&doc, Some(&laser)),
+            Command::AddLayer {
+                operation: Operation::Cut(_),
                 ..
             }
         ));

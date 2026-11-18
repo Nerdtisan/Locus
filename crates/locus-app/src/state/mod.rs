@@ -615,35 +615,25 @@ impl AppState {
     /// typed value or a text field has the keyboard.
     /// Normal/Construction on the selection (design §6.10, #289), as one
     /// command: if every selected entity is construction they all become
-    /// normal, otherwise the normal ones become construction. Pattern and
-    /// mirror copies follow their source and are left out; `None` when
-    /// nothing selected can change.
+    /// normal, otherwise they all become construction. Recipe outputs
+    /// (offset, pattern and mirror copies) are included and keep the flag
+    /// when their recipe regenerates (#421); copies of a selected source
+    /// follow it. `None` when nothing is selected.
     pub(crate) fn construction_toggle(&self) -> Option<Command> {
         let doc = self.doc.sketcher.document();
         let ids: Vec<(EntityId, bool)> = self
             .selection
             .items
             .iter()
-            .filter(|id| doc.driven_by(*id).is_none())
             .filter_map(|id| doc.entity(id).map(|e| (id, e.construction)))
             .collect();
         if ids.is_empty() {
             return None;
         }
-        let to_normal = ids.iter().all(|(_, c)| *c);
-        let commands: Vec<Command> = ids
-            .into_iter()
-            .filter(|(_, c)| *c == to_normal)
-            .map(|(id, _)| Command::ToggleConstruction { id })
-            .collect();
-        Some(Command::Compound {
-            label: if to_normal {
-                "Make normal"
-            } else {
-                "Make construction"
-            }
-            .to_owned(),
-            commands,
+        let construction = !ids.iter().all(|(_, c)| *c);
+        Some(Command::SetConstruction {
+            entities: ids.into_iter().map(|(id, _)| id).collect(),
+            construction,
         })
     }
 
@@ -1690,6 +1680,71 @@ mod tests {
         assert!(cons(&c, l1) && cons(&c, l2), "one undo per toggle");
         c.selection.items.clear();
         assert!(c.construction_toggle().is_none());
+    }
+
+    /// Regression (#421): X on an offset's curves makes them construction
+    /// (it did nothing: recipe outputs were left out), as one undo step, and
+    /// they stay construction when the offset's distance changes.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn x_makes_offset_curves_construction() {
+        use locus_doc::recipe::RecipeKind;
+        let mut c = AppState::default();
+        let layer = c.active_layer();
+        let add = |c: &mut AppState, geom| {
+            c.apply_reporting(&Command::AddEntity {
+                layer,
+                construction: false,
+                style: Default::default(),
+                geom,
+            });
+            c.document()
+                .entities()
+                .iter()
+                .map(|(i, _)| i)
+                .last()
+                .unwrap()
+        };
+        let a = add(
+            &mut c,
+            Geom::Point {
+                pos: Vec2::new(600.0, 0.0),
+            },
+        );
+        let b = add(
+            &mut c,
+            Geom::Point {
+                pos: Vec2::new(640.0, 0.0),
+            },
+        );
+        let line = add(&mut c, Geom::Line { start: a, end: b });
+        let kind = |d| RecipeKind::Offset {
+            distance: d,
+            sharp: true,
+            expr: None,
+        };
+        assert!(c.apply_reporting(&Command::AddRecipe {
+            kind: kind(2.0),
+            sources: vec![line],
+        }));
+        let doc = c.document();
+        let (rid, r) = doc.recipes().iter().next().unwrap();
+        let rid = *rid;
+        let out: Vec<EntityId> = r.instances().filter(|e| doc.line(*e).is_some()).collect();
+        assert_eq!(out.len(), 1);
+        c.selection.items.set_all(out.clone());
+        press(&mut c, egui::Key::X);
+        let cons = |c: &AppState| c.document().entity(out[0]).unwrap().construction;
+        assert!(cons(&c), "the offset curve is construction");
+        assert_eq!(c.undo_label(), Some("Make construction"));
+        assert!(c.apply_reporting(&Command::EditRecipe {
+            id: rid,
+            kind: kind(5.0),
+        }));
+        assert!(cons(&c), "kept when the offset regenerates");
+        c.undo();
+        c.undo();
+        assert!(!cons(&c), "one undo step");
     }
 
     /// The Linetype switch makes drawing tools create construction (#289).

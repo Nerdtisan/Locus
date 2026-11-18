@@ -7,6 +7,12 @@
 //!    reversed (open) or re-started at the closest vertex (closed) so the pen
 //!    lifts as little as possible. Paths that join end to end were already
 //!    chained by the collection stage.
+//!
+//! Paint order (#422): the order is also the order viewers paint in, and the
+//! canvas draws every fill under the geometry. So on a layer with filled
+//! shapes (Draw, SPEC §7) the filled ones go first, outermost first, so that
+//! no fill is painted over a stroke or a smaller fill drawn inside it. Machine
+//! layers carry no fill, so their cut order is unchanged.
 
 use crate::pipeline::{ExportLayer, ExportModel, ExportPath, PathSeg, Shape};
 use locus_geom::Vec2;
@@ -51,11 +57,28 @@ fn order_layer(layer: &mut ExportLayer, pen: &mut Vec2) {
         })
         .collect();
 
-    let mut remaining: Vec<(usize, ExportPath)> = depth.into_iter().zip(paths).collect();
+    // Lowest rank first: filled paths outermost first, then the rest deepest
+    // first (see the module docs).
+    let rank: Vec<(bool, isize)> = paths
+        .iter()
+        .zip(depth)
+        .map(|(p, d)| {
+            let d = isize::try_from(d).unwrap_or(isize::MAX);
+            if layer.paint(p).fill.is_some() {
+                (false, d)
+            } else {
+                (true, -d)
+            }
+        })
+        .collect();
+
+    let mut remaining: Vec<((bool, isize), ExportPath)> = rank.into_iter().zip(paths).collect();
     let mut out = Vec::with_capacity(remaining.len());
     while !remaining.is_empty() {
-        // Deepest level first; nearest neighbour inside the level.
-        let level = remaining.iter().map(|(d, _)| *d).max().unwrap_or(0);
+        // Lowest rank first; nearest neighbour inside the level.
+        let Some(level) = remaining.iter().map(|(r, _)| *r).min() else {
+            break;
+        };
         let (idx, _) = remaining
             .iter()
             .enumerate()

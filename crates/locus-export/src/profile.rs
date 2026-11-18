@@ -121,6 +121,70 @@ impl Bed {
     }
 }
 
+/// What kind of machine a profile drives (SPEC §7, #419). It sets the
+/// operation new layers get and the operations the layer pickers offer.
+/// Profiles saved before #419 have none and read as [`MachineKind::Generic`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MachineKind {
+    Laser,
+    Plotter,
+    /// A vinyl / craft cutter (Cricut, Silhouette): a drag knife.
+    Cutter,
+    /// Any machine: every operation, new layers Draw.
+    #[default]
+    Generic,
+}
+
+impl MachineKind {
+    pub const ALL: [MachineKind; 4] = [
+        MachineKind::Laser,
+        MachineKind::Plotter,
+        MachineKind::Cutter,
+        MachineKind::Generic,
+    ];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            MachineKind::Laser => "Laser cutter",
+            MachineKind::Plotter => "Pen plotter",
+            MachineKind::Cutter => "Vinyl cutter",
+            MachineKind::Generic => "Generic",
+        }
+    }
+
+    /// The operation new layers get.
+    #[must_use]
+    pub const fn default_operation(self) -> OperationKind {
+        match self {
+            MachineKind::Laser => OperationKind::Cut,
+            MachineKind::Cutter => OperationKind::DragKnife,
+            MachineKind::Plotter | MachineKind::Generic => OperationKind::Draw,
+        }
+    }
+
+    /// The operations this machine can run, in SPEC §7 order. Reference is
+    /// always offered: it is never exported.
+    #[must_use]
+    pub fn operations(self) -> &'static [OperationKind] {
+        use OperationKind::{Cut, DragKnife, Draw, Engrave, Reference, Score};
+        match self {
+            MachineKind::Laser => &[Cut, Score, Engrave, Reference],
+            // A pen can hatch a fill as well as draw a line.
+            MachineKind::Plotter => &[Engrave, Draw, Reference],
+            // Craft cutters also score and draw with a pen in the tool slot.
+            MachineKind::Cutter => &[Score, Draw, DragKnife, Reference],
+            MachineKind::Generic => &OperationKind::ALL,
+        }
+    }
+
+    /// Does this machine offer `op`?
+    #[must_use]
+    pub fn offers(self, op: OperationKind) -> bool {
+        self.operations().contains(&op)
+    }
+}
+
 /// Default operation parameters a profile suggests for new layers.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -189,6 +253,9 @@ pub struct MachineProfile {
     pub format: String,
     #[serde(default)]
     pub units: ProfileUnits,
+    /// The kind of machine: new layers' operation and the operations offered.
+    #[serde(default)]
+    pub machine: MachineKind,
     /// Exported colour per operation; operations not listed keep the layer's own colour.
     #[serde(default)]
     pub colours: BTreeMap<OperationKind, [u8; 3]>,
@@ -258,6 +325,13 @@ impl MachineProfile {
         serde_json::to_string_pretty(self).ok()
     }
 
+    /// The operation a new layer gets on this machine, with this profile's
+    /// default kerf / blade offset filled in (SPEC §7, #419).
+    #[must_use]
+    pub fn new_layer_operation(&self) -> Operation {
+        self.defaults.operation(self.machine.default_operation())
+    }
+
     /// Apply the colour and hairline mapping to an export model (before the
     /// writer runs).
     pub fn apply(&self, model: &mut ExportModel) {
@@ -294,6 +368,7 @@ fn preset(
     id: &str,
     name: &str,
     format: &str,
+    machine: MachineKind,
     units: ProfileUnits,
     colours: &[(OperationKind, [u8; 3])],
     bed: Option<Bed>,
@@ -303,6 +378,7 @@ fn preset(
         name: name.to_owned(),
         format: format.to_owned(),
         units,
+        machine,
         colours: colours.iter().copied().collect(),
         bed,
         defaults: Defaults::default(),
@@ -340,6 +416,12 @@ pub fn presets() -> Vec<MachineProfile> {
     ];
     let lb_bed = bed(400.0, 400.0, Origin::TopLeft);
     let mat12 = bed(12.0 * IN, 12.0 * IN, Origin::TopLeft);
+    let (laser, plotter, cutter, generic) = (
+        MachineKind::Laser,
+        MachineKind::Plotter,
+        MachineKind::Cutter,
+        MachineKind::Generic,
+    );
     let mm = ProfileUnits::Mm;
     let inch = ProfileUnits::Inch;
     vec![
@@ -347,6 +429,7 @@ pub fn presets() -> Vec<MachineProfile> {
             "lightburn",
             "LightBurn (SVG)",
             "svg",
+            laser,
             mm,
             &lightburn,
             lb_bed,
@@ -355,6 +438,7 @@ pub fn presets() -> Vec<MachineProfile> {
             "lightburn-dxf",
             "LightBurn (DXF)",
             "dxf",
+            laser,
             mm,
             &lightburn,
             lb_bed,
@@ -363,6 +447,7 @@ pub fn presets() -> Vec<MachineProfile> {
             "cricut",
             "Cricut Design Space (SVG)",
             "svg",
+            cutter,
             inch,
             &vinyl,
             mat12,
@@ -371,6 +456,7 @@ pub fn presets() -> Vec<MachineProfile> {
             "silhouette-basic-12",
             "Silhouette Studio Basic, Cameo 12\" mat (DXF R12)",
             "dxf",
+            cutter,
             inch,
             &vinyl,
             mat12,
@@ -379,6 +465,7 @@ pub fn presets() -> Vec<MachineProfile> {
             "silhouette-basic-24",
             "Silhouette Studio Basic, Cameo 24\" mat (DXF R12)",
             "dxf",
+            cutter,
             inch,
             &vinyl,
             bed(12.0 * IN, 24.0 * IN, Origin::TopLeft),
@@ -387,6 +474,7 @@ pub fn presets() -> Vec<MachineProfile> {
             "silhouette-designer-plus",
             "Silhouette Designer+ (SVG)",
             "svg",
+            cutter,
             inch,
             &vinyl,
             mat12,
@@ -395,12 +483,21 @@ pub fn presets() -> Vec<MachineProfile> {
             "hpgl",
             "Generic HPGL plotter (HPGL exporter plugin)",
             "hpgl",
+            plotter,
             mm,
             &[],
             bed(420.0, 297.0, Origin::BottomLeft),
         ),
-        preset("generic-svg", "Generic SVG", "svg", mm, &[], None),
-        preset("generic-dxf", "Generic DXF (R12)", "dxf", mm, &[], None),
+        preset("generic-svg", "Generic SVG", "svg", generic, mm, &[], None),
+        preset(
+            "generic-dxf",
+            "Generic DXF (R12)",
+            "dxf",
+            generic,
+            mm,
+            &[],
+            None,
+        ),
     ]
 }
 

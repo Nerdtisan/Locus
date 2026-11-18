@@ -30,6 +30,7 @@ usage:
 
 profiles lists the built-in machine profiles (SPEC §7). export --profile applies one:
 its format, colours and bed check; --profile-file loads one from a .json file.
+Without them, export uses the document's own machine profile (a built-in one).
 validate prints errors and warnings and exits 1 when errors remain.
 --fix applies the safe auto-fixes to the exported geometry (never to the file).
 export refuses to write when errors remain unless --force is given. Formats:
@@ -111,7 +112,19 @@ fn run(args: &[String]) -> Result<(), CliError> {
         }
         Some("export") => {
             let mut opts = ExportOpts::parse(&args[1..]).map_err(CliError::Usage)?;
-            let profile = opts.load_profile()?;
+            let mut profile = opts.load_profile()?;
+            // No format and no profile: the document's own machine profile
+            // decides (SPEC §7, #419). Only built-ins are known here.
+            if profile.is_none() && opts.format.is_none() {
+                let doc = read_document(&opts.input)?;
+                if let Some(id) = doc.profile() {
+                    profile = Some(locus_export::profile::find(id, &[]).ok_or_else(|| {
+                        CliError::Usage(format!(
+                            "the document's machine profile `{id}` is not built in:                              pass --profile-file <profile.json> or --format"
+                        ))
+                    })?);
+                }
+            }
             if let Some(p) = &profile {
                 match &opts.format {
                     Some(f) if f != &p.format => {
@@ -125,7 +138,8 @@ fn run(args: &[String]) -> Result<(), CliError> {
             }
             let Some(format) = opts.format.clone() else {
                 return Err(CliError::Usage(
-                    "--format, --profile or --profile-file is required".into(),
+                    "--format, --profile or --profile-file is required                      (or a document with a machine profile)"
+                        .into(),
                 ));
             };
             let mut registry = plugin::exporters(&opts.plugin_files, opts.plugins_dir.as_deref())?;
@@ -149,6 +163,12 @@ fn run(args: &[String]) -> Result<(), CliError> {
                 )));
             }
             let doc = read_document(&opts.input)?;
+            // An explicit --format still gets the document's profile colours,
+            // hairlines and bed check, as the app does (#419).
+            let profile = profile.or_else(|| {
+                doc.profile()
+                    .and_then(|id| locus_export::profile::find(id, &[]))
+            });
             let prepared = locus_export::prepare_for(&doc, opts.fix, profile.as_ref());
             let found = plugin::validator_findings(
                 &opts.plugin_files,

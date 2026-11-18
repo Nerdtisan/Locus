@@ -29,6 +29,9 @@ pub struct ViewState {
     /// Machine preview on, and its polylines (#176).
     pub(crate) machine_on: bool,
     pub(crate) machine: Vec<MachinePath>,
+    /// After a profile change: the offer to update layers the machine
+    /// can't run (#419). Never applied without the user's yes.
+    pub(crate) profile_offer: Option<crate::views::machine_profile::LayerOffer>,
     /// Draw pen width / kerf at true scale under the sketch (#240).
     pub(crate) stroke_on: bool,
     /// Screen rectangles of the dimension labels drawn last frame.
@@ -89,6 +92,7 @@ impl Default for ViewState {
             pointer_over: false,
             machine_on: false,
             machine: Vec::new(),
+            profile_offer: None,
             stroke_on: false,
             dim_rects: Vec::new(),
             glyph_rects: Vec::new(),
