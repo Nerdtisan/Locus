@@ -1270,7 +1270,7 @@ fn png_options(
     )
     .on_disabled_hover_text("Select something to export just that");
     // The image size, or why it can't be made (the Export button explains too).
-    if let Some(b) = model.bounds() {
+    if let Some((_, b)) = model.page() {
         let m = 2.0 * locus_export::png::MARGIN_MM;
         match png.size(b.width() + m, b.height() + m) {
             Ok((w, h)) if !*selection_only => {

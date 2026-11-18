@@ -2,9 +2,12 @@
 
 //! Plain SVG 1.1 writer (SPEC §8 Formats, M1: no validation yet).
 //!
-//! Output is true scale: user units are millimetres (`viewBox` equals the
-//! `width`/`height` in mm). The document is Y-up; SVG is Y-down, so Y is
-//! flipped about the top of the bounds when writing coordinates. Construction
+//! Output is true scale: user units are millimetres (the `viewBox` size
+//! equals the `width`/`height` in mm). The document is Y-up; SVG is Y-down,
+//! so Y is flipped about the top of the page's anchor when writing
+//! coordinates. The page includes half of every stroke (#450); with a frame
+//! (the #443 bed) that padding is a negative `viewBox` origin, so the job's
+//! coordinates don't move. Construction
 //! geometry, layers with export disabled and bare points are not written.
 //!
 //! Each `<path>`/`<circle>` carries its own `fill`/`stroke`/`stroke-width`
@@ -45,15 +48,17 @@ pub fn to_svg(doc: &Document) -> Vec<u8> {
 /// (closed paths end in `Z`); circles stay `<circle>`.
 #[must_use]
 pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
-    let (min, w, h) = match model.bounds() {
-        Some(b) => (b.min, b.width(), b.height()),
-        None => (Vec2::ZERO, EMPTY_SIZE_MM, EMPTY_SIZE_MM),
-    };
-    // A single horizontal/vertical line has zero height; keep the canvas valid.
-    let (w, h) = (w.max(EMPTY_SIZE_MM * 1e-3), h.max(EMPTY_SIZE_MM * 1e-3));
-    let top = min.y + h;
-    // Document point → SVG user space (origin at the bounds' top-left).
+    let empty = locus_geom::Aabb::from_points(Vec2::ZERO, Vec2::new(EMPTY_SIZE_MM, EMPTY_SIZE_MM));
+    let (anchor, page) = model.page().unwrap_or((empty, empty));
+    // A zero-width stroke on a straight line has no height; keep it valid.
+    let (w, h) = (
+        page.width().max(EMPTY_SIZE_MM * 1e-3),
+        page.height().max(EMPTY_SIZE_MM * 1e-3),
+    );
+    let (min, top) = (anchor.min, anchor.max.y);
+    // Document point → SVG user space (origin at the anchor's top-left).
     let map = |p: Vec2| Vec2::new(p.x - min.x, top - p.y);
+    let view = map(Vec2::new(page.min.x, page.max.y));
 
     let mut out = String::new();
     out.push_str(
@@ -62,7 +67,9 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
     );
     let _ = writeln!(
         out,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"{w}mm\" height=\"{h}mm\" viewBox=\"0 0 {w} {h}\">",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"{w}mm\" height=\"{h}mm\" viewBox=\"{x} {y} {w} {h}\">",
+        x = num(view.x),
+        y = num(view.y),
         w = num(w),
         h = num(h)
     );

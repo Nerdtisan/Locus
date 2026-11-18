@@ -136,8 +136,10 @@ impl Exporter for PngExporter {
 /// [`ExportError::Unsupported`] when the image would be too large or the
 /// resolution isn't positive; [`ExportError::Failed`] if encoding fails.
 pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, ExportError> {
-    let (min, w, h) = match model.bounds() {
-        Some(b) => (b.min, b.width(), b.height()),
+    // The page: half of every stroke included (#450). A raster has no
+    // coordinates to keep, so the anchor doesn't matter here.
+    let (min, w, h) = match model.page() {
+        Some((_, b)) => (b.min, b.width(), b.height()),
         None => (Vec2::ZERO, EMPTY_SIZE_MM, EMPTY_SIZE_MM),
     };
     // A lone horizontal or vertical line has no height; keep a pixel.
@@ -306,11 +308,12 @@ mod tests {
 
     #[test]
     fn size_follows_the_dpi_or_the_pixel_width() {
-        // 10 mm + 1 mm margin each side = 12 mm; at 254 DPI that is 120 px.
+        // 10 mm + the 0.1 mm hairline (#450) + 1 mm margin each side =
+        // 12.1 mm; at 254 DPI that is just over 121 px, rounded up to 122.
         let png =
             to_png_model(&square(), &opts(Resolution::Dpi(254.0), Background::White)).unwrap();
         let img = decode(&png);
-        assert_eq!((img.width(), img.height()), (120, 120));
+        assert_eq!((img.width(), img.height()), (122, 122));
         let png =
             to_png_model(&square(), &opts(Resolution::Width(600), Background::White)).unwrap();
         let img = decode(&png);
@@ -388,7 +391,7 @@ mod tests {
                 (img.width(), img.height())
             })
             .collect();
-        assert_eq!(sizes, [(120, 120), (120, 120)]);
+        assert_eq!(sizes, [(122, 122), (122, 122)]);
     }
 
     #[test]
@@ -410,7 +413,7 @@ mod tests {
         assert!((b.width() - 10.0).abs() < 1e-9 && (b.height() - 5.0).abs() < 1e-9);
         let o = opts(Resolution::Dpi(254.0), Background::White);
         let img = decode(&to_png_model(&only, &o).unwrap());
-        assert_eq!((img.width(), img.height()), (120, 70));
+        assert_eq!((img.width(), img.height()), (122, 71));
     }
 
     #[test]

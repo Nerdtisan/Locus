@@ -24,11 +24,11 @@ pub struct LayerFile {
     pub model: ExportModel,
 }
 
-/// A model per non-empty layer, in export order, all framed by the bounds of
-/// the whole model.
+/// A model per non-empty layer, in export order, all framed by the page of
+/// the whole model (strokes included, #450), so the files line up.
 #[must_use]
 pub fn split_layers(model: &ExportModel) -> Vec<LayerFile> {
-    let frame = model.bounds();
+    let frame = model.page().map(|(_, page)| page);
     model
         .layers
         .iter()

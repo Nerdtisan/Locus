@@ -334,6 +334,38 @@ impl ExportModel {
             .reduce(Aabb::union)
     }
 
+    /// What is drawn, ignoring the frame: each path's bounds grown by half
+    /// its stroke width, so a thick stroke is not cut off at the page edge
+    /// (#450).
+    #[must_use]
+    pub fn visual_bounds(&self) -> Option<Aabb> {
+        self.layers
+            .iter()
+            .flat_map(|l| l.paths.iter().map(move |p| (l, p)))
+            .filter_map(|(l, p)| {
+                let b = p.bbox()?;
+                let r = Vec2::new(1.0, 1.0) * (l.paint(p).width.max(0.0) / 2.0);
+                Some(Aabb::from_points(b.min - r, b.max + r))
+            })
+            .reduce(Aabb::union)
+    }
+
+    /// The page the writers draw on, as `(anchor, page)` (#450). Coordinates
+    /// are measured from the anchor: the frame when there is one (the #443
+    /// bed, or the per-layer frame), else the visual bounds. The page is the
+    /// anchor grown to everything drawn, so padding for a stroke never moves
+    /// the anchor: SVG writes it as a negative `viewBox` origin, PDF as its
+    /// `MediaBox` origin.
+    #[must_use]
+    pub fn page(&self) -> Option<(Aabb, Aabb)> {
+        match (self.frame, self.visual_bounds()) {
+            (Some(f), Some(v)) => Some((f, f.union(v))),
+            (Some(f), None) => Some((f, f)),
+            (None, Some(v)) => Some((v, v)),
+            (None, None) => None,
+        }
+    }
+
     /// Only the geometry of `keep` (an export of the selection, #332): each
     /// layer keeps the segments drawn from those entities, chained again.
     /// The frame is dropped, so the bounds are the selection's.
