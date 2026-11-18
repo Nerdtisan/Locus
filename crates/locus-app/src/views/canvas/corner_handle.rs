@@ -247,6 +247,14 @@ impl AppState {
         self.doc.notice = None;
     }
 
+    /// Start the resize of a fillet or chamfer that was selected when its
+    /// tool was picked (#445).
+    pub(crate) fn start_pending_corner_edit(&mut self, units: Units) {
+        if let Some(id) = self.tools.corner_edit_pending.take() {
+            self.corner_edit_begin(id, units);
+        }
+    }
+
     /// The command that resizes the fillet or chamfer being edited to the
     /// dialog's values: one compound, one undo step (SPEC §11). `None` when
     /// nothing changes.
@@ -691,5 +699,72 @@ mod tests {
         };
         assert!(near(v(d.first), 1.5) && near(v(d.second), 2.5));
         assert_eq!(doc.dimension_expr(d.second), Some("bevel"));
+    }
+
+    /// The fillet a picked corner made: its arc, and the arc itself.
+    fn filleted() -> (AppState, EntityId, locus_geom::Arc) {
+        let mut c = picked(Modify::Fillet);
+        assert!(c.corner_ok(Modify::Fillet, Units::Mm));
+        let doc = c.doc.sketcher.document();
+        let (arc, a) = doc
+            .entities()
+            .iter()
+            .find_map(|(id, _)| doc.arc(id).map(|a| (id, a)))
+            .unwrap();
+        (c, arc, a)
+    }
+
+    /// Regression (#445): at normal zoom a 2 mm fillet is a pixel or two,
+    /// so clicks on it land on its end points, which the line and the arc
+    /// share. That picked a new corner (line + arc, "too large") instead
+    /// of resizing the fillet. Its end points, its curve and the line next
+    /// to it at an end point now all start the resize.
+    #[test]
+    fn a_small_fillet_is_resized_from_its_end_points_or_its_curve() {
+        let (c0, arc, a) = filleted();
+        let doc = c0.doc.sketcher.document();
+        let neighbour = doc
+            .entities()
+            .iter()
+            .map(|(id, _)| id)
+            .find(|id| {
+                doc.line(*id)
+                    .is_some_and(|l| l.a.distance(a.start) < 1e-6 || l.b.distance(a.start) < 1e-6)
+            })
+            .unwrap();
+        for (at, hover) in [
+            (a.start, Some(neighbour)),
+            (a.end, Some(arc)),
+            (a.eval(0.5), Some(arc)),
+            (a.start, None),
+        ] {
+            let (mut c, ..) = filleted();
+            // The default view: the pick radius is a few millimetres.
+            c.tool_event(ToolEvent::Click(Pick::free(at)), hover, Units::Mm);
+            assert_eq!(c.tools.corner_edit, Some(arc), "{at:?} {hover:?}");
+            assert!(c.tools.corner_pick.is_none(), "not a new corner");
+            assert!(c.hint().starts_with("Resizing the fillet"), "{}", c.hint());
+        }
+    }
+
+    /// #445: selecting a fillet, then picking the Fillet tool, resizes it;
+    /// hovering one with the tool says a click resizes it.
+    #[test]
+    fn a_selected_fillet_is_resized_when_the_tool_starts() {
+        let (mut c, arc, _) = filleted();
+        c.set_tool(Tool::Select);
+        c.selection.items.set_all([arc]);
+        c.set_modify(Modify::Fillet);
+        c.start_pending_corner_edit(Units::Mm);
+        assert_eq!(c.tools.corner_edit, Some(arc));
+        assert_eq!(c.tools.corner.text.radius, "2");
+        assert!(c.corner_esc());
+        c.selection.hover = Some(arc);
+        assert_eq!(c.hint(), "Click to resize this fillet");
+        // Chamfer ignores a selected fillet.
+        c.selection.items.set_all([arc]);
+        c.set_modify(Modify::Chamfer);
+        c.start_pending_corner_edit(Units::Mm);
+        assert!(c.tools.corner_edit.is_none());
     }
 }

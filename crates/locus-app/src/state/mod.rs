@@ -107,6 +107,7 @@ impl AppState {
         self.tools.typed.clear();
         self.tools.corner_pick = None;
         self.tools.corner_edit = None;
+        self.tools.corner_edit_pending = None;
         self.tools.corner_drag = None;
         self.tools.offset_draft = None;
         self.doc.notice = None;
@@ -162,6 +163,24 @@ impl AppState {
                 // Selection first, then the line (design §6.9).
                 self.tools.mirror.picking =
                     !self.selection.items.is_empty() || self.tools.mirror.axis.is_none();
+            }
+            Modify::Fillet | Modify::Chamfer => {
+                // A selected fillet or chamfer is resized (#445); the dialog
+                // takes its sizes on the next frame, which knows the units.
+                let doc = self.doc.sketcher.document();
+                let fit: Vec<EntityId> = self
+                    .selection
+                    .items
+                    .iter()
+                    .filter(|id| m.resizes(doc, *id))
+                    .collect();
+                self.tools.corner_edit_pending = match fit.as_slice() {
+                    [one] => Some(*one),
+                    _ => None,
+                };
+                if self.tools.corner_edit_pending.is_none() {
+                    self.selection.items.clear();
+                }
             }
             _ => self.selection.items.clear(),
         }
@@ -375,8 +394,36 @@ impl AppState {
     pub fn hint(&self) -> String {
         match &self.doc.notice {
             Some(n) => n.clone(),
-            None => self.tools.host.tool().prompt().into_owned(),
+            None => self
+                .corner_hint()
+                .unwrap_or_else(|| self.tools.host.tool().prompt().into_owned()),
         }
+    }
+
+    /// Fillet / Chamfer status-bar hints for resizing (#445): what a click
+    /// on the fillet or chamfer under the pointer does, and how to resize
+    /// the one picked.
+    fn corner_hint(&self) -> Option<String> {
+        let m = self.modify().filter(|m| m.takes_two())?;
+        let what = m.label().to_lowercase();
+        if self.tools.corner_edit.is_some() {
+            let size = if m == Modify::Fillet {
+                "radius"
+            } else {
+                "distance"
+            };
+            return Some(format!(
+                "Resizing the {what}: drag the handle or type the {size}; Enter applies, Esc cancels"
+            ));
+        }
+        if self.tools.corner_pick.is_some() || self.tools.host.tool().busy() {
+            return None;
+        }
+        let doc = self.doc.sketcher.document();
+        self.selection
+            .hover
+            .filter(|id| m.resizes(doc, *id))
+            .map(|_| format!("Click to resize this {what}"))
     }
 
     /// DOF and solve status for the status bar — the solver's own report

@@ -79,6 +79,9 @@ pub struct ToolState {
     /// An existing fillet arc or chamfer line being resized (#418), its
     /// preview, and the corner handle being dragged.
     pub(crate) corner_edit: Option<EntityId>,
+    /// A fillet or chamfer selected before its tool was picked (#445): its
+    /// resize starts on the tool's first frame.
+    pub(crate) corner_edit_pending: Option<EntityId>,
     pub(crate) corner_resize: ResizePreview,
     pub(crate) corner_drag: Option<CornerHandle>,
     /// Move/rotate/scale values, edited in the tool options.
@@ -119,6 +122,7 @@ impl Default for ToolState {
             corner_pick: None,
             corner_focus: false,
             corner_edit: None,
+            corner_edit_pending: None,
             corner_resize: ResizePreview::default(),
             corner_drag: None,
             transform: TransformSettings::default(),

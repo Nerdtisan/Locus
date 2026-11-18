@@ -442,13 +442,16 @@ impl Tool for ModifyTool {
                 .map(|(p, _)| doc.dependents(p).0)
                 .filter(|users| users.len() == 2);
             // A fillet or chamfer the tool made is clicked to resize it
-            // (#418). A small one's end points lie within the pick radius
-            // of its middle, so only a click right on a point picks that
-            // corner instead.
-            let on_point = point.is_some_and(|(_, q)| q.distance(at) <= cx.tol * 0.5);
-            if !(corner.is_some() && on_point)
-                && self.first.is_none()
-                && let Some(id) = cx.hover.filter(|id| self.m.resizes(doc, *id))
+            // (#418): on its curve, an end point or its kept corner. This
+            // wins over the corner a shared end point would pick: at normal
+            // zoom a small fillet is a pixel or two, so every click on it is
+            // on its end points (#445).
+            let resize = cx
+                .hover
+                .filter(|id| self.m.resizes(doc, *id))
+                .or_else(|| point.and_then(|(p, _)| self.m.resizable_at(doc, p)));
+            if self.first.is_none()
+                && let Some(id) = resize
             {
                 cx.select = Some(vec![id]);
                 cx.notice = Some(None);
