@@ -13,7 +13,7 @@
 use crate::settings::{MAX_USER_PROFILES, Settings};
 use locus_doc::OperationKind;
 use locus_export::MachineProfile;
-use locus_export::profile::{self, Bed, Origin, ProfileUnits, is_builtin};
+use locus_export::profile::{self, Bed, MachineKind, Origin, ProfileUnits, is_builtin};
 
 /// Presets first, then the user's own, in settings order.
 pub(super) fn all(settings: &Settings) -> Vec<MachineProfile> {
@@ -117,6 +117,7 @@ fn new_profile(settings: &mut Settings) -> Result<String, String> {
         name: "My machine".to_owned(),
         format: "svg".to_owned(),
         units: ProfileUnits::Mm,
+        machine: MachineKind::Generic,
         colours: Default::default(),
         bed: None,
         defaults: Default::default(),
@@ -446,6 +447,19 @@ fn fields(ui: &mut egui::Ui, p: &mut MachineProfile, exporters: &locus_export::R
                         ui.selectable_value(&mut p.format, e.id().to_owned(), e.name());
                     }
                 });
+            ui.end_row();
+            ui.label("Machine");
+            egui::ComboBox::from_id_salt("profile-machine")
+                .selected_text(p.machine.name())
+                .show_ui(ui, |ui| {
+                    for m in MachineKind::ALL {
+                        ui.selectable_value(&mut p.machine, m, m.name());
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Sets the operation new layers get and the operations layers can use (SPEC §7)",
+                );
             ui.end_row();
             ui.label("Units");
             let units = [(ProfileUnits::Mm, "mm"), (ProfileUnits::Inch, "in")];

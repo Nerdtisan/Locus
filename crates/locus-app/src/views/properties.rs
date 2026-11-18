@@ -358,15 +358,27 @@ impl AppState {
         use crate::views::canvas::dialog::{row, segmented};
         section(ui, "Document", |_| {});
         row(ui, "Sketch", |ui| solve_pill(ui, self));
-        let doc = self.doc.sketcher.document();
-        let profile = doc
-            .profile()
-            .and_then(|id| locus_export::profile::find(id, &settings.profiles))
-            .map_or_else(|| "Chosen at export".to_owned(), |p| p.name);
-        row(ui, "Profile", |ui| {
-            ui.label(profile)
-                .on_hover_text("The machine profile this document exports with (File, Export…)")
+        let profile = crate::views::machine_profile::current(self.document(), settings);
+        let text = profile
+            .as_ref()
+            .map_or_else(|| "None".to_owned(), |p| p.name.clone());
+        let tip = profile.as_ref().map_or_else(
+            || "Choose the machine this document is for (saved with it)".to_owned(),
+            crate::views::machine_profile::summary,
+        );
+        let manage = row(ui, "Machine", |ui| {
+            crate::views::machine_profile::picker_button(
+                ui,
+                self,
+                settings,
+                egui::RichText::new(text),
+                &tip,
+            )
         });
+        if manage {
+            self.view.shell.push(crate::actions::Shell::Profiles);
+        }
+        let doc = self.doc.sketcher.document();
         let layer = doc
             .layer(self.doc.active_layer)
             .map(|l| (l.colour, l.name.clone()));

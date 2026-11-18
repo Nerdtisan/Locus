@@ -314,7 +314,7 @@ impl App {
                     }
                 }
                 Shell::Export => self.files.open_export(&self.state, &self.settings),
-                Shell::ExportPng => self.files.open_export_png(&self.state),
+                Shell::ExportPng => self.files.open_export_png(&self.state, &self.settings),
                 Shell::Profiles => self.files.open_profiles(),
                 Shell::InsertReference(kind) => {
                     self.files.begin_import_reference(&mut self.state, kind);
@@ -521,34 +521,51 @@ impl App {
         }
     }
 
-    /// "coaster-tray.locus · LightBurn (SVG) · mm", centred (mockup).
+    /// "coaster-tray.locus · LightBurn (SVG) ▾ · mm", centred (mockup). The
+    /// profile is the document's machine picker (#324, #419).
     fn document_label(&mut self, ui: &mut egui::Ui) {
-        let profile = self
-            .state
-            .document()
-            .profile()
-            .and_then(|id| locus_export::profile::find(id, &self.settings.profiles))
-            .map_or_else(|| "No machine profile".to_owned(), |p| p.name);
-        let mut job = egui::text::LayoutJob::default();
-        let strong = egui::TextFormat {
-            color: ui.visuals().strong_text_color(),
-            font_id: egui::TextStyle::Body.resolve(ui.style()),
-            ..Default::default()
+        let profile = crate::views::machine_profile::current(self.state.document(), &self.settings);
+        let weak = ui.visuals().weak_text_color();
+        // Centre the three pieces as one row: measure, then pad.
+        let name = egui::RichText::new(self.files.doc_name())
+            .strong()
+            .color(ui.visuals().strong_text_color());
+        let picker_text = profile
+            .as_ref()
+            .map_or("No machine profile", |p| p.name.as_str())
+            .to_owned();
+        let units = format!("·  {}", self.settings.units.label());
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let w = |t: &str| {
+            ui.painter()
+                .layout_no_wrap(t.to_owned(), font.clone(), weak)
+                .size()
+                .x
         };
-        let weak = egui::TextFormat {
-            color: ui.visuals().weak_text_color(),
-            font_id: egui::TextStyle::Small.resolve(ui.style()),
-            ..Default::default()
-        };
-        job.append(self.files.doc_name(), 0.0, strong);
-        job.append(
-            &format!("  ·  {profile}  ·  {}", self.settings.units.label()),
-            0.0,
-            weak,
-        );
-        ui.label(job).on_hover_text(
-            "The document, the machine profile it exports for (OUTPUT ▸ Machine profiles…) and the display units (View ▸ Units)",
-        );
+        let total = w(self.files.doc_name()) + w("  ·  ") + w(&picker_text) + 30.0 + w(&units);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(name);
+            ui.label(egui::RichText::new("·").color(weak));
+            let tip = profile.as_ref().map_or_else(
+                || "Choose the machine this document is for: it sets new layers' operation, the bed and Machine preview, and export uses it".to_owned(),
+                |p| format!("{}
+Click to choose another machine", crate::views::machine_profile::summary(p)),
+            );
+            let manage = crate::views::machine_profile::picker_button(
+                ui,
+                &mut self.state,
+                &self.settings,
+                egui::RichText::new(picker_text).color(weak),
+                &tip,
+            );
+            if manage {
+                self.files.open_profiles();
+            }
+            ui.label(egui::RichText::new(units).color(weak))
+                .on_hover_text("Display units (View ▸ Units)");
+        });
     }
 
     /// File, Edit, View, Plugins and Help (design §2): the full command set.
@@ -937,6 +954,7 @@ impl eframe::App for App {
         self.tab_dropped_outside(&ctx, dragged, dock_rect, origin);
         self.promote_floating(&ctx);
         self.pane_windows(&ctx);
+        crate::views::machine_profile::profile_offer_window(&ctx, &mut self.state);
         let mut cx = cx!(self);
         crate::views::marking_menu::show(&ctx, &self.registry, &mut cx);
         self.search

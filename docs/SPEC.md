@@ -36,6 +36,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Object style (M5) | **Decided** (#287, #284): each entity stores its own style (stroke colour or "by layer", stroke width, pen number, fill, opacity); `Operation::Draw` has no parameters any more. File format **v13** moves each Draw layer's pen onto that layer's entities; a default style is not written. Edits go through one `SetStyle` command per user action (a whole multi-selection is one undo step). Export: Draw layers write each object's own style; the machine layers (Cut, Score, Engrave, Drag-knife) write the machine profile's colour and hairline, because LightBurn and Cricut read colour as the operation. Owner decisions 2026-11-13, [ADR 0017](adr/0017-fusion-style-ui.md). |
 | Raster export (M5) | PNG joins SVG, PDF and DXF as a built-in export format, in the export dialog, the OUTPUT ribbon tab and `locus-cli` (§8 Formats). Rasteriser `tiny-skia` (BSD-3-Clause) with its `png` encoder, pure Rust without SIMD so the core crates still build for wasm32. Owner request 2026-11-14, #332. |
 | UI (M5) | Fusion-style sketch UI: ribbon grouped Create / Modify / Constrain / Inspect / Insert / Select, browser, sketch palette, context inspector, right-click marking menu (pan on middle-drag / Space+drag), Fusion's sketch keys, one pick → drag/type → Enter/Esc → editable-dimension tool model; built on an action registry and a tool trait. Style (stroke colour, width, pen number, fill, opacity) belongs to each object, not the layer; placed text stays re-editable. Owner decisions 2026-11-13, #293, [ADR 0017](adr/0017-fusion-style-ui.md). |
+| Machine profile per document (M5) | **Decided** (owner, #419, 2026-11-18): the document's machine profile drives more than export. A profile names its machine kind (laser, pen plotter, vinyl cutter or generic), which sets the operation new layers get (Cut, Draw, Drag knife; Draw when generic or no profile) and the operations layer pickers offer. Its bed is drawn on the canvas, Machine preview uses it, and every export defaults to it, `locus-cli export` included. It is chosen from the app bar, File ▸ Machine profile and the Inspector. Changing it is one undoable `SetProfile`, and layers are never rewritten silently: the app offers to update them, as one more undo step. The document still stores only the id (format v11), so no format change. The machine kind lives in the profile JSON and defaults to generic. |
 
 ---
 
@@ -248,6 +249,17 @@ Layer `operation` enum:
 
 Machine profiles (M4, #236): a profile bundles an export format (an exporter id), a colour per operation, display units, the bed (size and origin corner) and default operation parameters. Built-in presets are compiled in: LightBurn (SVG, DXF), Cricut Design Space (SVG, per-shape styles), Silhouette Studio Basic (DXF R12; Cameo 12" and 24" mats), Silhouette Designer+ (SVG), generic HPGL (via the HPGL exporter plugin) and generic SVG / DXF. The laser bed defaults to a generic 400 × 400 mm and is editable. User profiles are JSON in app settings; one profile can be exported or imported as a standalone `.json` file (imports are untrusted: size-bounded and validated). A document stores only the selected profile id (§10, format v11).
 
+**Per-document machine (M5, #419).** Each profile also names its **machine kind**: laser cutter, pen plotter, vinyl cutter or generic (profile JSON field `machine`, default generic). The kind decides what layers can be:
+
+| Machine | New layers | Operations offered |
+|---|---|---|
+| Laser cutter (LightBurn presets) | Cut | Cut, Score, Engrave, Reference |
+| Pen plotter (HPGL preset) | Draw | Engrave (pen hatch), Draw, Reference |
+| Vinyl cutter (Cricut, Silhouette presets) | Drag knife | Score, Draw, Drag knife, Reference |
+| Generic (generic SVG / DXF, no profile) | Draw | all |
+
+A new layer also gets the profile's default kerf or blade offset. A layer whose operation the machine doesn't run keeps it, and its picker still lists it. The document's profile is chosen from the app bar (next to the document name), File ▸ Machine profile, the Inspector's Document section or the export dialog. Choosing one is a single undoable `SetProfile` (§11). It **never rewrites layers silently**. If some layers don't fit the machine, the app lists them with the operation each would get: the same operation if offered, Cut ↔ Drag knife for a through-cut, otherwise the machine's default. Accepting changes them all as one undo step. The profile's bed (size and origin corner) is drawn on the canvas, and Machine preview uses the profile (§8).
+
 ---
 
 ## 8. Export pipeline
@@ -275,6 +287,8 @@ Document → Solve → Collect exportable geometry (exclude construction, refere
 - **DXF** — **R12** default for compatibility (LINE, ARC, CIRCLE, LWPOLYLINE-free path where needed), layers preserved, units = mm. Optional newer DXF later.
 - **HPGL** — v2 / optional.
 - **PNG** — raster image of the export geometry (#332): resolution as DPI (default 300) or pixel width, transparent or white background, the whole sketch or the selection, one file per layer like the vector formats. Same paint as SVG (§7); strokes under a pixel draw one pixel wide. Rasterised in `locus-export` with `tiny-skia` (no SIMD, so wasm32 builds); image size bounded (20 000 px a side, 100 MP). Also `locus-cli export --format png [--dpi n | --width-px n] [--background transparent|white]`.
+
+**Default profile (#419).** Every export starts from the document's machine profile: the export dialog preselects it, a direct format export (File ▸ Export ▸ SVG…, PNG…) still applies its colours, hairlines and bed check, and `locus-cli export` uses it when no `--format`, `--profile` or `--profile-file` is given. The CLI knows only the built-in presets, so a document whose profile is a user profile needs `--profile-file`.
 
 Export is always one-way. Native file is the source of truth.
 
