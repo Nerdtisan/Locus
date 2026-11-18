@@ -983,6 +983,13 @@ impl FileIo {
                 } else {
                     "One file per layer on the same canvas, written to a folder you pick."
                 });
+                if panel.per_layer {
+                    // Same page and origin on purpose (#457): LightBurn and
+                    // Cricut place each file where the others are.
+                    ui.weak(
+                        "Each file has only its layer's shapes and fills, on the same page and origin as the others, so the layers line up when imported.",
+                    );
+                }
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(

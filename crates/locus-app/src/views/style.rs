@@ -172,7 +172,9 @@ impl AppState {
             return;
         }
         let doc = self.doc.sketcher.document();
-        let fills: Vec<Option<RegionFill>> =
+        // What each region shows (#457): stored, or kept from a split.
+        let fills: Vec<Option<RegionFill>> = keys.iter().map(|k| self.resolved_fill(k)).collect();
+        let stored: Vec<Option<RegionFill>> =
             keys.iter().map(|k| doc.region_fill(k).copied()).collect();
         let fallback = self.region_layer_colour(&keys[0]);
         let key = egui::Id::new(REGION_PENDING);
@@ -190,10 +192,18 @@ impl AppState {
             ui.data_mut(|d| d.remove::<(Vec<RegionKey>, FillPatch)>(key));
             let commands: Vec<Command> = keys
                 .iter()
-                .zip(&fills)
-                .filter_map(|(k, f)| {
-                    let next = pending.apply(*f, fallback);
-                    (next != *f).then(|| Command::SetRegionFill {
+                .zip(fills.iter().zip(&stored))
+                .filter_map(|(k, (shown, stored))| {
+                    let mut next = pending.apply(*shown, fallback);
+                    // Removing an inherited fill stores "no fill", or the
+                    // split region's fill would show through again (#457).
+                    if next.is_none() && shown.is_some() && stored.is_none() {
+                        next = Some(RegionFill {
+                            fill: Fill::None,
+                            opacity: 1.0,
+                        });
+                    }
+                    (next != *stored).then(|| Command::SetRegionFill {
                         regions: vec![k.clone()],
                         fill: next,
                     })

@@ -2,6 +2,12 @@
 
 //! Lowering the document to region detection (SPEC §6.3, #121). Regions are
 //! derived data: never stored, recomputed after each solve.
+//!
+//! Regions are **per layer** (#457): each layer's faces come from that
+//! layer's curves alone, because layers are separate machine operations. A
+//! shape on another layer never splits, fills or hides a region; overlaps
+//! within one layer still make separate regions (#451). Region keys name
+//! entities, which belong to one layer, so keys never collide.
 
 use crate::document::Document;
 use crate::entity::Geom;
@@ -45,10 +51,53 @@ pub fn region_curves(doc: &Document) -> Vec<Curve> {
         .collect()
 }
 
-/// Every closed region of the document, sorted by key.
+/// Every closed region of the document, layer by layer, sorted by key.
 #[must_use]
 pub fn regions(doc: &Document) -> Vec<Region> {
+    let mut by_layer: std::collections::BTreeMap<crate::LayerId, Vec<Curve>> =
+        std::collections::BTreeMap::new();
+    for c in region_curves(doc) {
+        if let Some(e) = doc.entity(crate::EntityId::new(c.key)) {
+            by_layer.entry(e.layer).or_default().push(c);
+        }
+    }
+    let mut out: Vec<Region> = by_layer
+        .into_values()
+        .flat_map(|curves| locus_region::detect(&curves))
+        .collect();
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    out
+}
+
+/// The regions as they were built before #457: every layer's curves
+/// together. Only the v21 migration uses it, to find what an older key
+/// meant.
+pub(crate) fn regions_across_layers(doc: &Document) -> Vec<Region> {
     locus_region::detect(&region_curves(doc))
+}
+
+/// The layer a region belongs to: that of its outline's curves.
+#[must_use]
+pub fn layer_of(doc: &Document, r: &Region) -> Option<crate::LayerId> {
+    let e = r.outer.edges.first()?;
+    doc.entity(crate::EntityId::new(e.source)).map(|e| e.layer)
+}
+
+/// The region `key` on the current geometry, built from its own curves
+/// alone: what a filled region looks like now, even after other curves on
+/// its layer split it (#457).
+pub(crate) fn rebuild(doc: &Document, key: &locus_region::RegionKey) -> Option<Region> {
+    let ids: std::collections::BTreeSet<u64> = key.bounds.iter().copied().collect();
+    let curves: Vec<Curve> = region_curves(doc)
+        .into_iter()
+        .filter(|c| ids.contains(&c.key))
+        .collect();
+    if curves.is_empty() {
+        return None;
+    }
+    locus_region::detect(&curves)
+        .into_iter()
+        .find(|r| r.key == *key)
 }
 
 #[cfg(test)]

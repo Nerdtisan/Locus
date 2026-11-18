@@ -66,6 +66,122 @@ pub(crate) fn check_key(k: &RegionKey) -> Result<(), DocError> {
     Ok(())
 }
 
+/// A point strictly inside `r` (not on a curve, not in a hole): a little
+/// inside the middle of one of its outer edges.
+#[must_use]
+pub fn interior_point(r: &locus_region::Region) -> Option<locus_geom::Vec2> {
+    let size = r
+        .outer
+        .bbox()
+        .map_or(1.0, |b| (b.max.x - b.min.x).max(b.max.y - b.min.y));
+    for e in &r.outer.edges {
+        let m = e.seg.at(0.5);
+        // The outer loop runs counter-clockwise: the inside is on the left.
+        let n = e.seg.tangent(0.5).perp();
+        for k in [1e-4, 1e-3, 1e-2] {
+            let p = m + n * (size * k);
+            if r.contains(p) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Each region's fill (#457): the one resolver the canvas, the Inspector
+/// and export all use, so they can't disagree. A region takes
+/// - the fill stored under its own key, if any (a stored "no fill" counts:
+///   it hides an inherited fill), else
+/// - the fill of a filled region that an edit on the same layer split: the
+///   stored key no longer matches any region, so that region is rebuilt
+///   from its own curves on the current geometry, and every piece inside it
+///   keeps its fill. The innermost such region wins.
+///
+/// One entry per region, in the order of `regions`.
+#[must_use]
+pub fn resolve(doc: &Document, regions: &[locus_region::Region]) -> Vec<Option<RegionFill>> {
+    if doc.region_fills.is_empty() {
+        return vec![None; regions.len()];
+    }
+    let live: std::collections::BTreeSet<&RegionKey> = regions.iter().map(|r| &r.key).collect();
+    // Filled regions that were split: their shape now, their layer, fill.
+    let split: Vec<(
+        locus_region::Region,
+        Option<crate::LayerId>,
+        RegionFill,
+        f64,
+    )> = doc
+        .region_fills
+        .iter()
+        .filter(|(k, f)| !live.contains(k) && f.painted().is_some())
+        .filter_map(|(k, f)| {
+            let r = crate::regions::rebuild(doc, k)?;
+            let layer = crate::regions::layer_of(doc, &r);
+            let area = r.area().abs();
+            Some((r, layer, *f, area))
+        })
+        .collect();
+    regions
+        .iter()
+        .map(|r| {
+            if let Some(f) = doc.region_fills.get(&r.key) {
+                return Some(*f);
+            }
+            if split.is_empty() {
+                return None;
+            }
+            let p = interior_point(r)?;
+            let layer = crate::regions::layer_of(doc, r);
+            split
+                .iter()
+                .filter(|(old, l, ..)| *l == layer && old.contains(p))
+                .min_by(|a, b| a.3.total_cmp(&b.3))
+                .map(|(_, _, f, _)| *f)
+        })
+        .collect()
+}
+
+/// Format v20 and before built regions across layers, so a stored key could
+/// name a face cut by another layer's shape (#457). Each such key (for
+/// fills and boolean recipes) moves to the per-layer region holding the
+/// same place: a point inside the old face, on the layer of its outline.
+/// Keys that already match, or whose region is gone, stay as they are.
+pub(crate) fn migrate_region_keys(doc: &mut Document) {
+    let old = crate::regions::regions_across_layers(doc);
+    let new = crate::regions::regions(doc);
+    let rekey = |k: &RegionKey| -> RegionKey {
+        if new.binary_search_by(|r| r.key.cmp(k)).is_ok() {
+            return k.clone();
+        }
+        let Some(face) = old.iter().find(|r| r.key == *k) else {
+            return k.clone();
+        };
+        let (Some(p), layer) = (interior_point(face), crate::regions::layer_of(doc, face)) else {
+            return k.clone();
+        };
+        new.iter()
+            .filter(|r| crate::regions::layer_of(doc, r) == layer && r.contains(p))
+            .min_by(|a, b| a.area().abs().total_cmp(&b.area().abs()))
+            .map_or_else(|| k.clone(), |r| r.key.clone())
+    };
+    let mut fills = std::collections::BTreeMap::new();
+    for (k, f) in &doc.region_fills {
+        fills.entry(rekey(k)).or_insert(*f);
+    }
+    let booleans: Vec<_> = doc
+        .booleans
+        .iter()
+        .map(|(id, b)| {
+            let mut b = b.clone();
+            b.targets = b.targets.iter().map(&rekey).collect();
+            b.tools = b.tools.iter().map(&rekey).collect();
+            (*id, b)
+        })
+        .collect();
+    doc.region_fills = fills;
+    doc.booleans = booleans.into_iter().collect();
+}
+
 /// Move every object fill (format v18 and before) onto the regions it
 /// bounded, then clear the object fills. A region gets the fill of the first
 /// filled curve on its outer boundary, at that object's opacity: exactly

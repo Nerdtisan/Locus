@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="32.4mm" height="20.4mm" viewBox="0 0 32.4 20.4">
+  <g id="fills" data-name="Fills">
+    <path fill="#f35e5e" fill-rule="evenodd" stroke="none" data-layer="1" d="M 20.2 10.2 A 10 10 0 1 0 0.2 10.2 A 10 10 0 1 0 20.2 10.2 Z"/>
+  </g>
+  <g id="layer-1" data-name="Layer 1" data-operation="Draw">
+    <circle fill="none" stroke="#000000" stroke-width="0.4" data-pen="1" cx="10.2" cy="10.2" r="10"/>
+  </g>
+  <g id="layer-2" data-name="Layer 2" data-operation="Draw">
+    <circle fill="none" stroke="#0000ff" stroke-width="0.4" data-pen="1" cx="22.2" cy="10.2" r="10"/>
+  </g>
+</svg>

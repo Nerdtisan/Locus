@@ -112,6 +112,8 @@ pub struct Sketcher {
     drag: Option<Drag>,
     // Derived, recomputed with the solve state (§6.3, #121).
     regions: Vec<locus_region::Region>,
+    /// Each region's fill, by [`crate::region_fill::resolve`] (#457).
+    fills: Vec<Option<crate::region_fill::RegionFill>>,
     results: BTreeMap<BooleanId, Result<locus_region::Area, BooleanError>>,
 }
 
@@ -128,6 +130,7 @@ impl Sketcher {
             state: SolveState::unknown(),
             drag: None,
             regions: Vec::new(),
+            fills: Vec::new(),
             results: BTreeMap::new(),
         };
         if let Ok(sol) = solve(&mut s.solver, s.editor.document()) {
@@ -553,6 +556,7 @@ impl Sketcher {
         self.state = analyse(&mut self.solver, self.editor.document());
         let doc = self.editor.document();
         self.regions = crate::regions::regions(doc);
+        self.fills = crate::region_fill::resolve(doc, &self.regions);
         self.results = doc
             .booleans()
             .iter()
@@ -574,6 +578,12 @@ impl Sketcher {
     #[must_use]
     pub fn regions(&self) -> &[locus_region::Region] {
         &self.regions
+    }
+
+    /// Each region's fill, in the order of [`Self::regions`] (#457).
+    #[must_use]
+    pub fn region_fills(&self) -> &[Option<crate::region_fill::RegionFill>] {
+        &self.fills
     }
 }
 

@@ -622,18 +622,21 @@ fn loop_path(l: &locus_region::Loop) -> Option<ExportPath> {
 
 /// The document's region fills (#451) on exported Draw layers. Machine
 /// layers write no fills: their software reads every path as a cut, and
-/// fills stay visual (SPEC §7).
+/// fills stay visual (SPEC §7). Regions are per layer and resolved by the
+/// same function as the canvas, with the stored colour and opacity (#457).
 fn collect_fills(doc: &Document, layers: &[ExportLayer]) -> Vec<ExportFill> {
     if doc.region_fills().is_empty() {
         return Vec::new();
     }
-    locus_doc::regions::regions(doc)
+    let regions = locus_doc::regions::regions(doc);
+    let fills = locus_doc::region_fill::resolve(doc, &regions);
+    regions
         .into_iter()
-        .filter_map(|r| {
-            let fill = doc.region_fill(&r.key)?;
+        .zip(fills)
+        .filter_map(|(r, fill)| {
+            let fill = fill?;
             let colour = fill.painted()?;
-            let first = r.outer.edges.first()?;
-            let layer = doc.entity(EntityId::new(first.source))?.layer;
+            let layer = locus_doc::regions::layer_of(doc, &r)?;
             layers
                 .iter()
                 .find(|l| l.id == layer && l.uses_object_style())?;
