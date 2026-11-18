@@ -307,6 +307,7 @@ impl AppState {
             }
             self.refresh_offset_preview(settings.units);
             if let Some(m) = self.modify().filter(|m| m.takes_two()) {
+                self.start_pending_corner_edit(settings.units);
                 self.refresh_corner_resize(m, settings.units);
             }
         } else if self.tool() == Tool::Select {

@@ -523,6 +523,67 @@ pub fn chamfer_dims(doc: &Document, line: EntityId) -> Option<ChamferDims> {
     })
 }
 
+/// The fillet arc a click on point `p` means (#445): an arc that uses `p`
+/// (a tangent point or its centre), or whose virtual sharp `p` is (held on
+/// both curves the arc is tangent to).
+#[must_use]
+pub fn fillet_at_point(doc: &Document, p: EntityId) -> Option<EntityId> {
+    let (users, _) = doc.dependents(p);
+    if let Some(arc) = users
+        .iter()
+        .copied()
+        .find(|e| fillet_dims(doc, *e).is_some())
+    {
+        return Some(arc);
+    }
+    let held: Vec<EntityId> = doc
+        .constraints()
+        .values()
+        .filter_map(|c| match c {
+            Constraint::PointOnCurve { point, curve } if *point == p => Some(*curve),
+            _ => None,
+        })
+        .collect();
+    if held.len() < 2 {
+        return None;
+    }
+    doc.entities()
+        .iter()
+        .map(|(id, _)| id)
+        .filter(|id| fillet_dims(doc, *id).is_some())
+        .find(|arc| {
+            let tangent = doc
+                .constraints()
+                .values()
+                .filter_map(|c| match c {
+                    Constraint::Tangent { a, b } if b == arc => Some(*a),
+                    Constraint::Tangent { a, b } if a == arc => Some(*b),
+                    _ => None,
+                })
+                .filter(|c| held.contains(c))
+                .count();
+            tangent >= 2
+        })
+}
+
+/// The chamfer line a click on point `p` means (#445): a chamfer line that
+/// ends at `p`, or whose set-backs are measured from `p` (its corner).
+#[must_use]
+pub fn chamfer_at_point(doc: &Document, p: EntityId) -> Option<EntityId> {
+    let (users, _) = doc.dependents(p);
+    if let Some(line) = users
+        .iter()
+        .copied()
+        .find(|e| chamfer_dims(doc, *e).is_some())
+    {
+        return Some(line);
+    }
+    doc.entities()
+        .iter()
+        .map(|(id, _)| id)
+        .find(|id| chamfer_dims(doc, *id).is_some_and(|d| d.corner == p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -826,5 +887,55 @@ mod tests {
             }
             assert!(chamfer_dims(doc, a).is_none() && fillet_dims(doc, line).is_none());
         }
+    }
+
+    /// #445: a click on a fillet's or chamfer's end points, or on the
+    /// corner point kept for it, finds that fillet or chamfer.
+    #[test]
+    fn fillets_and_chamfers_are_found_from_their_points() {
+        let (mut d, a, b, o) = corner_doc();
+        // Keep the corner (a fix uses it), so it stays as a virtual sharp.
+        let id = crate::ConstraintId::new(d.alloc_id().unwrap());
+        d.constraints.insert(id, Constraint::Fix { point: o });
+        let mut sk = Sketcher::new(d);
+        sk.apply(&fillet(sk.document(), a, b, 3.0).unwrap().command)
+            .unwrap();
+        let doc = sk.document();
+        let (arc, _) = arc_of(doc);
+        let Geom::Arc { center, start, end } = doc.entity(arc).unwrap().geom else {
+            unreachable!()
+        };
+        for p in [start, end, center, o] {
+            assert_eq!(fillet_at_point(doc, p), Some(arc), "{p:?}");
+            assert_eq!(chamfer_at_point(doc, p), None);
+        }
+
+        let (d, a, b, o) = corner_doc();
+        let mut sk = Sketcher::new(d);
+        sk.apply(
+            &chamfer(sk.document(), a, b, ChamferSize::Equal(2.0))
+                .unwrap()
+                .command,
+        )
+        .unwrap();
+        let doc = sk.document();
+        let line = doc
+            .entities()
+            .iter()
+            .map(|(id, _)| id)
+            .find(|id| chamfer_dims(doc, *id).is_some())
+            .unwrap();
+        let Geom::Line { start, end } = doc.entity(line).unwrap().geom else {
+            unreachable!()
+        };
+        for p in [start, end, o] {
+            assert_eq!(chamfer_at_point(doc, p), Some(line), "{p:?}");
+            assert_eq!(fillet_at_point(doc, p), None);
+        }
+        // The lines' far ends are no corner's.
+        let Geom::Line { end: far, .. } = doc.entity(a).unwrap().geom else {
+            unreachable!()
+        };
+        assert_eq!(chamfer_at_point(doc, far), None);
     }
 }
