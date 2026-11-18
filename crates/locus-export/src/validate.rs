@@ -130,23 +130,68 @@ fn outside_bed(layer: &ExportLayer, bed: &Bed, out: &mut Vec<Issue>) {
             entities.push(seg.entity);
         }
     }
-    if entities.is_empty() {
-        return;
+    // Inside the bed, but its stroke reaches past the edge (#450): the
+    // page grows to show it rather than clip it, and the user is told.
+    // Only a Draw layer's pen has a real width; a machine layer's hairline
+    // is a file convention, so a cut touching the edge stays inside.
+    let mut strokes = Vec::new();
+    let paths: &[crate::pipeline::ExportPath] = if layer.uses_object_style() {
+        &layer.paths
+    } else {
+        &[]
+    };
+    for p in paths {
+        let half = layer.paint(p).width.max(0.0) / 2.0;
+        for seg in &p.segs {
+            let b = seg.shape.bbox();
+            let past = b.min.x - half < r.min.x - EXPORT_TOL
+                || b.min.y - half < r.min.y - EXPORT_TOL
+                || b.max.x + half > r.max.x + EXPORT_TOL
+                || b.max.y + half > r.max.y + EXPORT_TOL;
+            if past && !entities.contains(&seg.entity) && !strokes.contains(&seg.entity) {
+                strokes.push(seg.entity);
+            }
+        }
     }
-    out.push(Issue {
-        severity: Severity::Warning,
-        kind: IssueKind::OutsideBed,
-        layer: layer.id,
-        message: format!(
-            "layer \"{}\": {} entit{} outside the {} × {} mm machine bed",
-            layer.name,
-            entities.len(),
-            if entities.len() == 1 { "y" } else { "ies" },
-            bed.width_mm,
-            bed.height_mm
-        ),
-        entities,
-    });
+    let n = |v: &[EntityId]| {
+        format!(
+            "{} entit{}",
+            v.len(),
+            if v.len() == 1 { "y" } else { "ies" }
+        )
+    };
+    if !entities.is_empty() {
+        out.push(Issue {
+            severity: Severity::Warning,
+            kind: IssueKind::OutsideBed,
+            layer: layer.id,
+            message: format!(
+                "layer \"{}\": {} outside the {} × {} mm machine bed",
+                layer.name,
+                n(&entities),
+                // Rounded: an inch bed is 304.8 mm, not 304.79999999999995.
+                crate::svg::num(bed.width_mm),
+                crate::svg::num(bed.height_mm)
+            ),
+            entities,
+        });
+    }
+    if !strokes.is_empty() {
+        out.push(Issue {
+            severity: Severity::Warning,
+            kind: IssueKind::OutsideBed,
+            layer: layer.id,
+            message: format!(
+                "layer \"{}\": the stroke of {} reaches past the edge of the {} × {} mm machine bed; move the job in or use a thinner line",
+                layer.name,
+                n(&strokes),
+                // Rounded: an inch bed is 304.8 mm, not 304.79999999999995.
+                crate::svg::num(bed.width_mm),
+                crate::svg::num(bed.height_mm)
+            ),
+            entities: strokes,
+        });
+    }
 }
 
 fn degenerate(layer: &ExportLayer, out: &mut Vec<Issue>) {

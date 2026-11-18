@@ -191,3 +191,71 @@ fn a_placed_job_keeps_its_coordinates() {
         "{pdf}"
     );
 }
+
+/// #450 (owner's file): no machine profile, so no bed (`profile: None`).
+/// The page is the design's visual bounds, the whole stroke included, and
+/// there is no bed to warn about.
+#[test]
+fn without_a_profile_the_page_is_the_designs_visual_bounds() {
+    let doc = circle();
+    assert_eq!(doc.profile(), None);
+    let prepared = prepare(&doc, false);
+    assert!(prepared.report.issues.is_empty(), "{:?}", prepared.report);
+    let (anchor, page) = prepared.model.page().unwrap();
+    assert_eq!(anchor, page, "nothing to anchor to but the design");
+    // 178.885 + 4.06 / 2 = 180.915 each side of the centre.
+    assert!((page.min.x + 180.915).abs() < 1e-9 && (page.max.y - 180.915).abs() < 1e-9);
+    golden("circle-no-profile.svg", &to_svg_model(&prepared.model));
+}
+
+/// #450 with a machine profile: the rectangle's lines sit on the bed's edge
+/// (inside), but its 3 mm pen reaches 1.5 mm past it. The page grows to
+/// show the stroke rather than clip it, and the bed check warns.
+#[test]
+fn with_a_bed_a_stroke_past_the_edge_is_shown_and_warned_about() {
+    let lb = profile::find("lightburn", &[]).unwrap();
+    let prepared = prepare_for(&rectangle(), false, Some(&lb));
+    let warnings: Vec<_> = prepared
+        .report
+        .issues
+        .iter()
+        .filter(|i| i.kind == locus_export::validate::IssueKind::OutsideBed)
+        .collect();
+    assert_eq!(warnings.len(), 1, "{:?}", prepared.report);
+    assert!(
+        warnings[0].message.contains("stroke") && warnings[0].message.contains("400 × 400 mm"),
+        "{}",
+        warnings[0].message
+    );
+    // The left and bottom edges, and the two edges ending on their corners.
+    assert_eq!(warnings[0].entities.len(), 4);
+    assert!(!prepared.blocked(), "a warning, never blocking (SPEC §8)");
+    let svg = to_svg_model(&prepared.model);
+    let text = String::from_utf8(svg.clone()).unwrap();
+    assert!(text.contains("width=\"63mm\" height=\"43mm\""), "{text}");
+    golden("rectangle-on-bed-edge.svg", &svg);
+    // A thin pen on the same lines stays inside: no warning.
+    let thin = prepare_for(&super_thin(), false, Some(&lb));
+    assert!(thin.report.issues.is_empty(), "{:?}", thin.report);
+}
+
+/// The rectangle with the default 0.4 mm pen moved 1 mm in from the edges.
+fn super_thin() -> Document {
+    let mut ed = Editor::new(Document::new());
+    let p: Vec<_> = [(1.0, 1.0), (61.0, 1.0), (61.0, 41.0), (1.0, 41.0)]
+        .iter()
+        .map(|&(x, y)| point(&mut ed, x, y))
+        .collect();
+    for i in 0..4 {
+        add(
+            &mut ed,
+            Document::default_layer(),
+            Geom::Line {
+                start: p[i],
+                end: p[(i + 1) % 4],
+            },
+            Style::default(),
+        );
+    }
+    ed.into_document()
+}

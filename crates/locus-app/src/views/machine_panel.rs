@@ -46,6 +46,20 @@ pub(crate) fn job_bounds(paths: &[MachinePath]) -> Option<Aabb> {
         })
 }
 
+/// What the machine marks: each path's bounds grown by half its width (the
+/// pen on Draw, the kerf on Cut), for the fit check (#450): a stroke past
+/// the bed edge doesn't fit even when its centre line does.
+pub(crate) fn visual_bounds(paths: &[MachinePath]) -> Option<Aabb> {
+    paths
+        .iter()
+        .filter_map(|p| {
+            let b = job_bounds(std::slice::from_ref(p))?;
+            let r = Vec2::new(1.0, 1.0) * (p.band.max(0.0) / 2.0);
+            Some(Aabb::from_points(b.min - r, b.max + r))
+        })
+        .reduce(Aabb::union)
+}
+
 /// Snap `b` moved by `d` to the bed's edges and centre on each axis, within
 /// `tol` mm. Returns the snapped move and the bed lines it snapped to.
 pub(crate) fn snap(b: Aabb, d: Vec2, bed: &Bed, tol: f64) -> (Vec2, Option<f64>, Option<f64>) {
@@ -225,6 +239,7 @@ fn bed_canvas(
 
     // The drag: the design follows the pointer, snapping to the bed.
     let bounds = job_bounds(paths);
+    let visual = visual_bounds(paths);
     let tol = SNAP_PT / scale;
     if resp.drag_started() && bounds.is_some() {
         st.drag = Some((offset, Vec2::ZERO));
@@ -265,7 +280,7 @@ fn bed_canvas(
         let width = if p.hatch { 0.6 } else { 1.25 };
         painter.add(egui::Shape::line(pts, Stroke::new(width, c)));
     }
-    if let Some(b) = bounds {
+    if let Some(b) = visual {
         let moved = Aabb::from_points(b.min + shift, b.max + shift);
         let fits = moved.min.x >= -locus_geom::EXPORT_TOL
             && moved.min.y >= -locus_geom::EXPORT_TOL
@@ -388,7 +403,7 @@ pub fn placement_ui(
             if app.document().placement().is_none() {
                 ui.weak("Not placed yet: export frames the design itself. Drag it, or press Centre, to place it on the bed.");
             }
-            match fit_message(b, bed, units) {
+            match fit_message(visual_bounds(paths).unwrap_or(b), bed, units) {
                 Some(m) => {
                     ui.colored_label(ui.visuals().error_fg_color, m);
                 }
@@ -559,6 +574,19 @@ mod tests {
         let big = fit_message(b(0.0, 0.0, 450.0, 100.0), &bed, Units::Mm).unwrap();
         assert!(big.contains("doesn't fit"), "{big}");
         let past = fit_message(b(390.0, 0.0, 412.5, 10.0), &bed, Units::Mm).unwrap();
+        // A 4 mm pen on a line along the bed's left edge: the centre line
+        // fits, the stroke doesn't (#450).
+        let line = MachinePath {
+            points: vec![Vec2::new(0.0, 10.0), Vec2::new(0.0, 50.0)],
+            kind: OperationKind::Draw,
+            hatch: false,
+            band: 4.0,
+        };
+        let geom = job_bounds(std::slice::from_ref(&line)).unwrap();
+        assert!(fit_message(geom, &bed, Units::Mm).is_none());
+        let seen = visual_bounds(std::slice::from_ref(&line)).unwrap();
+        let m = fit_message(seen, &bed, Units::Mm).unwrap();
+        assert!(m.contains("2.000 mm") && m.contains("left"), "{m}");
         assert!(
             past.contains("12.500 mm") && past.contains("right"),
             "{past}"
