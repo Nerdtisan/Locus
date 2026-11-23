@@ -90,6 +90,13 @@ pub struct App {
     panes: Panes,
     /// Machine preview as last seen, to tell the toggle from the pane (#443).
     machine_seen: bool,
+    /// The main window was maximized when Locus last closed: maximize it
+    /// once it is on screen (#458, see [`main_window`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    restore_maximized: bool,
+    /// Is the main window maximized now (kept for `save`).
+    #[cfg(not(target_arch = "wasm32"))]
+    maximized: bool,
     status: Status,
     files: FileIo,
     #[cfg(not(target_arch = "wasm32"))]
@@ -135,6 +142,13 @@ impl App {
             search: ToolSearch::default(),
             panes: Panes::default(),
             machine_seen: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            restore_maximized: cc
+                .storage
+                .and_then(|s| s.get_string(main_window::MAXIMIZED_KEY))
+                .is_some_and(|v| v == "true"),
+            #[cfg(not(target_arch = "wasm32"))]
+            maximized: false,
             settings,
             state: {
                 let mut c = AppState::untitled();
@@ -270,7 +284,11 @@ impl App {
                 dock_it || !open
             } else {
                 let id = egui::ViewportId::from_hash_of(("locus-pane", tab));
+                // Hidden on its first frame so it appears once, in place
+                // (#458).
+                let hidden = crate::dialog::opening(ctx, id);
                 let builder = egui::ViewportBuilder::default()
+                    .with_visible(!hidden)
                     .with_title(format!("{} - Locus", tab.title()))
                     .with_position(pos)
                     .with_inner_size(size)
@@ -921,6 +939,17 @@ impl TabViewer for Viewer<'_> {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let ctx = ui.ctx().clone();
+            // eframe shows the window after the first pass; maximize it
+            // then, already on screen, so it never flashes (#458).
+            if self.restore_maximized && ctx.cumulative_pass_nr() >= 1 {
+                self.restore_maximized = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            }
+            self.maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        }
         if let Some(cpu) = frame.info().cpu_usage {
             let ms = cpu * 1000.0;
             self.status.frame_ms = if self.status.frame_ms == 0.0 {
@@ -995,6 +1024,8 @@ impl eframe::App for App {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        #[cfg(not(target_arch = "wasm32"))]
+        main_window::save(storage, self.maximized);
         self.settings.save(storage);
         self.files.save_state(storage);
         if let Some(json) = self.toolbar.save() {
@@ -1111,5 +1142,57 @@ mod startup_tests {
         assert_eq!(got.unwrap().file_name().unwrap(), "Plate.LOCUS");
         assert!(startup_file(args(&["plate.locus"])).is_none()); // argv[0]
         assert!(startup_file(args(&["locus", "x.svg"])).is_none());
+    }
+}
+
+/// The main window's maximized state, kept out of eframe's hands (#458).
+///
+/// eframe restores a maximized window by creating it maximized but hidden
+/// (it stays hidden until the first frame is painted). On Windows, winit
+/// maximizes with `ShowWindow(SW_MAXIMIZE)`, which shows the window, then
+/// hides it again (`SW_HIDE`) because it should be invisible; eframe shows
+/// it once more after the first frame. That show, hide, show is the flash
+/// at startup. So eframe is told the window was not maximized (it then
+/// restores it, hidden, at the size and place it had, which is the
+/// maximized one), and Locus maximizes it once it is on screen, which
+/// changes nothing visible.
+#[cfg(not(target_arch = "wasm32"))]
+mod main_window {
+    /// Locus's own record: was the main window maximized?
+    pub const MAXIMIZED_KEY: &str = "locus.window.maximized";
+    /// eframe's key for its window settings (`epi_integration`).
+    const EFRAME_WINDOW_KEY: &str = "window";
+
+    /// Runs after eframe has stored its window settings (eframe saves those
+    /// first, then calls `App::save`).
+    pub fn save(storage: &mut dyn eframe::Storage, maximized: bool) {
+        storage.set_string(MAXIMIZED_KEY, maximized.to_string());
+        if let Some(w) = storage.get_string(EFRAME_WINDOW_KEY) {
+            let restored = unmaximized(&w);
+            if restored != w {
+                storage.set_string(EFRAME_WINDOW_KEY, restored);
+            }
+        }
+    }
+
+    /// eframe's RON window settings with `maximized` cleared.
+    pub fn unmaximized(ron: &str) -> String {
+        ron.replace("maximized:true", "maximized:false")
+            .replace("maximized: true", "maximized: false")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_saved_window_is_never_maximized_for_eframe() {
+            let saved = "(inner_position_pixels:Some((x:0.0,y:23.0)),outer_position_pixels:Some((x:-8.0,y:-8.0)),fullscreen:false,maximized:true,inner_size_points:Some((x:1280.0,y:777.0)))";
+            let out = unmaximized(saved);
+            assert!(out.contains("maximized:false"), "{out}");
+            assert_eq!(out.replace("maximized:false", "maximized:true"), saved);
+            assert_eq!(unmaximized("(maximized: true)"), "(maximized: false)");
+            assert_eq!(unmaximized("(maximized:false)"), "(maximized:false)");
+        }
     }
 }
