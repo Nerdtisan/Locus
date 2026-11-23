@@ -953,3 +953,136 @@ fn a_pattern_copy_keeps_construction_through_regeneration() {
     .unwrap();
     assert!(all.iter().all(|e| !construction(&s, *e)));
 }
+
+// ── Patterning a mirrored shape (#472) ──
+
+/// Regression (#472): a mirror's copies were refused as pattern sources
+/// (`DocError::Driven`), so the pattern tool's preview stayed empty. A
+/// pattern may now copy a mirror's output, picked one for one; the copies
+/// follow the source through the mirror, the mirror can't be removed from
+/// under the pattern, and a pattern of that pattern stays within the
+/// instance limits (§6.2.1).
+#[test]
+fn a_mirrored_shape_can_be_patterned() {
+    let mut s = Sketcher::new(Document::new());
+    let (lines, _) = offset_rectangle(&mut s);
+    // A vertical mirror line at x = 30: the copy spans x 40 … 60.
+    let (a, b) = (pt(&mut s, 30.0, -10.0), pt(&mut s, 30.0, 40.0));
+    let axis = s
+        .apply(&Command::AddEntity {
+            layer: L,
+            construction: true,
+            style: Default::default(),
+            geom: Geom::Line { start: a, end: b },
+        })
+        .unwrap()
+        .entities[0];
+    let m = add(&mut s, RecipeKind::Mirror { axis }, &lines).unwrap();
+    let mirrored: Vec<EntityId> = {
+        let doc = s.document();
+        doc.recipe(m)
+            .unwrap()
+            .instances()
+            .filter(|e| doc.line(*e).is_some())
+            .collect()
+    };
+    assert_eq!(mirrored.len(), 4);
+    // Three copies running back along x (a negative spacing), and only
+    // the picked curves: two of the mirror's four lines.
+    let r = add(
+        &mut s,
+        RecipeKind::Linear {
+            dir1: dir(Axis::X, "3", "-30"),
+            dir2: None,
+        },
+        &mirrored[..2],
+    )
+    .expect("a pattern may copy a mirror's curves");
+    let lines_copied = |s: &Sketcher| {
+        let doc = s.document();
+        doc.recipe(r)
+            .unwrap()
+            .instances()
+            .filter(|e| doc.line(*e).is_some())
+            .count()
+    };
+    assert_eq!(
+        lines_copied(&s),
+        2 * 2,
+        "two copies of the two picked lines"
+    );
+    // Every copied point is a mirrored point 30 or 60 mm back along x.
+    let follows = |s: &Sketcher| {
+        let doc = s.document();
+        let from: Vec<Vec2> = doc
+            .recipe(m)
+            .unwrap()
+            .instances()
+            .filter_map(|e| doc.point_pos(e))
+            .collect();
+        doc.recipe(r)
+            .unwrap()
+            .instances()
+            .filter_map(|e| doc.point_pos(e))
+            .all(|p| {
+                from.iter()
+                    .any(|q| [30.0, 60.0].iter().any(|d| near(p, q.x - d, q.y)))
+            })
+    };
+    assert!(follows(&s));
+    // Moving the source moves the mirror, and the pattern follows it.
+    let xs = copy_xs(&s, r);
+    let Some(Geom::Line { start: p0, .. }) = s.document().entity(lines[0]).map(|e| e.geom.clone())
+    else {
+        panic!("a source line")
+    };
+    s.apply(&Command::ModifyEntity {
+        id: p0,
+        geom: Geom::Point {
+            pos: Vec2::new(-5.0, 0.0),
+        },
+    })
+    .unwrap();
+    let moved = copy_xs(&s, r);
+    assert_ne!(moved, xs, "the copies moved");
+    assert!(follows(&s), "and still copy the mirror");
+    // The mirror can't go while the pattern copies it.
+    assert!(matches!(
+        s.apply(&Command::RemoveRecipe { id: m }),
+        Err(DocError::RecipeInUse { .. })
+    ));
+    // A pattern of the pattern works, and is bounded like any other.
+    let curves: Vec<EntityId> = {
+        let doc = s.document();
+        doc.recipe(r)
+            .unwrap()
+            .instances()
+            .filter(|e| doc.line(*e).is_some())
+            .collect()
+    };
+    let rr = add(
+        &mut s,
+        RecipeKind::Linear {
+            dir1: dir(Axis::Y, "2", "50"),
+            dir2: None,
+        },
+        &curves,
+    );
+    assert!(rr.is_ok(), "{rr:?}");
+    assert!(matches!(
+        add(
+            &mut s,
+            RecipeKind::Linear {
+                dir1: dir(Axis::Y, "20000", "50"),
+                dir2: None,
+            },
+            &mirrored,
+        ),
+        Err(DocError::InstanceLimit { .. })
+    ));
+    // Save → load → save is byte-identical.
+    let text = locus_doc::file::save(s.document()).unwrap();
+    let back = locus_doc::file::load(&text).unwrap();
+    assert_eq!(&back, s.document());
+    assert_eq!(locus_doc::file::save(&back).unwrap(), text);
+}

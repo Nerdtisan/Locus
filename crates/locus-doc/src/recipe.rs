@@ -729,21 +729,20 @@ pub(crate) fn instances_of(doc: &Document, source: EntityId) -> Vec<(EntityId, R
 /// and below the counter, active copies exist and inactive ones don't, and
 /// every reference resolves. Never panics on a hostile file.
 /// Whether a recipe of `kind` (`self_id`, or a new one) may take recipe
-/// `from`'s instances as inputs (#221): a pattern may copy what an
-/// unsolved recipe (an offset, a pattern, a plugin object) wrote, since
-/// both are written after the solve. The source recipe must be older, so
-/// regenerating in ID order (`command::regenerate_all`) writes it first and
-/// no cycle can form. A mirror's copies are solved, and instances aren't
-/// solver variables, so a mirror never may.
+/// `from`'s instances as inputs (#221, #472). Only a pattern may: it is
+/// written after the solve, so it can copy what any older recipe made. A
+/// mirror's copies are solved, so they are final before any pattern
+/// regenerates; an unsolved recipe (an offset, a pattern, a plugin object)
+/// is regenerated in ID order (`command::regenerate_all`), so it must be
+/// older and no cycle can form. A mirror's copies are solved and instances
+/// aren't solver variables, so a mirror never may take instances.
 fn copies_output_of(
     doc: &Document,
     kind: &RecipeKind,
     from: RecipeId,
     self_id: Option<RecipeId>,
 ) -> bool {
-    kind.is_pattern()
-        && doc.recipe(from).is_some_and(|r| !r.kind.solved())
-        && self_id.is_none_or(|me| from < me)
+    kind.is_pattern() && doc.recipe(from).is_some() && self_id.is_none_or(|me| from < me)
 }
 
 pub(crate) fn validate_all(doc: &Document) -> Result<(), DocError> {

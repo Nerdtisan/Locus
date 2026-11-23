@@ -163,14 +163,17 @@ pub(crate) fn regenerate(
 /// for that recipe's whole current output: an offset's curves change in
 /// number and kind as it regenerates (round corners add arcs), so the
 /// pattern copies all of them rather than the IDs that existed when it was
-/// made. Sources that no longer exist are dropped.
+/// made. A mirror's copies (#472) are solved one for one with their
+/// sources, so they stay as picked, like plain sources. Sources that no
+/// longer exist are dropped.
 fn effective_sources(doc: &Document, rid: RecipeId, sources: &[EntityId]) -> Vec<EntityId> {
     let driven = doc.driven_entities();
     let mut out: BTreeSet<EntityId> = BTreeSet::new();
     let mut from: BTreeSet<RecipeId> = BTreeSet::new();
     for s in sources {
+        let regenerated = |r: &RecipeId| doc.recipe(*r).is_some_and(|x| !x.kind.solved());
         match driven.get(s) {
-            Some(r) if *r != rid => {
+            Some(r) if *r != rid && regenerated(r) => {
                 from.insert(*r);
             }
             _ if doc.entity(*s).is_some() => {
