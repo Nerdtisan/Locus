@@ -21,17 +21,46 @@ pub fn distance(shape: &Shape, p: Vec2) -> f64 {
     }
 }
 
-/// The item under `p`, if any, within `tol` mm.
+/// Pick tolerances in world mm: `curve` for curves and plain points,
+/// `handle` (never less than `curve`) for Bézier handles, whose target is
+/// larger than the drawn handle (#470, M6 design §12).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tol {
+    pub curve: f64,
+    pub handle: f64,
+}
+
+impl Tol {
+    /// The same tolerance for everything.
+    #[cfg(test)]
+    pub fn uniform(tol: f64) -> Self {
+        Self {
+            curve: tol,
+            handle: tol,
+        }
+    }
+
+    fn of(&self, item: &Item) -> f64 {
+        if item.handle.is_some() {
+            self.handle.max(self.curve)
+        } else {
+            self.curve
+        }
+    }
+}
+
+/// The item under `p`, if any, within `tol` (see [`Tol`]).
 ///
 /// Point-priority picking: a point (endpoint, centre or free point) within
 /// tolerance always beats a curve, even when the curve is nearer, so
 /// endpoints stay selectable where curves meet. Ties go to the nearest, then
 /// the lowest id (deterministic).
-pub fn pick(items: &[Item], p: Vec2, tol: f64) -> Option<EntityId> {
+pub fn pick(items: &[Item], p: Vec2, tol: Tol) -> Option<EntityId> {
     let mut best_point: Option<(f64, EntityId)> = None;
     let mut best_curve: Option<(f64, EntityId)> = None;
     let probe = Aabb::from_point(p);
     for item in items {
+        let tol = tol.of(item);
         // Cheap reject before the exact distance.
         if !bbox_near(&item.bbox, &probe, tol) {
             continue;
@@ -320,6 +349,7 @@ mod tests {
             derived_point: false,
             ends: None,
             text: false,
+            handle: None,
         }
     }
 
@@ -367,16 +397,19 @@ mod tests {
     fn arc_hit_respects_its_sweep() {
         let items = [quarter_arc(1)];
         let on_arc = v(10.0 * 0.5f64.sqrt(), 10.0 * 0.5f64.sqrt());
-        assert_eq!(pick(&items, on_arc, 0.5), Some(EntityId::new(1)));
+        assert_eq!(
+            pick(&items, on_arc, Tol::uniform(0.5)),
+            Some(EntityId::new(1))
+        );
         // Same circle, but in the part of the circle the arc does not cover.
-        assert_eq!(pick(&items, v(-10.0, 0.0), 0.5), None);
+        assert_eq!(pick(&items, v(-10.0, 0.0), Tol::uniform(0.5)), None);
     }
 
     #[test]
     fn tolerance_is_inclusive_and_misses_beyond_it() {
         let items = [line(1, v(0.0, 0.0), v(10.0, 0.0))];
-        assert!(pick(&items, v(5.0, 0.4), 0.5).is_some());
-        assert!(pick(&items, v(5.0, 0.6), 0.5).is_none());
+        assert!(pick(&items, v(5.0, 0.4), Tol::uniform(0.5)).is_some());
+        assert!(pick(&items, v(5.0, 0.6), Tol::uniform(0.5)).is_none());
     }
 
     #[test]
@@ -387,9 +420,12 @@ mod tests {
             item(2, Shape::Point(v(10.0, 0.0))),
         ];
         let at = v(9.6, 0.1);
-        assert_eq!(pick(&items, at, 0.5), Some(EntityId::new(2)));
+        assert_eq!(pick(&items, at, Tol::uniform(0.5)), Some(EntityId::new(2)));
         // Out of the point's tolerance, the curve is picked.
-        assert_eq!(pick(&items, v(5.0, 0.1), 0.5), Some(EntityId::new(1)));
+        assert_eq!(
+            pick(&items, v(5.0, 0.1), Tol::uniform(0.5)),
+            Some(EntityId::new(1))
+        );
     }
 
     #[test]
@@ -398,19 +434,25 @@ mod tests {
             line(5, v(0.0, 0.0), v(10.0, 0.0)),
             line(3, v(0.0, 0.2), v(10.0, 0.2)),
         ];
-        assert_eq!(pick(&items, v(5.0, 0.15), 1.0), Some(EntityId::new(3)));
+        assert_eq!(
+            pick(&items, v(5.0, 0.15), Tol::uniform(1.0)),
+            Some(EntityId::new(3))
+        );
         let tie = [
             line(9, v(0.0, 1.0), v(10.0, 1.0)),
             line(4, v(0.0, -1.0), v(10.0, -1.0)),
         ];
-        assert_eq!(pick(&tie, v(5.0, 0.0), 2.0), Some(EntityId::new(4)));
+        assert_eq!(
+            pick(&tie, v(5.0, 0.0), Tol::uniform(2.0)),
+            Some(EntityId::new(4))
+        );
     }
 
     #[test]
     fn nothing_under_the_cursor() {
-        assert_eq!(pick(&[], v(0.0, 0.0), 1.0), None);
+        assert_eq!(pick(&[], v(0.0, 0.0), Tol::uniform(1.0)), None);
         let items = [line(1, v(0.0, 0.0), v(1.0, 0.0))];
-        assert_eq!(pick(&items, v(50.0, 50.0), 1.0), None);
+        assert_eq!(pick(&items, v(50.0, 50.0), Tol::uniform(1.0)), None);
     }
 
     fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Aabb {
@@ -525,5 +567,30 @@ mod tests {
         s.set_all([id(1), id(2), id(3)]);
         s.retain(|i| i != id(2));
         assert_eq!(s.iter().collect::<Vec<_>>(), vec![id(1), id(3)]);
+    }
+
+    #[test]
+    fn handles_are_picked_within_the_larger_handle_tolerance() {
+        // #470: a Bézier handle's target is larger than a plain point's.
+        let mut handle = item(2, Shape::Point(v(5.0, 3.0)));
+        handle.handle = Some(crate::scene::Handle::Control);
+        let items = [
+            line(1, v(0.0, 0.0), v(10.0, 0.0)),
+            handle,
+            item(3, Shape::Point(v(20.0, 3.0))),
+        ];
+        let tol = Tol {
+            curve: 1.0,
+            handle: 2.5,
+        };
+        assert_eq!(pick(&items, v(5.0, 1.0), tol), Some(EntityId::new(2)));
+        // A plain point at the same distance is out of reach…
+        assert_eq!(pick(&items, v(20.0, 1.0), tol), None);
+        // …and the handle tolerance never shrinks below the curve's.
+        let tight = Tol {
+            curve: 2.0,
+            handle: 0.5,
+        };
+        assert_eq!(pick(&items, v(5.0, 1.2), tight), Some(EntityId::new(2)));
     }
 }

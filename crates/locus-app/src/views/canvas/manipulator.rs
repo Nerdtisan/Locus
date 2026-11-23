@@ -252,7 +252,7 @@ impl AppState {
         if resp.drag_started_by(PointerButton::Primary)
             && let Some(o) = super::press_pos(ui, resp)
         {
-            let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
+            let tol = self.pick_tol();
             let grip = gizmo.grip_at(o).or_else(|| {
                 // In Move, dragging the selection itself moves it freely.
                 let on = hit::pick(&self.doc.scene.items, world(o), tol);

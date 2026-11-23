@@ -349,7 +349,7 @@ impl AppState {
         self.draw_regions(&painter, rect, dark);
         self.draw_bed(&painter, rect, dark, settings);
         self.draw_stroke_preview(&frame, dark);
-        self.view.drawn = frame.draw_items(&self.doc.scene, |item| {
+        let emphasis = |item: &crate::scene::Item| {
             if flag_entities.contains(&item.id) {
                 Emphasis::Conflict
             } else if selection.contains(item.id) {
@@ -357,13 +357,15 @@ impl AppState {
             } else if hovered == Some(item.id) {
                 Emphasis::Hover
             } else if (!display.points || item.derived_point)
+                && item.handle.is_none()
                 && matches!(item.shape, crate::scene::Shape::Point(_))
             {
                 Emphasis::Hidden
             } else {
                 Emphasis::None
             }
-        });
+        };
+        self.view.drawn = frame.draw_items(&self.doc.scene, emphasis);
         // Over the sketch (#423): a Draw or uncompensated Cut path lies on
         // its sketch line, so drawn underneath it would never show.
         self.draw_machine(&painter, rect, dark);
@@ -376,6 +378,7 @@ impl AppState {
             .flat_map(|c| [(c.p0, c.c0), (c.p1, c.c1)])
             .collect();
         frame.draw_handle_guides(&guides);
+        frame.draw_handles(&self.doc.scene, emphasis);
         let hot = hover
             .filter(|_| self.view.marking.is_none())
             .and_then(|p| self.glyph_at(p));
@@ -565,7 +568,7 @@ impl AppState {
     /// then the marking menu opens there.
     pub(crate) fn open_marking(&mut self, at: Pos2, rect: egui::Rect, held: bool, now: f64) {
         if self.tool() == Tool::Select && self.modify().is_none() {
-            let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
+            let tol = self.pick_tol();
             let w = self.view.camera.to_world(at, rect);
             if let Some(id) = hit::pick(&self.doc.scene.items, w, tol)
                 && !self.selection.items.contains(id)
@@ -1009,7 +1012,7 @@ impl AppState {
             add: i.modifiers.shift || self.view.touch_add,
             toggle: i.modifiers.command || self.view.touch_toggle,
         });
-        let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
+        let tol = self.pick_tol();
         let pick_at = |this: &Self, p: Pos2| {
             let w = this.view.camera.to_world(p, rect);
             hit::pick(&this.doc.scene.items, w, tol)

@@ -51,7 +51,20 @@ pub struct Item {
     /// picked as the text, but no curve to snap onto, since a point can't
     /// lie on a text.
     pub text: bool,
+    /// An end point or control point of a Bézier whose handles show
+    /// (#160): drawn as a handle and picked with the larger handle
+    /// tolerance (#470, M6 design §12).
+    pub handle: Option<Handle>,
     pub bbox: Aabb,
+}
+
+/// How a Bézier handle is drawn (#470, M6 design §12).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Handle {
+    /// An end point (anchor): a square.
+    Anchor,
+    /// A control point: a circle.
+    Control,
 }
 
 /// What a dimension annotation measures; positions are already resolved.
@@ -241,6 +254,23 @@ impl Scene {
             })
             .flatten()
             .collect();
+        let mut handle_of: HashMap<EntityId, Handle> = HashMap::new();
+        for id in handles {
+            if let Some(Geom::Bezier {
+                start,
+                start_ctrl,
+                end_ctrl,
+                end,
+            }) = doc.entity(*id).map(|e| &e.geom)
+            {
+                for a in [start, end] {
+                    handle_of.entry(*a).or_insert(Handle::Anchor);
+                }
+                for c in [start_ctrl, end_ctrl] {
+                    handle_of.insert(*c, Handle::Control);
+                }
+            }
+        }
         let owned: HashSet<EntityId> = doc
             .entities()
             .iter()
@@ -303,6 +333,7 @@ impl Scene {
                                 derived_point: false,
                                 ends: None,
                                 text: true,
+                                handle: None,
                                 bbox,
                             });
                         }
@@ -344,6 +375,10 @@ impl Scene {
                     _ => None,
                 },
                 text: false,
+                handle: handle_of
+                    .get(&id)
+                    .copied()
+                    .filter(|_| matches!(shape, Shape::Point(_))),
                 bbox,
             });
         }
@@ -586,6 +621,15 @@ mod tests {
         assert_eq!(points(&hidden), 2);
         let shown = Scene::build(&doc, &BTreeSet::new(), &BTreeSet::from([curve]));
         assert_eq!(points(&shown), 4);
+        // #470: the shown curve's ends are anchors and its controls are
+        // control handles; hidden curves mark nothing.
+        let kind =
+            |s: &Scene, id: EntityId| s.items.iter().find(|i| i.id == id).and_then(|i| i.handle);
+        assert_eq!(kind(&shown, p[0]), Some(Handle::Anchor));
+        assert_eq!(kind(&shown, p[1]), Some(Handle::Control));
+        assert_eq!(kind(&shown, p[2]), Some(Handle::Control));
+        assert_eq!(kind(&shown, p[3]), Some(Handle::Anchor));
+        assert!(hidden.items.iter().all(|i| i.handle.is_none()));
     }
 
     /// A stroke-edge radius is drawn on the edge it measures (#240).
