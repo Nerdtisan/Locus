@@ -1,0 +1,1075 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Locus M6 Styles</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Same design language as docs/ux/m5-mockup.html: a design-review page around a scaled,
+   clickable app frame. M6 adds the Style section, width profiles, brushes, gradients,
+   history, layer blending/interaction, reference handles, auto trace and machine mapping. */
+:root{
+  --bg:#e9ecf1; --page-ink:#1a2030; --page-muted:#566074;
+  --chrome:#dfe3e9; --panel:#f6f7f9; --panel-2:#eceff3; --line:#c9cfd8; --ink:#1b2130; --muted:#5f6878;
+  --accent:#1f6fd1; --accent-ink:#ffffff; --accent-soft:#d8e6fa;
+  --canvas:#fbfcfd; --grid:#e6eaf0; --grid-major:#d4dae3;
+  --geom-free:#1f6fd1; --geom-fixed:#1b2130; --construct:#d27a1c; --sel:#0ea5b7; --preview:#7b4ddb; --driven:#8a93a3;
+  --dim:#3b4456; --ok:#2f8a4c; --warn:#b7791f; --err:#c23b3b;
+  --op-cut:#d03a3a; --op-score:#2a7de1; --op-engrave:#c98612; --op-draw:#1b2130;
+  --shadow:0 8px 28px rgba(20,30,50,.18);
+  --f-ui:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --f-head:"Space Grotesk","Inter",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#14171d; --page-ink:#e6e9ef; --page-muted:#9aa3b3;
+  --chrome:#23272f; --panel:#2a2f38; --panel-2:#323844; --line:#3e4552; --ink:#e3e7ee; --muted:#9aa3b3;
+  --accent:#4c93ec; --accent-ink:#0d1420; --accent-soft:#233a5a;
+  --canvas:#1c2027; --grid:#252a33; --grid-major:#2f3540;
+  --geom-free:#5aa2f5; --geom-fixed:#e3e7ee; --construct:#e8953a; --sel:#33c6d6; --preview:#a585f2; --driven:#7d8697;
+  --dim:#c4cad6; --ok:#4fb26c; --warn:#d9a03b; --err:#e06464; --op-draw:#e3e7ee; --shadow:0 8px 28px rgba(0,0,0,.5); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#14171d; --page-ink:#e6e9ef; --page-muted:#9aa3b3;
+  --chrome:#23272f; --panel:#2a2f38; --panel-2:#323844; --line:#3e4552; --ink:#e3e7ee; --muted:#9aa3b3;
+  --accent:#4c93ec; --accent-ink:#0d1420; --accent-soft:#233a5a;
+  --canvas:#1c2027; --grid:#252a33; --grid-major:#2f3540;
+  --geom-free:#5aa2f5; --geom-fixed:#e3e7ee; --construct:#e8953a; --sel:#33c6d6; --preview:#a585f2; --driven:#7d8697;
+  --dim:#c4cad6; --ok:#4fb26c; --warn:#d9a03b; --err:#e06464; --op-draw:#e3e7ee; --shadow:0 8px 28px rgba(0,0,0,.5); color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:auto;margin:0}
+body{background:var(--bg);color:var(--page-ink);font-family:var(--f-ui);padding:20px max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px))}
+.page{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+header.top h1{font-family:var(--f-head);font-size:26px;margin:0;letter-spacing:-.01em}
+header.top p{margin:4px 0 0;color:var(--page-muted);max-width:76ch;line-height:1.45}
+.ticket{font-family:var(--f-mono);font-size:12px;color:var(--page-muted)}
+.flows{display:flex;flex-wrap:wrap;gap:6px}
+.flows button{font:500 12.5px var(--f-ui);border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 10px;border-radius:999px;cursor:pointer}
+.flows button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.flows button .n{font-family:var(--f-mono);font-size:10.5px;opacity:.7;margin-right:4px}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hint{font-size:12px;color:var(--page-muted)}
+kbd,.kbd{font-family:var(--f-mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;background:var(--panel);color:var(--ink)}
+.stage{overflow-x:auto;overflow-y:hidden;border-radius:10px}
+.scaler{position:relative}
+/* ---------- app frame ---------- */
+.frame{position:absolute;left:0;top:0;width:1280px;height:780px;transform-origin:0 0;background:var(--chrome);color:var(--ink);font:12px var(--f-ui);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:grid;grid-template-rows:32px 24px 62px 1fr 24px;box-shadow:var(--shadow);user-select:none}
+.appbar{display:flex;align-items:center;gap:10px;padding:0 10px;background:var(--panel-2);border-bottom:1px solid var(--line)}
+.appbar .logo{font:700 13px var(--f-head);letter-spacing:.02em}
+.appbar .doc{font-weight:500}.appbar .doc small{color:var(--muted);font-weight:400}
+.sp{flex:1}
+.ib{display:inline-flex;align-items:center;justify-content:center;gap:4px;border:0;background:transparent;color:var(--ink);border-radius:5px;padding:3px 6px;cursor:pointer;font:inherit}
+.ib:hover{background:var(--accent-soft)}
+.tabs{display:flex;gap:2px;padding:0 8px;background:var(--chrome);align-items:flex-end;border-bottom:1px solid var(--line)}
+.tabs button{border:1px solid transparent;border-bottom:0;background:transparent;color:var(--muted);font:600 11px var(--f-ui);letter-spacing:.08em;padding:4px 14px;border-radius:6px 6px 0 0;cursor:pointer}
+.tabs button.on{background:var(--panel);color:var(--accent);border-color:var(--line)}
+.ribbon{display:flex;align-items:stretch;background:var(--panel);border-bottom:1px solid var(--line);padding:0 6px}
+.grp{position:relative;display:flex;flex-direction:column;align-items:center;padding:4px 8px 2px;border-right:1px solid var(--line)}
+.grp .btns{display:flex;gap:1px}
+.grp .glabel{color:var(--muted);font:600 10px var(--f-ui);letter-spacing:.09em;padding:2px 6px}
+.grp.finish{margin-left:auto;border-right:0}
+.tb{width:34px;height:32px;display:flex;align-items:center;justify-content:center;border:0;border-radius:5px;background:transparent;color:var(--ink);cursor:pointer;position:relative}
+.tb:hover,.tb.on{background:var(--accent-soft)}
+.tb.on{box-shadow:inset 0 -2px 0 var(--accent)}
+.tb.new::after{content:"M6";position:absolute;top:0;right:0;font:700 7px var(--f-ui);color:var(--preview);letter-spacing:.02em}
+.ico{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.main{display:grid;grid-template-columns:238px 1fr 296px;min-height:0}
+.pane{background:var(--panel);display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
+.pane.right{border-right:0;border-left:1px solid var(--line)}
+.ph{display:flex;align-items:center;gap:6px;height:26px;flex:none;padding:0 6px 0 10px;background:var(--panel-2);border-bottom:1px solid var(--line);font:600 10.5px var(--f-ui);letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.ph .ib{padding:1px 4px;color:var(--muted)}
+.ph .tabsm{display:flex;gap:2px}
+.ph .tabsm button{border:0;background:transparent;color:var(--muted);font:600 10.5px var(--f-ui);letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border-radius:4px;cursor:pointer}
+.ph .tabsm button.on{color:var(--accent);background:var(--accent-soft)}
+.pb{padding:6px 8px;overflow:auto;min-height:0}
+.tree{list-style:none;margin:0;padding:0}
+.tree li{padding:3px 4px;border-radius:4px;display:flex;align-items:center;gap:6px;white-space:nowrap;position:relative}
+.tree li:hover{background:var(--panel-2)}
+.tree li.on{background:var(--accent-soft)}
+.tree .tw{color:var(--muted);width:10px;font-size:9px}
+.tree .sub{padding-left:16px}
+.tree .cnt{margin-left:auto;color:var(--muted);font-family:var(--f-mono);font-size:10.5px}
+.tree li.drag{opacity:.4}
+.tree li.ins-before::before,.tree li.ins-after::after{content:"";position:absolute;left:0;right:0;height:2px;background:var(--accent);border-radius:2px}
+.tree li.ins-before::before{top:-1px}.tree li.ins-after::after{bottom:-1px}
+.grip{color:var(--muted);cursor:grab;font-size:11px;letter-spacing:-2px;padding:0 2px}
+.sw{width:10px;height:10px;border-radius:2px;flex:none;border:1px solid rgba(0,0,0,.15)}
+.chip{font:600 9.5px var(--f-ui);letter-spacing:.04em;padding:1px 5px;border-radius:3px;background:var(--panel-2);color:var(--muted);border:1px solid var(--line)}
+.chip.blend{color:var(--preview);border-color:color-mix(in srgb,var(--preview) 40%,var(--line))}
+.chip.link{color:var(--accent)}
+.canvaswrap{position:relative;background:var(--canvas);min-width:0;overflow:hidden}
+.canvaswrap svg.cv{position:absolute;inset:0;width:100%;height:100%}
+.navbar{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;box-shadow:0 2px 10px rgba(0,0,0,.08);z-index:6}
+.navbar .tb{width:28px;height:26px}.navbar .ico{width:16px;height:16px}
+.status{display:flex;align-items:center;gap:14px;padding:0 10px;background:var(--panel-2);border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden}
+.status .prompt{color:var(--ink);font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.status .mono{font-family:var(--f-mono);font-size:11px}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-weight:600;font-size:11px;background:var(--accent-soft);color:var(--accent)}
+/* inspector */
+.sec{border-bottom:1px solid var(--line);padding:6px 2px 8px}
+.sec h4{margin:2px 0 6px;font:600 10.5px var(--f-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:6px}
+.ssub{border-top:1px dashed var(--line);margin-top:4px;padding-top:4px}
+.subh{display:flex;align-items:center;gap:6px;width:100%;border:0;background:transparent;color:var(--ink);font:600 11px var(--f-ui);padding:3px 0;cursor:pointer;text-align:left}
+.subh .tw{color:var(--muted);width:10px;font-size:9px}
+.subh .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.ssub.hl{background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:5px;padding-left:4px;padding-right:4px}
+.row{display:flex;align-items:center;gap:6px;min-height:24px}
+.row .lb{flex:0 0 78px;color:var(--muted)}
+.row .grow{flex:1;min-width:0}
+.fld{display:inline-flex;align-items:center;height:22px;border:1px solid var(--line);border-radius:4px;background:var(--canvas);padding:0 6px;font-family:var(--f-mono);font-size:11.5px;color:var(--ink);min-width:0}
+input.fld{width:64px}
+input.fld.w{width:100%}
+select.fld{font-family:var(--f-ui);padding:0 2px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden;flex:none}
+.seg button{border:0;background:var(--canvas);color:var(--ink);font:500 11px var(--f-ui);padding:3px 7px;cursor:pointer;border-right:1px solid var(--line);display:inline-flex;align-items:center;gap:3px}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
+.seg .ico{width:15px;height:15px}
+.ck{display:inline-flex;align-items:center;gap:6px;min-height:22px;cursor:pointer;border:0;background:transparent;color:var(--ink);font:12px var(--f-ui);padding:0}
+.ck i{width:13px;height:13px;border:1px solid var(--line);border-radius:3px;background:var(--canvas);display:inline-flex;align-items:center;justify-content:center;font-style:normal;font-size:10px;color:var(--accent-ink)}
+.ck.on i{background:var(--accent);border-color:var(--accent)}
+.ck.on i::after{content:"✓"}
+.ck.rd i{border-radius:50%}
+.note{font-size:11px;color:var(--muted);line-height:1.4;margin-top:4px}
+.note.mach{background:var(--panel-2);border-radius:5px;padding:5px 7px;color:var(--ink)}
+.badge{font:600 10px var(--f-ui);padding:1px 6px;border-radius:3px;background:var(--accent-soft);color:var(--accent)}
+.badge.err{background:color-mix(in srgb,var(--err) 16%,transparent);color:var(--err)}
+.swbtn{width:22px;height:22px;border-radius:4px;border:1px solid var(--line);cursor:pointer;padding:0;flex:none}
+.btn{border:1px solid var(--line);background:var(--canvas);color:var(--ink);font:500 11.5px var(--f-ui);padding:4px 10px;border-radius:5px;cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.sm{padding:2px 7px;font-size:11px}
+.btn:disabled{opacity:.5;cursor:default}
+.strokes{border:1px solid var(--line);border-radius:5px;background:var(--canvas)}
+.strokes .sr{display:flex;align-items:center;gap:6px;padding:3px 6px;border-bottom:1px solid var(--line);font-size:11px}
+.strokes .sr:last-child{border-bottom:0}
+.strokes .sr.on{background:var(--accent-soft)}
+.strokes .sr .mono{font-family:var(--f-mono);font-size:10.5px;color:var(--muted)}
+.bgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.bcell{border:1px solid var(--line);border-radius:6px;background:var(--canvas);padding:3px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;font-size:10px;color:var(--ink)}
+.bcell svg{width:100%;height:30px}
+.bcell .k{font-size:9px;color:var(--muted)}
+.bcell.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.blist .bl{display:flex;align-items:center;gap:8px;padding:3px 4px;border-radius:5px;cursor:pointer}
+.blist .bl:hover{background:var(--panel-2)}
+.blist .bl.on{background:var(--accent-soft)}
+.blist .bl svg{width:70px;height:22px;flex:none}
+.blist .bl .k{font-size:10px;color:var(--muted)}
+.blist .bl .cnt{margin-left:auto;font-family:var(--f-mono);font-size:10px;color:var(--muted)}
+.mh{font:600 10px var(--f-ui);letter-spacing:.08em;color:var(--muted);padding:6px 2px 3px;text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.lock{font-size:9px}
+.stopbar{position:relative;height:18px;border-radius:4px;border:1px solid var(--line);margin:6px 0 12px;cursor:copy}
+.stopbar .st{position:absolute;top:100%;width:12px;height:12px;margin-left:-6px;margin-top:1px;border:2px solid var(--panel);box-shadow:0 0 0 1px var(--line);border-radius:2px 2px 3px 3px;cursor:pointer}
+.stopbar .st.on{box-shadow:0 0 0 2px var(--accent)}
+.hist .hr{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:11.5px}
+.hist .hr:hover{background:var(--panel-2)}
+.hist .hr.cur{background:var(--accent-soft);font-weight:600}
+.hist .hr.fut{opacity:.45}
+.hist .hr .n{font-family:var(--f-mono);font-size:10px;color:var(--muted);width:18px;text-align:right}
+.tl .tr{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;cursor:grab;font-size:11.5px;border:1px solid transparent}
+.tl .tr:hover{background:var(--panel-2)}
+.tl .tr.on{border-color:var(--accent);background:var(--accent-soft)}
+.tl .tr.fail{color:var(--err)}
+.tl .tr.sup .nm{text-decoration:line-through;color:var(--muted)}
+.tl .tr .ico{width:16px;height:16px}
+.tl .tr .why{font-size:10px;color:var(--err)}
+/* command dialog */
+.dlg{position:absolute;top:12px;right:12px;width:272px;max-height:calc(100% - 64px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);z-index:20}
+.dlg .dh{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font:600 12px var(--f-ui);text-transform:uppercase;letter-spacing:.06em}
+.dlg .db{padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.dlg .df{display:flex;gap:6px;justify-content:flex-end;padding:8px 10px;border-top:1px solid var(--line);align-items:center}
+.dlg .df .lft{margin-right:auto;font-size:10.5px;color:var(--muted)}
+.graph{width:100%;height:110px;background:var(--canvas);border:1px solid var(--line);border-radius:5px;display:block}
+/* modal */
+#overlay{position:absolute;inset:0;pointer-events:none;z-index:45}
+#overlay>*{pointer-events:auto}
+.scrim{position:absolute;inset:0;background:rgba(10,15,25,.35);z-index:70;display:flex;align-items:center;justify-content:center}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);display:flex;flex-direction:column;max-height:720px}
+.modal .mh2{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);font:600 14px var(--f-head)}
+.modal .mb{padding:12px 14px;overflow:auto}
+.modal .mf{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--line);align-items:center}
+.modal .mf .lft{margin-right:auto;color:var(--muted);font-size:11.5px}
+.toast{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:var(--ink);color:var(--canvas);padding:6px 12px;border-radius:6px;font-size:12px;z-index:80;box-shadow:var(--shadow);white-space:nowrap;pointer-events:none}
+.legend{position:absolute;left:12px;right:12px;bottom:48px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.08);padding:7px 10px;font-size:11px;z-index:5}
+.legend .lr{display:flex;gap:10px;align-items:center;padding:1px 0}
+.legend .lr i{width:18px;height:3px;border-radius:2px;display:inline-block}
+.tlstrip{position:absolute;left:12px;right:12px;bottom:46px;height:36px;background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;gap:3px;padding:0 8px;z-index:5;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+.tlstrip .f{width:26px;height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:var(--canvas);cursor:pointer}
+.tlstrip .f.fail{border-color:var(--err);color:var(--err)}
+.tlstrip .f.sup{opacity:.4}
+.tlstrip .f .ico{width:15px;height:15px}
+.tlstrip .mk{width:3px;height:26px;background:var(--accent);border-radius:2px;margin:0 2px}
+/* svg canvas */
+.cv .gridm{stroke:var(--grid)}.cv .gridM{stroke:var(--grid-major)}
+.cv .geo{fill:none;stroke:var(--geom-free);stroke-width:1.4}
+.cv .cl{fill:none;stroke:var(--sel);stroke-width:1;stroke-dasharray:3 3}
+.cv .pv{fill:none;stroke:var(--preview);stroke-width:1.4;stroke-dasharray:5 3}
+.cv .pvf{fill:color-mix(in srgb,var(--preview) 14%,transparent);stroke:var(--preview);stroke-width:1.2}
+.cv .lbl{fill:var(--muted);font:500 11px var(--f-ui)}
+.cv .hud rect{fill:var(--panel);stroke:var(--accent)}
+.cv .hud text{fill:var(--ink);font:500 11.5px var(--f-mono)}
+.cv .wh{fill:var(--panel);stroke:var(--accent);stroke-width:1.5;cursor:grab}
+.cv .wh.on{fill:var(--accent)}
+.cv .wl{stroke:var(--accent);stroke-width:1;stroke-dasharray:2 2}
+.cv .hdl{cursor:grab}
+.cv .hdl:hover .ring{opacity:1}
+.cv .ring{opacity:0;fill:none;stroke:var(--sel);stroke-width:2}
+.cv .bed{fill:none;stroke:var(--line);stroke-width:1.2}
+.cv .node{fill:var(--panel);stroke:var(--geom-free);stroke-width:1.2}
+/* notes */
+.notes{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px}
+@media (max-width:900px){.notes{grid-template-columns:1fr}}
+.card{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:14px 18px;min-width:0}
+.card h2{font:700 15px var(--f-head);margin:0 0 8px}
+.card h3{font:600 12px var(--f-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
+.card ul,.card ol{margin:0;padding-left:18px;line-height:1.5;font-size:13.5px}
+.card li{margin:3px 0}
+.card p{font-size:13.5px;line-height:1.5;margin:6px 0;max-width:76ch}
+.card code{font-family:var(--f-mono);font-size:12px;background:var(--panel-2);padding:0 4px;border-radius:3px}
+table.t{border-collapse:collapse;width:100%;font-size:11.5px}
+table.t th{text-align:left;font:600 10px var(--f-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:4px 6px;border-bottom:1px solid var(--line)}
+table.t td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+@media (prefers-reduced-motion:no-preference){.toast{animation:tin .15s ease-out}@keyframes tin{from{opacity:0;transform:translate(-50%,6px)}}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div>
+      <h1>Locus M6: line, brush and fill styles</h1>
+      <p>A clickable design prototype for sign-off. It edits nothing real, but the strokes are drawn live from the path, so width profiles, dashes, multi-strokes, brushes and gradients respond to the controls. Pick a flow, or use the frame directly.</p>
+    </div>
+    <div class="ticket">Nerdtisan/Locus #425 · epic #424 · ADR 0019 · for sign-off · 2026-11-24</div>
+  </header>
+  <nav class="flows" id="flows" aria-label="Flows"></nav>
+  <div class="hint">Try: <kbd>Shift+W</kbd> width tool · drag the diamonds · <kbd>Tab</kbd> next point · <kbd>Del</kbd> remove point · <kbd>B</kbd> brushes · <kbd>Ctrl+H</kbd> history · <kbd>Ctrl+Shift+E</kbd> expand · drag layer rows · <kbd>Alt+↑/↓</kbd> · <kbd>Esc</kbd></div>
+  <div class="stage" id="stage"><div class="scaler" id="scaler">
+  <div class="frame" id="frame" role="application" aria-label="Locus M6 mockup">
+    <div class="appbar">
+      <span class="logo">LOCUS</span>
+      <button class="ib">File ▾</button><button class="ib">Edit ▾</button><button class="ib">View ▾</button><button class="ib">Plugins ▾</button><button class="ib">Help ▾</button>
+      <button class="ib" title="Undo (Ctrl+Z)" data-act="undo"><svg class="ico" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h10a5 5 0 0 1 0 10h-2"/></svg></button>
+      <button class="ib" title="Redo (Ctrl+Y)"><svg class="ico" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M20 12H10a5 5 0 0 0 0 10h2"/></svg></button>
+      <span class="sp"></span>
+      <span class="doc">botanical-label.locus <small id="docprof">· AxiDraw (pen plotter) · mm</small></span>
+      <span class="sp"></span>
+      <button class="ib">Search <span class="kbd">S</span></button>
+    </div>
+    <div class="tabs"><button class="on">SKETCH</button><button>OUTPUT</button><button>UTILITIES</button></div>
+    <div class="ribbon" id="ribbon"></div>
+    <div class="main">
+      <aside class="pane"><div class="ph">Browser<span class="sp"></span><button class="ib" title="Undock pane">⧉</button></div><div class="pb" id="browser"></div></aside>
+      <section class="canvaswrap" id="cw">
+        <svg class="cv" id="cv" viewBox="0 0 800 560" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="cvover"></div>
+        <div id="dlg"></div>
+        <div class="navbar" id="navbar"></div>
+      </section>
+      <aside class="pane right" id="right"></aside>
+    </div>
+    <div class="status" id="status"></div>
+    <div id="overlay"></div>
+  </div>
+  </div></div>
+  <div class="notes">
+    <div class="card" id="notesFlow"></div>
+    <div class="card">
+      <h2>Open questions for the owner</h2>
+      <p>The mockup shows the recommended option for each. Details are in <code>docs/ux/m6-design.md</code> §1 and ADR 0019.</p>
+      <ol>
+        <li><b>Spec §1 conflict.</b> §1 lists "no gradients" and "no feature timeline / history tree" as non-goals, but M6 plans both (#436, #446). Recommended: edit §1. Alternatively, drop them from M6.</li>
+        <li><b>Machine layers and styled strokes.</b> Recommended: <i>Stroke styles: Centreline</i> by default, so cuts never change by surprise, with <i>Styled</i> as a per-layer option (dashes become perforations).</li>
+        <li><b>Gradients on regions only</b>, following #451. A gradient follows its region's box when the shape moves or scales, but not when it rotates.</li>
+        <li><b>History is linear.</b> Jumping back and then editing drops the later steps, as Photoshop does by default. Branching would come later.</li>
+        <li><b>Default cap and join: Round</b>, matching today's canvas. The alternative is Illustrator's butt and miter.</li>
+        <li><b>Wide strokes on a plotter</b> plot as outline + hatch at the pen width, so they look solid.</li>
+      </ol>
+      <h3>Needs measuring first</h3>
+      <p>Spikes S1–S5 (ADR 0019): the variable-width outline engine, calligraphic accuracy, canvas draw cost, OS font enumeration, and the auto-trace engine.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(()=>{
+const $=s=>document.querySelector(s), frame=$('#frame'), cv=$('#cv');
+const SVGNS='http://www.w3.org/2000/svg';
+/* ---------- icons ---------- */
+const I={
+line:'<path d="M5 19 19 5"/>',rect:'<rect x="4" y="6" width="16" height="12" rx="1"/>',circle:'<circle cx="12" cy="12" r="7"/>',
+arc:'<path d="M5 17a8 8 0 0 1 14 0"/>',spline:'<path d="M4 17c4-12 8 4 16-10"/>',
+paint:'<path d="M4 19c3 0 4-2 5-4s3-4 6-4"/><path d="m14 11 5-6 1 1-5 6z"/>',
+fillet:'<path d="M5 19V11a6 6 0 0 1 6-6h8"/>',trim:'<path d="M4 12h6M14 12h6"/><path d="m9 7 6 10M15 7 9 17" stroke-width="1.2"/>',
+offset:'<rect x="7" y="7" width="10" height="10" rx="2"/><rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke-dasharray="2.5 2"/>',
+move:'<path d="M12 3v18M3 12h18"/>',expand:'<path d="M4 16c4-10 12-10 16 0" stroke-width="4" opacity=".35"/><path d="M4 13c4-9 12-9 16 0M4 19c4-9 12-9 16 0"/>',
+width:'<path d="M3 12c4-6 14-6 18 0c-4 6-14 6-18 0z"/><path d="m12 6 2 2-2 2-2-2z" fill="currentColor"/>',
+dimension:'<path d="M4 8v10M20 8v10M4 13h16"/>',coincident:'<circle cx="12" cy="12" r="3"/><path d="M4 12h5M15 12h5"/>',
+parallel:'<path d="M5 19 15 5M10 19 20 5"/>',tangent:'<circle cx="11" cy="13" r="6"/><path d="M3 7h18"/>',
+measure:'<path d="M3 16 16 3l5 5L8 21z"/>',preview:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+import:'<path d="M12 4v11m-4-4 4 4 4-4"/><path d="M4 17v3h16v-3"/>',trace:'<rect x="3" y="4" width="18" height="16" rx="1" stroke-dasharray="2 2"/><path d="M7 16c2-6 4-8 10-8"/><circle cx="7" cy="16" r="1.3"/><circle cx="17" cy="8" r="1.3"/>',
+select:'<path d="m5 3 14 8-6 2-2 6z"/>',export:'<path d="M12 15V4m-4 4 4-4 4 4"/><path d="M4 14v6h16v-6"/>',
+brush:'<path d="M14 4l6 6-8 8-6-6z"/><path d="M6 12c-2 2-2 6-2 8 2 0 6 0 8-2"/>',history:'<path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4M12 8v5l3 2"/>',
+mirror:'<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7 4 17h5zM15 7l5 10h-5z"/>',cpattern:'<circle cx="12" cy="12" r="7" stroke-dasharray="2 2"/><circle cx="12" cy="5" r="1.8"/><circle cx="18.5" cy="15" r="1.8"/><circle cx="5.5" cy="15" r="1.8"/>',
+text:'<path d="M6 6h12M12 6v13M9 19h6"/>',boolean:'<circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/>',
+pan:'<path d="M8 13V5a1.5 1.5 0 0 1 3 0v6V4a1.5 1.5 0 0 1 3 0v7V6a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-12 0"/>',
+fit:'<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',zoom:'<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>',
+stroke:'<path d="M4 17C8 7 16 7 20 17" stroke-width="3.5"/>',eyedrop:'<path d="m14 4 6 6-3 3-6-6z"/><path d="m11 7-7 7v6h6l7-7"/>',
+capbutt:'<path d="M4 12h12" stroke-width="7" stroke-linecap="butt"/><path d="M16 6v12" stroke-width="1"/>',
+capround:'<path d="M4 12h11" stroke-width="7" stroke-linecap="round"/><path d="M15 6v12" stroke-width="1"/>',
+capsquare:'<path d="M4 12h11" stroke-width="7" stroke-linecap="square"/><path d="M15 6v12" stroke-width="1"/>',
+joinmiter:'<path d="M5 19V7h12" stroke-width="5" stroke-linejoin="miter" stroke-linecap="butt"/>',
+joinround:'<path d="M5 19V7h12" stroke-width="5" stroke-linejoin="round" stroke-linecap="butt"/>',
+joinbevel:'<path d="M5 19V7h12" stroke-width="5" stroke-linejoin="bevel" stroke-linecap="butt"/>',
+};
+const ic=(n,c='ico')=>`<svg class="${c}" viewBox="0 0 24 24">${I[n]||''}</svg>`;
+
+/* ---------- state ---------- */
+const WAVE='M110 380 C190 170 320 170 400 300 S590 460 690 250';
+const ZIG='M120 130 L210 70 L300 130 L390 70 L480 130';
+const PRESETS={
+ uniform:[[0,1,1],[1,1,1]],
+ taper:[[0,.08,.08],[.22,1,1],[.78,1,1],[1,.08,.08]],
+ start:[[0,.08,.08],[.35,1,1],[1,1,1]],
+ end:[[0,1,1],[.65,1,1],[1,.08,.08]],
+ bulge:[[0,.35,.35],[.5,1.7,1.7],[1,.35,.35]],
+ pinch:[[0,1.3,1.3],[.5,.3,.3],[1,1.3,1.3]],
+ pressure:null,
+};
+const DASHES={solid:null,dash:[3,2],dot:[0,1.5],dashdot:[3,1.2,0,1.2],long:[6,2]};
+const S={
+  flow:'style', width:1.2, stroke:'#1b2130', profile:'taper', pts:clone(PRESETS.taper), focus:1,
+  cap:'round', join:'round', miter:4, align:'centre', dash:'solid', dashAlign:false, phase:0,
+  strokes:null, strokeSel:0, brush:null, open:{caps:true,dash:true,strokes:true,brush:true},
+  grad:{type:'linear',from:[480,150],to:[700,330],stops:[{p:0,c:'#1f6fd1',o:1},{p:.55,c:'#7fd1c7',o:1},{p:1,c:'#f3c623',o:1}],sel:1,mach:'hatch'},
+  hist:9, tlSel:2,
+  layers:[{id:'ink',name:'Ink',op:'Draw',col:'#1b2130'},{id:'tint',name:'Tint',op:'Draw',col:'#e8953a'},{id:'fills',name:'Fills',op:'Draw',col:'#1f6fd1'},{id:'line',name:'Linework',op:'Score',col:'#2a7de1'},{id:'cut',name:'Cut outline',op:'Cut',col:'#d03a3a'}],
+  layerSel:'fills', blend:{tint:'multiply'}, opacity:{tint:80}, cutBy:{fills:['line']}, knock:{fills:[]}, interactAll:false,
+  ref:{x:400,y:280,a:0,s:1}, trace:{mode:'centre',thr:128,smooth:1,speck:4,overlay:60},
+  expand:'outline', expanded:false, mop:'Score', mstyled:true, mfill:'both',
+  brushes:[
+    {id:'rope',name:'Rope',kind:'art',uses:2,doc:1},{id:'nib',name:'Nib 30°',kind:'calligraphic',uses:1,doc:1},
+    {id:'stitch',name:'Stitch',kind:'pattern',lib:1,lock:1},{id:'leaves',name:'Leaves',kind:'scatter',lib:1,lock:1},
+    {id:'dots',name:'Dots',kind:'scatter',lib:1,lock:1},{id:'chain',name:'Chain',kind:'pattern',lib:1,lock:1},
+  ], bview:'list', bshow:'all', seed:7,
+};
+function clone(x){return JSON.parse(JSON.stringify(x));}
+
+/* ---------- geometry helpers (mockup only: SVG path sampling) ---------- */
+const probe=document.createElementNS(SVGNS,'svg'); probe.setAttribute('width','0'); probe.setAttribute('height','0'); probe.style.position='absolute'; probe.style.visibility='hidden';
+document.body.appendChild(probe);
+const cache={};
+function sample(d,n=220){
+  const key=d+'|'+n; if(cache[key]) return cache[key];
+  const p=document.createElementNS(SVGNS,'path'); p.setAttribute('d',d); probe.appendChild(p);
+  const L=p.getTotalLength(), out=[];
+  for(let i=0;i<=n;i++){
+    const s=L*i/n, a=p.getPointAtLength(s), b=p.getPointAtLength(Math.min(L,s+0.6)), c=p.getPointAtLength(Math.max(0,s-0.6));
+    let tx=b.x-c.x, ty=b.y-c.y; const m=Math.hypot(tx,ty)||1; tx/=m; ty/=m;
+    out.push({t:i/n,s,x:a.x,y:a.y,tx,ty,nx:ty,ny:-tx}); // n = left of travel in a y-down view = up-left
+  }
+  probe.removeChild(p); out.L=L; cache[key]=out; return out;
+}
+function interp(pts,t){
+  if(t<=pts[0][0]) return [pts[0][1],pts[0][2]];
+  for(let i=1;i<pts.length;i++){ if(t<=pts[i][0]){ const a=pts[i-1],b=pts[i],u=(t-a[0])/((b[0]-a[0])||1), k=(1-Math.cos(Math.PI*u))/2; return [a[1]+(b[1]-a[1])*k,a[2]+(b[2]-a[2])*k]; } }
+  const z=pts[pts.length-1]; return [z[1],z[2]];
+}
+const MM=10; // 10 canvas units = 1 mm
+function outline(sm,fn){ // fn(sample)->[left half-width,right half-width] in units
+  const L=[],R=[];
+  for(const q of sm){ const [l,r]=fn(q); L.push([q.x+q.nx*l,q.y+q.ny*l]); R.push([q.x-q.nx*r,q.y-q.ny*r]); }
+  const pts=L.concat(R.reverse());
+  return 'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' L')+'Z';
+}
+function offsetD(sm,off){ return 'M'+sm.map(q=>(q.x+q.nx*off).toFixed(1)+' '+(q.y+q.ny*off).toFixed(1)).join(' L'); }
+function rng(seed){ let a=seed>>>0; return ()=>{ a=(a+0x6D2B79F5)>>>0; let t=a; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return ((t^t>>>14)>>>0)/4294967296; }; }
+function pressurePts(seed){ const r=rng(seed), pts=[[0,.1,.1]]; for(let i=1;i<6;i++){ const w=.55+r()*.9; pts.push([i/6,w,w]); } pts.push([1,.1,.1]); return pts; }
+function dashArr(name,w){ const d=DASHES[name]; if(!d) return ''; return d.map(v=>Math.max(v*MM, v===0?0.01:0)).join(' '); }
+
+/* ---------- styled stroke renderer ---------- */
+function brushSvg(id,d,col,sm,w){
+  sm=sm||sample(d); w=w||S.width*MM; let h='';
+  if(id==='rope'){
+    for(const ph of [0,Math.PI]){ h+=`<path d="${'M'+sm.map(q=>{const y=Math.sin(q.s/9+ph)*w*.45; return (q.x+q.nx*y).toFixed(1)+' '+(q.y+q.ny*y).toFixed(1);}).join(' L')}" fill="none" stroke="${col}" stroke-width="${w*.32}" stroke-linecap="round"/>`; }
+    h+=`<path d="${offsetD(sm,w*.62)}" fill="none" stroke="${col}" stroke-width="1"/><path d="${offsetD(sm,-w*.62)}" fill="none" stroke="${col}" stroke-width="1"/>`;
+  } else if(id==='nib'){
+    const a=30*Math.PI/180, R=w*.9, r=R*.22;
+    h+=`<path d="${outline(sm,q=>{const th=Math.atan2(q.ty,q.tx)+Math.PI/2-a; const hw=Math.sqrt((R*Math.cos(th))**2+(r*Math.sin(th))**2)/1; return [hw,hw];})}" fill="${col}"/>`;
+  } else if(id==='stitch'||id==='chain'){
+    const step=id==='stitch'?w*1.1:w*1.6;
+    for(let s=step/2;s<sm.L;s+=step){ const q=sm[Math.min(sm.length-1,Math.round(s/sm.L*(sm.length-1)))];
+      if(id==='stitch'){ const k=w*.45; const p=(dx,dy)=>[(q.x+q.tx*dx+q.nx*dy).toFixed(1),(q.y+q.ty*dx+q.ny*dy).toFixed(1)].join(' ');
+        h+=`<path d="M${p(-k,-k)} L${p(k,k)} M${p(-k,k)} L${p(k,-k)}" stroke="${col}" stroke-width="1.6" fill="none" stroke-linecap="round"/>`; }
+      else h+=`<ellipse cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" rx="${(w*.75).toFixed(1)}" ry="${(w*.42).toFixed(1)}" transform="rotate(${(Math.atan2(q.ty,q.tx)*180/Math.PI).toFixed(1)} ${q.x.toFixed(1)} ${q.y.toFixed(1)})" fill="none" stroke="${col}" stroke-width="1.8"/>`;
+    }
+  } else if(id==='leaves'||id==='dots'){
+    const r=rng(S.seed); h+=`<path d="${'M'+sm.map(q=>q.x.toFixed(1)+' '+q.y.toFixed(1)).join(' L')}" fill="none" stroke="${col}" stroke-width=".8" opacity=".35"/>`;
+    for(let s=6;s<sm.L;s+=w*(1.4+r()*1.1)){ const q=sm[Math.min(sm.length-1,Math.round(s/sm.L*(sm.length-1)))];
+      const off=(r()*2-1)*w*1.1, sz=w*(.45+r()*.55), rot=Math.atan2(q.ty,q.tx)*180/Math.PI+(r()*2-1)*50, x=q.x+q.nx*off, y=q.y+q.ny*off;
+      h+= id==='leaves' ? `<path d="M${-sz} 0 Q0 ${-sz*.7} ${sz} 0 Q0 ${sz*.7} ${-sz} 0Z M${-sz} 0 L${sz} 0" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${rot.toFixed(1)})" fill="color-mix(in srgb, ${col} 25%, transparent)" stroke="${col}" stroke-width="1"/>`
+                       : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(sz*.45).toFixed(1)}" fill="${col}"/>`;
+    }
+  }
+  return h;
+}
+function strokeSvg(d,opt={}){
+  const col=opt.col||S.stroke, sm=sample(d), W=S.width*MM, dash=dashArr(S.dash,S.width);
+  if(S.brush) return brushSvg(S.brush,d,col,sm,W);
+  const profiled = S.profile!=='uniform';
+  if(S.strokes){
+    return S.strokes.map(r=>`<path d="${offsetD(sm,r.off*MM)}" fill="none" stroke="${r.col}" stroke-width="${r.w*MM}" stroke-dasharray="${dashArr(r.dash,r.w)}" stroke-linecap="${r.dash==='dot'?'round':S.cap}" stroke-linejoin="${S.join}"/>`).join('');
+  }
+  if(profiled && !dash){
+    return `<path d="${outline(sm,q=>{const [l,r]=interp(S.pts,q.t); return [l*W/2,r*W/2];})}" fill="${col}"/>`;
+  }
+  return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${W}" stroke-linecap="${S.dash==='dot'?'round':S.cap}" stroke-linejoin="${S.join}" stroke-miterlimit="${S.miter}" stroke-dasharray="${dash}" stroke-dashoffset="${S.phase*MM}"/>`;
+}
+
+/* ---------- flows ---------- */
+const F={
+ style:{n:'Style section',t:'#426–#429',prompt:'Select a curve to style it · the Style section edits the selection'},
+ width:{n:'Width profile',t:'#426',prompt:'Width tool · drag a diamond across the path to change its width · Alt: one side · click the edge to add · Del removes'},
+ dashes:{n:'Caps, joins, dashes',t:'#427 #428',prompt:'Caps and joins show while Stroke width is on · dashes plot as separate pen strokes'},
+ multi:{n:'Multi-strokes',t:'#429',prompt:'Each row is its own stroke: offset, width, colour, pen and dash · drag ⋮ to reorder'},
+ brushes:{n:'Brushes pane',t:'#430–#435',prompt:'Click a brush to apply it to the selection · New from selection makes one from the selected geometry'},
+ gradient:{n:'Gradient fill',t:'#436',prompt:'Region selected · drag the round start or square end handle · drag a stop along the line, or off it to remove'},
+ history:{n:'History & timeline',t:'#446',prompt:'Click a history row to go back to it · edits after a jump drop the later rows'},
+ layers:{n:'Layer blending & regions',t:'#459',prompt:'Layer selected · blending is visual only · Cut by and Knock out change regions and Engrave hatch'},
+ reorder:{n:'Drag-reorder layers',t:'#462',prompt:'Drag a layer row · the insertion line shows where it lands · Alt+↑/↓ moves the focused row'},
+ refs:{n:'Reference handles',t:'#463',prompt:'Transform reference · drag to move, ◯ to rotate, corners to scale (Shift: free) · Enter to finish'},
+ trace:{n:'Auto trace',t:'#461',prompt:'Auto trace · the preview updates as you change settings'},
+ handles:{n:'Bézier handles',t:'#470',prompt:'Hover the handles: 9 px drawn, 16 px to click, a ring on hover'},
+ expand:{n:'Expand to geometry',t:'#424',prompt:'Expand to geometry · Outline or Centrelines · OK is one undo step'},
+ machine:{n:'Machine preview',t:'§7 §8',prompt:'Machine preview · pick a layer operation and Stroke styles to see what the machine does'},
+};
+const FLOW_KEYS=Object.keys(F);
+function flows(){ $('#flows').innerHTML=FLOW_KEYS.map((k,i)=>`<button data-flow="${k}" aria-pressed="${S.flow===k}"><span class="n">${i+1}</span>${F[k].n}</button>`).join(''); }
+function setFlow(k){
+  S.flow=k; S.brush=null; S.strokes=null; closeOverlay();
+  if(k==='width'){ S.profile=S.profile==='uniform'?'taper':S.profile; if(!S.pts) S.pts=clone(PRESETS.taper); S.dash='solid'; }
+  if(k==='dashes'){ S.profile='uniform'; S.pts=clone(PRESETS.uniform); S.dash='dash'; S.cap='round'; S.join='miter'; }
+  if(k==='multi'){ S.profile='uniform'; S.pts=clone(PRESETS.uniform); S.dash='solid'; S.width=3.2; S.strokes=[{w:3.2,col:'#3b4456',off:0,dash:'solid',pen:1},{w:.25,col:'#f3c623',off:1.2,dash:'solid',pen:2},{w:.25,col:'#f3c623',off:-1.2,dash:'solid',pen:2},{w:.25,col:'#ffffff',off:0,dash:'long',pen:3}]; S.strokeSel=1; }
+  else if(S.width>2) S.width=1.2;
+  if(k==='brushes'){ S.brush='rope'; }
+  if(k==='style'){ S.profile='taper'; S.pts=clone(PRESETS.taper); S.dash='solid'; S.cap='round'; S.join='round'; }
+  if(k==='expand'){ S.expanded=false; S.profile='taper'; S.pts=clone(PRESETS.taper); S.dash='solid'; }
+  if(k==='trace') traceModal();
+  render();
+  try{localStorage.setItem('locus-m6-flow',k);}catch(e){}
+}
+
+/* ---------- ribbon / navbar ---------- */
+const RIB=[
+ ['CREATE',[['line','Line (L)'],['rect','2-Point Rectangle (R)'],['circle','Circle (C)'],['spline','Bézier Pen (N)'],['paint','Paint brush (Shift+B) · M6','new','brushes']]],
+ ['MODIFY',[['fillet','Fillet'],['trim','Trim (T)'],['offset','Offset (O)'],['move','Move/Copy (M)'],['width','Width tool (Shift+W) · M6','new','width'],['expand','Expand to geometry (Ctrl+Shift+E) · M6','new','expand']]],
+ ['CONSTRAIN',[['dimension','Sketch Dimension (D)'],['coincident','Coincident'],['parallel','Parallel'],['tangent','Tangent']]],
+ ['INSPECT',[['measure','Measure (I)'],['preview','Machine preview','','machine']]],
+ ['INSERT',[['import','Insert SVG…'],['trace','Auto trace… · M6','new','trace']]],
+ ['SELECT',[['select','Select (Esc)']]],
+];
+function ribbon(){
+  let h=RIB.map(([g,items])=>`<div class="grp"><div class="btns">${items.map(([i,t,n,f])=>`<button class="tb ${n||''} ${f&&S.flow===f?'on':''}" title="${t}" ${f?`data-flow="${f}"`:''}>${ic(i)}</button>`).join('')}</div><div class="glabel">${g} ▾</div></div>`).join('');
+  h+=`<div class="grp"><div class="btns"><button class="tb new ${S.flow==='brushes'?'on':''}" title="Brushes pane (B) · M6" data-flow="brushes">${ic('brush')}</button><button class="tb new ${S.flow==='history'?'on':''}" title="History pane (Ctrl+H) · M6" data-flow="history">${ic('history')}</button></div><div class="glabel">PANES</div></div>`;
+  h+=`<div class="grp finish"><div class="btns"><button class="tb" title="Export (Ctrl+E)">${ic('export')}</button></div><div class="glabel">EXPORT</div></div>`;
+  $('#ribbon').innerHTML=h;
+  $('#navbar').innerHTML=['pan','zoom','fit','stroke','preview'].map(i=>`<button class="tb ${i==='stroke'?'on':''}${i==='preview'&&S.flow==='machine'?' on':''}" ${i==='preview'?'data-flow="machine"':''} title="${{pan:'Pan',zoom:'Zoom',fit:'Fit (F6)',stroke:'Stroke width: on (styles show)',preview:'Machine preview'}[i]}">${ic(i)}</button>`).join('');
+}
+
+/* ---------- browser ---------- */
+function browser(){
+  const L=S.layers;
+  const opch=op=>`<span class="chip">${op}</span>`;
+  let rows=L.map((l,i)=>{
+    const chips=[]; if(S.blend[l.id]&&S.blend[l.id]!=='normal') chips.push(`<span class="chip blend">${cap1(S.blend[l.id])}${S.opacity[l.id]<100?' '+S.opacity[l.id]+'%':''}</span>`);
+    if((S.cutBy[l.id]||[]).length||(S.knock[l.id]||[]).length||S.interactAll) chips.push(`<span class="chip link" title="Regions linked to other layers">⛓</span>`);
+    return `<li class="sub ${S.layerSel===l.id&&(S.flow==='layers'||S.flow==='reorder')?'on':''}" draggable="true" data-layer="${l.id}" data-idx="${i}" tabindex="0"><span class="grip">⋮⋮</span><span class="sw" style="background:${l.col}"></span>${l.name} ${opch(l.op)} ${chips.join(' ')}</li>`;
+  }).join('');
+  const brushRow=`<li><span class="tw">▾</span>Brushes <span class="cnt">2</span></li><li class="sub">▬ Rope <span class="cnt">2 uses</span></li><li class="sub">✒ Nib 30° <span class="cnt">1 use</span></li>`;
+  $('#browser').innerHTML=`<ul class="tree"><li><span class="tw">▾</span>Layers<span class="cnt">${L.length}</span></li>${rows}
+  <li><span class="tw">▸</span>Parameters <span class="cnt">3</span></li><li><span class="tw">▾</span>Recipes</li><li class="sub">Offset 1</li><li class="sub">Circular Pattern 1</li><li class="sub" style="color:var(--err)">Offset 2 ⚠</li>
+  ${brushRow}<li><span class="tw">▸</span>Regions <span class="cnt">7</span></li><li><span class="tw">▸</span>Constraints <span class="cnt">24</span></li></ul>
+  ${S.flow==='reorder'?'<div class="note" style="margin-top:8px">Drag a row (or its ⋮⋮ grip). Esc cancels the drag. Alt+↑/↓ moves the focused row. The top row exports first, and the canvas and export follow the new order.</div>':''}`;
+}
+const cap1=s=>s.charAt(0).toUpperCase()+s.slice(1);
+
+/* ---------- canvas ---------- */
+function grid(){
+  return `<defs><pattern id="g1" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" class="gridm"/></pattern><pattern id="g2" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#g1)"/><path d="M100 0H0V100" fill="none" class="gridM"/></pattern>
+  <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0V6" stroke="var(--op-engrave)" stroke-width="1"/></pattern>
+  <pattern id="phatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0V4" stroke="var(--op-draw)" stroke-width="1"/></pattern></defs>
+  <rect width="800" height="560" fill="url(#g2)"/>`;
+}
+function hud(x,y,txt){ const w=txt.length*6.9+14; return `<g class="hud"><rect x="${x}" y="${y}" width="${w}" height="22" rx="4"/><text x="${x+7}" y="${y+15}">${txt}</text></g>`; }
+function selCentre(d){ return `<path d="${d}" class="cl"/>`; }
+function drawCanvas(){
+  let h=grid(); const f=S.flow;
+  if(['style','width','dashes','multi','brushes'].includes(f)){
+    h+=strokeSvg(WAVE)+selCentre(WAVE);
+    if(f==='dashes'){ h+=`<path d="${ZIG}" fill="none" stroke="${S.stroke}" stroke-width="${S.width*MM}" stroke-linecap="${S.cap}" stroke-linejoin="${S.join}" stroke-miterlimit="${S.miter}" stroke-dasharray="${dashArr(S.dash,S.width)}"/>`+selCentre(ZIG);
+      h+=`<text class="lbl" x="120" y="170">Caps at the ends · ${S.join} joins at the corners${S.dashAlign?' · dashes aligned to corners':''}</text>`; }
+    if(f==='width') h+=widthHandles();
+    if(f==='brushes') h+=`<text class="lbl" x="110" y="430">${S.brush?'Brush: '+S.brushes.find(b=>b.id===S.brush).name+' · the path stays editable; the art is drawn along it':'No brush'}</text>`;
+    if(f==='multi') h+=`<text class="lbl" x="110" y="440">A road on one path: 4 strokes, each its own offset, width, colour, pen and dash</text>`;
+  }
+  if(f==='gradient') h+=gradientCanvas();
+  if(f==='history') h+=historyCanvas();
+  if(f==='layers') h+=layersCanvas();
+  if(f==='reorder') h+=reorderCanvas();
+  if(f==='refs') h+=refsCanvas();
+  if(f==='trace') h+=`<text class="lbl" x="250" y="280">Auto trace dialog open</text>`;
+  if(f==='handles') h+=handlesCanvas();
+  if(f==='expand') h+=expandCanvas();
+  if(f==='machine') h+=machineCanvas();
+  cv.innerHTML=h;
+  canvasOverlay();
+}
+function widthHandles(){
+  const sm=sample(WAVE), W=S.width*MM; let h='';
+  S.pts.forEach((p,i)=>{
+    const q=sm[Math.round(p[0]*(sm.length-1))], l=p[1]*W/2, r=p[2]*W/2;
+    const a=[q.x+q.nx*l,q.y+q.ny*l], b=[q.x-q.nx*r,q.y-q.ny*r];
+    h+=`<line class="wl" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`;
+    for(const [side,pt] of [['l',a],['r',b]]) h+=`<path class="wh ${i===S.focus?'on':''}" data-wp="${i}" data-side="${side}" d="M${pt[0]} ${pt[1]-6} L${pt[0]+6} ${pt[1]} L${pt[0]} ${pt[1]+6} L${pt[0]-6} ${pt[1]}Z"/>`;
+  });
+  const p=S.pts[S.focus], q=sm[Math.round(p[0]*(sm.length-1))];
+  h+=hud(q.x+18,q.y-40,`t ${Math.round(p[0]*100)} % · W ${(S.width*(p[1]+p[2])/2).toFixed(2)} mm (L ${(S.width*p[1]/2).toFixed(2)} / R ${(S.width*p[2]/2).toFixed(2)})`);
+  return h;
+}
+function gradDefs(){
+  const g=S.grad, st=g.stops.map(s=>`<stop offset="${s.p}" stop-color="${s.c}" stop-opacity="${s.o}"/>`).join('');
+  const [x1,y1]=g.from,[x2,y2]=g.to, r=Math.hypot(x2-x1,y2-y1);
+  if(g.type==='linear') return `<linearGradient id="gr" gradientUnits="userSpaceOnUse" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">${st}</linearGradient>`;
+  const ang=Math.atan2(y2-y1,x2-x1)*180/Math.PI;
+  const tf=g.type==='elliptical'?` gradientTransform="translate(${x1} ${y1}) rotate(${ang}) scale(1 .55) translate(${-x1} ${-y1})"`:'';
+  return `<radialGradient id="gr" gradientUnits="userSpaceOnUse" cx="${x1}" cy="${y1}" r="${r}"${tf}>${st}</radialGradient>`;
+}
+function stopColour(p){ const st=S.grad.stops; let a=st[0],b=st[st.length-1]; for(let i=1;i<st.length;i++){ if(p<=st[i].p){ a=st[i-1]; b=st[i]; break; } } const u=(p-a.p)/((b.p-a.p)||1); const h=c=>[1,3,5].map(i=>parseInt(c.substr(i,2),16)); const A=h(a.c),B=h(b.c); return `rgb(${A.map((v,i)=>Math.round(v+(B[i]-v)*Math.max(0,Math.min(1,u)))).join(',')})`; }
+function gradientCanvas(){
+  const g=S.grad; const ring='M470 120 h240 a20 20 0 0 1 20 20 v200 a20 20 0 0 1 -20 20 h-240 a20 20 0 0 1 -20 -20 v-200 a20 20 0 0 1 20 -20Z M640 240 m-50 0 a50 50 0 1 0 100 0 a50 50 0 1 0 -100 0Z';
+  let fill='url(#gr)', extra='';
+  if(g.type==='conic'){ const cx=g.from[0], cy=g.from[1]; let w=''; for(let i=0;i<64;i++){ const a0=i/64*2*Math.PI, a1=(i+1.05)/64*2*Math.PI; w+=`<path d="M${cx} ${cy} L${cx+600*Math.cos(a0)} ${cy+600*Math.sin(a0)} L${cx+600*Math.cos(a1)} ${cy+600*Math.sin(a1)}Z" fill="${stopColour(i/64)}"/>`; } extra=`<clipPath id="ringclip"><path d="${ring}" clip-rule="evenodd"/></clipPath><g clip-path="url(#ringclip)">${w}</g>`; fill='none'; }
+  let h=`<defs>${gradDefs()}</defs>${extra}<path d="${ring}" fill="${fill}" fill-rule="evenodd"/><path d="${ring}" fill="none" stroke="var(--geom-fixed)" stroke-width="1.4"/>`;
+  h+=`<path d="M640 240 m-50 0 a50 50 0 1 0 100 0 a50 50 0 1 0 -100 0" fill="#ffffff" fill-opacity=".001" stroke="var(--geom-fixed)" stroke-width="1.4"/>`;
+  h+=`<path d="M470 120 h240 a20 20 0 0 1 20 20 v200 a20 20 0 0 1 -20 20 h-240 a20 20 0 0 1 -20 -20 v-200 a20 20 0 0 1 20 -20Z" fill="none" stroke="var(--sel)" stroke-width="2.4" stroke-dasharray="6 4"/>`;
+  // other region + text
+  h+=`<rect x="90" y="140" width="250" height="180" rx="10" fill="#e8953a" fill-opacity=".35" stroke="var(--geom-fixed)" stroke-width="1.4"/><text class="lbl" x="95" y="345">Solid fill (another region)</text><text class="lbl" x="450" y="390">Ring region selected · the inner circle is its own region</text>`;
+  const [x1,y1]=g.from,[x2,y2]=g.to;
+  h+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--panel)" stroke-width="4"/><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--ink)" stroke-width="1.4" data-gline="1" style="cursor:copy"/>`;
+  if(g.type!=='linear'&&g.type!=='conic') h+=`<circle cx="${x1}" cy="${y1}" r="${Math.hypot(x2-x1,y2-y1)}" fill="none" stroke="var(--ink)" stroke-width="1" stroke-dasharray="4 3"/>`;
+  g.stops.forEach((s,i)=>{ const x=x1+(x2-x1)*s.p, y=y1+(y2-y1)*s.p; h+=`<rect data-gstop="${i}" x="${x-6}" y="${y-6}" width="12" height="12" rx="2" fill="${s.c}" stroke="${i===g.sel?'var(--accent)':'var(--panel)'}" stroke-width="2.5" style="cursor:grab"/>`; });
+  h+=`<circle data-gh="from" cx="${x1}" cy="${y1}" r="7" fill="var(--panel)" stroke="var(--accent)" stroke-width="2" style="cursor:grab"/><rect data-gh="to" x="${x2-7}" y="${y2-7}" width="14" height="14" fill="var(--panel)" stroke="var(--accent)" stroke-width="2" style="cursor:grab"/>`;
+  return h;
+}
+const HIST=['New document','Line ×4','2-Point Rectangle','Fillet ×4','Offset 2 mm','Circular Pattern ×8','Set style: Width profile Taper','Apply brush: Rope','Set region fill: Linear gradient','Reorder layer: Fills'];
+function historyCanvas(){
+  const c=S.hist; let h='';
+  if(c>=2) h+=`<rect x="160" y="110" width="320" height="220" ${c>=3?'rx="24"':''} fill="${c>=8?'url(#hg)':'none'}" stroke="var(--geom-fixed)" stroke-width="1.4"/>`;
+  if(c>=8) h=`<defs><linearGradient id="hg" x1="0" x2="1"><stop offset="0" stop-color="#1f6fd1" stop-opacity=".6"/><stop offset="1" stop-color="#f3c623" stop-opacity=".6"/></linearGradient></defs>`+h;
+  if(c>=1) h+=`<path d="M120 420 L520 420" stroke="var(--geom-fixed)" stroke-width="1.4"/>`;
+  if(c>=4) h+=`<rect x="140" y="90" width="360" height="260" rx="40" fill="none" stroke="var(--geom-free)" stroke-width="1.2" stroke-dasharray="6 4"/>`;
+  if(c>=5) for(let i=0;i<8;i++){ const a=i/8*2*Math.PI; h+=`<circle cx="${620+80*Math.cos(a)}" cy="${220+80*Math.sin(a)}" r="14" fill="none" stroke="var(--geom-fixed)" stroke-width="1.4"/>`; }
+  if(c>=6){ const d='M560 440 C600 380 680 380 720 440'; const sm=sample(d,80); h+=c>=7?brushSvg('rope',d,'var(--ink)',sm,12):`<path d="${outline(sm,q=>{const [l,r]=interp(PRESETS.taper,q.t); return [l*7,r*7];})}" fill="var(--ink)"/>`; }
+  h+=`<text class="lbl" x="120" y="470">The canvas shows the state after "${HIST[c]}" (step ${c+1} of ${HIST.length})</text>`;
+  return h;
+}
+function layerOrder(){ return S.layers.map(l=>l.id); }
+function layersCanvas(){
+  const cut=(S.cutBy.fills||[]).includes('line')||S.interactAll, ko=(S.knock.fills||[]).includes('line')||S.interactAll&&false;
+  let h=`<defs><mask id="ko"><rect width="800" height="560" fill="white"/>${ko?'<circle cx="420" cy="270" r="70" fill="black"/>':''}</mask></defs>`;
+  h+=`<g mask="url(#ko)">`;
+  if(cut){ h+=`<path d="M150 140 L560 140 L380 400 L150 400Z" fill="#1f6fd1" fill-opacity=".55"/><path d="M560 140 L650 140 L650 400 L380 400Z" fill="#7fd1c7" fill-opacity=".75"/>`; }
+  else h+=`<rect x="150" y="140" width="500" height="260" fill="#1f6fd1" fill-opacity=".55"/>`;
+  h+=`</g><rect x="150" y="140" width="500" height="260" fill="none" stroke="var(--geom-fixed)" stroke-width="1.4"/>`;
+  h+=`<g style="mix-blend-mode:${S.blend.tint||'normal'};opacity:${(S.opacity.tint??100)/100}"><circle cx="560" cy="200" r="90" fill="#e8953a"/></g>`;
+  h+=`<path d="M580 110 L360 430" stroke="#2a7de1" stroke-width="1.6"/><circle cx="420" cy="270" r="70" fill="none" stroke="#2a7de1" stroke-width="1.6"/>`;
+  h+=`<text class="lbl" x="150" y="440">Fills (blue): ${cut?'cut by Linework → 2 regions, each filled on its own':'own shapes only → 1 region'}${ko?' · knocked out by Linework\'s circle':''}</text>`;
+  h+=`<text class="lbl" x="150" y="458">Tint (orange): blend ${S.blend.tint||'normal'} at ${S.opacity.tint??100} % · visual only, so machines ignore it</text>`;
+  return h;
+}
+function reorderCanvas(){
+  let h=''; const order=layerOrder();
+  order.forEach((id,i)=>{ const l=S.layers.find(x=>x.id===id); h+=`<rect x="${180+i*70}" y="${120+i*40}" width="200" height="150" rx="8" fill="${l.col}" fill-opacity=".8" stroke="var(--panel)" stroke-width="2"/><text x="${190+i*70}" y="${140+i*40}" fill="#fff" style="font:600 12px var(--f-ui)">${l.name}</text>`; });
+  h+=`<text class="lbl" x="180" y="480">Paint order follows the list (top row first; later rows paint over it)</text>`;
+  return h;
+}
+function refImage(){
+  return `<g><rect x="-150" y="-100" width="300" height="200" fill="#efe7d6"/><path d="M-110 60 C-60 -70 40 -80 100 -40" fill="none" stroke="#5b4b3a" stroke-width="7" stroke-linecap="round" opacity=".85"/><path d="M-20 -60 C10 -100 70 -90 80 -60 C50 -40 10 -40 -20 -60Z" fill="#6e8f4e" opacity=".9"/><circle cx="-90" cy="-50" r="22" fill="#c9653a" opacity=".85"/><text x="-120" y="85" style="font:italic 600 22px Georgia,serif" fill="#5b4b3a">Botanica</text></g>`;
+}
+function refsCanvas(){
+  const r=S.ref, w=150*r.s, hh=100*r.s;
+  let h=`<g transform="translate(${r.x} ${r.y}) rotate(${r.a}) scale(${r.s})" opacity=".85" data-refbody="1" style="cursor:move">${refImage()}</g>`;
+  h+=`<g transform="translate(${r.x} ${r.y}) rotate(${r.a})"><rect x="${-w}" y="${-hh}" width="${2*w}" height="${2*hh}" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 3" pointer-events="none"/>
+   <line x1="0" y1="${-hh}" x2="0" y2="${-hh-34}" stroke="var(--accent)" stroke-width="1.2"/><circle data-rh="rot" cx="0" cy="${-hh-40}" r="7" fill="var(--panel)" stroke="var(--accent)" stroke-width="2" style="cursor:grab"/>
+   ${[[-1,-1],[1,-1],[1,1],[-1,1]].map(([a,b])=>`<rect data-rh="scale" x="${a*w-6}" y="${b*hh-6}" width="12" height="12" fill="var(--panel)" stroke="var(--accent)" stroke-width="2" style="cursor:nwse-resize"/>`).join('')}
+   ${[[0,-1],[1,0],[0,1],[-1,0]].map(([a,b])=>`<rect x="${a*w-4}" y="${b*hh-4}" width="8" height="8" fill="var(--accent)" pointer-events="none"/>`).join('')}
+   <path d="M-8 0h16M0 -8v16" stroke="var(--accent)" stroke-width="1.5"/></g>`;
+  h+=hud(r.x+w+14,r.y-10,`X ${((r.x-400)/MM).toFixed(1)}  Y ${((280-r.y)/MM).toFixed(1)} mm · ${r.a.toFixed(0)}° · ${(r.s*100).toFixed(0)} %`);
+  h+=`<text class="lbl" x="20" y="540">Reference layer stays locked; the handles exist only in Transform reference mode</text>`;
+  return h;
+}
+function handlesCanvas(){
+  const seg=(ox,big)=>{
+    const a=[ox+60,360],c1=[ox+60,200],c2=[ox+260,160],b=[ox+260,320];
+    const R=big?4.5:1.6, hit=big?8:2.5;
+    const hd=(p,sq)=>`<g class="hdl"><circle cx="${p[0]}" cy="${p[1]}" r="${hit}" fill="transparent"/>${big?`<circle class="ring" cx="${p[0]}" cy="${p[1]}" r="${R+4}"/>`:''}${sq?`<rect x="${p[0]-R}" y="${p[1]-R}" width="${2*R}" height="${2*R}" fill="${big?'var(--panel)':'var(--geom-free)'}" stroke="${big?'var(--geom-free)':'none'}" stroke-width="1.5"/>`:`<circle cx="${p[0]}" cy="${p[1]}" r="${R}" fill="${big?'var(--panel)':'var(--geom-free)'}" stroke="${big?'var(--geom-free)':'none'}" stroke-width="1.5"/>`}</g>`;
+    return `<rect x="${ox+20}" y="120" width="300" height="300" fill="#1f6fd1" fill-opacity=".18"/><path d="M${a} C${c1} ${c2} ${b}" class="geo"/><line x1="${a[0]}" y1="${a[1]}" x2="${c1[0]}" y2="${c1[1]}" stroke="var(--geom-free)" stroke-width="1"/><line x1="${b[0]}" y1="${b[1]}" x2="${c2[0]}" y2="${c2[1]}" stroke="var(--geom-free)" stroke-width="1"/>${hd(a,1)}${hd(b,1)}${hd(c1)}${hd(c2)}`;
+  };
+  return seg(40,false)+seg(420,true)+`<text class="lbl" x="60" y="100">M5: 3 px dots, hard to see over fills</text><text class="lbl" x="440" y="100">M6: 9 px with an outline, 16 px hit area, hover ring</text><text class="lbl" x="440" y="450">Anchors are squares, control handles circles · sizes in the theme</text>`;
+}
+function expandCanvas(){
+  const sm=sample(WAVE), W=S.width*MM; let h='';
+  if(S.expanded){
+    const d=S.expand==='outline'?outline(sm,q=>{const [l,r]=interp(S.pts,q.t); return [l*W/2,r*W/2];}):WAVE;
+    h+=`<path d="${d}" class="geo" fill="none"/>`; const step=S.expand==='outline'?12:40; const pts=S.expand==='outline'?[]:sm.filter((q,i)=>i%55===0);
+    if(S.expand==='outline'){ const ol=sm.filter((q,i)=>i%22===0); for(const q of ol){ const [l]=interp(S.pts,q.t); h+=`<rect class="node" x="${q.x+q.nx*l*W/2-3}" y="${q.y+q.ny*l*W/2-3}" width="6" height="6"/>`; } }
+    else for(const q of pts) h+=`<rect class="node" x="${q.x-3}" y="${q.y-3}" width="6" height="6"/>`;
+    h+=`<text class="lbl" x="110" y="440">Expanded: plain editable curves on Ink, in the object's colour and pen · undo restores the styled path</text>`;
+  } else {
+    h+=strokeSvg(WAVE);
+    h+= S.expand==='outline' ? `<path d="${outline(sm,q=>{const [l,r]=interp(S.pts,q.t); return [l*W/2,r*W/2];})}" class="pvf"/>` : `<path d="${WAVE}" class="pv"/>`;
+    h+=`<text class="lbl" x="110" y="440">Preview (purple): ${S.expand==='outline'?'one closed outline: 2 cubic sides lowered to 46 arcs, 2 caps':'the centreline the pen follows: 1 path'}</text>`;
+  }
+  return h;
+}
+function machineCanvas(){
+  const op=S.mop, styled=S.mstyled, opc={Draw:'var(--op-draw)',Cut:'var(--op-cut)',Score:'var(--op-score)',Engrave:'var(--op-engrave)'}[op];
+  let h=`<rect x="60" y="40" width="680" height="380" class="bed"/><text class="lbl" x="64" y="34">Bed 300 × 200 mm · origin bottom-left</text>`;
+  const sm=sample(WAVE), W=S.width*MM, ol=outline(sm,q=>{const [l,r]=interp(PRESETS.taper,q.t); return [l*W/2,r*W/2];});
+  const fold='M150 110 L650 110', fsm=sample(fold,60);
+  if(!styled){
+    h+=`<path d="${WAVE}" fill="none" stroke="${opc}" stroke-width="1.4"/><path d="${fold}" fill="none" stroke="${opc}" stroke-width="1.4"/>`;
+  } else if(op==='Draw'){
+    if(S.mfill!=='hatch') h+=`<path d="${ol}" fill="none" stroke="${opc}" stroke-width="1"/>`;
+    if(S.mfill!=='outline') h+=`<path d="${ol}" fill="url(#phatch)"/>`;
+    h+=`<path d="${fold}" fill="none" stroke="${opc}" stroke-width="1.4" stroke-dasharray="20 12"/>`;
+  } else if(op==='Engrave'){
+    h+=`<path d="${ol}" fill="url(#hatch)" stroke="${opc}" stroke-width="1"/><path d="${fold}" fill="none" stroke="${opc}" stroke-width="1.4" stroke-dasharray="20 12"/>`;
+  } else {
+    h+=`<path d="${ol}" fill="none" stroke="${opc}" stroke-width="1.2"/><path d="${fold}" fill="none" stroke="${opc}" stroke-width="1.8" stroke-dasharray="20 12"/>`;
+    if(op==='Cut') h+=`<path d="${ol}" fill="none" stroke="${opc}" stroke-opacity=".18" stroke-width="5"/>`;
+  }
+  return h;
+}
+function canvasOverlay(){
+  let h='';
+  if(S.flow==='machine'){
+    const op=S.mop, st=S.mstyled;
+    const what={Draw:st?(S.mfill==='both'?'taper plotted as outline + hatch at the pen width; each dash a pen-down':S.mfill==='outline'?'taper plotted as its outline':'taper hatched only'):'the centreline, at the object\'s pen',
+      Cut:st?'taper cut as its outline (kerf band shown); dashed fold line cut as a perforation':'the real path, as today; styles are visual only',
+      Score:st?'dashes scored as separate marks (perforation); taper as its outline':'the real path, as today',
+      Engrave:st?'taper outline hatched like any closed shape; dashes as separate lines':'the real path, as today'}[op];
+    h=`<div class="legend"><div class="lr"><b>Legend</b><span class="sp"></span><span class="badge">${op} · Stroke styles: ${st?'Styled':'Centreline'}</span></div>
+      <div class="lr"><i style="background:${{Draw:'var(--op-draw)',Cut:'var(--op-cut)',Score:'var(--op-score)',Engrave:'var(--op-engrave)'}[op]}"></i>Wave (taper profile) and Fold line (dash 3/2): ${what}</div>
+      <div class="lr" style="color:var(--muted)">Colour and hairline come from the machine profile on Cut, Score and Engrave (M5 rule). Blend modes never change machine paths.</div></div>`;
+  }
+  if(S.flow==='history'&&S.htab==='timeline'){
+    h=`<div class="tlstrip" title="Timeline (Fusion-style)">${TL.map((f,i)=>`<div class="f ${f.fail?'fail':''} ${f.sup?'sup':''}" data-tl="${i}" title="${f.n}${f.fail?' · '+f.why:''}">${ic(f.i)}</div>`).join('')}<span class="mk" title="End of timeline"></span><span class="sp"></span><span style="font-size:10.5px;color:var(--muted)">Timeline · hover to highlight, double-click to edit</span></div>`;
+  }
+  $('#cvover').innerHTML=h;
+}
+
+/* ---------- right pane ---------- */
+function sec(title,body,extra=''){ return `<div class="sec"><h4>${title}<span class="sp"></span>${extra}</h4>${body}</div>`; }
+function sub(key,title,body,hl,dot){ const o=S.open[key]; return `<div class="ssub ${hl?'hl':''}"><button class="subh" data-toggle="${key}"><span class="tw">${o?'▾':'▸'}</span>${title}${dot?'<span class="dot" title="Not default"></span>':''}</button>${o?body:''}</div>`; }
+function seg(name,opts,cur){ return `<span class="seg">${opts.map(([v,l,t])=>`<button class="${cur===v?'on':''}" data-set="${name}:${v}" title="${t||l}">${l}</button>`).join('')}</span>`; }
+function machineRow(){ return `<div class="note mach"><b>Machine:</b> on <b>Ink</b> (Draw, pen plotter) this plots as outline + hatch at the pen width. On a Cut layer it would cut the centreline (<i>Stroke styles: Centreline</i>). <a href="#" data-flow="machine">change…</a></div>`; }
+function styleSection(){
+  const f=S.flow, prof=Object.keys(PRESETS);
+  let b=`<div class="row"><span class="lb">Stroke</span><input type="color" class="swbtn" value="${S.stroke}" data-col="stroke"><select class="fld grow"><option>Colour</option><option>By layer</option></select><span class="lb" style="flex:0 0 auto">Opacity</span><input class="fld" style="width:52px" value="100 %"></div>`;
+  b+=`<div class="row"><span class="lb">Width</span><input class="fld" type="number" step="0.1" min="0.1" max="10" data-num="width" value="${S.width}"> mm <span class="lb" style="flex:0 0 auto;margin-left:6px">Pen</span><input class="fld" style="width:40px" value="1"></div>`;
+  b+=`<div class="row"><span class="lb">Profile</span><select class="fld grow" data-sel="profile">${prof.map(p=>`<option value="${p}" ${S.profile===p?'selected':''}>${{uniform:'▭ Uniform',taper:'◇ Taper both ends',start:'◁ Taper start',end:'▷ Taper end',bulge:'⬭ Bulge',pinch:'⋈ Pinch',pressure:'∿ Pressure (simulated)'}[p]}</option>`).join('')}${S.profile==='custom'?'<option value="custom" selected>✎ Custom</option>':''}</select><button class="btn sm" data-flow="width">Edit…</button></div>`;
+  if(S.profile==='pressure') b+=`<div class="row"><span class="lb"></span><button class="btn sm" data-act="reseed">Reseed</button><span class="note">seed ${S.seed}</span></div>`;
+  b+=sub('caps','Caps &amp; joins',`<div class="row"><span class="lb">Cap</span>${seg('cap',[['butt',ic('capbutt'),'Butt'],['round',ic('capround'),'Round'],['square',ic('capsquare'),'Square']],S.cap)}</div>
+     <div class="row"><span class="lb">Join</span>${seg('join',[['miter',ic('joinmiter'),'Miter'],['round',ic('joinround'),'Round'],['bevel',ic('joinbevel'),'Bevel']],S.join)}<span class="note" style="margin:0 0 0 4px">limit</span><input class="fld" style="width:38px" data-num="miter" value="${S.miter}"></div>
+     <div class="row"><span class="lb">Align</span>${seg('align',[['centre','Centre'],['inside','Inside'],['outside','Outside']],S.align)}</div>`,f==='dashes',S.cap!=='round'||S.join!=='round');
+  b+=sub('dash','Dashes',`<div class="row"><span class="lb">Pattern</span><select class="fld grow" data-sel="dash">${Object.keys(DASHES).map(k=>`<option value="${k}" ${S.dash===k?'selected':''}>${{solid:'——— Solid',dash:'– – – Dash 3/2',dot:'· · · · Dot',dashdot:'–·–· Dash-dot',long:'—— —— Long dash'}[k]}</option>`).join('')}</select></div>
+     <div class="row"><span class="lb">Dash / gap</span>${(DASHES[S.dash]||[0,0]).concat([null,null,null,null]).slice(0,4).map(v=>`<input class="fld" style="width:38px" value="${v===null?'':v}" placeholder="—">`).join('')}</div>
+     <div class="row"><span class="lb">Phase</span><input class="fld" type="number" step="0.5" data-num="phase" value="${S.phase}"> mm</div>
+     <div class="row"><span class="lb"></span><button class="ck ${S.dashAlign?'on':''}" data-flag="dashAlign"><i></i>Align to corners and ends</button></div>`,f==='dashes',S.dash!=='solid');
+  const rows=S.strokes||[{w:S.width,col:S.stroke,off:0,dash:S.dash,pen:1}];
+  b+=sub('strokes','Strokes',`<div class="strokes">${rows.map((r,i)=>`<div class="sr ${S.strokes&&i===S.strokeSel?'on':''}" data-stroke="${i}"><span class="grip">⋮⋮</span><span class="sw" style="background:${r.col}"></span>${r.w.toFixed(2)} mm <span class="mono">${i===0?'on path':(r.off>0?'+':'')+r.off.toFixed(1)+' mm'}${r.dash!=='solid'?' · '+r.dash:''} · pen ${r.pen}</span></div>`).join('')}</div>
+     ${S.strokes?`<div class="row" style="margin-top:4px"><span class="lb">Offset</span><input class="fld" type="number" step="0.1" data-snum="off" value="${S.strokes[S.strokeSel].off}"> <span class="lb" style="flex:0 0 auto">W</span><input class="fld" style="width:50px" type="number" step="0.05" data-snum="w" value="${S.strokes[S.strokeSel].w}"></div>`:''}
+     <div class="row"><button class="btn sm" data-act="addstroke">+ Add stroke</button>${S.strokes?'<button class="btn sm" data-act="delstroke">Remove</button>':''}<span class="note" style="margin:0">≤ 16 · paint order = list</span></div>`,f==='multi',!!S.strokes);
+  const bi=S.brushes;
+  b+=sub('brush','Brush',`<div class="bgrid">${[{id:null,name:'None',kind:''}].concat(bi.slice(0,5)).map(x=>`<div class="bcell ${S.brush===x.id?'on':''}" data-brush="${x.id||''}">${thumb(x.id)}${x.name}<span class="k">${x.kind}</span></div>`).join('')}</div>
+     ${S.brush?`<div class="row"><span class="lb">Scale</span><input class="fld" value="100 %"> <button class="btn sm" title="Flip along">⇋</button><button class="btn sm" title="Flip across">⇅</button>${['leaves','dots'].includes(S.brush)?'<button class="btn sm" data-act="reseed">Reseed</button>':''}</div><div class="note">The brush replaces Profile and Dashes ("Set by the brush").</div>`:''}`,f==='brushes',!!S.brush);
+  b+=machineRow();
+  return sec('Style',b,`<button class="ib" title="Eyedropper: copy a style">${ic('eyedrop')}</button><button class="ib" title="Copy / Paste style (Ctrl+Alt+C / V)">⋯</button>`);
+}
+function thumb(id){
+  if(!id) return `<svg viewBox="0 0 80 30"><path d="M6 20 C26 4 50 28 74 10" fill="none" stroke="var(--ink)" stroke-width="2"/></svg>`;
+  const d='M6 20 C26 4 50 28 74 10'; const save=S.width; S.width=.9;
+  const s=`<svg viewBox="0 0 80 30">${brushSvg(id,d,'var(--ink)',sample(d,70),8)}</svg>`; S.width=save; return s;
+}
+function inspectorCurve(){
+  return `<div class="sec"><h4>Curve <span class="badge">Bézier · 1</span><span class="sp"></span><span class="badge">2 DOF</span></h4>
+    <div class="row"><span class="lb">Layer</span><select class="fld grow"><option>Ink (Draw)</option></select></div>
+    <div class="row"><span class="lb">Construction</span><button class="ck"><i></i>X</button></div></div>`+styleSection();
+}
+function brushesPane(){
+  const list=S.brushes.filter(b=>S.bshow==='all'||(S.bshow==='doc'?b.doc:b.lib));
+  const row=b=>`<div class="bl ${S.brush===b.id?'on':''}" data-brush="${b.id}">${thumb(b.id).replace('<svg','<svg preserveAspectRatio="none"')}<div><div>${b.name} ${b.lock?'<span class="lock" title="Bundled, read-only">🔒</span>':''}</div><div class="k">${b.kind}</div></div><span class="cnt">${b.uses?b.uses+(b.uses>1?' uses':' use'):''}</span></div>`;
+  const doc=list.filter(b=>b.doc), lib=list.filter(b=>b.lib);
+  return `<div class="ph">Brushes<span class="sp"></span><button class="ib" title="Undock pane">⧉</button></div>
+   <div class="pb" style="flex:none;max-height:330px">
+    <div class="row"><input class="fld w" placeholder="Search brushes…"></div>
+    <div class="row"><span class="lb" style="flex:0 0 auto">Show</span>${seg('bshow',[['all','All'],['doc','Document'],['lib','Library']],S.bshow)}</div>
+    <div class="blist">${doc.length?'<div class="mh">In this document</div>'+doc.map(row).join(''):''}${lib.length?'<div class="mh">Library</div>'+lib.map(row).join(''):''}</div>
+    <div class="row" style="flex-wrap:wrap;margin-top:6px"><button class="btn sm pri" data-act="newbrush">+ New from selection ▾</button><button class="btn sm" data-act="editbrush">Edit</button><button class="btn sm">Duplicate</button><button class="btn sm" data-act="delbrush">Delete</button><button class="btn sm">Import…</button><button class="btn sm">Export…</button></div>
+   </div>
+   <div class="ph">Inspector<span class="sp"></span></div><div class="pb" style="flex:1">${styleSection()}</div>`;
+}
+function gradientInspector(){
+  const g=S.grad, st=g.stops[g.sel]||g.stops[0];
+  const bar=`linear-gradient(90deg,${g.stops.map(s=>`${s.c} ${s.p*100}%`).join(',')})`;
+  return `<div class="sec"><h4>Region <span class="badge">1 selected</span><span class="sp"></span><span class="badge" style="background:var(--panel-2);color:var(--muted)">Fills layer</span></h4><div class="note">The ring between the frame and the circle. The circle is a separate region.</div></div>
+  ${sec('Fill',`<div class="row"><button class="ck on"><i></i>Fill</button><span class="sp"></span><span class="lb" style="flex:0 0 auto">Opacity</span><input class="fld" style="width:52px" value="100 %"></div>
+   <div class="row">${seg('gtype',[['solid','Solid'],['linear','Linear'],['radial','Radial'],['elliptical','Ellip.'],['conic','Conic']],g.type)}</div>
+   <div class="stopbar" id="stopbar" style="background:${bar}">${g.stops.map((s,i)=>`<span class="st ${i===g.sel?'on':''}" data-stop="${i}" style="left:${s.p*100}%;background:${s.c}"></span>`).join('')}</div>
+   <div class="row"><span class="lb">Stop</span><input type="color" class="swbtn" value="${st.c}" data-stopcol="1"><input class="fld" style="width:60px" type="number" min="0" max="100" data-stoppos="1" value="${Math.round(st.p*100)}">% <button class="btn sm" data-act="delstop" ${g.stops.length<=2?'disabled':''}>Delete</button><button class="btn sm" data-act="revgrad" title="Reverse">⇄</button></div>
+   <div class="row"><span class="lb">Angle</span><input class="fld" value="${Math.round(Math.atan2(g.to[1]-g.from[1],g.to[0]-g.from[0])*-180/Math.PI)}°">${g.type==='elliptical'?'<span class="lb" style="flex:0 0 auto">Ratio</span><input class="fld" style="width:50px" value="55 %">':''}</div>
+   <div class="row"><span class="lb">Presets</span>${['#1f6fd1,#f3c623','#000000,#ffffff','#c23b3b,#e8953a,#f3c623','#0ea5b7,#7b4ddb'].map(p=>`<button class="swbtn" style="background:linear-gradient(90deg,${p})" data-preset="${p}"></button>`).join('')}<button class="btn sm">+ Save</button></div>
+   ${sub('gmach','Machine',`<div class="row" style="flex-wrap:wrap">${seg('gmach',[['none','None'],['hatch','Hatch by luminance'],['power','Laser power']],g.mach)}</div>
+     ${g.mach==='hatch'?'<div class="row"><span class="lb">Spacing</span><input class="fld" style="width:48px" value="0.2"> – <input class="fld" style="width:48px" value="1.2"> mm</div><div class="row"><span class="lb">Angle</span><input class="fld" value="45°"></div>':''}
+     ${g.mach==='power'?'<div class="note" style="color:var(--warn)">Needs a machine profile that declares greyscale power. No built-in preset does yet, so this stays disabled with that reason.</div>':''}
+     <div class="note">Gradients are visual. SVG and PDF write native gradients (conic as 64 bands), and PNG rasterises them. Draw and Engrave can turn them into variable-density hatch. Cut and Score ignore fills.</div>`,true,g.mach!=='none')}`)}`;
+}
+const TL=[{n:'Offset 1 (2 mm)',i:'offset'},{n:'Circular Pattern 1 ×8',i:'cpattern'},{n:'Mirror 1',i:'mirror'},{n:'Offset 2 (−3 mm)',i:'offset',fail:1,why:'Offset collapses at −3 mm · last good result kept'},{n:'Text on path: "Botanica"',i:'text'},{n:'Boolean: Union 1',i:'boolean'},{n:'Brush: Rope on Curve 7',i:'brush'}];
+function historyPane(){
+  const t=S.htab||'history';
+  let body='';
+  if(t==='history') body=`<div class="hist">${HIST.map((l,i)=>`<div class="hr ${i===S.hist?'cur':''} ${i>S.hist?'fut':''}" data-hist="${i}"><span class="n">${i+1}</span>${l}</div>`).join('')}</div>
+     <div class="note">Click a row to go back to it (one batch, one re-solve). Ctrl+Z and Ctrl+Y move one row. Editing after a jump drops the dimmed rows (linear). Session only · 1 000 steps.</div>`;
+  else body=`<div class="tl">${TL.map((f,i)=>`<div class="tr ${i===S.tlSel?'on':''} ${f.fail?'fail':''} ${f.sup?'sup':''}" data-tl="${i}" draggable="true">${ic(f.i)}<div><div class="nm">${f.n}</div>${f.fail?`<div class="why">${f.why}</div>`:''}</div></div>`).join('')}</div>
+     <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn sm">Edit</button><button class="btn sm" data-act="suppress">${TL[S.tlSel].sup?'Unsuppress':'Suppress'}</button><button class="btn sm" data-act="tldelete">Delete</button><button class="btn sm">Explode</button></div>
+     <div class="note">Features in creation order. Drag reorders only where nothing depends on the feature; otherwise the drop is refused with the reason. A failed feature keeps its last good result, and the sketch still solves.</div>`;
+  return `<div class="ph"><span class="tabsm"><button class="${t==='history'?'on':''}" data-htab="history">History</button><button class="${t==='timeline'?'on':''}" data-htab="timeline">Timeline</button></span><span class="sp"></span><button class="ib" title="Undock pane">⧉</button></div><div class="pb" style="flex:1">${body}</div>`;
+}
+function layerInspector(){
+  const id=S.layerSel, l=S.layers.find(x=>x.id===id), others=S.layers.filter(x=>x.id!==id);
+  const modes=['normal','multiply','screen','overlay','darken','lighten','difference','exclusion','hue','saturation','color','luminosity'];
+  const lst=(key)=>others.map(o=>`<button class="ck ${(S[key][id]||[]).includes(o.id)?'on':''}" data-link="${key}:${o.id}" ${S.interactAll?'disabled style="opacity:.5"':''}><i></i>${o.name}</button>`).join('');
+  return `<div class="sec"><h4>Layer <span class="badge">${l.name}</span></h4><div class="row"><span class="lb">Operation</span><select class="fld grow"><option>${l.op}</option></select></div></div>
+   ${sec('Blending',`<div class="row"><span class="lb">Mode</span><select class="fld grow" data-blend="${id}">${modes.map(m=>`<option value="${m}" ${(S.blend[id]||'normal')===m?'selected':''}>${cap1(m)}</option>`).join('')}</select></div>
+     <div class="row"><span class="lb">Opacity</span><input type="range" min="0" max="100" value="${S.opacity[id]??100}" data-opac="${id}" class="grow"><span class="fld" style="width:46px">${S.opacity[id]??100} %</span></div>
+     <div class="note">Visual only: canvas, SVG (mix-blend-mode), PDF (/BM) and PNG. Machines ignore it.</div>`)}
+   ${sec('Regions',`<button class="ck rd ${!S.interactAll?'on':''}" data-set="interact:off"><i></i>Own shapes only (default, #457)</button><br>
+     <button class="ck rd ${S.interactAll?'on':''}" data-set="interact:on"><i></i>All layers interact (document switch)</button>
+     <div class="mh">Cut by</div><div style="display:flex;flex-direction:column">${lst('cutBy')}</div>
+     <div class="mh">Knock out by</div><div style="display:flex;flex-direction:column">${lst('knock')}</div>
+     <div class="note mach">Engrave hatch follows these regions. Check Machine preview.</div>`)}
+   ${sec('Stroke styles',`${seg('lstyled',[['c','Centreline'],['s','Styled']],'c')}<div class="note">On machine layers. Styled cuts and marks the expanded styles (dashes become perforations).</div>`)}`;
+}
+function refInspector(){
+  const r=S.ref;
+  return `<div class="sec"><h4>Reference <span class="badge">Image · Botanica.png</span></h4><div class="row"><span class="lb">Layer</span><span>Reference 🔒</span></div><div class="row"><button class="btn sm pri">Transform</button><button class="btn sm">Calibrate…</button><button class="btn sm" data-flow="trace">Auto trace…</button></div></div>
+   ${sec('Transform',`<div class="row"><span class="lb">X</span><input class="fld" data-ref="x" value="${((r.x-400)/MM).toFixed(1)}"> mm</div><div class="row"><span class="lb">Y</span><input class="fld" data-ref="y" value="${((280-r.y)/MM).toFixed(1)}"> mm</div>
+    <div class="row"><span class="lb">Angle</span><input class="fld" data-ref="a" value="${r.a.toFixed(1)}"> °</div><div class="row"><span class="lb">Scale</span><input class="fld" data-ref="s" value="${(r.s*100).toFixed(0)}"> %</div>
+    <div class="row"><span class="lb">Pivot</span><select class="fld grow"><option>Centre</option><option>Anchor corner</option></select></div>
+    <div class="note">Each drag or typed value is one undo step (TransformReference). Enter or Esc leaves the mode.</div>`)}`;
+}
+function machineInspector(){
+  return `<div class="sec"><h4>Machine preview <span class="badge">AxiDraw · pen plotter</span></h4><div class="note">Pick an operation for the layer holding the styled curves to see each result.</div></div>
+   ${sec('Layer operation',`<div class="row">${seg('mop',[['Draw','Draw'],['Cut','Cut'],['Score','Score'],['Engrave','Engrave']],S.mop)}</div>
+     <div class="row"><span class="lb">Stroke styles</span>${seg('mstyled',[['0','Centreline'],['1','Styled']],S.mstyled?'1':'0')}</div>
+     ${S.mop==='Draw'?`<div class="row"><span class="lb">Filled strokes</span><select class="fld grow" data-sel="mfill"><option value="both" ${S.mfill==='both'?'selected':''}>Outline + hatch</option><option value="outline" ${S.mfill==='outline'?'selected':''}>Outline</option><option value="hatch" ${S.mfill==='hatch'?'selected':''}>Hatch</option></select></div>`:''}
+     <div class="note">${S.mop==='Draw'?'Draw on a pen plotter always plots machine geometry. Stroke styles is a machine-layer setting; it is shown here only for comparison.':'Default Centreline: cuts never change because of a style.'}</div>`)}`;
+}
+function rightPane(){
+  const f=S.flow; let h='';
+  const palette=`<div class="ph">Sketch palette<span class="sp"></span><button class="ib">⧉</button></div><div class="pb" style="flex:none"><div class="row"><span class="lb">Linetype</span>${seg('lt',[['n','Normal'],['c','Construction']],'n')}</div><div class="row"><button class="ck on"><i></i>Stroke width</button><button class="ck on"><i></i>Show fills</button></div>${f==='width'?'<div class="row"><span class="lb">Width tool</span><span class="note" style="margin:0">Alt: one side · Shift: snap 0.1 mm</span></div>':''}</div>`;
+  if(f==='brushes') h=brushesPane();
+  else if(f==='history') h=historyPane();
+  else {
+    let insp='';
+    if(['style','width','dashes','multi','expand'].includes(f)) insp=inspectorCurve();
+    else if(f==='gradient') insp=gradientInspector();
+    else if(f==='layers'||f==='reorder') insp=layerInspector();
+    else if(f==='refs') insp=refInspector();
+    else if(f==='machine') insp=machineInspector();
+    else if(f==='handles') insp=`<div class="sec"><h4>Theme</h4><div class="row"><span class="lb">HANDLE_PX</span><span class="fld">9</span></div><div class="row"><span class="lb">HANDLE_HIT_PX</span><span class="fld">16</span></div><div class="row"><span class="lb">Outline</span><span class="fld">1.5 px canvas colour</span></div><div class="note">The same sizes for anchors and for the M5 offset, pattern and fillet handles.</div></div>`;
+    else insp=`<div class="sec"><h4>Document</h4><div class="note">Nothing selected.</div></div>`;
+    h=palette+`<div class="ph">Inspector<span class="sp"></span><button class="ib">⧉</button></div><div class="pb" style="flex:1">${insp}</div>`;
+  }
+  $('#right').innerHTML=h;
+}
+
+/* ---------- command dialogs ---------- */
+function dialog(){
+  const f=S.flow; let h='';
+  if(f==='width'){
+    h=`<div class="dlg"><div class="dh">Width profile<span class="sp"></span><span class="badge">${S.profile==='custom'?'Custom':cap1(S.profile)}</span></div><div class="db">
+     ${graphSvg()}
+     <div class="row"><span class="lb">Point ${S.focus+1}/${S.pts.length}</span>t <input class="fld" style="width:44px" value="${Math.round(S.pts[S.focus][0]*100)}">% L <input class="fld" style="width:40px" value="${S.pts[S.focus][1].toFixed(2)}"> R <input class="fld" style="width:40px" value="${S.pts[S.focus][2].toFixed(2)}"></div>
+     <div class="row" style="flex-wrap:wrap"><button class="btn sm" data-act="pflip">Flip</button><button class="btn sm" data-act="pmirror">Mirror L→R</button><button class="btn sm">Save as preset…</button><button class="btn sm" data-act="preset:uniform">Reset</button></div>
+     <div class="note">Drag the points here or the diamonds on the canvas. Click the canvas stroke edge to add a point. Del removes one; Tab moves to the next.</div></div>
+     <div class="df"><span class="lft">One undo step per drag</span><button class="btn" data-flow="style">Cancel</button><button class="btn pri" data-flow="style">OK</button></div></div>`;
+  }
+  if(f==='expand' && !S.expanded){
+    h=`<div class="dlg"><div class="dh">Expand to geometry</div><div class="db">
+     <div class="row"><span class="lb">Selection</span><span class="badge">Curve 7 · Taper</span></div>
+     <div class="row"><span class="lb">Result</span>${seg('expand',[['outline','Outline'],['centre','Centrelines']],S.expand)}</div>
+     <div class="row"><span class="lb"></span><button class="ck"><i></i>Keep original (hidden)</button></div>
+     <div class="note">${S.expand==='outline'?'Filled areas become closed curves: 1 loop, 46 arcs, 4 lines.':'The pen paths become curves: dashes, multi-strokes and art lines. Here, 1 path.'} The result is plain editable curves on Ink, in the object's colour and pen.</div></div>
+     <div class="df"><span class="lft">Ctrl+Shift+E</span><button class="btn" data-flow="style">Cancel</button><button class="btn pri" data-act="doexpand">OK</button></div></div>`;
+  }
+  $('#dlg').innerHTML=h;
+}
+function graphSvg(){
+  const W=248,H=104, x=t=>8+t*(W-16), y=v=>H/2-v*H/2*.42;
+  const curve=(side)=>{ let d=''; for(let i=0;i<=60;i++){ const t=i/60, [l,r]=interp(S.pts,t); const v=side==='l'?l:r; d+=(i?'L':'M')+x(t).toFixed(1)+' '+(side==='l'?y(v):H-y(v)).toFixed(1); } return d; };
+  return `<svg class="graph" id="graph" viewBox="0 0 ${W} ${H}"><line x1="8" x2="${W-8}" y1="${H/2}" y2="${H/2}" stroke="var(--grid-major)"/><path d="${curve('l')} L${x(1)} ${H/2} L${x(0)} ${H/2}Z" fill="color-mix(in srgb,var(--accent) 18%,transparent)" stroke="var(--accent)" stroke-width="1.4"/><path d="${curve('r')}" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="3 2"/>
+   ${S.pts.map((p,i)=>`<circle data-gp="${i}" cx="${x(p[0])}" cy="${y(p[1])}" r="5" fill="${i===S.focus?'var(--accent)':'var(--panel)'}" stroke="var(--accent)" stroke-width="1.5" style="cursor:grab"/>`).join('')}
+   <text x="10" y="12" style="font:9px var(--f-ui)" fill="var(--muted)">left</text><text x="10" y="${H-4}" style="font:9px var(--f-ui)" fill="var(--muted)">right</text><text x="${W-60}" y="12" style="font:9px var(--f-ui)" fill="var(--muted)">length →</text></svg>`;
+}
+
+/* ---------- modals ---------- */
+function closeOverlay(){ $('#overlay').innerHTML=''; }
+function modal(html){ $('#overlay').innerHTML=`<div class="scrim" data-scrim="1">${html}</div>`; }
+function newBrushModal(edit){
+  const k=S.nbkind||'art';
+  const d='M30 110 C110 20 210 160 300 60 S430 30 470 100'; const prev={art:'rope',scatter:'leaves',pattern:'stitch',calligraphic:'nib'}[k];
+  const opts={
+    art:`<div class="row"><span class="lb">Fit</span>${seg('nbfit',[['stretch','Stretch'],['prop','Proportional']],'stretch')}</div><div class="row"><span class="lb">Protect ends</span><input class="fld" value="4"> / <input class="fld" value="4"> mm</div><div class="row"><span class="lb">Colour</span>${seg('nbc',[['keep','Keep'],['tint','Tint to stroke']],'keep')}</div>`,
+    scatter:`${['Size','Spacing','Offset','Rotation'].map(n=>`<div class="row"><span class="lb">${n}</span><select class="fld"><option>Random</option><option>Fixed</option></select><input class="fld" style="width:44px" value="${{Size:'60',Spacing:'120',Offset:'-80',Rotation:'-45'}[n]}"> – <input class="fld" style="width:44px" value="${{Size:'110',Spacing:'200',Offset:'80',Rotation:'45'}[n]}"></div>`).join('')}<div class="row"><span class="lb">Rotate</span>${seg('nbr',[['path','With path'],['page','Page']],'path')}</div>`,
+    pattern:`<div class="row"><span class="lb">Fit</span>${seg('nbpf',[['stretch','Stretch'],['space','Add space'],['approx','Approximate']],'stretch')}</div><div class="row" style="gap:6px;flex-wrap:wrap">${['Side','Outer corner','Inner corner','Start','End'].map((n,i)=>`<div style="border:1px dashed var(--line);border-radius:5px;padding:4px;text-align:center;width:84px;font-size:10px">${i===0?'✕✕':'—'}<br>${n}<br><button class="btn sm" style="margin-top:2px">Set from selection</button></div>`).join('')}</div>`,
+    calligraphic:`<div class="row"><span class="lb">Angle</span><input class="fld" value="30°"></div><div class="row"><span class="lb">Roundness</span><input class="fld" value="22 %"></div><div class="row"><span class="lb">Size</span><input class="fld" value="1.8 mm"></div><div class="row"><span class="lb">Variation</span><select class="fld"><option>Fixed</option><option>Random (seed)</option><option>Pressure</option></select></div><svg viewBox="0 0 60 40" style="width:80px;height:50px"><ellipse cx="30" cy="20" rx="22" ry="5" transform="rotate(-30 30 20)" fill="var(--ink)"/></svg>`,
+  }[k];
+  const save=S.width; S.width=1.4; const pv=brushSvg(prev,d,'var(--ink)',sample(d,160),14); S.width=save;
+  modal(`<div class="modal" style="width:620px"><div class="mh2">${edit?'Edit brush: Rope':'New brush from selection'}<span class="sp"></span><button class="ib" data-act="close">×</button></div><div class="mb">
+    <div class="row"><span class="lb">Name</span><input class="fld w" value="${edit?'Rope':'Brush 3'}"></div>
+    <div class="row"><span class="lb">Type</span>${seg('nbkind',[['calligraphic','Calligraphic'],['art','Art'],['scatter','Scatter'],['pattern','Pattern']],k)}</div>
+    <div class="row" style="align-items:flex-start;margin-top:6px"><span class="lb">Preview</span><svg viewBox="0 0 500 140" style="flex:1;height:120px;background:var(--canvas);border:1px solid var(--line);border-radius:5px">${pv}<path d="M30 130 h40 m-8 -5 l8 5 -8 5" stroke="var(--accent)" stroke-width="1.5" fill="none"/><text x="78" y="134" style="font:10px var(--f-ui)" fill="var(--muted)">artwork direction: along the path</text></svg></div>
+    ${k!=='calligraphic'?'<div class="note">Artwork: 3 curves from the selection, <b>copied</b> into the brush, so later edits to those shapes don\'t change it.</div>':''}
+    <div style="margin-top:6px">${opts}</div>
+  </div><div class="mf"><span class="lft">${edit?'OK applies to 2 objects in this document (one undo step)':'Saved in this document · Save to library to reuse elsewhere'}</span><button class="btn">Save to library</button><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="${edit?'close':'createbrush'}">${edit?'OK':'Create'}</button></div></div>`);
+}
+function traceModal(){
+  const t=S.trace, mode=t.mode;
+  const img=`<g transform="translate(260 150) scale(1.1)" opacity="${t.overlay/100}" style="filter:blur(.7px)">${refImage()}</g>`;
+  let tr='';
+  const c='var(--accent)';
+  if(mode==='thr') tr=`<g transform="translate(260 150) scale(1.1)" fill="none" stroke="${c}" stroke-width="1.3"><path d="M-114 64 C-62 -74 40 -84 104 -44 L96 -36 C38 -76 -58 -66 -106 56Z"/><path d="M-20 -60 C10 -100 70 -90 80 -60 C50 -40 10 -40 -20 -60Z"/><circle cx="-90" cy="-50" r="22"/>${t.speck<3?'<circle cx="60" cy="40" r="2"/><circle cx="-40" cy="20" r="1.5"/><circle cx="110" cy="70" r="2"/>':''}</g>`;
+  if(mode==='edge') tr=`<g transform="translate(260 150) scale(1.1)" fill="none" stroke="${c}" stroke-width="1"><path d="M-114 64 C-62 -74 40 -84 104 -44"/><path d="M-106 56 C-58 -66 38 -76 96 -36"/><path d="M-22 -60 C10 -102 72 -92 82 -60 C50 -38 10 -38 -22 -60Z"/><path d="M-18 -60 C10 -98 68 -88 78 -60 C50 -42 10 -42 -18 -60Z"/><circle cx="-90" cy="-50" r="23"/><circle cx="-90" cy="-50" r="21"/></g>`;
+  if(mode==='col') tr=`<g transform="translate(260 150) scale(1.1)" stroke-width="1"><rect x="-150" y="-100" width="300" height="200" fill="#efe7d6" stroke="#b9a88f"/><path d="M-114 64 C-62 -74 40 -84 104 -44 L96 -36 C38 -76 -58 -66 -106 56Z" fill="#5b4b3a"/><path d="M-20 -60 C10 -100 70 -90 80 -60 C50 -40 10 -40 -20 -60Z" fill="#6e8f4e"/><circle cx="-90" cy="-50" r="22" fill="#c9653a"/></g>`;
+  if(mode==='centre') tr=`<g transform="translate(260 150) scale(1.1)" fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round"><path d="M-110 60 C-60 -70 40 -80 100 -40"/><path d="M-20 -60 C20 -70 50 -68 80 -60"/><circle cx="-90" cy="-50" r="11"/><path d="M-118 82 l6 -20 l6 20 M-100 70 h8 M-88 62 v20 M-78 70 c6 0 10 4 10 8 s-4 4 -10 4 M-60 62 v20 M-50 70 v12 M-40 82 v-12 c8 0 10 4 10 12"/></g>`;
+  const counts={thr:'38 curves · 1 layer',edge:'74 curves · 1 layer',col:'52 curves · 4 layers (one per colour)',centre:'21 open paths · 1 layer · single-line for the plotter'}[mode];
+  modal(`<div class="modal" style="width:760px"><div class="mh2">Auto trace<span class="sp"></span><button class="ib" data-act="close">×</button></div><div class="mb">
+   <div class="row"><span class="lb">Source</span><select class="fld"><option>Botanica.png (Reference)</option></select><span class="note" style="margin:0">Calibrated 0.12 mm/px (#391)</span></div>
+   <div class="row"><span class="lb">Mode</span>${seg('tmode',[['thr','Threshold'],['edge','Edges'],['col','Colours'],['centre','Centreline']],mode)}</div>
+   <div style="display:grid;grid-template-columns:240px 1fr;gap:12px;margin-top:6px">
+    <div>
+     ${mode==='thr'?`<div class="row"><span class="lb">Threshold</span><input type="range" min="0" max="255" value="${t.thr}" data-tr="thr" class="grow"></div><div class="row"><span class="lb"></span><button class="ck"><i></i>Auto (Otsu)</button></div>`:''}
+     ${mode==='col'?`<div class="row"><span class="lb">Colours</span><input class="fld" value="4"> → 4 layers</div>`:''}
+     <div class="row"><span class="lb">Smoothing</span><input type="range" min="0" max="3" step=".1" value="${t.smooth}" data-tr="smooth" class="grow"></div>
+     <div class="row"><span class="lb">Speckles &lt;</span><input type="range" min="0" max="20" value="${t.speck}" data-tr="speck" class="grow"><span class="fld" style="width:44px">${t.speck} px</span></div>
+     <div class="row"><span class="lb">Corners</span><input class="fld" value="100°"></div>
+     <div class="row"><span class="lb">Curve fit</span>${seg('tfit',[['la','Lines + arcs'],['bz','Béziers']],'la')}</div>
+     <div class="row"><span class="lb">Tolerance</span><input class="fld" value="0.05"> mm</div>
+     <div class="row"><span class="lb">Overlay</span><input type="range" min="0" max="100" value="${t.overlay}" data-tr="overlay" class="grow"></div>
+     <div class="note">Runs in core (wasm32-clean) with a step budget, cancelled and restarted on every change. Large images are downscaled to ≤ 4 MP.</div>
+    </div>
+    <svg viewBox="0 0 520 300" style="width:100%;height:300px;background:var(--canvas);border:1px solid var(--line);border-radius:6px">${img}${tr}</svg>
+   </div></div>
+   <div class="mf"><span class="lft">${counts}</span><span class="lb">Output layer</span><select class="fld"><option>Trace (new, Draw)</option><option>Ink</option></select><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="dotrace">Trace</button></div></div>`);
+}
+
+/* ---------- status, notes ---------- */
+function status(){
+  $('#status').innerHTML=`<span class="prompt">${F[S.flow].prompt}</span><span class="sp"></span><span class="pill">Under-constrained · 6 DOF</span><span>1 selected</span><span class="mono">x 84.2 y 41.0</span><span>mm</span>`;
+}
+const NOTES={
+ style:['Inspector ▸ Style',`<p>Each style option is a collapsible sub-section under the M5 Style section. A dot marks a sub-section that's not at its default.</p><ul><li><b>Stroke</b>, width, pen and opacity, as in M5.</li><li><b>Profile</b> presets: uniform, taper both, taper start, taper end, bulge, pinch, and pressure (simulated, seeded). <b>Edit…</b> opens the width tool.</li><li><b>Caps &amp; joins</b>, <b>Dashes</b>, <b>Strokes</b> (multi) and <b>Brush</b>. A brush replaces Profile and Dashes.</li><li>The <b>Machine</b> line says what this layer will do with the style, and links to the layer's Stroke styles setting.</li><li>A multi-selection shows "—" for values that differ. One edit is one <code>SetStyle</code> and one undo step.</li></ul>`],
+ width:['Width profile and taper (#426)',`<ul><li>The <b>Width tool</b> (Shift+W, or Profile ▸ Edit…) shows diamond width points on both edges.</li><li>Drag across the path to change the width (Alt: one side only), or along it to move the point.</li><li>Click the stroke edge to add a point. <kbd>Del</kbd> removes the focused point. <kbd>Tab</kbd> cycles points, and <kbd>←/→</kbd> nudges one.</li><li>The graph in the dialog is the same data. It has Flip, Mirror and Save as preset.</li><li>Each drag is one undo step on release.</li><li><b>Machine:</b> an outline, plotted as outline + hatch on a plotter. On machine layers the centreline is used unless the layer is set to Styled.</li></ul>`],
+ dashes:['Caps, joins and dashes (#427, #428)',`<ul><li>Cap: butt, round or square. Join: miter (with a limit), round or bevel. Align: centre, inside or outside, for closed paths.</li><li>Dashes: presets, or up to 8 dash/gap pairs, plus phase. <b>Align to corners and ends</b> scales the pattern per span, so each corner gets a dash.</li><li><b>Machine:</b> SVG and PDF use native <code>stroke-dasharray</code>; aligned dashes are written expanded.</li><li>A pen plotter gets one pen-down per dash. DXF and HPGL get one entity per dash.</li><li>A Score or Cut layer set to Styled turns dashes into a perforation.</li></ul>`],
+ multi:['Multi-strokes (#429)',`<ul><li>The list starts with the base stroke.</li><li>+ Add stroke copies the selected row, offset by its width.</li><li>Each row has its own offset (+ is left of the path), width, colour, pen and dash.</li><li>Drag ⋮⋮ to reorder; the paint order is the list order. At most 16 rows.</li><li>Built on the exact offsets in ADR 0010, so arcs stay arcs.</li><li><b>Machine:</b> each row is its own path, with its own pen on a plotter. A Styled machine layer makes parallel cuts.</li></ul>`],
+ brushes:['Brushes pane (#435) and brush types (#430–#433)',`<ul><li>Open it with <kbd>B</kbd>. It lists the document's brushes first, then the library; bundled brushes are locked.</li><li>Click a brush to apply it, or drag it onto a path.</li><li><b>New from selection</b>: calligraphic, art, scatter or pattern. The artwork is <b>copied</b> into the brush.</li><li><b>Edit</b> updates every use in the document as one step. A library brush changes only through <b>Save to library</b>.</li><li>Scatter has a stored seed, so results are deterministic, and <b>Reseed</b> picks a new one. Counts are bounded (10 000 placements per path).</li><li><b>Machine:</b> the mapped artwork is real geometry. Closed art is hatched on a plotter, and Styled machine layers cut its outlines.</li></ul>`],
+ gradient:['Gradient fill (#436)',`<ul><li><b>Regions only</b>, following #451. Select a region, then use the Fill section: solid, linear, radial, elliptical or conic.</li><li>Click the stop bar to add a stop. Drag the canvas handles: round for the start, square for the end, and stops along the line.</li><li>Handles are stored in the region's box, so the gradient follows a move or scale (but not a rotation; owner question 3).</li><li><b>Machine:</b> visual. SVG and PDF write native gradients, with conic as 64 bands. Draw and Engrave can hatch by luminance. Laser power only works with a profile that supports greyscale.</li></ul>`],
+ history:['History and timeline (#446)',`<ul><li><b>History</b> lists every undo step. Click a row to go back to it, as one batch with one re-solve. Editing after a jump drops the later rows (linear; owner question 4). It is session only, up to 1 000 steps.</li><li><b>Timeline</b> lists the recipes in creation order. Edit, suppress (stored), delete and explode work as in M5's dialogs.</li><li>Reorder works only where nothing depends on the feature; otherwise the drop is refused with the reason.</li><li>A failed feature is red, keeps its last good result, and the sketch still solves.</li><li><b>Spec conflict:</b> §1 lists a feature timeline as a non-goal.</li></ul>`],
+ layers:['Layer blending and interaction (#459)',`<ul><li><b>Blending</b>: mode and opacity per layer. It is visual only: canvas, SVG <code>mix-blend-mode</code>, PDF <code>/BM</code> and PNG. Machines ignore it.</li><li><b>Regions</b>: own shapes only (the #457 default), or <i>all layers interact</i> (the document switch).</li><li>Per layer, <b>Cut by</b> and <b>Knock out by</b> are directional links.</li><li>One resolver serves the canvas, the Inspector and export, so Engrave hatch follows the links, and Machine preview shows it.</li><li>Browser rows show a blend chip and a ⛓ link badge.</li></ul>`],
+ reorder:['Drag-reorder layers (#462)',`<ul><li>Drag a row; a 2 px insertion line shows where it will land. Dropping is one <code>ReorderLayer</code> step.</li><li><kbd>Esc</kbd> cancels the drag, and <kbd>Alt+↑/↓</kbd> moves the focused row.</li><li>The canvas paint order, the export order and the Export dialog's table all follow.</li></ul>`],
+ refs:['Reference handles (#463)',`<ul><li>Double-click a reference, or use Inspector ▸ Transform, to enter <b>Transform reference</b> mode. Outside it the layer stays locked.</li><li>Drag inside the box to move it, the ◯ knob to rotate (Shift snaps to 15°), and a corner to scale (uniform; Shift for free).</li><li>Type X, Y, angle and scale, with the pivot from Calibrate's choice (#464).</li><li>One <code>TransformReference</code> per drag. Images gain a stored rotation (a format bump).</li></ul>`],
+ trace:['Auto trace (#461)',`<ul><li>Modes: threshold, edges, colours (N colours on N layers) and centreline (single-line for plotters).</li><li>The live preview runs over the reference with an overlay slider.</li><li>The output is lines, arcs or Béziers in mm at the calibrated scale, as one <code>TraceImage</code> command. Counts are bounded by the entity limit.</li><li>Runs in core (wasm32-clean) with a step budget. Spike S5 compares <code>vtracer</code> with a Locus-owned tracer; Potrace's GPL-2.0-or-later isn't on the allow list.</li></ul>`],
+ handles:['Larger Bézier handles (#470)',`<ul><li>Drawn at 9 px at every zoom, with a 1.5 px outline so they show over fills.</li><li>A 16 px hit area and a hover ring.</li><li>Anchors are squares and control handles are circles. Both match the M5 offset, pattern and fillet handles.</li><li>The sizes are theme constants, not hard-coded in the tools.</li></ul>`],
+ expand:['Expand to geometry',`<ul><li>Ctrl+Shift+E, Modify ▸ Expand, or the marking-menu list.</li><li><b>Outline</b> turns filled areas into closed curves. <b>Centrelines</b> turns pen paths (dashes, multi-strokes, art lines) into curves.</li><li>A purple preview shows the result with counts. OK is one <code>ExpandStyle</code> step.</li><li>The result is plain editable curves on the same layer, in the same colour and pen.</li><li>Gradients become stepped bands or hatch. A recipe instance must be exploded first (ADR 0011).</li></ul>`],
+ machine:['Machine preview: styles → operations',`<table class="t"><tr><th>Style</th><th>Draw (plotter)</th><th>Cut / Score</th><th>Engrave</th><th>SVG/PDF visual</th><th>DXF/HPGL</th></tr>
+   <tr><td>Width, caps, joins</td><td>outline + hatch</td><td>C: path · S: outline</td><td>C: path · S: hatched outline</td><td>native attrs</td><td>outline</td></tr>
+   <tr><td>Dashes</td><td>pen-down per dash</td><td>S: perforation</td><td>S: dashed lines</td><td>dasharray</td><td>entity per dash</td></tr>
+   <tr><td>Multi-strokes</td><td>path per row, own pen</td><td>S: parallel cuts</td><td>S: lines</td><td>path per row</td><td>offset paths</td></tr>
+   <tr><td>Profile, calligraphic, paint</td><td>outline + hatch</td><td>S: outline</td><td>S: hatched outline</td><td>filled outline</td><td>outline</td></tr>
+   <tr><td>Art, pattern, scatter</td><td>artwork paths</td><td>S: art outlines</td><td>S: hatched art</td><td>mapped art</td><td>art outlines</td></tr>
+   <tr><td>Gradient</td><td>density hatch (opt.)</td><td>ignored</td><td>density hatch (opt.)</td><td>native gradient</td><td>hatch or none</td></tr>
+   <tr><td>Blend, opacity</td><td>ignored</td><td>ignored</td><td>ignored</td><td>native</td><td>ignored</td></tr></table>
+   <p>C = Stroke styles: Centreline (the default). S = Styled. Colour and hairline on Cut, Score and Engrave come from the profile (M5).</p>`],
+};
+function notes(){ const [t,b]=NOTES[S.flow]; $('#notesFlow').innerHTML=`<h2>${t} <span class="ticket">${F[S.flow].t}</span></h2>${b}`; }
+function render(){ flows(); ribbon(); browser(); drawCanvas(); rightPane(); dialog(); status(); notes(); }
+let toastT; function toast(m){ clearTimeout(toastT); const old=document.querySelector('.toast'); if(old) old.remove(); const d=document.createElement('div'); d.className='toast'; d.textContent=m; frame.appendChild(d); toastT=setTimeout(()=>d.remove(),2400); }
+
+/* ---------- events ---------- */
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-flow],[data-set],[data-act],[data-toggle],[data-brush],[data-flag],[data-stroke],[data-hist],[data-htab],[data-tl],[data-link],[data-stop],[data-preset],[data-layer],[data-scrim]');
+  if(!t) return;
+  if(t.dataset.scrim!==undefined){ if(e.target===t) closeOverlay(); return; }
+  if(t.closest('a')) e.preventDefault();
+  if(t.dataset.flow){ setFlow(t.dataset.flow); return; }
+  if(t.dataset.toggle){ S.open[t.dataset.toggle]=!S.open[t.dataset.toggle]; rightPane(); return; }
+  if(t.dataset.flag){ S[t.dataset.flag]=!S[t.dataset.flag]; render(); return; }
+  if(t.dataset.brush!==undefined){ S.brush=t.dataset.brush||null; if(S.brush){S.strokes=null;} drawCanvas(); rightPane(); if(S.brush) toast(`Apply brush: ${S.brushes.find(b=>b.id===S.brush).name} · one undo step`); return; }
+  if(t.dataset.stroke!==undefined){ if(S.strokes){ S.strokeSel=+t.dataset.stroke; rightPane(); } return; }
+  if(t.dataset.hist!==undefined){ const n=+t.dataset.hist, d=S.hist-n; S.hist=n; render(); if(d) toast(d>0?`Back ${d} step${d>1?'s':''} · one re-solve`:`Forward ${-d} step${d<-1?'s':''}`); return; }
+  if(t.dataset.htab){ S.htab=t.dataset.htab; render(); return; }
+  if(t.dataset.tl!==undefined){ S.tlSel=+t.dataset.tl; rightPane(); if(TL[S.tlSel].fail) toast(TL[S.tlSel].why); return; }
+  if(t.dataset.link){ const [k,o]=t.dataset.link.split(':'); const a=S[k][S.layerSel]=S[k][S.layerSel]||[]; const i=a.indexOf(o); i<0?a.push(o):a.splice(i,1); render(); toast(`${k==='cutBy'?'Cut by':'Knock out by'} ${S.layers.find(x=>x.id===o).name} ${i<0?'on':'off'} · one undo step`); return; }
+  if(t.dataset.stop!==undefined){ S.grad.sel=+t.dataset.stop; rightPane(); drawCanvas(); e.stopPropagation(); return; }
+  if(t.dataset.preset){ const c=t.dataset.preset.split(','); S.grad.stops=c.map((x,i)=>({p:i/(c.length-1),c:x,o:1})); S.grad.sel=0; render(); return; }
+  if(t.dataset.layer && (S.flow==='layers'||S.flow==='reorder')){ S.layerSel=t.dataset.layer; render(); return; }
+  if(t.dataset.set){ const [k,v]=t.dataset.set.split(':'); setVal(k,v); return; }
+  if(t.dataset.act) act(t.dataset.act);
+});
+document.addEventListener('click',e=>{ const sb=e.target.closest('#stopbar'); if(sb && !e.target.closest('[data-stop]')){ const r=sb.getBoundingClientRect(), p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)); S.grad.stops.push({p,c:stopColour(p).replace(/rgb\((\d+),(\d+),(\d+)\)/,(m,a,b,c)=>'#'+[a,b,c].map(v=>(+v).toString(16).padStart(2,'0')).join('')),o:1}); S.grad.stops.sort((a,b)=>a.p-b.p); S.grad.sel=S.grad.stops.findIndex(s=>s.p===p); render(); toast('Stop added · one undo step'); } });
+function setVal(k,v){
+  if(k==='cap'||k==='join'||k==='align') S[k]=v;
+  else if(k==='expand') S.expand=v;
+  else if(k==='bshow') S.bshow=v;
+  else if(k==='gtype'){ S.grad.type=v; }
+  else if(k==='gmach') S.grad.mach=v;
+  else if(k==='interact') S.interactAll=v==='on';
+  else if(k==='mop') S.mop=v;
+  else if(k==='mstyled') S.mstyled=v==='1';
+  else if(k==='nbkind'){ S.nbkind=v; newBrushModal(S.nbedit); return; }
+  else if(k==='tmode'){ S.trace.mode=v; traceModal(); return; }
+  else return;
+  render();
+}
+function act(a){
+  if(a==='undo'){ toast('Undo'); return; }
+  if(a==='reseed'){ S.seed=(S.seed*7919+13)%9973; if(S.profile==='pressure') S.pts=pressurePts(S.seed); render(); toast('Reseed · one undo step'); return; }
+  if(a==='addstroke'){ if(!S.strokes){ S.strokes=[{w:S.width,col:S.stroke,off:0,dash:S.dash,pen:1}]; S.brush=null; } const r=S.strokes[S.strokeSel]; if(S.strokes.length<16){ S.strokes.splice(S.strokeSel+1,0,{...r,off:r.off+r.w+.2,col:'#c23b3b',pen:r.pen+1}); S.strokeSel++; } render(); toast('Add stroke · one undo step'); return; }
+  if(a==='delstroke'){ if(S.strokes&&S.strokeSel>0){ S.strokes.splice(S.strokeSel,1); S.strokeSel--; } if(S.strokes&&S.strokes.length===1) S.strokes=null; render(); return; }
+  if(a.startsWith('preset:')){ const p=a.split(':')[1]; S.profile=p; S.pts=clone(PRESETS[p]); S.focus=0; render(); return; }
+  if(a==='pflip'){ S.pts=S.pts.map(p=>[1-p[0],p[1],p[2]]).reverse(); S.profile='custom'; render(); return; }
+  if(a==='pmirror'){ S.pts=S.pts.map(p=>[p[0],p[1],p[1]]); S.profile='custom'; render(); return; }
+  if(a==='newbrush'){ S.nbedit=false; newBrushModal(false); return; }
+  if(a==='editbrush'){ S.nbedit=true; S.nbkind='art'; newBrushModal(true); return; }
+  if(a==='createbrush'){ closeOverlay(); S.brushes.splice(2,0,{id:{art:'rope',scatter:'leaves',pattern:'stitch',calligraphic:'nib'}[S.nbkind||'art'],name:'Brush 3',kind:S.nbkind||'art',uses:0,doc:1}); rightPane(); toast('Add brush "Brush 3" · one undo step'); return; }
+  if(a==='delbrush'){ modal(`<div class="modal" style="width:420px"><div class="mh2">Delete brush "Rope"?</div><div class="mb"><p style="margin:0">Rope is used by 2 objects in this document.</p></div><div class="mf"><button class="btn" data-act="close">Cancel</button><button class="btn pri" data-act="close">Replace with plain stroke</button></div></div>`); return; }
+  if(a==='close'){ closeOverlay(); return; }
+  if(a==='delstop'){ if(S.grad.stops.length>2){ S.grad.stops.splice(S.grad.sel,1); S.grad.sel=0; render(); } return; }
+  if(a==='revgrad'){ S.grad.stops=S.grad.stops.map(s=>({...s,p:1-s.p})).reverse(); render(); return; }
+  if(a==='suppress'){ TL[S.tlSel].sup=!TL[S.tlSel].sup; render(); toast(`${TL[S.tlSel].sup?'Suppress':'Unsuppress'} ${TL[S.tlSel].n} · one undo step`); return; }
+  if(a==='tldelete'){ toast(S.tlSel===0?'Can\'t delete Offset 1: Offset 2 uses its curves':'Delete '+TL[S.tlSel].n+' · one undo step'); return; }
+  if(a==='doexpand'){ S.expanded=true; render(); toast('Expand to geometry · one undo step'); return; }
+  if(a==='dotrace'){ closeOverlay(); toast('Trace: 21 paths on "Trace" · one undo step'); return; }
+}
+document.addEventListener('change',e=>{
+  const t=e.target;
+  if(t.dataset.sel==='profile'){ S.profile=t.value; S.pts=t.value==='pressure'?pressurePts(S.seed):clone(PRESETS[t.value]); S.focus=0; render(); }
+  if(t.dataset.sel==='dash'){ S.dash=t.value; render(); }
+  if(t.dataset.sel==='mfill'){ S.mfill=t.value; render(); }
+  if(t.dataset.blend){ S.blend[t.dataset.blend]=t.value; render(); toast('Set layer blend · one undo step'); }
+  if(t.dataset.col){ S.stroke=t.value; drawCanvas(); }
+  if(t.dataset.stopcol){ S.grad.stops[S.grad.sel].c=t.value; render(); }
+});
+document.addEventListener('input',e=>{
+  const t=e.target;
+  if(t.dataset.num){ const v=parseFloat(t.value); if(isFinite(v)){ S[t.dataset.num]=v; drawCanvas(); } }
+  if(t.dataset.snum&&S.strokes){ const v=parseFloat(t.value); if(isFinite(v)){ S.strokes[S.strokeSel][t.dataset.snum]=v; drawCanvas(); } }
+  if(t.dataset.opac){ S.opacity[t.dataset.opac]=+t.value; drawCanvas(); browser(); t.nextElementSibling.textContent=t.value+' %'; }
+  if(t.dataset.stoppos){ const v=parseFloat(t.value); if(isFinite(v)){ S.grad.stops[S.grad.sel].p=Math.max(0,Math.min(1,v/100)); drawCanvas(); } }
+  if(t.dataset.tr){ S.trace[t.dataset.tr]=+t.value; const fo=t.dataset.tr; traceModal(); const n=document.querySelector(`[data-tr="${fo}"]`); if(n) n.focus(); }
+  if(t.dataset.ref){ const v=parseFloat(t.value); if(isFinite(v)){ const k=t.dataset.ref; if(k==='x') S.ref.x=400+v*MM; if(k==='y') S.ref.y=280-v*MM; if(k==='a') S.ref.a=v; if(k==='s') S.ref.s=Math.max(.1,v/100); drawCanvas(); } }
+});
+
+/* drags on the canvas (width points, gradient handles, reference handles) and the profile graph */
+function svgPt(svg,e){ const p=svg.createSVGPoint(); p.x=e.clientX; p.y=e.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); }
+let drag=null;
+cv.addEventListener('mousedown',e=>{
+  const w=e.target.closest('[data-wp]'), gh=e.target.closest('[data-gh]'), gs=e.target.closest('[data-gstop]'), rh=e.target.closest('[data-rh]'), rb=e.target.closest('[data-refbody]');
+  if(w){ S.focus=+w.dataset.wp; drag={k:'wp',i:+w.dataset.wp,side:w.dataset.side,alt:e.altKey}; e.preventDefault(); }
+  else if(gh){ drag={k:'gh',which:gh.dataset.gh}; e.preventDefault(); }
+  else if(gs){ S.grad.sel=+gs.dataset.gstop; drag={k:'gs',i:+gs.dataset.gstop}; e.preventDefault(); }
+  else if(rh){ drag={k:rh.dataset.rh,start:svgPt(cv,e),ref:{...S.ref}}; e.preventDefault(); }
+  else if(rb){ drag={k:'move',start:svgPt(cv,e),ref:{...S.ref}}; e.preventDefault(); }
+  else if(S.flow==='width'){ // click near the stroke edge adds a point
+    const p=svgPt(cv,e), sm=sample(WAVE); let best=null,bd=1e9; for(const q of sm){ const d=Math.hypot(q.x-p.x,q.y-p.y); if(d<bd){bd=d;best=q;} }
+    if(best && bd<S.width*MM*1.2 && bd>2){ const [l,r]=interp(S.pts,best.t); S.pts.push([best.t,l,r]); S.pts.sort((a,b)=>a[0]-b[0]); S.focus=S.pts.findIndex(x=>x[0]===best.t); S.profile='custom'; render(); toast('Add width point · one undo step'); }
+  }
+});
+document.addEventListener('mousemove',e=>{
+  if(!drag) return;
+  if(drag.k==='gp'){ const g=$('#graph'); if(!g) return; const p=svgPt(g,e), W=248,H=104; const pt=S.pts[drag.i]; const v=Math.max(0,Math.min(2.2,(H/2-p.y)/(H/2*.42))); pt[1]=v; pt[2]=v; if(drag.i>0&&drag.i<S.pts.length-1){ pt[0]=Math.max(S.pts[drag.i-1][0]+.02,Math.min(S.pts[drag.i+1][0]-.02,(p.x-8)/(W-16))); } S.profile='custom'; drawCanvas(); $('#graph').outerHTML=graphSvg(); return; }
+  const p=svgPt(cv,e);
+  if(drag.k==='wp'){
+    const sm=sample(WAVE), pt=S.pts[drag.i], q=sm[Math.round(pt[0]*(sm.length-1))];
+    const d=((p.x-q.x)*q.nx+(p.y-q.y)*q.ny)*(drag.side==='l'?1:-1);
+    const v=Math.max(0,Math.min(3,d/(S.width*MM/2)));
+    if(drag.alt||e.altKey){ pt[drag.side==='l'?1:2]=v; } else { pt[1]=v; pt[2]=v; }
+    if(drag.i>0&&drag.i<S.pts.length-1){ let bi=0,bd=1e9; sm.forEach((s,j)=>{const dd=Math.hypot(s.x-p.x,s.y-p.y); if(dd<bd){bd=dd;bi=j;}}); const t=sm[bi].t; pt[0]=Math.max(S.pts[drag.i-1][0]+.02,Math.min(S.pts[drag.i+1][0]-.02,t)); }
+    S.profile='custom'; drawCanvas(); const g=$('#graph'); if(g) g.outerHTML=graphSvg();
+  }
+  if(drag.k==='gh'){ S.grad[drag.which]=[p.x,p.y]; drawCanvas(); }
+  if(drag.k==='gs'){ const [x1,y1]=S.grad.from,[x2,y2]=S.grad.to, dx=x2-x1, dy=y2-y1, L2=dx*dx+dy*dy; const u=((p.x-x1)*dx+(p.y-y1)*dy)/L2, off=Math.abs((p.x-x1)*dy-(p.y-y1)*dx)/Math.sqrt(L2); drag.off=off>40; S.grad.stops[drag.i].p=Math.max(0,Math.min(1,u)); drawCanvas(); }
+  if(drag.k==='move'){ S.ref.x=drag.ref.x+p.x-drag.start.x; S.ref.y=drag.ref.y+p.y-drag.start.y; drawCanvas(); }
+  if(drag.k==='rot'){ let a=Math.atan2(p.y-S.ref.y,p.x-S.ref.x)*180/Math.PI+90; if(e.shiftKey) a=Math.round(a/15)*15; S.ref.a=a; drawCanvas(); }
+  if(drag.k==='scale'){ const d0=Math.hypot(drag.start.x-drag.ref.x,drag.start.y-drag.ref.y), d1=Math.hypot(p.x-drag.ref.x,p.y-drag.ref.y); S.ref.s=Math.max(.2,drag.ref.s*d1/d0); drawCanvas(); }
+});
+document.addEventListener('mouseup',()=>{
+  if(!drag) return; const k=drag.k;
+  if(k==='gs'&&drag.off&&S.grad.stops.length>2){ S.grad.stops.splice(drag.i,1); S.grad.sel=0; toast('Stop removed · one undo step'); }
+  else if(k==='wp'||k==='gp') toast('Set width profile · one undo step');
+  else if(k==='gh'||k==='gs') toast('Set region fill · one undo step');
+  else if(['move','rot','scale'].includes(k)) toast('Transform reference · one undo step');
+  drag=null; rightPane(); if(S.flow==='width') dialog(); drawCanvas();
+});
+document.addEventListener('mousedown',e=>{ const g=e.target.closest('[data-gp]'); if(g){ S.focus=+g.dataset.gp; drag={k:'gp',i:+g.dataset.gp}; e.preventDefault(); } });
+
+/* layer drag-reorder (HTML5 DnD) */
+let dragLayer=null;
+document.addEventListener('dragstart',e=>{ const li=e.target.closest&&e.target.closest('[data-layer]'); if(li){ dragLayer=li.dataset.layer; li.classList.add('drag'); e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain',dragLayer);}catch(_){} } const tl=e.target.closest&&e.target.closest('.tl [data-tl]'); if(tl){ e.dataTransfer.setData('text/plain','tl'); S.tlDrag=+tl.dataset.tl; } });
+document.addEventListener('dragover',e=>{
+  const li=e.target.closest&&e.target.closest('[data-layer]');
+  document.querySelectorAll('.ins-before,.ins-after').forEach(x=>x.classList.remove('ins-before','ins-after'));
+  if(li&&dragLayer){ e.preventDefault(); const r=li.getBoundingClientRect(); li.classList.add(e.clientY<r.top+r.height/2?'ins-before':'ins-after'); }
+  const tl=e.target.closest&&e.target.closest('.tl [data-tl]'); if(tl&&S.tlDrag!=null) e.preventDefault();
+});
+document.addEventListener('drop',e=>{
+  const li=e.target.closest&&e.target.closest('[data-layer]');
+  if(li&&dragLayer){ e.preventDefault(); const r=li.getBoundingClientRect(), before=e.clientY<r.top+r.height/2; const from=S.layers.findIndex(x=>x.id===dragLayer); const item=S.layers.splice(from,1)[0]; let to=S.layers.findIndex(x=>x.id===li.dataset.layer); if(!before) to++; S.layers.splice(to,0,item); S.layerSel=item.id; dragLayer=null; render(); toast(`Reorder layer: ${item.name} · one undo step`); }
+  const tl=e.target.closest&&e.target.closest('.tl [data-tl]');
+  if(tl&&S.tlDrag!=null){ e.preventDefault(); const to=+tl.dataset.tl, from=S.tlDrag; S.tlDrag=null; if(from===to) return; if((from===0&&to>=3)||(from===3&&to<=0)) toast('Can\'t move: Offset 2 uses Offset 1\'s curves'); else { const it=TL.splice(from,1)[0]; TL.splice(to,0,it); S.tlSel=to; render(); toast(`Reorder ${it.n} · one undo step`); } }
+});
+document.addEventListener('dragend',()=>{ dragLayer=null; document.querySelectorAll('.drag,.ins-before,.ins-after').forEach(x=>x.classList.remove('drag','ins-before','ins-after')); });
+
+/* keys */
+document.addEventListener('keydown',e=>{
+  const tag=(e.target.tagName||'').toLowerCase(); if(tag==='input'||tag==='select'||tag==='textarea') return;
+  const k=e.key;
+  if(k==='Escape'){ if($('#overlay').innerHTML){ closeOverlay(); return; } if(dragLayer){ dragLayer=null; return; } if(S.flow!=='style') setFlow('style'); return; }
+  if(e.ctrlKey&&e.shiftKey&&k.toLowerCase()==='e'){ e.preventDefault(); setFlow('expand'); return; }
+  if(e.ctrlKey&&k.toLowerCase()==='h'){ e.preventDefault(); setFlow('history'); return; }
+  if(e.ctrlKey&&k.toLowerCase()==='z'&&S.flow==='history'){ e.preventDefault(); if(S.hist>0){S.hist--; render(); toast('Undo · '+HIST[S.hist+1]);} return; }
+  if(e.ctrlKey&&k.toLowerCase()==='y'&&S.flow==='history'){ e.preventDefault(); if(S.hist<HIST.length-1){S.hist++; render(); toast('Redo · '+HIST[S.hist]);} return; }
+  if(e.altKey&&(k==='ArrowUp'||k==='ArrowDown')&&(S.flow==='reorder'||S.flow==='layers')){ e.preventDefault(); const i=S.layers.findIndex(x=>x.id===S.layerSel), j=i+(k==='ArrowUp'?-1:1); if(j>=0&&j<S.layers.length){ const it=S.layers.splice(i,1)[0]; S.layers.splice(j,0,it); render(); toast(`Reorder layer: ${it.name} · one undo step`); } return; }
+  if(S.flow==='width'){
+    if(k==='Tab'){ e.preventDefault(); S.focus=(S.focus+(e.shiftKey?S.pts.length-1:1))%S.pts.length; drawCanvas(); dialog(); return; }
+    if(k==='Delete'||k==='Backspace'){ e.preventDefault(); if(S.focus>0&&S.focus<S.pts.length-1){ S.pts.splice(S.focus,1); S.focus--; S.profile='custom'; render(); toast('Remove width point · one undo step'); } else toast('The end points stay'); return; }
+    if(k==='ArrowLeft'||k==='ArrowRight'){ e.preventDefault(); const i=S.focus; if(i>0&&i<S.pts.length-1){ const d=(e.shiftKey?.1:.01)*(k==='ArrowLeft'?-1:1); S.pts[i][0]=Math.max(S.pts[i-1][0]+.02,Math.min(S.pts[i+1][0]-.02,S.pts[i][0]+d)); S.profile='custom'; drawCanvas(); dialog(); } return; }
+  }
+  if(e.ctrlKey||e.metaKey||e.altKey) return;
+  if(e.shiftKey&&k.toLowerCase()==='w'){ setFlow('width'); return; }
+  if(e.shiftKey&&k.toLowerCase()==='b'){ setFlow('brushes'); toast('Paint brush: draw freehand, release to commit a path + width profile'); return; }
+  if(!e.shiftKey&&k==='b'){ setFlow(S.flow==='brushes'?'style':'brushes'); return; }
+  if(k==='Enter'&&S.flow==='refs'){ toast('Transform reference finished'); setFlow('style'); }
+});
+
+/* ---------- scale the frame to the stage ---------- */
+function fit(){ const w=$('#stage').clientWidth; const s=Math.max(.5,Math.min(1,w/1282)); frame.style.transform=`scale(${s})`; $('#scaler').style.width=1282*s+'px'; $('#scaler').style.height=782*s+'px'; }
+window.addEventListener('resize',fit);
+fit();
+let start='style'; try{const v=localStorage.getItem('locus-m6-flow'); if(v&&F[v]) start=v;}catch(e){}
+setFlow(start);
+})();
+</script>
+</body>
+</html>
