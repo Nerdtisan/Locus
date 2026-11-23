@@ -41,6 +41,7 @@ Decisions taken on **2026-11-04** after reviewing the initial brainstorm. Where 
 | Fills belong to regions (M5) | **Decided** (owner, #451, 2026-11-18, supersedes the paint-order part of #422): every closed region (a `locus-region` face) has its own fill colour and opacity. Objects have no fill. Strokes always draw above every fill, on the canvas and in SVG, PDF and PNG, so no fill can hide a line. A region's fill is set by selecting the region (#370) and using the Inspector's Fill section. Format **v19**: object fills migrate to the regions whose outer boundary they formed, the regions the canvas showed filled since #338. Holes stay open. Fills stay visual: only Draw layers export them, and machine output and Engrave hatch are unchanged. |
 | Engrave modes (M5) | **Decided** (owner, #455, 2026-11-18): Engrave layers get a mode, as in LightBurn: Fill, Line, Line + Fill or Offset fill. They also get an overlap rule, Even-odd or Union. Format **v20**. Older Engrave layers migrate to Line + Fill, not Fill, because they kept their outline and their export must not change; the ticket's "existing layers become Fill" is flagged in the PR. Machine preview draws the engrave hatch or rings faint, so the spacing reads and the region's fill shows through, and the legend explains it. The mode is per layer. A per-object override doesn't fit the model, since operations belong to layers (§4); put shapes on another Engrave layer instead. |
 | Regions per layer (M5) | **Decided** (owner, #457, 2026-11-19): regions are built per layer, so another layer's shape never cuts, fills or hides a layer's region. One resolver gives the canvas, the Inspector and export the same fill. When an edit on the same layer splits a filled region, every piece inside the old region keeps the fill. Format **v21** moves old cross-layer region keys (fills and booleans) to the per-layer region in the same place. |
+| Milestones M5 and M6 | M5 "Fusion-style UX" was added from owner feedback after M3 and accepted on 2026-11-23 (#295). M6 "Line, brush and fill styles" was planned by the owner on 2026-11-18 (epic #424) and starts with a design pass and ADR (#425). Both are listed in §13. |
 
 ---
 
@@ -430,6 +431,22 @@ Status as of 2026-11-04. Items marked **Spiking** or **Open** close with an ADR 
   - Calibrate (M5, #391): as Fusion's, pick two points on a reference (snapping to its points, or anywhere on an image) and type the real distance; the whole reference (points, radii and image) scales as one `ScaleReference` command. The scale is stored in the reference, and the layer stays locked. **Pivot (#464, #468):** by default a reference scales about its **centre** (the middle of its image and geometry), so one centred on 0,0 stays centred. "Scale about" in the Calibrate dialog also offers **Anchor corner** (an image's placement origin or the bottom-left of a vector reference's geometry, so one placed at 0,0 stays at 0,0) and **First point**. The hint under the choice says which point stays put, and the choice is remembered. Typing an image's width in the Inspector uses the same choice (Centre or Anchor corner). Each scale is one undoable command.
 - Packaging/installers: Windows Inno Setup installer + portable zip, macOS `.dmg`, Linux AppImage, Flatpak and `.deb`.
 - **Touch/pen input** epic (tablet and stylus interaction on the canvas).
+
+**M5 — Fusion-style UX** (owner feedback after M3/M4; closed 2026-11-23, acceptance #295)
+- Fusion-style sketch UI to the owner-approved mockup and [ADR 0017](adr/0017-fusion-style-ui.md) ([`docs/ux/m5-design.md`](ux/m5-design.md)): ribbon (Create / Modify / Constrain / Inspect / Insert / Select), browser tree, sketch palette, context Inspector, marking menu, Fusion's keys, versioned dock layout with panes and dialogs as real OS windows. Built on an action registry and a tool trait.
+- Fusion-style tools: pick → drag a handle or type → Enter/Esc, with editable dimensions. Move / Rotate / Scale, offset, fillet and chamfer handles, linear and circular patterns with handles and a picked direction, mirror, Bézier trim/extend/break, chain select, Delete key.
+- Style per object (stroke, width, pen, opacity), and fills per region (§0). Per-layer regions, engrave modes, per-layer and PNG export.
+- Machine profile per document: it drives the bed, the layer operations and the dockable Machine preview with job placement (§0).
+- Text: re-editable, font picker, alignment, letter spacing, text on a path. Raster references (PNG/JPEG) and Calibrate (§13 M4 notes).
+
+**M6 — Line, brush and fill styles** (epic #424; starts 2026-11-24)
+- Design pass first (#425): a mockup the owner signs off, `docs/ux/m6-design.md` and an ADR for the style model, the core stroke-expansion engine (variable-width offset, dash splitting, path-mapped art, scatter and pattern placement; wasm32-clean, bounded counts as §6.2.1, never panics) and the UI.
+- **Line styles:** width profiles and taper (#426), dashes and gaps (#427), caps and joins (#428), multi-strokes (#429).
+- **Brushes:** calligraphic (#430), art (#431), scatter (#432), pattern (#433), vector paint and contour (#434), and a brush library and Brushes panel (#435).
+- **Fills:** gradient fills (#436).
+- **Machine output for every style:** Draw/plot emits the styled geometry, Cut/Score/Engrave use the real path or the expanded outline, SVG/PDF/PNG stay visual where the format allows, DXF/HPGL get expanded geometry, and an **Expand to geometry** command turns any style into editable curves. Styles are stored in `.locus` with a format bump and migration test, and every change goes through the command API (§11).
+- Also in M6: edit timeline and history panel (#446), layer blending modes and an opt-in for cross-layer regions (#459), auto trace of raster references (#461), drag-reorder layers (#462), on-canvas move/rotate/scale handles for references (#463), larger Bézier handles (#470), and fonts listed from the OS so Adobe Creative Cloud fonts appear (#477).
+- Last of all: the egui 0.37 upgrade (#397).
 
 **Later (after M4)**
 - MCP for the web build, if a safe transport exists.
