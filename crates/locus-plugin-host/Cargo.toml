@@ -28,7 +28,7 @@ wasmparser = { version = "0.263", default-features = false, features = ["std", "
 
 # Desktop-only (SPEC §0, #181): the web build never links wasmtime.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wasmtime = { version = "50.0.1", default-features = false, features = [
+wasmtime = { version = "50.0.2", default-features = false, features = [
     "std",
     "runtime",
     "cranelift",
