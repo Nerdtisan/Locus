@@ -32,5 +32,6 @@ Decisions that close a `docs/SPEC.md §12` item, or any other choice that is cos
 | [0016](0016-web-plugin-runtime.md) | Web plugin runtime: the component's core module in a Web Worker, canonical ABI in Rust | Accepted | §15, §0, §12.14 |
 | [0017](0017-fusion-style-ui.md) | Fusion-style UI: ribbon, marking menu, one tool model, action registry | Accepted | §6, §11, §12.1, §12.15 |
 | [0018](0018-solidcore-kernel.md) | solidcore B-rep kernel: stay on `locus-solver` / `locus-geom` (proposed) | Proposed | §3, §12.16 |
+| [0019](0019-line-brush-fill-styles.md) | Line, brush and fill styles: style model, `locus-stroke` expansion engine, machine output (proposed) | Proposed | §4, §6.3, §7, §8, §12.17 |
 
 All §12 M0 decisions are recorded.
