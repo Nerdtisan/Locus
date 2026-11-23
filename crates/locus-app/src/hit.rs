@@ -319,6 +319,7 @@ mod tests {
             owned_point: false,
             derived_point: false,
             ends: None,
+            text: false,
         }
     }
 

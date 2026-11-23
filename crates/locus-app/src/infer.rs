@@ -157,10 +157,12 @@ pub fn infer(
     pick
 }
 
-/// The lines, circles and arcs among `items`, by id.
+/// The lines, circles and arcs among `items`, by id. Text outlines aren't
+/// curves to snap onto (#473).
 fn curves(items: &[Item]) -> impl Iterator<Item = (EntityId, Shape)> + '_ {
     items
         .iter()
+        .filter(|i| !i.text)
         .filter(|i| matches!(i.shape, Shape::Line(_) | Shape::Circle(_) | Shape::Arc(_)))
         .map(|i| (i.id, i.shape))
 }
@@ -298,7 +300,7 @@ fn parallel(items: &[Item], from: Vec2, to: Vec2) -> Option<(EntityId, Vec2)> {
 /// arcs and circles; points are handled before this.
 fn nearest_curve(items: &[Item], p: Vec2, tol: f64) -> Option<(EntityId, Vec2)> {
     let mut best: Option<(f64, EntityId, Vec2)> = None;
-    for item in items {
+    for item in items.iter().filter(|i| !i.text) {
         let q = match item.shape {
             Shape::Point(_) => continue,
             Shape::Line(l) => l.closest_point(p),
@@ -416,6 +418,7 @@ mod tests {
             owned_point: false,
             derived_point: false,
             ends: None,
+            text: false,
         }
     }
 
@@ -447,6 +450,31 @@ mod tests {
 
     fn line_item(id: u64, a: Vec2, b: Vec2) -> Item {
         item(id, Shape::Line(Line::new(a, b)))
+    }
+
+    /// Regression (#473): a text's outline and path guide draw as line
+    /// segments carrying the text's id. Snapping onto them (on, at a
+    /// crossing, a midpoint or an extension) designated "a point on the
+    /// text", which the Text tool's click couldn't place. They never snap.
+    #[test]
+    fn text_outlines_are_not_snapped_onto() {
+        let text = |a, b| Item {
+            text: true,
+            ..line_item(7, a, b)
+        };
+        let items = [
+            text(v(-10.0, 0.0), v(10.0, 0.0)),
+            text(v(3.0, -10.0), v(3.0, 10.0)),
+        ];
+        for at in [v(3.4, 0.3), v(-5.0, 0.4), v(0.3, 0.2), v(25.0, 0.6)] {
+            let p = infer(&items, ON, Tool::Text, None, true, at);
+            assert_eq!(
+                (p.on_curve, p.on_curve2, p.midpoint_of),
+                (None, None, None),
+                "{at:?}"
+            );
+            assert_eq!(p.guide, None);
+        }
     }
 
     /// #357: each snap to existing geometry, and what it designates.
