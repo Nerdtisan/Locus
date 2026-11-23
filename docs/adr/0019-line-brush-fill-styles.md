@@ -30,12 +30,12 @@ Forces:
 - **§10:** a format bump comes with a migration test, and saves stay deterministic.
 - **ADR 0010 / 0008:** laser and DXF output want true arcs.
 
-## Spec conflicts flagged (§17), not resolved here
+## Spec conflicts flagged (§17)
 
-1. **§1 Non-goals vs §13 M6.** §1 says "no gradients" and "Parametric feature timeline / history tree". The owner planned gradient fills (#436) and an edit timeline (#446) into M6, and §13 lists them. This ADR designs them, but **§1 needs the owner's edit** before they're built. A suggested wording: "no raster effects; gradients are visual fills with a defined machine result (M6)", and "the timeline lists recipes and the undo history; there is still one constrained sketch, not a feature tree".
+1. **§1 Non-goals vs §13 M6: resolved by the owner, 2026-11-24.** §1 said "no gradients" and "Parametric feature timeline / history tree", but M6 plans gradient fills (#436) and an edit timeline (#446). The owner chose to update the spec. §1 now says that gradients are visual region fills with a defined machine result, and that the timeline is the undo history plus the recipes, not a feature tree. §0 records it as "Owner decision 2026-11-24".
 2. **#436 says "fill objects and regions".** Since #451 (§0, §4), objects have no fill. This design puts gradients on **region fills only**. Object fills stay refused.
 3. **#459 interacting layers vs §6.3 "Regions are per layer".** This is opt-in and off by default, so #457 stays the default. §6.3 is amended when #459 is built.
-4. **Auto trace.** Potrace (GPL-2.0-or-later) is *not* on the `deny.toml` allow list, which has GPL-3.0-only/-or-later but not GPL-2.0-or-later, and it is C. It is therefore out, and only its published algorithm is used (decision 8).
+4. **Auto trace.** Potrace (GPL-2.0-or-later) is *not* on the `deny.toml` allow list, which has GPL-3.0-only/-or-later but not GPL-2.0-or-later, and it is C. **Owner decision 2026-11-24:** Locus writes its own implementation from the published algorithm. It uses no Potrace code and needs no licence exception (decision 8).
 
 ## Decision 1: the style model in `locus-doc`
 
@@ -96,12 +96,24 @@ BrushUse    { brush: BrushId, scale: f64, flip_along: bool, flip_across: bool, s
   - The `uid` links the copy to its library entry. "Update from library" and "Save to library" are explicit, so a library edit never changes a saved document silently.
 - **Gradients on region fills (#436):**
   - `RegionFill` gains `gradient: Option<Gradient>`. `fill` stays the solid colour and is used when the gradient is off, the same "remember the last choice" idea as #388.
-  - `Gradient` is `{ kind, from, to, stops, machine }`:
+  - `Gradient` is `{ kind, from, to, stops, machine, rotate_with_shape, frame_angle, frame_flip }`:
     - `kind`: `Linear | Radial | Elliptical { ratio } | Conic`.
-    - `from` and `to`: points **in the region's bounding box, normalised 0..1**, so the gradient follows the shape when it moves or scales.
+    - `from` and `to`: points normalised 0..1 in the gradient's **frame**.
     - `stops`: `Vec<Stop { pos, colour, opacity }>`, 2..=32 stops.
     - `machine`: `None | Hatch { min_spacing, max_spacing, angle } | Power`.
-  - Rotating a shape doesn't rotate its gradient, because the box is axis-aligned. This is recorded as a known limitation; the owner may want it changed.
+    - `rotate_with_shape`: `bool`, **default on** (owner decision 2026-11-24, #436).
+    - `frame_angle` (radians) and `frame_flip`: omitted while 0 / false.
+  - **The frame** is the region's bounding box measured along axes turned by `frame_angle`, and mirrored when `frame_flip` is set. It is always derived from the region's current geometry and never stored.
+    - **Any edit** (a solve, a dimension, a drag): the frame is refitted, so the gradient follows moves and scales, including non-uniform ones along its axes.
+    - **Rotate and Mirror commands** (#219, #215) that move every entity on the region's key: with **Rotate with shape** on, the same command adds the rotation to `frame_angle` or toggles `frame_flip`, in the same undo step. So the gradient turns and flips with the shape, as one would expect from a transform.
+    - **With it off:** `frame_angle` stays as it is, so the frame stays axis-aligned (0 unless the user set it). The gradient keeps its page direction, for example "light from the top" on parts rotated for nesting.
+    - Turning the option on or off is one `SetRegionFill` step and leaves the current look unchanged.
+    - Regions are derived faces with no transform of their own (§6.3), so only commands that carry a rotation or mirror can say how much the shape turned. A solver-driven reshape that happens to rotate a shape is refitted, not rotated. This is stated in the Inspector's tooltip.
+  - **Why default on:**
+    - It matches Illustrator and Affinity, where a gradient is part of the object's appearance and turns with it.
+    - Rotating a styled shape should look like rotating the object, the same rule as brushes and patterns that follow their path.
+    - Users who want a page-fixed direction turn it off per fill.
+    - Files gain nothing while the default holds, because `frame_angle` is 0 for every fill written before a rotation.
 - **Layers (#459):** `Layer` gains `blend: BlendMode`, which is Normal, Multiply, Screen, Overlay, Darken, Lighten, Difference, Exclusion, Hue, Saturation, Color or Luminosity, all supported by `tiny-skia`, SVG and PDF. It also gains `opacity` and `regions: RegionLinks { cut_by: Vec<LayerId>, knockout_by: Vec<LayerId> }`. `Document` gains `layers_interact: bool`. All are omitted at their defaults (decision 6).
 - **References (#463):** `ImagePlacement` gains `rotation` in radians, about the image's centre, omitted while 0. Vector references are entities, so they are transformed by a new command and need no format change.
 - **Commands (§11):**
@@ -132,7 +144,7 @@ The next free version goes to whichever ticket merges first. Every new field is 
 | #429 | `LineStyle.extra` | none |
 | #426 | `LineStyle.profile` | none |
 | #435 (with #430) | `Document.brushes`, `LineStyle.brush` | none |
-| #436 | `RegionFill.gradient` | none |
+| #436 | `RegionFill.gradient` (with `rotate_with_shape`, `frame_angle`, `frame_flip`) | none |
 | #459 | `Layer.blend`, `opacity`, `regions`; `Document.layers_interact` | none: absent = #457 behaviour |
 | #463 | `ImagePlacement.rotation` | none |
 | #446 | `Recipe.suppressed` | none |
@@ -179,7 +191,12 @@ Expansion {
 - **Multi-strokes (#429):** each `StrokeLayer` is the ADR 0010 open-chain offset of the path, then dashed and widened like the base stroke. **Exact.**
 - **Variable width (#426), calligraphic (#430) and paint (#434):**
   - The width is a function w(s) of arc length: the profile, or the nib's projection on the path normal, w(θ) = √((a·sin(θ−α))² + (b·cos(θ−α))²), with a the nib size and b = size × roundness.
-  - Each side is sampled adaptively until the chord error is under the tolerance, fitted with cubics, and lowered to biarcs (`to_pieces`). The two sides and the caps then go through one `locus-region` boolean, which removes the loops that tight curves make.
+  - Each side is sampled adaptively until the chord error is under the tolerance and fitted with cubics. The two sides and the caps then go through one `locus-region` boolean, which removes the loops that tight curves make. The boolean works on lines and arcs only (ADR 0008), so the cubics are lowered to biarcs (`to_pieces`) for it.
+  - **Arcs or Béziers (owner question, 2026-11-24): pending spike S1.**
+    - Option **(a) biarcs only:** one representation everywhere, as today.
+    - Option **(b) keep the fitted cubics:** for the canvas, SVG/PDF and **Expand to geometry**, with biarcs only where they're needed (region booleans, DXF R12, lasers and other arc-based machine output).
+    - In (b), the boolean cleanup still runs on biarcs. Each cleaned piece then maps back to the cubic span it came from, and spans the cleanup cut are refitted.
+    - S1 measures both, and the decision is recorded here after S1.
   - Spans where the width is constant use the exact constant-width path.
   - **This is an approximation.** The tolerance is a parameter: `EXPORT_TOL` (0.001 mm) for export and Expand, 0.05 screen px for the canvas.
   - **Spike S1** measures whether that is fast enough (below).
@@ -203,7 +220,7 @@ Expansion {
 
 | Spike | Question | Measure | Blocks |
 |---|---|---|---|
-| **S1 variable-width outline** | Is adaptive sampling + cubic fit + biarcs + boolean cleanup accurate and fast enough? | Hausdorff error against a dense-sampling oracle, the same harness style as ADR 0010; time per path and for 500 styled paths, native and wasm32; output arc count | #426, #430, #434 |
+| **S1 variable-width outline** | Is adaptive sampling + cubic fit + boolean cleanup accurate and fast enough? **And should the outline stay biarcs only, or keep cubic Béziers outside the boolean and arc-based outputs** (owner question, 2026-11-24)? | For (a) biarcs only and (b) cubics kept with biarcs only where needed: Hausdorff error against a dense-sampling oracle (ADR 0010 harness style); segment count; **node count after Expand to geometry** (how editable it is); how the boolean cleanup behaves on line/arc-only booleans (ADR 0008), including the cost and error of mapping back to cubics in (b); time per path and for 500 styled paths, native and wasm32 | #426, #430, #434 |
 | **S2 calligraphic accuracy** | Is w(θ) close enough to the exact Minkowski sweep of an elliptical or flat nib? | Maximum deviation against an exact sweep built with ADR 0010 pieces, for roundness 0, 0.3 and 1 | #430 (folded into S1) |
 | **S3 canvas cost** | Can the egui painter draw expanded areas within the frame budget? | Frame time with 500 styled paths, cached, with the current tessellator; compare with the wgpu callback upgrade path (ADR 0001) | #426 onward |
 
@@ -330,13 +347,13 @@ Owner clarification on #459 (2026-11-19): an **Interact / Don't interact** switc
 
 **D. Hybrid.** A for colour outlines, C for centreline.
 
-### Decision: proposed C, confirmed by spike S5
+### Decision: C (owner decision, 2026-11-24)
 
-C is proposed because centreline output is required and only C provides it. It also keeps line and arc output native, and adds no dependency.
+Locus writes its own tracer in `locus-trace`, implemented from the published Potrace algorithm (Selinger, 2003) and the other published methods above. No Potrace code is used and no licence exception is needed. C is the only option with centreline output, it keeps line and arc output native, and it adds no dependency. A and D are not chosen.
 
-**Spike S5** compares A and C on four fixtures: a logo, scanned line art, a photo and a handwritten signature. It measures node count, maximum deviation from the source edge in pixels, time for a 4 MP image native and wasm, and wasm size. If A is clearly better on outlines and passes `cargo deny`, the decision becomes D.
+**Spike S5 becomes a benchmark,** not a choice. It runs on four fixtures: a logo, scanned line art, a photo and a handwritten signature. It measures node count, maximum deviation from the source edge in pixels, time for a 4 MP image native and wasm, and wasm size. These set the default tolerances and the step budget.
 
-Either way:
+Also:
 - Input is the decoded reference, downscaled to ≤ 4 MP for tracing.
 - Work is bounded by a step budget, not a clock (§3), and cancellable through a callback.
 - On the desktop the trace runs off the UI thread. On the web it runs in chunks.
@@ -358,17 +375,20 @@ Either way:
 
 ## Consequences
 
-- **New core crate `locus-stroke`**, and possibly `locus-trace` (after S5). Both are UI-agnostic and added to the CI wasm32 check list; editing CI is out of this pass, so the first ticket that adds a crate asks for the check list change.
+- **New core crate `locus-stroke`**, and `locus-trace` (#461). Both are UI-agnostic and added to the CI wasm32 check list; editing CI is out of this pass, so the first ticket that adds a crate asks for the check list change.
 - `locus-doc` depends on `locus-stroke`, and `locus-export` and `locus-app` use it.
 - `Style` stops being `Copy`. Expect mechanical edits in `locus-app` and `locus-export` in the first style ticket.
 - §0 records the decisions as proposed. §12 gains item 17 pointing here. §4, §6.3, §7, §8 and §10 are edited by each feature PR as it lands, not now.
-- **Owner decisions needed:**
-  1. The §1 non-goals edit (conflict 1).
-  2. Default **Stroke styles = Centreline** on machine layers.
-  3. Gradients on regions only, following the box without rotating.
-  4. Linear history (truncate) rather than branching.
-  5. Default caps and joins = Round, which matches today's canvas.
+- **Owner decisions, 2026-11-24:**
+  - §1 is reworded (conflict 1).
+  - Gradient fills get **Rotate with shape**, default on (decision 1).
+  - Auto trace is Locus's own implementation from the Potrace paper (decision 8).
+  - Arcs vs Béziers for variable-width outlines is pending S1 (decision 3).
+- **Defaults still standing unless the owner says otherwise:**
+  - **Stroke styles = Centreline** on machine layers.
+  - Gradients on regions only.
+  - Linear history (truncate) rather than branching.
+  - Caps and joins = Round, which matches today's canvas.
 - **Revisit if:**
   - S1 shows the variable-width approximation can't meet `EXPORT_TOL` at a usable speed. Then expand to a coarser export tolerance and say so in the UI.
   - S3 shows the canvas can't draw expanded strokes within budget. Then move to the wgpu paint-callback renderer, ADR 0001's upgrade path.
-  - S5 favours `vtracer`.

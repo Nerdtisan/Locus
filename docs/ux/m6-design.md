@@ -17,13 +17,19 @@ Built on these owner decisions:
 - Both parts of #459 are in scope (2026-11-19).
 - Every style has a machine result (#424).
 
-**Open for the owner** (ADR 0019 "Consequences"). The mockup shows the recommended option for each.
+**Owner decisions, 2026-11-24** (SPEC §0):
+- **§1 is reworded.** Gradients are visual region fills with a defined machine result, and the timeline is undo history plus recipes, not a feature tree.
+- **Gradients get a "Rotate with shape" option per fill, default on** (§6).
+- **Auto trace is Locus's own implementation** of the published Potrace algorithm, with no Potrace code (§10).
+- **Arcs vs Béziers** for variable-width, calligraphic and paint outlines is measured by spike S1. Decision pending.
+
+**Defaults still standing** (ADR 0019 "Consequences"). The mockup shows the recommended option for each.
 
 | # | Question | Recommended | Alternative |
 |---|---|---|---|
-| 1 | §1 lists gradients and a history tree as non-goals, but M6 plans both | Edit §1 (wording in ADR 0019) | Drop #436 or #446 from M6 |
+| 1 | §1 non-goals | **Decided:** §1 reworded (owner, 2026-11-24) | — |
 | 2 | Machine layers and styled strokes | **Stroke styles: Centreline** by default; **Styled** per layer | Styled by default |
-| 3 | Gradients | On **regions** only (#451), following the region's box | Also on objects (reverses #451) |
+| 3 | Gradients | On **regions** only (#451); **Rotate with shape** on by default (owner, 2026-11-24) | Also on objects (reverses #451) |
 | 4 | History after jumping back | **Linear**: a new edit drops the redo steps | Branching tree |
 | 5 | Default cap and join | **Round / Round** (today's look) | Butt / Miter (Illustrator's) |
 | 6 | Plotter fill of wide strokes | **Outline + hatch** at the pen width | Outline only |
@@ -182,6 +188,7 @@ Regions only (open question 3). Select a region (#370), then **Inspector ▸ Fil
 ```
 FILL
   ☑ Fill   Type [Solid | Linear | Radial | Elliptical | Conic]   Opacity [100 %]
+  ☑ Rotate with shape
   [■■■■■■■■■■■■■■■■■■ stop bar with ▲ stops ]   ⇄ reverse
   Stop  [■ #1f6fd1]  Position [35 %]  Opacity [100 %]   [Delete stop]
   Angle [30°]  Ratio [60 %] (elliptical)
@@ -196,7 +203,12 @@ FILL
   - Radial and elliptical gradients add a **radius ring**, and elliptical adds a **ratio handle**.
   - Each drag is one `SetRegionFill` on release.
 - **Several regions selected:** shared values show, differing ones show "—", and one edit applies to all, each region keeping its own box.
-- The handles are stored relative to the region's bounding box, so the gradient follows a move or scale. A rotation leaves the gradient unrotated, a known limitation the owner should accept.
+- **Rotate with shape** (per fill, **default on**, owner decision 2026-11-24):
+  - The handles are stored in the gradient's frame: the region's box, measured along the frame's angle. The frame is refitted after every edit, so the gradient always follows a move or scale.
+  - With the option **on**, a Rotate or Mirror command on the shape (#219, #215) also turns or flips the frame, in the same undo step, so the gradient turns with the shape, as in Illustrator and Affinity.
+  - With it **off**, the gradient keeps its page direction when the shape rotates, for example "light from the top" on parts rotated for nesting.
+  - Toggling it doesn't change the current look.
+  - Its tooltip: “Follows Rotate and Mirror. Reshaping by dragging points refits the gradient to the new outline.”
 - **Swatches and presets** are saved in the user library next to brushes (#435).
 
 ## 7. History and timeline (#446)
@@ -268,7 +280,7 @@ The full table is ADR 0019 decision 4. In short:
 
 ## 10. Auto trace (#461)
 
-Insert ▸ **Auto trace…**, or right-click a raster reference. A modal dialog, because tracing is a one-off conversion:
+Insert ▸ **Auto trace…**, or right-click a raster reference. A modal dialog, because tracing is a one-off conversion (the engine is Locus's own `locus-trace`, written from the published Potrace algorithm, owner decision 2026-11-24):
 
 ```
 AUTO TRACE                                                  [×]
@@ -317,7 +329,7 @@ At most two build sessions at a time. Spikes first, because they decide engine d
 
 | Step | Ticket | Needs | Why here |
 |---|---|---|---|
-| A0 | **Spikes S1 + S2 + S3** (variable-width outline, calligraphic accuracy, canvas cost) | — | They decide #426/#430/#434 and the canvas budget |
+| A0 | **Spikes S1 + S2 + S3** (variable-width outline, **biarcs only vs kept cubic Béziers**, calligraphic accuracy, canvas cost) | — | They decide #426/#430/#434, the outline representation and the canvas budget |
 | A1 | **#428 caps and joins** + the `locus-stroke` crate, `Style.line`, the first format bump, `ExpandStyle`, the **Stroke styles** layer option, Machine preview and page bounds (#450) | A0 (S3) | Exact, smallest style; lands the whole pipeline once |
 | A2 | **#427 dashes** | A1 | Exact; perforation is a real machine win |
 | A3 | **#429 multi-strokes** | A1, A2 | Offsets plus per-stroke dash |
@@ -339,7 +351,7 @@ At most two build sessions at a time. Spikes first, because they decide engine d
 | B5 | **#446 history and timeline** | — | `Editor::history()`, pane, `SetRecipeSuppressed` (format) |
 | B6 | **#436 gradient fills** | B5 not needed; **after A1** (shares the export paint code) | Region fill (format), canvas handles |
 | B7 | **#459 blending and layer interaction** | **after B6** (the same region resolver and export paint) | Layer fields (format), resolver links |
-| B8 | **Spike S5** then **#461 auto trace** | — | New `locus-trace` crate if S5 confirms |
+| B8 | **#461 auto trace** (benchmark S5 inside the ticket) | — | New `locus-trace` crate, implemented from the Potrace paper (owner decision) |
 
 **Last of all:** the egui 0.37 upgrade (#397, §13), once both tracks are merged.
 
