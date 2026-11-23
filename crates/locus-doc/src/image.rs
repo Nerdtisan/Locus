@@ -414,6 +414,34 @@ mod tests {
         );
     }
 
+    /// #468: an image centred on 0,0, scaled about its centre ×0.0875 and
+    /// ×2, stays centred on 0,0.
+    #[test]
+    fn scaling_an_image_about_its_centre_keeps_it_centred() {
+        use crate::Command;
+        let (mut ed, layer) = with_image();
+        // Centre it on 0,0 first.
+        let mut p = ed.document().image(layer).unwrap().placement;
+        p.origin = ed.document().image(layer).unwrap().size_mm() * -0.5;
+        ed.apply(&Command::SetImagePlacement {
+            layer,
+            placement: p,
+        })
+        .unwrap();
+        let mid = crate::reference::centre(ed.document(), layer).unwrap();
+        assert!(mid.length() < 1e-12, "{mid:?}");
+        for f in [0.0875, 2.0] {
+            ed.apply(&Command::ScaleReference {
+                layer,
+                about: crate::reference::centre(ed.document(), layer).unwrap(),
+                factor: f,
+            })
+            .unwrap();
+            let now = crate::reference::centre(ed.document(), layer).unwrap();
+            assert!(now.length() < 1e-9, "×{f}: {now:?}");
+        }
+    }
+
     #[test]
     fn base64_round_trips_and_bounds() {
         let i = tiny_png();

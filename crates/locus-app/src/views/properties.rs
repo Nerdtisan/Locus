@@ -330,14 +330,35 @@ impl AppState {
             ));
             r.changed()
         });
+        // A typed width scales about the same pivot as Calibrate (#468):
+        // the centre by default, or the anchor corner (the image's origin).
+        use crate::views::canvas::calibrate_tool::Pivot;
+        let corner = self.tools.calibrate.pivot == Pivot::AnchorCorner;
+        row(ui, "Scale about", |ui| {
+            if let Some(c) = crate::views::canvas::dialog::segmented(
+                ui,
+                corner,
+                &[(false, "Centre"), (true, "Anchor corner")],
+            ) {
+                self.tools.calibrate.pivot = if c {
+                    Pivot::AnchorCorner
+                } else {
+                    Pivot::Centre
+                };
+            }
+        });
         if sized && width.is_finite() && width > 0.0 {
             let s = (width / px_w).clamp(
                 locus_doc::image::MIN_MM_PER_PX,
                 locus_doc::image::MAX_MM_PER_PX,
             );
-            p.mm_per_px = s;
+            p = scaled_placement(p, img.width_px, img.height_px, s, corner);
         }
-        ui.weak("Type the width, or Calibrate from a known distance.");
+        ui.weak(if corner {
+            "Type the width: the image keeps its anchor corner. Or Calibrate from a known distance."
+        } else {
+            "Type the width: the image keeps its centre. Or Calibrate from a known distance."
+        });
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
         if p == img.placement {
             ui.data_mut(|d| d.remove::<ImagePlacement>(key));
@@ -735,6 +756,28 @@ pub(crate) fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(Strin
     rows
 }
 
+/// An image placement at pixel size `mm_per_px`, scaled about its centre
+/// or, with `corner`, its anchor corner (the origin) (#464, #468).
+fn scaled_placement(
+    p: locus_doc::ImagePlacement,
+    width_px: u32,
+    height_px: u32,
+    mm_per_px: f64,
+    corner: bool,
+) -> locus_doc::ImagePlacement {
+    let size = |s: f64| locus_geom::Vec2::new(f64::from(width_px) * s, f64::from(height_px) * s);
+    let origin = if corner {
+        p.origin
+    } else {
+        p.origin + (size(p.mm_per_px) - size(mm_per_px)) * 0.5
+    };
+    locus_doc::ImagePlacement {
+        origin,
+        mm_per_px,
+        ..p
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -801,6 +844,27 @@ mod tests {
         let _ = frame(&mut state, vec![btn(false)]);
         assert_eq!(state.modify(), Some(crate::modify_tool::Modify::Calibrate));
         assert_eq!(state.tools.calibrate.layer, Some(layer));
+    }
+
+    /// #468: a typed width keeps the image's centre by default, or its
+    /// anchor corner when chosen.
+    #[test]
+    fn a_typed_width_keeps_the_centre_or_the_corner() {
+        let p = locus_doc::ImagePlacement {
+            origin: locus_geom::Vec2::new(-50.0, -25.0),
+            mm_per_px: 1.0,
+            opacity: 1.0,
+        };
+        // 100 × 50 px, centred on 0,0; halve it.
+        let c = super::scaled_placement(p, 100, 50, 0.5, false);
+        assert_eq!(
+            c.origin,
+            locus_geom::Vec2::new(-25.0, -12.5),
+            "still centred"
+        );
+        let k = super::scaled_placement(p, 100, 50, 0.5, true);
+        assert_eq!(k.origin, p.origin, "the corner stays");
+        assert_eq!(k.mm_per_px, 0.5);
     }
 
     /// #370, #451: selecting a region shows its own Fill; setting it fills
