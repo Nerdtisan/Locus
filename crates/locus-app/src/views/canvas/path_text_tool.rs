@@ -598,4 +598,87 @@ mod tests {
         assert!(c.detach_text(text));
         assert!(shown(&c, baseline) && shown(&c, anchor));
     }
+
+    /// Regression (#473): after a text went on a path, the Text tool
+    /// placed nothing. In real egui frames: place a text with the Text
+    /// tool, put it on the line with Text on path, then open the Text tool
+    /// again and click: a second, free text; the first stays on its path.
+    #[test]
+    fn the_text_tool_places_again_after_text_on_path() {
+        use egui::{Event, PointerButton as B, RawInput, pos2, vec2};
+        let (mut c, _, _) = ready();
+        let ctx = egui::Context::default();
+        let settings = crate::settings::Settings::default();
+        let mut t = 0.0;
+        let mut frame = |c: &mut AppState, events: Vec<Event>| {
+            let input = RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    pos2(0.0, 0.0),
+                    vec2(800.0, 600.0),
+                )),
+                time: Some(t),
+                events,
+                ..RawInput::default()
+            };
+            t += 0.03;
+            let mut status = crate::app::Status::default();
+            let _ = ctx.run_ui(input, |ui| c.canvas_ui(ui, &settings, &mut status));
+        };
+        let btn = |pos, pressed| Event::PointerButton {
+            pos,
+            button: B::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut click = |c: &mut AppState, at: Vec2| {
+            frame(c, Vec::new());
+            let p = c.view.camera.to_screen(at, c.view.rect);
+            frame(c, vec![Event::PointerMoved(p)]);
+            frame(c, vec![btn(p, true)]);
+            frame(c, vec![btn(p, false)]);
+            frame(c, Vec::new());
+        };
+        let texts = |c: &AppState| {
+            let doc = c.document();
+            doc.entities()
+                .iter()
+                .filter(|(_, e)| matches!(e.geom, Geom::Text { .. }))
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        // The scene on screen; clicks stay low and left, clear of the dialogs.
+        c.view.camera.center = Vec2::new(0.0, 20.0);
+        c.view.camera.pt_per_mm = 3.0;
+        // Place a text with the Text tool, as the owner did.
+        c.set_tool(Tool::Text);
+        c.tools.text_settings.content = "FIRST".to_owned();
+        click(&mut c, Vec2::new(-60.0, -10.0));
+        let placed = texts(&c);
+        assert_eq!(placed.len(), 2, "placed with the tool");
+        let first = *placed.last().expect("the new text");
+        // Text on path: click the text, then the line.
+        c.set_modify(Modify::TextOnPath);
+        let on = c
+            .document()
+            .text_geometry(first)
+            .and_then(|g| g.bbox())
+            .expect("glyphs");
+        click(&mut c, (on.min + on.max) * 0.5);
+        assert_eq!(c.tools.path_text.text, Some(first), "{:?}", c.doc.notice);
+        click(&mut c, Vec2::new(20.0, 0.0));
+        assert!(
+            c.document().text(first).expect("text").0.path.is_some(),
+            "{:?}",
+            c.doc.notice
+        );
+        // The Text tool again: a click places a second, free text.
+        c.set_tool(Tool::Text);
+        c.tools.text_settings.content = "SECOND".to_owned();
+        click(&mut c, Vec2::new(-60.0, -40.0));
+        let now = texts(&c);
+        assert_eq!(now.len(), 3, "a new text: {:?}", c.doc.notice);
+        let second = *now.last().expect("the second text");
+        assert!(c.document().text(second).expect("text").0.path.is_none());
+        assert!(c.document().text(first).expect("text").0.path.is_some());
+    }
 }

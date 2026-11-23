@@ -47,6 +47,10 @@ pub struct Item {
     pub derived_point: bool,
     /// The defining end points of a line or arc, for inference (#69).
     pub ends: Option<(EntityId, EntityId)>,
+    /// A segment of a text's outline or its path guide (#473): drawn and
+    /// picked as the text, but no curve to snap onto, since a point can't
+    /// lie on a text.
+    pub text: bool,
     pub bbox: Aabb,
 }
 
@@ -298,6 +302,7 @@ impl Scene {
                                 owned_point: false,
                                 derived_point: false,
                                 ends: None,
+                                text: true,
                                 bbox,
                             });
                         }
@@ -338,6 +343,7 @@ impl Scene {
                     | Geom::Bezier { start, end, .. } => Some((start, end)),
                     _ => None,
                 },
+                text: false,
                 bbox,
             });
         }
