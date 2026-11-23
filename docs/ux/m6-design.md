@@ -60,7 +60,7 @@ New keys (they don't clash with Fusion's sketch keys or M5):
 | Ctrl+H | History pane |
 | Ctrl+Alt+C / Ctrl+Alt+V | Copy style / Paste style (the eyedropper as keys) |
 | Alt+↑ / Alt+↓ | Move the focused layer row up or down (#462) |
-| T on a reference | (in Transform reference mode only) cycle move / rotate / scale handles |
+| M with a reference selected | Move reference (#463); Rotate and Scale from the same dialog's switch, as for shapes (#219) |
 
 ## 3. Inspector ▸ Style (#426–#429, #430–#435)
 
@@ -297,17 +297,24 @@ AUTO TRACE                                                  [×]
 - **Trace** is one `TraceImage` step. The result is ordinary geometry at the reference's scale. **Colours** mode puts each colour on its own new layer.
 - **Esc** cancels the dialog. Tracing never changes the reference.
 
-## 11. References: transform handles (#463)
+## 11. References: the same Move / Rotate / Scale handles as shapes (#463)
 
-- **Entering the mode:** double-click a reference (image or vector), or use Inspector ▸ **Transform**.
-  - The reference shows a **bounding box with 4 corner squares** (scale), **edge midpoints** (scale one axis, with Shift), a **rotation knob** above the top edge and a **centre cross** (the pivot, from the Calibrate pivot choice, #464).
-  - The layer stays locked otherwise. The handles exist only in this mode, which the status bar names: "Transform reference · Enter to finish".
-- **Dragging:**
-  - Drag inside the box to move. Arrow keys nudge 1 mm (Shift: 10 mm).
-  - Shift while rotating snaps to 15°.
-  - The HUD shows ΔX/ΔY, angle or scale.
-- **Inspector:** X, Y, Angle and Scale (%) fields, plus Pivot ▾.
-- **Undo:** each drag or typed value is one `TransformReference`. Enter or Esc leaves the mode.
+Owner clarification, 2026-11-24: references use the **same tools and handles as shapes**, the Move / Rotate / Scale tools from #219 (M5 design §6.7), so they are placed just as precisely. Every value can also be typed while dragging, as in Fusion's Move/Copy.
+
+- **Starting a tool:**
+  - Select a reference (click its image or geometry; selection doesn't edit it).
+  - Then pick **Move** (M), **Rotate** or **Scale** from the ribbon, the marking menu or the Inspector's buttons.
+  - The M5 manipulator appears: red X and green Y arrows, a centre square for free moves, a rotation ring and a scale handle.
+- **Move:** drag an arrow (one axis) or the centre square, or type the **X / Y distance**. It snaps to points and the grid as shapes do, in 0.1 mm steps (Shift: 1 mm).
+- **Rotate:** drag the ring, or type an **angle**. The pivot is the reference's **centre** or a **picked point** (snapping to points). Steps are 1°, and Shift snaps to 15°.
+- **Scale:** drag the scale handle (uniform; Shift for free X / Y), or type a **factor**. It scales about **Centre**, **Anchor corner** or a **picked point**: the same choice as Calibrate (#391, #464, #468), and remembered with it.
+- **Command dialog:**
+  - It docks top right, as in M5: a Move | Rotate | Scale switch (changing mode keeps the selection), then that mode's fields and pivot choice.
+  - **Tab** moves between fields. **Enter** (OK) commits one `TransformReference`. **Esc** first resets the values, then leaves the tool (M5 §6.7).
+  - The HUD beside the reference shows ΔX/ΔY, the angle or the factor while dragging.
+- **Inspector:** a selected reference shows X / Y, Angle and Scale (%) fields. Typing one commits the same command.
+- **Locking:** the Reference layer stays locked against accidental edits. Only these tools move a reference, so a stray click or drag can't. Calibrate still works the same.
+- **Undo:** one `TransformReference` per commit (§11). Images gain a stored rotation (a format bump). Vector references transform their entities.
 
 ## 12. Bézier handles (#470)
 

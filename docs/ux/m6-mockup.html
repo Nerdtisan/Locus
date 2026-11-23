@@ -344,7 +344,7 @@ const S={
   hist:9, tlSel:2,
   layers:[{id:'ink',name:'Ink',op:'Draw',col:'#1b2130'},{id:'tint',name:'Tint',op:'Draw',col:'#e8953a'},{id:'fills',name:'Fills',op:'Draw',col:'#1f6fd1'},{id:'line',name:'Linework',op:'Score',col:'#2a7de1'},{id:'cut',name:'Cut outline',op:'Cut',col:'#d03a3a'}],
   layerSel:'fills', blend:{tint:'multiply'}, opacity:{tint:80}, cutBy:{fills:['line']}, knock:{fills:[]}, interactAll:false,
-  ref:{x:400,y:280,a:0,s:1}, trace:{mode:'centre',thr:128,smooth:1,speck:4,overlay:60},
+  ref:{x:300,y:280,a:0,s:1}, trace:{mode:'centre',thr:128,smooth:1,speck:4,overlay:60},
   expand:'outline', expanded:false, mop:'Score', mstyled:true, mfill:'both',
   brushes:[
     {id:'rope',name:'Rope',kind:'art',uses:2,doc:1},{id:'nib',name:'Nib 30°',kind:'calligraphic',uses:1,doc:1},
@@ -436,7 +436,7 @@ const F={
  history:{n:'History & timeline',t:'#446',prompt:'Click a history row to go back to it · edits after a jump drop the later rows'},
  layers:{n:'Layer blending & regions',t:'#459',prompt:'Layer selected · blending is visual only · Cut by and Knock out change regions and Engrave hatch'},
  reorder:{n:'Drag-reorder layers',t:'#462',prompt:'Drag a layer row · the insertion line shows where it lands · Alt+↑/↓ moves the focused row'},
- refs:{n:'Reference handles',t:'#463',prompt:'Transform reference · drag to move, ◯ to rotate, corners to scale (Shift: free) · Enter to finish'},
+ refs:{n:'Reference handles',t:'#463',prompt:'Move/Rotate/Scale reference · drag an arrow, the ring or the scale handle, or type a value · Tab next field · Enter OK · Esc cancel'},
  trace:{n:'Auto trace',t:'#461',prompt:'Auto trace · the preview updates as you change settings'},
  handles:{n:'Bézier handles',t:'#470',prompt:'Hover the handles: 9 px drawn, 16 px to click, a ring on hover'},
  expand:{n:'Expand to geometry',t:'#424',prompt:'Expand to geometry · Outline or Centrelines · OK is one undo step'},
@@ -600,17 +600,24 @@ function refImage(){
   return `<g><rect x="-150" y="-100" width="300" height="200" fill="#efe7d6"/><path d="M-110 60 C-60 -70 40 -80 100 -40" fill="none" stroke="#5b4b3a" stroke-width="7" stroke-linecap="round" opacity=".85"/><path d="M-20 -60 C10 -100 70 -90 80 -60 C50 -40 10 -40 -20 -60Z" fill="#6e8f4e" opacity=".9"/><circle cx="-90" cy="-50" r="22" fill="#c9653a" opacity=".85"/><text x="-120" y="85" style="font:italic 600 22px Georgia,serif" fill="#5b4b3a">Botanica</text></g>`;
 }
 function refsCanvas(){
-  const r=S.ref, w=150*r.s, hh=100*r.s;
-  let h=`<g transform="translate(${r.x} ${r.y}) rotate(${r.a}) scale(${r.s})" opacity=".85" data-refbody="1" style="cursor:move">${refImage()}</g>`;
-  h+=`<g transform="translate(${r.x} ${r.y}) rotate(${r.a})"><rect x="${-w}" y="${-hh}" width="${2*w}" height="${2*hh}" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 3" pointer-events="none"/>
-   <line x1="0" y1="${-hh}" x2="0" y2="${-hh-34}" stroke="var(--accent)" stroke-width="1.2"/><circle data-rh="rot" cx="0" cy="${-hh-40}" r="7" fill="var(--panel)" stroke="var(--accent)" stroke-width="2" style="cursor:grab"/>
-   ${[[-1,-1],[1,-1],[1,1],[-1,1]].map(([a,b])=>`<rect data-rh="scale" x="${a*w-6}" y="${b*hh-6}" width="12" height="12" fill="var(--panel)" stroke="var(--accent)" stroke-width="2" style="cursor:nwse-resize"/>`).join('')}
-   ${[[0,-1],[1,0],[0,1],[-1,0]].map(([a,b])=>`<rect x="${a*w-4}" y="${b*hh-4}" width="8" height="8" fill="var(--accent)" pointer-events="none"/>`).join('')}
-   <path d="M-8 0h16M0 -8v16" stroke="var(--accent)" stroke-width="1.5"/></g>`;
-  h+=hud(r.x+w+14,r.y-10,`X ${((r.x-400)/MM).toFixed(1)}  Y ${((280-r.y)/MM).toFixed(1)} mm · ${r.a.toFixed(0)}° · ${(r.s*100).toFixed(0)} %`);
-  h+=`<text class="lbl" x="20" y="540">Reference layer stays locked; the handles exist only in Transform reference mode</text>`;
+  // The same manipulator as shapes (Move / Rotate / Scale, #219, M5 §6.7), applied to the locked reference.
+  const r=S.ref, m=r.mode||'move', w=150*r.s, hh=100*r.s;
+  let h=`<g transform="translate(${r.x} ${r.y}) rotate(${r.a}) scale(${r.s})" opacity=".85">${refImage()}</g>`;
+  h+=`<g transform="translate(${r.x} ${r.y}) rotate(${r.a})"><rect x="${-w}" y="${-hh}" width="${2*w}" height="${2*hh}" fill="none" stroke="var(--sel)" stroke-width="1.4" stroke-dasharray="5 3" pointer-events="none"/></g>`;
+  const px=r.pivot==='corner'?rotP2([r.x-w,r.y+hh],r):[r.x,r.y];
+  const on=k=>m===k?1:.35;
+  h+=`<g transform="translate(${px[0]} ${px[1]})">
+   <g opacity="${on('move')}"><line x1="0" y1="0" x2="70" y2="0" stroke="#d03a3a" stroke-width="2.5"/><path data-rh="mx" d="M70 -7 L86 0 L70 7Z" fill="#d03a3a" style="cursor:ew-resize"/>
+   <line x1="0" y1="0" x2="0" y2="-70" stroke="#2f8a4c" stroke-width="2.5"/><path data-rh="my" d="M-7 -70 L0 -86 L7 -70Z" fill="#2f8a4c" style="cursor:ns-resize"/>
+   <rect data-rh="move" x="10" y="-30" width="20" height="20" fill="color-mix(in srgb,var(--accent) 30%,transparent)" stroke="var(--accent)" style="cursor:move"/></g>
+   <path data-rh="rot" d="M${Math.cos(-0.2)*58} ${Math.sin(-0.2)*58} A58 58 0 0 1 ${Math.cos(-1.4)*58} ${Math.sin(-1.4)*58}" transform="scale(-1 1)" fill="none" stroke="var(--preview)" stroke-width="6" stroke-linecap="round" opacity="${on('rotate')}" style="cursor:grab"/>
+   <rect data-rh="scale" x="-58" y="40" width="14" height="14" fill="var(--panel)" stroke="var(--accent)" stroke-width="2" opacity="${on('scale')}" style="cursor:nwse-resize"/>
+   <circle r="5" fill="var(--panel)" stroke="var(--ink)" stroke-width="1.5"/></g>`;
+  h+=hud(r.x+w+14,r.y+hh-10,m==='move'?`ΔX ${((r.x-300)/MM).toFixed(1)}  ΔY ${((280-r.y)/MM).toFixed(1)} mm`:m==='rotate'?`${r.a.toFixed(1)}°`:`× ${r.s.toFixed(2)}`);
+  h+=`<text class="lbl" x="20" y="540">Same manipulator as shapes (#219). The Reference layer stays locked; only these tools move it, so a stray click can't.</text>`;
   return h;
 }
+function rotP2(p,r){ const a=r.a*Math.PI/180, dx=p[0]-r.x, dy=p[1]-r.y; return [r.x+dx*Math.cos(a)-dy*Math.sin(a), r.y+dx*Math.sin(a)+dy*Math.cos(a)]; }
 function handlesCanvas(){
   const seg=(ox,big)=>{
     const a=[ox+60,360],c1=[ox+60,200],c2=[ox+260,160],b=[ox+260,320];
@@ -767,11 +774,10 @@ function layerInspector(){
 }
 function refInspector(){
   const r=S.ref;
-  return `<div class="sec"><h4>Reference <span class="badge">Image · Botanica.png</span></h4><div class="row"><span class="lb">Layer</span><span>Reference 🔒</span></div><div class="row"><button class="btn sm pri">Transform</button><button class="btn sm">Calibrate…</button><button class="btn sm" data-flow="trace">Auto trace…</button></div></div>
-   ${sec('Transform',`<div class="row"><span class="lb">X</span><input class="fld" data-ref="x" value="${((r.x-400)/MM).toFixed(1)}"> mm</div><div class="row"><span class="lb">Y</span><input class="fld" data-ref="y" value="${((280-r.y)/MM).toFixed(1)}"> mm</div>
+  return `<div class="sec"><h4>Reference <span class="badge">Image · Botanica.png</span></h4><div class="row"><span class="lb">Layer</span><span>Reference 🔒</span></div><div class="row"><button class="btn sm" data-refmode="move">Move</button><button class="btn sm" data-refmode="rotate">Rotate</button><button class="btn sm" data-refmode="scale">Scale</button><button class="btn sm">Calibrate…</button><button class="btn sm" data-flow="trace">Auto trace…</button></div></div>
+   ${sec('Transform',`<div class="row"><span class="lb">X</span><input class="fld" data-ref="x" value="${((r.x-300)/MM).toFixed(1)}"> mm</div><div class="row"><span class="lb">Y</span><input class="fld" data-ref="y" value="${((280-r.y)/MM).toFixed(1)}"> mm</div>
     <div class="row"><span class="lb">Angle</span><input class="fld" data-ref="a" value="${r.a.toFixed(1)}"> °</div><div class="row"><span class="lb">Scale</span><input class="fld" data-ref="s" value="${(r.s*100).toFixed(0)}"> %</div>
-    <div class="row"><span class="lb">Pivot</span><select class="fld grow"><option>Centre</option><option>Anchor corner</option></select></div>
-    <div class="note">Each drag or typed value is one undo step (TransformReference). Enter or Esc leaves the mode.</div>`)}`;
+    <div class="note">Typing here is one undo step each, the same <code>TransformReference</code> as the tools.</div>`)}`;
 }
 function machineInspector(){
   return `<div class="sec"><h4>Machine preview <span class="badge">AxiDraw · pen plotter</span></h4><div class="note">Pick an operation for the layer holding the styled curves to see each result.</div></div>
@@ -817,6 +823,18 @@ function dialog(){
      <div class="row"><span class="lb"></span><button class="ck"><i></i>Keep original (hidden)</button></div>
      <div class="note">${S.expand==='outline'?'Filled areas become closed curves: 1 loop, 46 arcs, 4 lines.':'The pen paths become curves: dashes, multi-strokes and art lines. Here, 1 path.'} The result is plain editable curves on Ink, in the object's colour and pen.</div></div>
      <div class="df"><span class="lft">Ctrl+Shift+E</span><button class="btn" data-flow="style">Cancel</button><button class="btn pri" data-act="doexpand">OK</button></div></div>`;
+  }
+  if(f==='refs'){
+    const r=S.ref, m=r.mode||'move';
+    const piv=`<div class="row"><span class="lb">${m==='rotate'?'Pivot':'Scale about'}</span>${seg('refpivot',[['centre','Centre'],...(m==='scale'?[['corner','Corner']]:[]),['pick','Pick']],r.pivot||'centre')}</div>`;
+    const fields=m==='move'?`<div class="row"><span class="lb">X distance</span><input class="fld" data-ref="x" value="${((r.x-300)/MM).toFixed(1)}"> mm</div><div class="row"><span class="lb">Y distance</span><input class="fld" data-ref="y" value="${((280-r.y)/MM).toFixed(1)}"> mm</div><div class="note">Snaps to points and the grid like shapes. Shift: 1 mm steps.</div>`
+      : m==='rotate'?`<div class="row"><span class="lb">Angle</span><input class="fld" data-ref="a" value="${r.a.toFixed(1)}"> °</div>${piv}<div class="note">Drag the ring; Shift snaps to 15°.</div>`
+      : `<div class="row"><span class="lb">Factor</span><input class="fld" data-ref="f" value="${r.s.toFixed(3)}"></div>${piv}<div class="row"><span class="lb"></span><button class="ck"><i></i>Free X/Y (Shift while dragging)</button></div><div class="note">The same pivot choice as Calibrate (#464); it is remembered.</div>`;
+    h=`<div class="dlg"><div class="dh">${cap1(m)} reference<span class="sp"></span><span class="badge">Botanica.png</span></div><div class="db">
+     <div class="row"><span class="lb">Mode</span>${seg('refmode',[['move','Move'],['rotate','Rotate'],['scale','Scale']],m)}</div>
+     <div class="row"><span class="lb">Objects</span><span class="selbox" style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:4px;background:var(--accent);color:var(--accent-ink);font-size:11px">1 reference</span></div>
+     ${fields}</div>
+     <div class="df"><span class="lft">Tab next field · Enter OK · Esc cancel</span><button class="btn" data-act="refcancel">Cancel</button><button class="btn pri" data-act="refok">OK</button></div></div>`;
   }
   $('#dlg').innerHTML=h;
 }
@@ -893,7 +911,7 @@ const NOTES={
  history:['History and timeline (#446)',`<ul><li><b>History</b> lists every undo step. Click a row to go back to it, as one batch with one re-solve. Editing after a jump drops the later rows (linear; owner question 4). It is session only, up to 1 000 steps.</li><li><b>Timeline</b> lists the recipes in creation order. Edit, suppress (stored), delete and explode work as in M5's dialogs.</li><li>Reorder works only where nothing depends on the feature; otherwise the drop is refused with the reason.</li><li>A failed feature is red, keeps its last good result, and the sketch still solves.</li><li><b>Spec conflict:</b> §1 lists a feature timeline as a non-goal.</li></ul>`],
  layers:['Layer blending and interaction (#459)',`<ul><li><b>Blending</b>: mode and opacity per layer. It is visual only: canvas, SVG <code>mix-blend-mode</code>, PDF <code>/BM</code> and PNG. Machines ignore it.</li><li><b>Regions</b>: own shapes only (the #457 default), or <i>all layers interact</i> (the document switch).</li><li>Per layer, <b>Cut by</b> and <b>Knock out by</b> are directional links.</li><li>One resolver serves the canvas, the Inspector and export, so Engrave hatch follows the links, and Machine preview shows it.</li><li>Browser rows show a blend chip and a ⛓ link badge.</li></ul>`],
  reorder:['Drag-reorder layers (#462)',`<ul><li>Drag a row; a 2 px insertion line shows where it will land. Dropping is one <code>ReorderLayer</code> step.</li><li><kbd>Esc</kbd> cancels the drag, and <kbd>Alt+↑/↓</kbd> moves the focused row.</li><li>The canvas paint order, the export order and the Export dialog's table all follow.</li></ul>`],
- refs:['Reference handles (#463)',`<ul><li>Double-click a reference, or use Inspector ▸ Transform, to enter <b>Transform reference</b> mode. Outside it the layer stays locked.</li><li>Drag inside the box to move it, the ◯ knob to rotate (Shift snaps to 15°), and a corner to scale (uniform; Shift for free).</li><li>Type X, Y, angle and scale, with the pivot from Calibrate's choice (#464).</li><li>One <code>TransformReference</code> per drag. Images gain a stored rotation (a format bump).</li></ul>`],
+ refs:['Reference handles (#463)',`<ul><li><b>Same handles as shapes</b> (owner, 2026-11-24): the Move / Rotate / Scale tools from #219, so references are placed just as precisely. Pick them from the Inspector, M, or the marking menu with a reference selected.</li><li><b>Move:</b> drag the X or Y arrow or the centre square, or type the X / Y distance. Snaps to points and the grid.</li><li><b>Rotate:</b> drag the ring, or type an angle, about the centre or a picked point. Shift snaps to 15°.</li><li><b>Scale:</b> drag the scale handle (uniform; Shift for free X/Y), or type a factor, about Centre, Anchor corner or a picked point, the same choice as Calibrate (#464).</li><li>The command dialog sits top right. <kbd>Tab</kbd> moves between fields, <kbd>Enter</kbd> commits one <code>TransformReference</code>, and <kbd>Esc</kbd> cancels. The Inspector also shows X/Y, angle and scale.</li><li>The layer stays locked, and only these tools move it. Images gain a stored rotation (a format bump).</li></ul>`],
  trace:['Auto trace (#461)',`<ul><li>Modes: threshold, edges, colours (N colours on N layers) and centreline (single-line for plotters).</li><li>The live preview runs over the reference with an overlay slider.</li><li>The output is lines, arcs or Béziers in mm at the calibrated scale, as one <code>TraceImage</code> command. Counts are bounded by the entity limit.</li><li>Runs in core (wasm32-clean) with a step budget. It is Locus's own implementation of the published Potrace algorithm (owner decision): no Potrace code and no licence exception.</li></ul>`],
  handles:['Larger Bézier handles (#470)',`<ul><li>Drawn at 9 px at every zoom, with a 1.5 px outline so they show over fills.</li><li>A 16 px hit area and a hover ring.</li><li>Anchors are squares and control handles are circles. Both match the M5 offset, pattern and fillet handles.</li><li>The sizes are theme constants, not hard-coded in the tools.</li></ul>`],
  expand:['Expand to geometry',`<ul><li>Ctrl+Shift+E, Modify ▸ Expand, or the marking-menu list.</li><li><b>Outline</b> turns filled areas into closed curves. <b>Centrelines</b> turns pen paths (dashes, multi-strokes, art lines) into curves.</li><li>A purple preview shows the result with counts. OK is one <code>ExpandStyle</code> step.</li><li>The result is plain editable curves on the same layer, in the same colour and pen.</li><li>Gradients become stepped bands or hatch. A recipe instance must be exploded first (ADR 0011).</li></ul>`],
@@ -913,7 +931,7 @@ let toastT; function toast(m){ clearTimeout(toastT); const old=document.querySel
 
 /* ---------- events ---------- */
 document.addEventListener('click',e=>{
-  const t=e.target.closest('[data-flow],[data-set],[data-act],[data-toggle],[data-brush],[data-flag],[data-stroke],[data-hist],[data-htab],[data-tl],[data-link],[data-stop],[data-preset],[data-layer],[data-scrim]');
+  const t=e.target.closest('[data-flow],[data-set],[data-refmode],[data-act],[data-toggle],[data-brush],[data-flag],[data-stroke],[data-hist],[data-htab],[data-tl],[data-link],[data-stop],[data-preset],[data-layer],[data-scrim]');
   if(!t) return;
   if(t.dataset.scrim!==undefined){ if(e.target===t) closeOverlay(); return; }
   if(t.closest('a')) e.preventDefault();
@@ -930,6 +948,7 @@ document.addEventListener('click',e=>{
   if(t.dataset.preset){ const c=t.dataset.preset.split(','); S.grad.stops=c.map((x,i)=>({p:i/(c.length-1),c:x,o:1})); S.grad.sel=0; render(); return; }
   if(t.dataset.layer && (S.flow==='layers'||S.flow==='reorder')){ S.layerSel=t.dataset.layer; render(); return; }
   if(t.dataset.set){ const [k,v]=t.dataset.set.split(':'); setVal(k,v); return; }
+  if(t.dataset.refmode){ setVal('refmode',t.dataset.refmode); return; }
   if(t.dataset.act) act(t.dataset.act);
 });
 document.addEventListener('click',e=>{ const sb=e.target.closest('#stopbar'); if(sb && !e.target.closest('[data-stop]')){ const r=sb.getBoundingClientRect(), p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)); S.grad.stops.push({p,c:stopColour(p).replace(/rgb\((\d+),(\d+),(\d+)\)/,(m,a,b,c)=>'#'+[a,b,c].map(v=>(+v).toString(16).padStart(2,'0')).join('')),o:1}); S.grad.stops.sort((a,b)=>a.p-b.p); S.grad.sel=S.grad.stops.findIndex(s=>s.p===p); render(); toast('Stop added · one undo step'); } });
@@ -942,6 +961,8 @@ function setVal(k,v){
   else if(k==='interact') S.interactAll=v==='on';
   else if(k==='mop') S.mop=v;
   else if(k==='mstyled') S.mstyled=v==='1';
+  else if(k==='refmode'){ S.ref.mode=v; }
+  else if(k==='refpivot'){ S.ref.pivot=v; if(v==='pick') toast('Click a point to pivot about (snaps to points)'); }
   else if(k==='nbkind'){ S.nbkind=v; newBrushModal(S.nbedit); return; }
   else if(k==='tmode'){ S.trace.mode=v; traceModal(); return; }
   else return;
@@ -966,6 +987,8 @@ function act(a){
   if(a==='revgrad'){ S.grad.stops=S.grad.stops.map(s=>({...s,p:1-s.p})).reverse(); render(); return; }
   if(a==='suppress'){ TL[S.tlSel].sup=!TL[S.tlSel].sup; render(); toast(`${TL[S.tlSel].sup?'Suppress':'Unsuppress'} ${TL[S.tlSel].n} · one undo step`); return; }
   if(a==='tldelete'){ toast(S.tlSel===0?'Can\'t delete Offset 1: Offset 2 uses its curves':'Delete '+TL[S.tlSel].n+' · one undo step'); return; }
+  if(a==='refok'){ S.ref.saved={...S.ref}; toast('Transform reference · one undo step'); return; }
+  if(a==='refcancel'){ const sv=S.ref.saved||{x:300,y:280,a:0,s:1}; Object.assign(S.ref,{x:sv.x,y:sv.y,a:sv.a,s:sv.s}); render(); return; }
   if(a==='doexpand'){ S.expanded=true; render(); toast('Expand to geometry · one undo step'); return; }
   if(a==='dotrace'){ closeOverlay(); toast('Trace: 21 paths on "Trace" · one undo step'); return; }
 }
@@ -985,7 +1008,7 @@ document.addEventListener('input',e=>{
   if(t.dataset.opac){ S.opacity[t.dataset.opac]=+t.value; drawCanvas(); browser(); t.nextElementSibling.textContent=t.value+' %'; }
   if(t.dataset.stoppos){ const v=parseFloat(t.value); if(isFinite(v)){ S.grad.stops[S.grad.sel].p=Math.max(0,Math.min(1,v/100)); drawCanvas(); } }
   if(t.dataset.tr){ S.trace[t.dataset.tr]=+t.value; const fo=t.dataset.tr; traceModal(); const n=document.querySelector(`[data-tr="${fo}"]`); if(n) n.focus(); }
-  if(t.dataset.ref){ const v=parseFloat(t.value); if(isFinite(v)){ const k=t.dataset.ref; if(k==='x') S.ref.x=400+v*MM; if(k==='y') S.ref.y=280-v*MM; if(k==='a') S.ref.a=v; if(k==='s') S.ref.s=Math.max(.1,v/100); drawCanvas(); } }
+  if(t.dataset.ref){ const v=parseFloat(t.value); if(isFinite(v)){ const k=t.dataset.ref; if(k==='x') S.ref.x=300+v*MM; if(k==='y') S.ref.y=280-v*MM; if(k==='a') S.ref.a=v; if(k==='s') S.ref.s=Math.max(.1,v/100); if(k==='f') S.ref.s=Math.max(.1,v); drawCanvas(); if(t.closest('#dlg')) rightPane(); } }
 });
 
 /* drags on the canvas (width points, gradient handles, reference handles) and the profile graph */
@@ -1017,17 +1040,19 @@ document.addEventListener('mousemove',e=>{
   }
   if(drag.k==='gh'){ S.grad[drag.which]=[p.x,p.y]; drawCanvas(); }
   if(drag.k==='gs'){ const [x1,y1]=S.grad.from,[x2,y2]=S.grad.to, dx=x2-x1, dy=y2-y1, L2=dx*dx+dy*dy; const u=((p.x-x1)*dx+(p.y-y1)*dy)/L2, off=Math.abs((p.x-x1)*dy-(p.y-y1)*dx)/Math.sqrt(L2); drag.off=off>40; S.grad.stops[drag.i].p=Math.max(0,Math.min(1,u)); drawCanvas(); }
-  if(drag.k==='move'){ S.ref.x=drag.ref.x+p.x-drag.start.x; S.ref.y=drag.ref.y+p.y-drag.start.y; drawCanvas(); }
-  if(drag.k==='rot'){ let a=Math.atan2(p.y-S.ref.y,p.x-S.ref.x)*180/Math.PI+90; if(e.shiftKey) a=Math.round(a/15)*15; S.ref.a=a; drawCanvas(); }
-  if(drag.k==='scale'){ const d0=Math.hypot(drag.start.x-drag.ref.x,drag.start.y-drag.ref.y), d1=Math.hypot(p.x-drag.ref.x,p.y-drag.ref.y); S.ref.s=Math.max(.2,drag.ref.s*d1/d0); drawCanvas(); }
+  if(drag.k==='move'){ S.ref.mode='move'; S.ref.x=drag.ref.x+p.x-drag.start.x; S.ref.y=drag.ref.y+p.y-drag.start.y; drawCanvas(); }
+  if(drag.k==='mx'){ S.ref.mode='move'; S.ref.x=drag.ref.x+p.x-drag.start.x; drawCanvas(); }
+  if(drag.k==='my'){ S.ref.mode='move'; S.ref.y=drag.ref.y+p.y-drag.start.y; drawCanvas(); }
+  if(drag.k==='rot'){ S.ref.mode='rotate'; let a=Math.atan2(p.y-S.ref.y,p.x-S.ref.x)*180/Math.PI+90; if(e.shiftKey) a=Math.round(a/15)*15; S.ref.a=a; drawCanvas(); }
+  if(drag.k==='scale'){ S.ref.mode='scale'; const d0=Math.hypot(drag.start.x-drag.ref.x,drag.start.y-drag.ref.y), d1=Math.hypot(p.x-drag.ref.x,p.y-drag.ref.y); S.ref.s=Math.max(.2,drag.ref.s*d1/d0); drawCanvas(); }
 });
 document.addEventListener('mouseup',()=>{
   if(!drag) return; const k=drag.k;
   if(k==='gs'&&drag.off&&S.grad.stops.length>2){ S.grad.stops.splice(drag.i,1); S.grad.sel=0; toast('Stop removed · one undo step'); }
   else if(k==='wp'||k==='gp') toast('Set width profile · one undo step');
   else if(k==='gh'||k==='gs') toast('Set region fill · one undo step');
-  else if(['move','rot','scale'].includes(k)) toast('Transform reference · one undo step');
-  drag=null; rightPane(); if(S.flow==='width') dialog(); drawCanvas();
+  else if(['move','mx','my','rot','scale'].includes(k)) toast('Transform reference · one undo step');
+  drag=null; rightPane(); if(S.flow==='width'||S.flow==='refs') dialog(); drawCanvas();
 });
 document.addEventListener('mousedown',e=>{ const g=e.target.closest('[data-gp]'); if(g){ S.focus=+g.dataset.gp; drag={k:'gp',i:+g.dataset.gp}; e.preventDefault(); } });
 
@@ -1067,7 +1092,7 @@ document.addEventListener('keydown',e=>{
   if(e.shiftKey&&k.toLowerCase()==='w'){ setFlow('width'); return; }
   if(e.shiftKey&&k.toLowerCase()==='b'){ setFlow('brushes'); toast('Paint brush: draw freehand, release to commit a path + width profile'); return; }
   if(!e.shiftKey&&k==='b'){ setFlow(S.flow==='brushes'?'style':'brushes'); return; }
-  if(k==='Enter'&&S.flow==='refs'){ toast('Transform reference finished'); setFlow('style'); }
+  if(k==='Enter'&&S.flow==='refs'){ act('refok'); }
 });
 
 /* ---------- scale the frame to the stage ---------- */

@@ -365,9 +365,15 @@ Also:
   - `ReorderLayer { layer, to }` rewrites every layer's `export_order` as one step. The canvas draw order and the export order both follow it (#291).
   - Keyboard: Alt+↑ and Alt+↓ on a focused layer row.
 - **#463 reference handles:**
-  - The handles appear only in **Transform reference** mode, entered by double-clicking a reference or with the Inspector button. Outside that mode the layer stays locked.
-  - One `TransformReference` per drag: move, rotate about the centre, or scale (uniform by default, free with Shift), using the Calibrate pivot choice (#464).
-  - Typed X, Y, angle and scale in the Inspector.
+  - **Owner clarification, 2026-11-24:** references use the **same Move / Rotate / Scale tools and manipulator as shapes** (#219), not a separate handle set, so placement is just as precise.
+  - Values can be typed while dragging, as in Fusion's Move/Copy:
+    - **Move:** X / Y distance, snapping to points and the grid.
+    - **Rotate:** an angle, about the centre or a picked point.
+    - **Scale:** a factor, about Centre, Anchor corner or a picked point (the Calibrate choice, #464/#468).
+  - The command dialog docks top right: Tab between fields, Enter commits, Esc cancels (ADR 0017 tool model).
+  - The Inspector also shows X / Y, angle and scale.
+  - The tools dispatch on the selection. A reference selection commits one `TransformReference { layer, transform }` (generalising `ScaleReference`) instead of moving entities, because the Reference layer stays locked and only these tools may move it.
+  - Images gain `ImagePlacement.rotation` (format). Vector references transform their entities inside the same command.
 - **#470 Bézier handles:**
   - Theme constants `HANDLE_PX = 9` and `HANDLE_HIT_PX = 16`, a 1.5 px outline in the canvas colour, and a hover ring.
   - Anchors share the same size.
