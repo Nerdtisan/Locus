@@ -109,6 +109,14 @@ pub enum Command {
         id: LayerId,
         props: LayerProps,
     },
+    /// Move a layer to position `to` (0 = first) in the export order and
+    /// renumber every layer's `export_order` to its new position, as one
+    /// step (#462, ADR 0019 decision 9). The canvas draw order and the
+    /// export order follow it (#291). `to` past the end means last.
+    ReorderLayer {
+        layer: LayerId,
+        to: u32,
+    },
     /// Lock or unlock a layer. A locked layer's geometry is fixed for the
     /// solver and refuses edits (SPEC §4 rule 3); [`Sketcher`](crate::Sketcher)
     /// refuses a lock that would conflict with other constraints.
@@ -292,6 +300,7 @@ impl Command {
             Command::SetDriven { .. } => "Set driven".to_owned(),
             Command::AddLayer { .. } => "Add layer".to_owned(),
             Command::SetLayerProps { .. } => "Change layer".to_owned(),
+            Command::ReorderLayer { .. } => "Reorder layers".to_owned(),
             Command::MoveToLayer { .. } => "Move to layer".to_owned(),
             Command::DeleteLayer { .. } => "Delete layer".to_owned(),
             Command::SetLayerLocked { locked: true, .. } => "Lock layer".to_owned(),
@@ -1015,6 +1024,35 @@ fn exec(
                         after: Some(after),
                     },
                 );
+            }
+        }
+        Command::ReorderLayer { layer, to } => {
+            if doc.layer(*layer).is_none() {
+                return Err(DocError::UnknownLayer(*layer));
+            }
+            let mut order: Vec<LayerId> = doc.layer_order();
+            order.retain(|id| id != layer);
+            let at = usize::try_from(*to).map_or(order.len(), |t| t.min(order.len()));
+            order.insert(at, *layer);
+            for (i, id) in order.iter().enumerate() {
+                let want = u32::try_from(i)
+                    .map_err(|_| DocError::Invalid("too many layers".to_owned()))?;
+                let before = doc.layer(*id).ok_or(DocError::UnknownLayer(*id))?.clone();
+                if before.export_order != want {
+                    let after = Layer {
+                        export_order: want,
+                        ..before.clone()
+                    };
+                    record(
+                        doc,
+                        patches,
+                        Patch::Layer {
+                            id: *id,
+                            before: Some(before),
+                            after: Some(after),
+                        },
+                    );
+                }
             }
         }
         Command::SetLayerLocked { id, locked } => {
@@ -2465,5 +2503,47 @@ mod tests {
         };
         let text = ron::to_string(&c).unwrap();
         assert_eq!(ron::from_str::<Command>(&text).unwrap(), c);
+    }
+
+    #[test]
+    fn reorder_layer_is_one_step_and_renumbers_every_layer() {
+        // #462: a drag in the Browser is one ReorderLayer step.
+        let mut ed = Editor::new(Document::new());
+        let add = |ed: &mut Editor, name: &str| {
+            ed.apply(&Command::AddLayer {
+                name: name.to_owned(),
+                colour: [0, 0, 0],
+                operation: Operation::Draw,
+            })
+            .unwrap()
+            .layers[0]
+        };
+        let a = add(&mut ed, "A");
+        let b = add(&mut ed, "B");
+        assert_eq!(ed.document().layer_order(), [L, a, b]);
+        let before = ed.document().clone();
+        ed.apply(&Command::ReorderLayer { layer: b, to: 0 })
+            .unwrap();
+        assert_eq!(ed.document().layer_order(), [b, L, a]);
+        let orders: Vec<u32> = [b, L, a]
+            .iter()
+            .map(|id| ed.document().layer(*id).unwrap().export_order)
+            .collect();
+        assert_eq!(orders, [0, 1, 2]);
+        assert_eq!(ed.undo_label(), Some("Reorder layers"));
+        ed.undo().unwrap();
+        assert!(same_content(ed.document(), &before));
+        // Past the end means last; an unknown layer is refused.
+        ed.apply(&Command::ReorderLayer { layer: L, to: 99 })
+            .unwrap();
+        assert_eq!(ed.document().layer_order(), [a, b, L]);
+        let ghost = LayerId::new(9_999);
+        assert!(
+            ed.apply(&Command::ReorderLayer {
+                layer: ghost,
+                to: 0
+            })
+            .is_err()
+        );
     }
 }
