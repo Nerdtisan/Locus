@@ -167,7 +167,9 @@ impl<'open> Dialog<'open> {
                 main.map_or(Pos2::new(200.0, 200.0), |r| centred(r, size))
             })
         });
+        let hidden = opening(ctx, id);
         let builder = ViewportBuilder::default()
+            .with_visible(!hidden)
             .with_title(self.title.clone())
             .with_position(pos)
             .with_inner_size(size)
@@ -212,6 +214,28 @@ impl<'open> Dialog<'open> {
     }
 }
 
+/// True on the frame an OS-window viewport opens (it wasn't shown on the
+/// previous pass). egui-winit creates a new window visible before it knows
+/// the monitor's scale, so it would appear at the OS default place and size
+/// and jump into place a frame later (#458). Shown hidden on that frame, it
+/// appears once, where it belongs. Keyed by the viewport and the parent's
+/// pass counter, so a dialog or pane that closes and reopens hides again.
+pub(crate) fn opening(ctx: &Context, id: ViewportId) -> bool {
+    let key = Id::new(id).with("locus-last-pass");
+    let now = ctx.cumulative_pass_nr();
+    let last = ctx.data_mut(|d| {
+        let last = d.get_temp::<u64>(key);
+        d.insert_temp(key, now);
+        last
+    });
+    first_pass(last, now)
+}
+
+/// Was the viewport absent on the pass before `now`?
+fn first_pass(last: Option<u64>, now: u64) -> bool {
+    last.is_none_or(|l| l.saturating_add(1) < now)
+}
+
 /// The size a dialog opens at: the one the user left it at, if usable,
 /// else its default. A stored size is bounded (untrusted memory).
 fn opening_size(default: Vec2, remembered: Option<Vec2>) -> Vec2 {
@@ -228,6 +252,15 @@ fn centred(parent: egui::Rect, size: Vec2) -> Pos2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #458: an OS window is hidden only on the pass it (re)opens.
+    #[test]
+    fn os_windows_are_hidden_only_on_the_pass_they_open() {
+        assert!(first_pass(None, 0), "never shown");
+        assert!(!first_pass(Some(4), 5), "shown on the pass before");
+        assert!(!first_pass(Some(5), 5), "a second pass in the same frame");
+        assert!(first_pass(Some(2), 5), "closed in between: opening again");
+    }
 
     #[test]
     fn dialogs_open_centred_on_the_main_window() {
