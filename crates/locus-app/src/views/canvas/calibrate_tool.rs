@@ -2,9 +2,10 @@
 //! Calibrate a reference (#391), as Fusion's Calibrate: pick two points on
 //! a reference (an image or imported geometry), type the real distance
 //! between them, and the reference scales so that distance is exact. It
-//! scales about its anchor (an image's placement origin, or the bottom-left
-//! of the reference's geometry), so a reference placed at 0,0 stays at 0,0
-//! (#464); scaling about the first picked point is an explicit choice. One command (`Command::ScaleReference`, §11), stored
+//! scales about its centre by default, so a reference centred on 0,0 stays
+//! centred (#468). Its anchor corner (an image's placement origin, or the
+//! bottom-left of the reference's geometry, #464) and the first picked
+//! point are the other choices. One command (`Command::ScaleReference`, §11), stored
 //! in the reference itself, so it survives saving and undoes in one step.
 //!
 //! Points snap to the reference's own points; on an image any spot counts.
@@ -16,6 +17,47 @@ use egui::{Align2, FontId, PointerButton, Rect, Stroke};
 use locus_doc::{Command, LayerId, Operation};
 use locus_geom::Vec2;
 
+/// What a reference scales about (#464, #468).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pivot {
+    /// The middle of the reference: it stays centred where it is.
+    #[default]
+    Centre,
+    /// Its anchor corner: an image's placement origin, or the bottom-left
+    /// of its geometry.
+    AnchorCorner,
+    /// The first point picked in Calibrate.
+    FirstPoint,
+}
+
+impl Pivot {
+    /// The hint under the choice.
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Pivot::Centre => "The reference keeps its centre where it is.",
+            Pivot::AnchorCorner => {
+                "The reference keeps its anchor corner (its bottom-left) where it is."
+            }
+            Pivot::FirstPoint => "The reference scales about the first point you picked.",
+        }
+    }
+
+    /// The point to scale `layer` about: `first` is the first pick, if any.
+    pub fn point(
+        self,
+        doc: &locus_doc::Document,
+        layer: LayerId,
+        first: Option<Vec2>,
+    ) -> Option<Vec2> {
+        match self {
+            Pivot::Centre => locus_doc::reference::centre(doc, layer),
+            Pivot::AnchorCorner => locus_doc::reference::anchor(doc, layer),
+            Pivot::FirstPoint => first,
+        }
+        .or(first)
+    }
+}
+
 /// The Calibrate tool's picks and the typed distance.
 #[derive(Clone, Debug, Default)]
 pub struct CalibrateDraft {
@@ -25,9 +67,8 @@ pub struct CalibrateDraft {
     pub b: Option<Vec2>,
     /// The real distance between the points, in display units.
     pub distance: String,
-    /// Scale about the first picked point instead of the reference's
-    /// anchor (#464). Off by default.
-    pub about_first: bool,
+    /// What the reference scales about (#468: the centre by default).
+    pub pivot: Pivot,
 }
 
 impl CalibrateDraft {
@@ -37,7 +78,7 @@ impl CalibrateDraft {
         // The pivot choice is the user's: it stays for the next run.
         *self = Self {
             layer,
-            about_first: self.about_first,
+            pivot: self.pivot,
             ..Self::default()
         };
     }
@@ -95,12 +136,8 @@ impl AppState {
             .ok()
             .filter(|v| v.is_finite() && *v > 0.0)
             .ok_or_else(|| "Type the real distance between the points".to_owned())?;
-        // The anchor stays put unless the user chose the first point (#464).
-        let about = if d.about_first {
-            a
-        } else {
-            locus_doc::reference::anchor(doc, layer).unwrap_or(a)
-        };
+        // The chosen pivot stays put (#468: the centre by default).
+        let about = d.pivot.point(doc, layer, Some(a)).unwrap_or(a);
         Ok(Command::ScaleReference {
             layer,
             about,
@@ -281,19 +318,19 @@ impl AppState {
                     });
                 });
                 row(ui, "Scale about", |ui| {
-                    if let Some(first) = super::dialog::segmented(
+                    if let Some(p) = super::dialog::segmented(
                         ui,
-                        d.about_first,
-                        &[(false, "Anchor"), (true, "First point")],
+                        d.pivot,
+                        &[
+                            (Pivot::Centre, "Centre"),
+                            (Pivot::AnchorCorner, "Anchor corner"),
+                            (Pivot::FirstPoint, "First point"),
+                        ],
                     ) {
-                        d.about_first = first;
+                        d.pivot = p;
                     }
                 });
-                ui.weak(if d.about_first {
-                    "The reference scales about the first point you picked."
-                } else {
-                    "The reference keeps its anchor (its bottom-left corner) where it is."
-                });
+                ui.weak(d.pivot.hint());
                 if let Some(why) = &error {
                     ui.colored_label(ui.visuals().error_fg_color, why);
                 }
@@ -342,9 +379,9 @@ mod tests {
             .collect()
     }
 
-    /// #464: Calibrate keeps the reference's anchor (the bottom-left of its
-    /// geometry, here the line's start) fixed by default, scaled ×2 then
-    /// ×0.5. (`locus-doc` checks a reference placed at 0,0 stays at 0,0.)
+    /// #464: with "Anchor corner", Calibrate keeps the reference's anchor
+    /// (the bottom-left of its geometry, here the line's start) fixed,
+    /// scaled ×2 then ×0.5. (`locus-doc` checks one placed at 0,0 stays.)
     #[test]
     fn calibrate_keeps_the_anchor_where_it_was_placed() {
         let (mut c, layer) = with_reference();
@@ -359,6 +396,7 @@ mod tests {
                 (p[0], p[1])
             };
             c.set_modify(Modify::Calibrate);
+            c.tools.calibrate.pivot = Pivot::AnchorCorner;
             c.tools.calibrate.layer = Some(layer);
             c.tools.calibrate.a = Some(a); // not the anchor
             c.tools.calibrate.b = Some(b);
@@ -371,7 +409,31 @@ mod tests {
         }
     }
 
-    /// #464: scaling about the first picked point is an explicit choice.
+    /// #468: Calibrate keeps the reference's centre by default, scaled
+    /// ×0.0875 then ×2.
+    #[test]
+    fn calibrate_keeps_the_centre_by_default() {
+        let (mut c, layer) = with_reference();
+        assert_eq!(c.tools.calibrate.pivot, Pivot::Centre);
+        let mid = |c: &AppState| locus_doc::reference::centre(c.document(), layer).unwrap();
+        let start = mid(&c);
+        for factor in [0.0875, 2.0] {
+            let p = points(&c, layer);
+            c.set_modify(Modify::Calibrate);
+            c.tools.calibrate.layer = Some(layer);
+            c.tools.calibrate.a = Some(p[0]);
+            c.tools.calibrate.b = Some(p[1]);
+            c.tools.calibrate.distance = format!("{}", p[0].distance(p[1]) * factor);
+            assert!(c.calibrate_ok(Units::Mm));
+            assert!(
+                mid(&c).distance(start) < 1e-9,
+                "×{factor}: the centre stays"
+            );
+        }
+    }
+
+    /// #464, #468: the anchor corner and the first point are explicit
+    /// choices; the centre is the default.
     #[test]
     fn the_first_point_is_the_pivot_only_when_chosen() {
         let (mut c, layer) = with_reference();
@@ -384,13 +446,20 @@ mod tests {
             Ok(Command::ScaleReference { about, .. }) => about,
             other => panic!("{other:?}"),
         };
+        let mid = locus_doc::reference::centre(c.document(), layer).unwrap();
+        assert_eq!(about(&c), mid, "the centre by default");
+        c.tools.calibrate.pivot = Pivot::AnchorCorner;
         let at = locus_doc::reference::anchor(c.document(), layer).unwrap();
-        assert_eq!(about(&c), at, "the anchor by default");
+        assert_eq!(about(&c), at, "the anchor corner when chosen");
         assert_ne!(at, p[1]);
-        c.tools.calibrate.about_first = true;
+        c.tools.calibrate.pivot = Pivot::FirstPoint;
         assert_eq!(about(&c), p[1], "the first point when chosen");
         c.tools.calibrate.begin(Some(layer));
-        assert!(c.tools.calibrate.about_first, "the choice is kept");
+        assert_eq!(
+            c.tools.calibrate.pivot,
+            Pivot::FirstPoint,
+            "the choice is kept"
+        );
     }
 
     /// #391: pick two points on the reference, type the real distance, and
@@ -411,7 +480,7 @@ mod tests {
         assert!(c.reference_at(Vec2::new(500.0, 500.0), tol, None).is_none());
         c.tools.calibrate.layer = Some(layer);
         c.tools.calibrate.a = Some(a);
-        c.tools.calibrate.about_first = true;
+        c.tools.calibrate.pivot = Pivot::FirstPoint;
         assert!(!c.calibrate_ok(Units::Mm), "one point");
         c.tools.calibrate.b = Some(b);
         c.tools.calibrate.distance = "25".to_owned();

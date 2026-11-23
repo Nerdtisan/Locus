@@ -18,7 +18,7 @@ use locus_geom::{Aabb, Vec2};
 #[cfg(not(target_arch = "wasm32"))]
 mod ai;
 mod bed;
-mod calibrate_tool;
+pub(crate) mod calibrate_tool;
 mod corner_dialog;
 mod corner_handle;
 pub(crate) mod dialog;

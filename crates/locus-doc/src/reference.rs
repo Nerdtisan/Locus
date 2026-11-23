@@ -160,15 +160,35 @@ pub fn import_shapes_command(
 /// Largest calibration factor in one step (and the inverse, the smallest).
 pub const MAX_SCALE_FACTOR: f64 = 1.0e6;
 
-/// A reference's anchor (#464): the point a scale keeps fixed unless the
-/// user picks another. An image's placement origin (its bottom-left
-/// corner); otherwise the bottom-left corner of the layer's geometry. A
-/// reference placed at 0,0 stays at 0,0 when it is scaled.
+/// A reference's anchor corner (#464): an image's placement origin (its
+/// bottom-left corner); otherwise the bottom-left corner of the layer's
+/// geometry. Scaling about it keeps a reference placed at 0,0 at 0,0.
 #[must_use]
 pub fn anchor(doc: &Document, layer: LayerId) -> Option<Vec2> {
     if let Some(img) = doc.image(layer) {
         return Some(img.placement.origin);
     }
+    geometry_bounds(doc, layer).map(|b| b.min)
+}
+
+/// A reference's centre (#468): the middle of everything on the layer, its
+/// image and its geometry. Scaling about it keeps a reference centred where
+/// it is (the default pivot).
+#[must_use]
+pub fn centre(doc: &Document, layer: LayerId) -> Option<Vec2> {
+    let image = doc.image(layer).map(|img| {
+        let (lo, hi) = img.rect();
+        locus_geom::Aabb::from_points(lo, hi)
+    });
+    let b = match (image, geometry_bounds(doc, layer)) {
+        (Some(a), Some(b)) => a.union(b),
+        (a, b) => a.or(b)?,
+    };
+    Some((b.min + b.max) * 0.5)
+}
+
+/// The bounding box of the curves and points on `layer`.
+fn geometry_bounds(doc: &Document, layer: LayerId) -> Option<locus_geom::Aabb> {
     doc.entities()
         .iter()
         .filter(|(_, e)| e.layer == layer)
@@ -181,7 +201,6 @@ pub fn anchor(doc: &Document, layer: LayerId) -> Option<Vec2> {
             Geom::Text { .. } => None,
         })
         .reduce(locus_geom::Aabb::union)
-        .map(|b| b.min)
 }
 
 /// [`Command::ScaleReference`] (#391): every point on `layer` moves away
@@ -366,6 +385,18 @@ mod tests {
         }
         ed.undo().unwrap();
         ed.undo().unwrap();
+        // #468: about its centre, ×0.0875 then ×2, the centre stays put.
+        let mid = centre(ed.document(), layer).unwrap();
+        for f in [0.0875, 2.0] {
+            ed.apply(&Command::ScaleReference {
+                layer,
+                about: centre(ed.document(), layer).unwrap(),
+                factor: f,
+            })
+            .unwrap();
+            let now = centre(ed.document(), layer).unwrap();
+            assert!(now.distance(mid) < 1e-9, "×{f}: {now:?} vs {mid:?}");
+        }
         // Only Reference layers, and only sane factors.
         for (l, f) in [
             (Document::default_layer(), 2.0),
