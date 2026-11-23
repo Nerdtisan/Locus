@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Calibrate a reference (#391), as Fusion's Calibrate: pick two points on
 //! a reference (an image or imported geometry), type the real distance
-//! between them, and the reference scales about the first point so that
-//! distance is exact. One command (`Command::ScaleReference`, §11), stored
+//! between them, and the reference scales so that distance is exact. It
+//! scales about its anchor (an image's placement origin, or the bottom-left
+//! of the reference's geometry), so a reference placed at 0,0 stays at 0,0
+//! (#464); scaling about the first picked point is an explicit choice. One command (`Command::ScaleReference`, §11), stored
 //! in the reference itself, so it survives saving and undoes in one step.
 //!
 //! Points snap to the reference's own points; on an image any spot counts.
@@ -23,14 +25,19 @@ pub struct CalibrateDraft {
     pub b: Option<Vec2>,
     /// The real distance between the points, in display units.
     pub distance: String,
+    /// Scale about the first picked point instead of the reference's
+    /// anchor (#464). Off by default.
+    pub about_first: bool,
 }
 
 impl CalibrateDraft {
     /// A fresh run: on `layer` if one is given (the reference picked in the
     /// Browser), no points yet.
     pub fn begin(&mut self, layer: Option<LayerId>) {
+        // The pivot choice is the user's: it stays for the next run.
         *self = Self {
             layer,
+            about_first: self.about_first,
             ..Self::default()
         };
     }
@@ -88,9 +95,15 @@ impl AppState {
             .ok()
             .filter(|v| v.is_finite() && *v > 0.0)
             .ok_or_else(|| "Type the real distance between the points".to_owned())?;
+        // The anchor stays put unless the user chose the first point (#464).
+        let about = if d.about_first {
+            a
+        } else {
+            locus_doc::reference::anchor(doc, layer).unwrap_or(a)
+        };
         Ok(Command::ScaleReference {
             layer,
-            about: a,
+            about,
             factor: real / measured,
         })
     }
@@ -267,7 +280,20 @@ impl AppState {
                         ui.weak(units.label());
                     });
                 });
-                ui.weak("The reference scales about the first point.");
+                row(ui, "Scale about", |ui| {
+                    if let Some(first) = super::dialog::segmented(
+                        ui,
+                        d.about_first,
+                        &[(false, "Anchor"), (true, "First point")],
+                    ) {
+                        d.about_first = first;
+                    }
+                });
+                ui.weak(if d.about_first {
+                    "The reference scales about the first point you picked."
+                } else {
+                    "The reference keeps its anchor (its bottom-left corner) where it is."
+                });
                 if let Some(why) = &error {
                     ui.colored_label(ui.visuals().error_fg_color, why);
                 }
@@ -316,8 +342,60 @@ mod tests {
             .collect()
     }
 
+    /// #464: Calibrate keeps the reference's anchor (the bottom-left of its
+    /// geometry, here the line's start) fixed by default, scaled ×2 then
+    /// ×0.5. (`locus-doc` checks a reference placed at 0,0 stays at 0,0.)
+    #[test]
+    fn calibrate_keeps_the_anchor_where_it_was_placed() {
+        let (mut c, layer) = with_reference();
+        let anchor = |c: &AppState| locus_doc::reference::anchor(c.document(), layer).unwrap();
+        let start = anchor(&c);
+        assert_eq!(start, Vec2::new(0.0, 50.0), "the line's left end");
+        for (real, factor) in [("20", 2.0), ("10", 0.5)] {
+            let p = points(&c, layer);
+            let (a, b) = if p[0].x <= p[1].x {
+                (p[1], p[0])
+            } else {
+                (p[0], p[1])
+            };
+            c.set_modify(Modify::Calibrate);
+            c.tools.calibrate.layer = Some(layer);
+            c.tools.calibrate.a = Some(a); // not the anchor
+            c.tools.calibrate.b = Some(b);
+            c.tools.calibrate.distance = real.to_owned();
+            let before = a.distance(b);
+            assert!(c.calibrate_ok(Units::Mm));
+            assert_eq!(anchor(&c), start, "×{factor}: the anchor stays put");
+            let p = points(&c, layer);
+            assert!((p[0].distance(p[1]) - before * factor).abs() < 1e-9);
+        }
+    }
+
+    /// #464: scaling about the first picked point is an explicit choice.
+    #[test]
+    fn the_first_point_is_the_pivot_only_when_chosen() {
+        let (mut c, layer) = with_reference();
+        let p = points(&c, layer);
+        c.tools.calibrate.layer = Some(layer);
+        c.tools.calibrate.a = Some(p[1]);
+        c.tools.calibrate.b = Some(p[0]);
+        c.tools.calibrate.distance = "20".to_owned();
+        let about = |c: &AppState| match c.calibrate_command(Units::Mm) {
+            Ok(Command::ScaleReference { about, .. }) => about,
+            other => panic!("{other:?}"),
+        };
+        let at = locus_doc::reference::anchor(c.document(), layer).unwrap();
+        assert_eq!(about(&c), at, "the anchor by default");
+        assert_ne!(at, p[1]);
+        c.tools.calibrate.about_first = true;
+        assert_eq!(about(&c), p[1], "the first point when chosen");
+        c.tools.calibrate.begin(Some(layer));
+        assert!(c.tools.calibrate.about_first, "the choice is kept");
+    }
+
     /// #391: pick two points on the reference, type the real distance, and
-    /// the reference scales about the first point in one undo step.
+    /// the reference scales about the first point (when chosen) in one undo
+    /// step.
     #[test]
     fn two_picks_and_a_distance_scale_the_reference() {
         let (mut c, layer) = with_reference();
@@ -333,6 +411,7 @@ mod tests {
         assert!(c.reference_at(Vec2::new(500.0, 500.0), tol, None).is_none());
         c.tools.calibrate.layer = Some(layer);
         c.tools.calibrate.a = Some(a);
+        c.tools.calibrate.about_first = true;
         assert!(!c.calibrate_ok(Units::Mm), "one point");
         c.tools.calibrate.b = Some(b);
         c.tools.calibrate.distance = "25".to_owned();

@@ -160,6 +160,30 @@ pub fn import_shapes_command(
 /// Largest calibration factor in one step (and the inverse, the smallest).
 pub const MAX_SCALE_FACTOR: f64 = 1.0e6;
 
+/// A reference's anchor (#464): the point a scale keeps fixed unless the
+/// user picks another. An image's placement origin (its bottom-left
+/// corner); otherwise the bottom-left corner of the layer's geometry. A
+/// reference placed at 0,0 stays at 0,0 when it is scaled.
+#[must_use]
+pub fn anchor(doc: &Document, layer: LayerId) -> Option<Vec2> {
+    if let Some(img) = doc.image(layer) {
+        return Some(img.placement.origin);
+    }
+    doc.entities()
+        .iter()
+        .filter(|(_, e)| e.layer == layer)
+        .filter_map(|(id, e)| match e.geom {
+            Geom::Point { pos } => Some(locus_geom::Aabb::from_points(pos, pos)),
+            Geom::Line { .. } => doc.line(id).map(|l| l.bbox()),
+            Geom::Circle { .. } => doc.circle(id).map(|c| c.bbox()),
+            Geom::Arc { .. } => doc.arc(id).map(|a| a.bbox()),
+            Geom::Bezier { .. } => doc.cubic(id).map(|c| c.bbox()),
+            Geom::Text { .. } => None,
+        })
+        .reduce(locus_geom::Aabb::union)
+        .map(|b| b.min)
+}
+
 /// [`Command::ScaleReference`] (#391): every point on `layer` moves away
 /// from `about` by `factor`, and circle radii and the image follow. Lines,
 /// arcs and Béziers hang off their points, so they scale with them.
@@ -327,6 +351,21 @@ mod tests {
         assert_eq!(ed.undo_label(), Some("Calibrate reference"));
         ed.undo().unwrap();
         assert_eq!(ed.document().entities(), before.entities());
+        // #464: about its anchor (bottom-left, here 0,0) the reference
+        // stays put, ×2 and ×0.5.
+        let at = anchor(ed.document(), layer).unwrap();
+        assert_eq!(at, Vec2::ZERO);
+        for f in [2.0, 0.5] {
+            ed.apply(&Command::ScaleReference {
+                layer,
+                about: anchor(ed.document(), layer).unwrap(),
+                factor: f,
+            })
+            .unwrap();
+            assert_eq!(anchor(ed.document(), layer).unwrap(), at, "×{f}");
+        }
+        ed.undo().unwrap();
+        ed.undo().unwrap();
         // Only Reference layers, and only sane factors.
         for (l, f) in [
             (Document::default_layer(), 2.0),
