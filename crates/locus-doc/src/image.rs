@@ -365,6 +365,8 @@ mod tests {
     /// corner about the picked point; undo puts it back.
     #[test]
     fn calibrate_scales_an_image() {
+        // (#464: Calibrate passes the anchor, the origin, by default; this
+        // checks the command scales about whatever point it is given.)
         use crate::Command;
         let (mut ed, layer) = with_image();
         let before = ed.document().image(layer).cloned().unwrap();
@@ -383,6 +385,33 @@ mod tests {
         assert_eq!(after.size_mm(), Vec2::new(8.0, 4.0));
         ed.undo().unwrap();
         assert_eq!(ed.document().image(layer), Some(&before));
+    }
+
+    /// #464: an image's anchor is its placement origin; scaled about it,
+    /// ×2 then ×0.5, the image's corner doesn't move.
+    #[test]
+    fn scaling_an_image_about_its_anchor_keeps_it_in_place() {
+        use crate::Command;
+        let (mut ed, layer) = with_image();
+        let at = crate::reference::anchor(ed.document(), layer).unwrap();
+        assert_eq!(at, ed.document().image(layer).unwrap().placement.origin);
+        for f in [2.0, 0.5] {
+            ed.apply(&Command::ScaleReference {
+                layer,
+                about: crate::reference::anchor(ed.document(), layer).unwrap(),
+                factor: f,
+            })
+            .unwrap();
+            assert_eq!(
+                ed.document().image(layer).unwrap().placement.origin,
+                at,
+                "×{f}"
+            );
+        }
+        assert_eq!(
+            ed.document().image(layer).unwrap().size_mm(),
+            Vec2::new(2.0, 1.0)
+        );
     }
 
     #[test]
