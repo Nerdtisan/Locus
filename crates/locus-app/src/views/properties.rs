@@ -146,18 +146,13 @@ impl AppState {
     /// The Construction checkbox (X): one command per click (design §2.1,
     /// §6.10; #289).
     fn construction_row(&mut self, ui: &mut egui::Ui) {
-        if let Some(cmd) = self.construction_toggle() {
-            // Normal/Construction (design §2.1, §6.10; #289): one command per click.
-            let doc = self.doc.sketcher.document();
-            let flags: Vec<bool> = self
-                .selection
-                .items
-                .iter()
-                .filter(|id| doc.driven_by(*id).is_none())
-                .filter_map(|id| doc.entity(id).map(|e| e.construction))
-                .collect();
-            let all = flags.iter().all(|c| *c);
-            let mixed = !all && flags.iter().any(|c| *c);
+        if let (Some(cmd), Some((all, mixed))) =
+            (self.construction_toggle(), self.construction_state())
+        {
+            // Normal/Construction (design §2.1, §6.10; #289): one command per
+            // click. The box reads the same entities the click changes, recipe
+            // outputs included (#471): it used to skip those, read nothing,
+            // and show an empty selection as all-construction.
             let mut on = all;
             let toggled = crate::views::canvas::dialog::row(ui, "Construction", |ui| {
                 ui.add(crate::theme::Checkbox::new(&mut on, "X").mixed(mixed))

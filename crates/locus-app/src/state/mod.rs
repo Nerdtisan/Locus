@@ -668,13 +668,7 @@ impl AppState {
     /// when their recipe regenerates (#421); copies of a selected source
     /// follow it. `None` when nothing is selected.
     pub(crate) fn construction_toggle(&self) -> Option<Command> {
-        let doc = self.doc.sketcher.document();
-        let ids: Vec<(EntityId, bool)> = self
-            .selection
-            .items
-            .iter()
-            .filter_map(|id| doc.entity(id).map(|e| (id, e.construction)))
-            .collect();
+        let ids = self.construction_flags();
         if ids.is_empty() {
             return None;
         }
@@ -683,6 +677,30 @@ impl AppState {
             entities: ids.into_iter().map(|(id, _)| id).collect(),
             construction,
         })
+    }
+
+    /// Each selected entity and its construction flag: what the X toggle
+    /// acts on, recipe outputs included (#421).
+    fn construction_flags(&self) -> Vec<(EntityId, bool)> {
+        let doc = self.doc.sketcher.document();
+        self.selection
+            .items
+            .iter()
+            .filter_map(|id| doc.entity(id).map(|e| (id, e.construction)))
+            .collect()
+    }
+
+    /// The Inspector's Construction box for the selection (#471): `(ticked,
+    /// mixed)` from the same entities the toggle changes, so the box always
+    /// shows what a click will flip. `None` with nothing to toggle.
+    pub(crate) fn construction_state(&self) -> Option<(bool, bool)> {
+        let flags = self.construction_flags();
+        if flags.is_empty() {
+            return None;
+        }
+        let all = flags.iter().all(|(_, c)| *c);
+        let any = flags.iter().any(|(_, c)| *c);
+        Some((all, any && !all))
     }
 
     /// Delete the selection, with what is built on it, as one undo step
@@ -1781,9 +1799,26 @@ mod tests {
         let out: Vec<EntityId> = r.instances().filter(|e| doc.line(*e).is_some()).collect();
         assert_eq!(out.len(), 1);
         c.selection.items.set_all(out.clone());
+        // #471: the Inspector box shows the offset curve's own flag (it
+        // read nothing, as recipe outputs were left out, and so stayed
+        // ticked).
+        assert_eq!(c.construction_state(), Some((false, false)), "unticked");
         press(&mut c, egui::Key::X);
         let cons = |c: &AppState| c.document().entity(out[0]).unwrap().construction;
         assert!(cons(&c), "the offset curve is construction");
+        assert_eq!(c.construction_state(), Some((true, false)), "ticked");
+        // A mixed selection: the construction offset curve and its normal
+        // source line.
+        c.selection.items.set_all(vec![out[0], line]);
+        assert_eq!(c.construction_state(), Some((false, true)), "mixed");
+        c.selection.items.set_all(out.clone());
+        press(&mut c, egui::Key::X);
+        assert_eq!(
+            c.construction_state(),
+            Some((false, false)),
+            "unticked again"
+        );
+        c.undo();
         assert_eq!(c.undo_label(), Some("Make construction"));
         assert!(c.apply_reporting(&Command::EditRecipe {
             id: rid,
