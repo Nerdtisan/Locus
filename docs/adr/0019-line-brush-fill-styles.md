@@ -327,6 +327,29 @@ Owner clarification on #459 (2026-11-19): an **Interact / Don't interact** switc
 
 **Spike S4:** check on Windows and macOS with Creative Cloud running that Adobe fonts are listed and load; measure enumeration time with about 1 000 installed fonts (target < 300 ms at startup, done off the UI thread); run `cargo deny` on the exact features. The added dependencies are chosen in the #477 PR, not here (no new dependencies in this pass).
 
+**Spike S4 results (2026-11-24, #477).** Measured on the owner's Windows 11 PC with Creative Cloud running and 33 Adobe font files activated, using a throwaway probe over DirectWrite (`windows` 0.62):
+
+| Measure | Result |
+|---|---|
+| System collection | 226 families, 531 real (not simulated) faces; created in 0.8–1.3 ms |
+| Family and face names for every face | 25 ms cold, 100 ms warm run (both under the 300 ms target, and off the UI thread) |
+| Adobe fonts listed | **22 families, 32 faces**: every activated Adobe font whose file DirectWrite reports under Creative Cloud's `livetype` folder |
+| Adobe fonts loaded | **32 of 32** read through DirectWrite's font-file stream as valid sfnt data (7.5 MB) in 5–8 ms |
+| Each face's file path as well (for de-duplicating against the folder scan) | another 240–420 ms: **not used** |
+
+What #477 does as a result:
+
+- **Bindings: `dwrote` 0.11 (MPL-2.0) on Windows, `core-text` 22 (MIT OR Apache-2.0) on macOS, and `fc-list` on Linux.** This differs from the crates named in option C. The workspace denies `unsafe_code`, and has no exception anywhere. Raw `windows` or `objc2-core-text` calls are `unsafe`, while these two crates are safe wrappers over the same DirectWrite and Core Text calls. `fc-list` is fontconfig's own command, so no FFI crate is needed. Without fontconfig, the folder scan is used. All licences are on the `deny.toml` allow list. `dwrote` brings `winapi` 0.3 (Windows only).
+- **Names:** a face is listed as its family name for the regular face, and as "Family Style" for the others. That is what a document stores.
+- **De-duplication:** no file paths are fetched. On Windows and macOS the folders the scan walks are the OS's own, so the OS list already covers them. The OS list is shown whenever it isn't empty, and the first face under a name wins. The folder scan is listed only where the OS lists nothing.
+- **Older documents:** the folder scan always stays loadable by file stem, so documents saved before #477 (which store "arial") keep their fonts.
+- **Bytes:**
+  - Windows reads through DirectWrite's stream, so no path is needed.
+  - macOS reads the file at Core Text's URL, and finds the face in a `.ttc` by its names (`locus_text::face_index`).
+  - Linux uses fontconfig's index.
+  - All under the 64 MB cap. Nothing is copied or embedded, and no path is logged.
+- **Not measured:** the macOS check with Creative Cloud (no Mac here). CI builds and tests macOS, and the manual check is listed in #477's test notes.
+
 ## Decision 8: auto trace (#461)
 
 ### Options

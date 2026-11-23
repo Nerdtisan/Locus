@@ -184,7 +184,7 @@ impl FontCatalog {
         #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut library = FontLibrary::new();
         #[cfg(not(target_arch = "wasm32"))]
-        library.set_system_source(Box::new(system::DirFonts::scan()));
+        library.set_system_source(Box::new(crate::os_fonts::SystemFonts::start(system::scan)));
         // Fonts added in earlier sessions (#222). A file that no longer
         // parses is skipped, never fatal.
         #[cfg(not(target_arch = "wasm32"))]
@@ -481,7 +481,13 @@ fn font_picker(ui: &mut egui::Ui, s: &mut TextSettings, cat: &mut FontCatalog) -
             if k == FontKind::System && !cat.library.has_system_fonts() {
                 continue;
             }
-            ui.selectable_value(&mut cat.kind, k, k.label());
+            let r = ui.selectable_value(&mut cat.kind, k, k.label());
+            if k == FontKind::System {
+                // #477: the OS's list, including session-activated fonts.
+                r.on_hover_text(
+                    "Fonts installed on this computer, as the system lists them.                      Adobe Fonts appear while Creative Cloud is running and has them                      activated; documents keep only the font's name, never the font.",
+                );
+            }
         }
     });
     let id = ui.id().with("font-list-height");
@@ -621,31 +627,24 @@ fn font_picker(ui: &mut egui::Ui, s: &mut TextSettings, cat: &mut FontCatalog) -
 
 #[cfg(not(target_arch = "wasm32"))]
 mod system {
-    //! Installed fonts on desktop, found by walking the platform's font
-    //! folders. Listing needs no file contents; a font is read only when a
-    //! text uses it. Names are file stems, which is what the document stores.
+    //! The platform's font folders, walked for font files by file stem.
+    //! Since #477 the OS lists the fonts (`crate::os_fonts`); this scan is
+    //! the fallback where the OS lists none, and keeps the file-stem names
+    //! that documents saved before #477 store loading.
 
-    use locus_text::SystemFontSource;
+    use crate::os_fonts::MAX_FONT_BYTES;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
     const MAX_DEPTH: usize = 4;
-    /// Matches `locus_text::outline::MAX_OUTLINE_FONT_BYTES`.
-    const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
 
-    #[derive(Debug)]
-    pub struct DirFonts {
-        files: BTreeMap<String, PathBuf>,
-    }
-
-    impl DirFonts {
-        pub fn scan() -> Self {
-            let mut files = BTreeMap::new();
-            for dir in font_dirs() {
-                walk(&dir, 0, &mut files);
-            }
-            Self { files }
+    /// Font files in the platform's font folders, by file stem.
+    pub fn scan() -> BTreeMap<String, PathBuf> {
+        let mut files = BTreeMap::new();
+        for dir in font_dirs() {
+            walk(&dir, 0, &mut files);
         }
+        files
     }
 
     fn env_dir(var: &str) -> Option<PathBuf> {
@@ -704,20 +703,6 @@ mod system {
             {
                 out.entry(stem.to_owned()).or_insert(p);
             }
-        }
-    }
-
-    impl SystemFontSource for DirFonts {
-        fn families(&self) -> Vec<String> {
-            self.files.keys().cloned().collect()
-        }
-
-        fn load(&self, family: &str) -> Option<Vec<u8>> {
-            let path = self.files.get(family)?;
-            if std::fs::metadata(path).ok()?.len() > MAX_FONT_BYTES {
-                return None;
-            }
-            std::fs::read(path).ok()
         }
     }
 

@@ -43,6 +43,15 @@ rfd.workspace = true
 # The MCP server is desktop-only too (SPEC §0, §16).
 locus-mcp = { path = "../locus-mcp" }
 
+# Installed fonts from the OS (#477, ADR 0019 decision 7): safe wrappers
+# over DirectWrite and Core Text, so the workspace's `unsafe_code = "deny"`
+# holds. Linux asks fontconfig through `fc-list`.
+[target.'cfg(windows)'.dependencies]
+dwrote = { version = "0.11", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text = "22"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # Drives an MCP call from another thread in the canvas test (#230).
 tokio = { version = "1", features = ["rt"] }

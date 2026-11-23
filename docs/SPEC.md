@@ -343,6 +343,7 @@ Export is always one-way. Native file is the source of truth.
 - Text entity has a constrained baseline/anchor (can be constrained like any entity, e.g. centred on a region).
 - Bundle only fonts with compatible licences (OFL/public domain).
 - Representation, caching and font references: [ADR-0012](adr/0012-text-entity.md). Documents store the font *reference* and the cached geometry, never the font file; user fonts and (desktop only) system fonts are resolved by the app shell.
+- **System fonts (M6, #477):** the desktop lists installed fonts by asking the OS: DirectWrite on Windows, Core Text on macOS and fontconfig on Linux, with the font-folder scan as the fallback. Fonts the OS registers for the session, such as Adobe Creative Cloud fonts, are included while they are activated. A face is stored as its family name (regular) or "Family Style". Font files are read, never copied or embedded, and their paths are never logged ([ADR 0019](adr/0019-line-brush-fill-styles.md) decision 7).
 - Outline glyphs whose contours overlap (common in variable fonts) are unioned into one outline when laid out, so a cutter never cuts through a letter (#222).
 
 ---

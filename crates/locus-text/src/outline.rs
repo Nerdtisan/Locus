@@ -15,6 +15,40 @@ use skrifa::font::glyph::outline::{DrawMemory, DrawOptions, PathSink};
 /// this bounds memory for a hostile file without excluding normal fonts.
 pub const MAX_OUTLINE_FONT_BYTES: usize = 64 * 1024 * 1024;
 
+/// The index of the face named `family` / `style` in font file `data`
+/// (#477): 0 for a single font, the matching face of a collection (`.ttc`),
+/// or `None` when no face matches or the data isn't a font. Typographic
+/// names (IDs 16/17) are tried before the legacy ones (IDs 1/2), as the OS
+/// lists them.
+#[must_use]
+pub fn face_index(data: &[u8], family: &str, style: &str) -> Option<u32> {
+    use skrifa::MetadataProvider;
+    use skrifa::raw::FileRef;
+    use skrifa::string::StringId;
+    let count = match FileRef::new(data).ok()? {
+        FileRef::Font(_) => return Some(0),
+        FileRef::Collection(c) => c.len(),
+    };
+    (0..count).find(|&i| {
+        let Ok(f) = skrifa::FontRef::from_index(data, i) else {
+            return false;
+        };
+        let name = |ids: [StringId; 2]| {
+            ids.iter().find_map(|id| {
+                f.localized_strings(*id)
+                    .english_or_first()
+                    .map(|s| s.to_string())
+            })
+        };
+        let fam = name([StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME]);
+        let sub = name([
+            StringId::TYPOGRAPHIC_SUBFAMILY_NAME,
+            StringId::SUBFAMILY_NAME,
+        ]);
+        fam.as_deref() == Some(family) && sub.as_deref() == Some(style)
+    })
+}
+
 /// A parsed TrueType/OpenType font, cheap to clone (the font data is shared).
 #[derive(Clone)]
 pub struct OutlineFont {
@@ -45,10 +79,19 @@ impl OutlineFont {
     /// # Errors
     /// [`TextError`] if the data is too large or is not a font with outlines.
     pub fn from_bytes(name: &str, data: Vec<u8>) -> Result<Self, TextError> {
+        Self::from_bytes_at(name, data, 0)
+    }
+
+    /// [`OutlineFont::from_bytes`] for face `index` of a font collection
+    /// (`.ttc`), as the OS lists it (#477). 0 for a single font.
+    ///
+    /// # Errors
+    /// As [`OutlineFont::from_bytes`], also when `index` is out of range.
+    pub fn from_bytes_at(name: &str, data: Vec<u8>, index: u32) -> Result<Self, TextError> {
         if data.len() > MAX_OUTLINE_FONT_BYTES {
             return Err(TextError::FontTooLarge(MAX_OUTLINE_FONT_BYTES));
         }
-        Self::build(name, Font::new(data, 0))
+        Self::build(name, Font::new(data, index))
     }
 
     /// Loads a font from data baked into the binary, without copying it.
