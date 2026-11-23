@@ -1539,4 +1539,82 @@ mod tests {
         };
         assert!(dir1.symmetric && dir2.symmetric);
     }
+
+    /// Regression (#472): a pattern of a mirrored shape showed no preview
+    /// (the scratch apply was refused) and made nothing. Linear along a
+    /// picked line with a negative distance, and circular: the preview
+    /// shows every copy and OK makes them.
+    #[test]
+    fn a_mirrored_shape_previews_and_patterns() {
+        for circular in [false, true] {
+            let mut c = ready(circular);
+            let rect: Vec<EntityId> = c.selection.items.iter().collect();
+            c.set_tool(Tool::Line);
+            for p in [Vec2::new(30.0, -10.0), Vec2::new(30.0, 40.0)] {
+                c.tool_event(ToolEvent::Click(Pick::free(p)), None, Units::Mm);
+            }
+            c.set_tool(Tool::Select);
+            let axis = {
+                let doc = c.doc.sketcher.document();
+                doc.entities()
+                    .iter()
+                    .filter(|(id, _)| doc.line(*id).is_some())
+                    .map(|(id, _)| id)
+                    .last()
+                    .expect("the mirror line")
+            };
+            assert!(c.apply_reporting(&Command::AddRecipe {
+                kind: RecipeKind::Mirror { axis },
+                sources: rect,
+            }));
+            let mirrored: Vec<EntityId> = {
+                let doc = c.doc.sketcher.document();
+                let m = doc.recipes().values().next().expect("the mirror");
+                m.instances().filter(|e| doc.line(*e).is_some()).collect()
+            };
+            assert_eq!(mirrored.len(), 4);
+            let centre = circular.then(|| {
+                assert!(c.apply_reporting(&Command::AddEntity {
+                    layer: Document::default_layer(),
+                    construction: false,
+                    geom: Geom::Point {
+                        pos: Vec2::new(0.0, -40.0),
+                    },
+                    style: Default::default(),
+                }));
+                let doc = c.doc.sketcher.document();
+                doc.entities()
+                    .iter()
+                    .last()
+                    .map(|(id, _)| id)
+                    .expect("a centre")
+            });
+            c.selection.items.set_all(mirrored);
+            c.set_modify(Modify::Pattern(circular));
+            let d = &mut c.tools.pattern;
+            d.centre = centre;
+            d.axis1 = Axis::Line(axis);
+            d.count1 = "5".to_owned();
+            d.spacing1 = "-30".to_owned();
+            c.refresh_pattern_preview(circular, Units::Mm);
+            let shapes = &c.tools.pattern.preview.as_ref().expect("a preview").1;
+            assert!(!shapes.is_empty(), "circular {circular}");
+            assert_eq!(shapes.len() % 4, 0, "whole copies: {}", shapes.len());
+            let previewed = shapes.len();
+            assert!(c.pattern_ok(circular, Units::Mm), "{:?}", c.doc.notice);
+            let doc = c.doc.sketcher.document();
+            let made = doc
+                .recipes()
+                .values()
+                .find(|r| r.kind.is_pattern())
+                .expect("the pattern")
+                .instances()
+                .filter(|e| doc.line(*e).is_some())
+                .count();
+            assert_eq!(made, previewed, "circular {circular}");
+            if !circular {
+                assert_eq!(made, 4 * 4, "four copies of four lines");
+            }
+        }
+    }
 }
