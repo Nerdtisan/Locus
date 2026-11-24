@@ -74,6 +74,8 @@ pub struct ToolState {
     pub(crate) mirror: MirrorDraft,
     /// The Calibrate tool's picks and distance (#391).
     pub(crate) calibrate: CalibrateDraft,
+    /// The Auto trace dialog (#461).
+    pub(crate) trace: crate::views::trace::TraceUi,
     /// The Text on path tool's picks and options (#392).
     pub(crate) path_text: PathTextDraft,
     /// Bound text being slid along its path by a drag (#392).
@@ -128,6 +130,7 @@ impl Default for ToolState {
             pattern: PatternDraft::default(),
             mirror: MirrorDraft::default(),
             calibrate: CalibrateDraft::default(),
+            trace: Default::default(),
             path_text: PathTextDraft::default(),
             slide: None,
             corner: CornerSettings::default(),

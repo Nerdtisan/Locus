@@ -777,7 +777,8 @@ mod tests {
                 "insert.svg",
                 "insert.dxf",
                 "insert.image",
-                "sketch.calibrate"
+                "sketch.calibrate",
+                "insert.auto_trace"
             ]
         );
         assert_eq!(

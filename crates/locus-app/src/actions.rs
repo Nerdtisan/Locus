@@ -222,6 +222,8 @@ pub enum Shell {
     InsertReference(crate::file_io::Insert),
     InstallPlugin,
     PluginManager,
+    /// INSERT ▸ Auto trace… (#461): the dialog on the picked reference image.
+    AutoTrace,
     /// The MCP server window (desktop only, SPEC §16).
     Mcp,
     /// Save the document (the app bar's Save, #324).
@@ -760,6 +762,25 @@ pub static BUILTIN: &[Action] = &[
         &[],
         KeyScope::Canvas,
         Op::Modify(Modify::Calibrate),
+    ),
+    // Auto trace (#461, M6 design §10): a reference image into geometry.
+    a(
+        "insert.auto_trace",
+        "Auto trace…",
+        Group::Insert,
+        &[
+            "trace",
+            "bitmap",
+            "vectorise",
+            "vectorize",
+            "image",
+            "centreline",
+            "potrace",
+        ],
+        "Turn a reference image into lines and curves you can edit",
+        &[],
+        KeyScope::Global,
+        Op::Shell(Shell::AutoTrace),
     ),
     // ── Select ──
     draw(

@@ -188,6 +188,21 @@ impl RefImage {
         [lo, Vec2::new(hi.x, lo.y), hi, Vec2::new(lo.x, hi.y)].map(|p| turn.point(p))
     }
 
+    /// Where image pixel coordinates `p` (x right, y down from the top-left
+    /// corner, in pixels) are on the page, mm: through the placement, its
+    /// pixel size and its turn (Auto trace, #461).
+    #[must_use]
+    pub fn pixel_to_world(&self, p: Vec2) -> Vec2 {
+        let px = self.placement.pixel();
+        let local =
+            self.placement.origin + Vec2::new(p.x * px.x, (f64::from(self.height_px) - p.y) * px.y);
+        crate::transform::Transform::Rotate {
+            center: self.centre(),
+            angle: self.placement.rotation,
+        }
+        .point(local)
+    }
+
     /// Whether the drawn image covers `w`.
     #[must_use]
     pub fn contains(&self, w: Vec2) -> bool {
@@ -564,6 +579,24 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    /// #461: image pixels map to the page through the placement: the
+    /// top-left pixel corner is the drawn top-left corner, turned too.
+    #[test]
+    fn pixels_map_to_the_page_through_the_placement() {
+        let mut img = tiny_png();
+        img.placement.origin = Vec2::new(10.0, 20.0);
+        img.placement.mm_per_px = 2.0;
+        let (w, h) = (f64::from(img.width_px), f64::from(img.height_px));
+        let [bl, br, tr, tl] = img.corners();
+        assert!(img.pixel_to_world(Vec2::new(0.0, 0.0)).distance(tl) < 1e-12);
+        assert!(img.pixel_to_world(Vec2::new(w, h)).distance(br) < 1e-12);
+        img.placement.rotation = 1.0;
+        let [bl2, _, tr2, _] = img.corners();
+        assert!(img.pixel_to_world(Vec2::new(0.0, h)).distance(bl2) < 1e-12);
+        assert!(img.pixel_to_world(Vec2::new(w, 0.0)).distance(tr2) < 1e-12);
+        let _ = (bl, tr);
     }
 
     /// A turned image covers its turned corners, not its old box.
