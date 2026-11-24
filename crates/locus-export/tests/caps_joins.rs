@@ -49,7 +49,7 @@ fn rect(op: Operation) -> (Editor, LayerId, Vec<locus_doc::EntityId>) {
             ed.apply(&Command::AddEntity {
                 layer,
                 construction: false,
-                style,
+                style: style.clone(),
                 geom: Geom::Line {
                     start: pts[i],
                     end: pts[(i + 1) % 4],

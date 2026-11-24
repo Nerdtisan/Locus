@@ -256,7 +256,7 @@ impl ExportLayer {
     }
 
     fn style_of(&self, entity: EntityId) -> Style {
-        self.styles.get(&entity).copied().unwrap_or_default()
+        self.styles.get(&entity).cloned().unwrap_or_default()
     }
 
     /// How `path` is written. A path is chained from segments of one style
@@ -598,7 +598,7 @@ pub fn collect(doc: &Document) -> ExportModel {
             && !e.style.is_default()
             && let Some((layer, _)) = layers.iter_mut().find(|(l, _)| l.id == e.layer)
         {
-            layer.styles.insert(eid, e.style);
+            layer.styles.insert(eid, e.style.clone());
         }
         if matches!(e.geom, Geom::Text { .. }) {
             // Text exports as the geometry cached in the document (SPEC §9,

@@ -37,7 +37,7 @@ fn line(s: &mut Sketcher, a: (f64, f64), b: (f64, f64), style: Style) -> EntityI
 }
 
 fn style(s: &Sketcher, id: EntityId) -> Style {
-    s.document().entity(id).unwrap().style
+    s.document().entity(id).unwrap().style.clone()
 }
 
 const RED: Stroke = Stroke::Colour([255, 0, 0]);
@@ -58,7 +58,7 @@ fn new_entities_take_the_style_they_are_given() {
         width: 0.25,
         ..Style::default()
     };
-    let l = line(&mut s, (0.0, 0.0), (10.0, 0.0), red);
+    let l = line(&mut s, (0.0, 0.0), (10.0, 0.0), red.clone());
     assert_eq!(style(&s, l), red);
 }
 
@@ -187,7 +187,7 @@ fn trimmed_pieces_keep_their_style() {
         opacity: 0.5,
         line: Default::default(),
     };
-    let a = line(&mut s, (0.0, 0.0), (10.0, 0.0), st);
+    let a = line(&mut s, (0.0, 0.0), (10.0, 0.0), st.clone());
     line(&mut s, (5.0, -5.0), (5.0, 5.0), Style::default());
     let plan = modify::trim(s.document(), a, Vec2::new(8.0, 0.0)).unwrap();
     s.apply(&plan.command).unwrap();
@@ -196,7 +196,7 @@ fn trimmed_pieces_keep_their_style() {
         .entities()
         .iter()
         .filter(|(_, e)| matches!(e.geom, Geom::Line { .. }))
-        .map(|(_, e)| e.style)
+        .map(|(_, e)| e.style.clone())
         .filter(|x| *x == st)
         .collect();
     assert_eq!(styled.len(), 1, "the kept piece of the trimmed line");

@@ -68,7 +68,7 @@ impl Fill {
 }
 
 /// One entity's style (SPEC §4).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Style {
     pub stroke: Stroke,
     /// Stroke (pen) width, mm, `>0..=MAX_LENGTH`. Drives the stroke-width
@@ -312,12 +312,15 @@ mod tests {
         };
         let off: Vec<Style> = [red, blue, plain]
             .iter()
-            .map(|s| s.patched(&switch(false)))
+            .map(|s| s.clone().patched(&switch(false)))
             .collect();
         assert_eq!(off[0].fill, Fill::Off([200, 0, 0]));
         assert_eq!(off[0].fill.painted(), None, "draws unfilled");
         assert_eq!(off[2].fill, Fill::None, "nothing to remember");
-        let on: Vec<Fill> = off.iter().map(|s| s.patched(&switch(true)).fill).collect();
+        let on: Vec<Fill> = off
+            .iter()
+            .map(|s| s.clone().patched(&switch(true)).fill)
+            .collect();
         assert_eq!(
             on,
             [
@@ -339,7 +342,7 @@ mod tests {
             width: Some(0.7),
             ..StylePatch::default()
         };
-        let out = red.patched(&p);
+        let out = red.clone().patched(&p);
         assert_eq!(out.stroke, Stroke::Colour([255, 0, 0]));
         assert_eq!(out.width, 0.7);
         assert_eq!(

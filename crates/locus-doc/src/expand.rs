@@ -93,7 +93,7 @@ pub(crate) fn plan(
             .find(|(l, s, _)| *l == e.layer && *s == e.style)
         {
             Some((_, _, v)) => v.push(segs),
-            None => groups.push((e.layer, e.style, vec![segs])),
+            None => groups.push((e.layer, e.style.clone(), vec![segs])),
         }
     }
     if sources.is_empty() {
@@ -191,7 +191,7 @@ mod tests {
                 ed.apply(&Command::AddEntity {
                     layer,
                     construction: false,
-                    style,
+                    style: style.clone(),
                     geom: Geom::Line { start: s, end: e },
                 })
                 .unwrap()

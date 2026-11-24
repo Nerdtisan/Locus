@@ -359,7 +359,7 @@ impl<'a> Builder<'a> {
         let (layer, construction, style) = doc
             .entity(of)
             .map_or((Document::default_layer(), false, Style::default()), |e| {
-                (e.layer, e.construction, e.style)
+                (e.layer, e.construction, e.style.clone())
             });
         Self {
             doc,
@@ -382,7 +382,7 @@ impl<'a> Builder<'a> {
             layer: self.layer,
             construction: self.construction,
             geom,
-            style: self.style,
+            style: self.style.clone(),
         });
         EntityId::new(self.alloc())
     }
@@ -393,8 +393,8 @@ impl<'a> Builder<'a> {
         let (layer, construction, style) = self
             .doc
             .entity(like)
-            .map_or((self.layer, self.construction, self.style), |e| {
-                (e.layer, e.construction, e.style)
+            .map_or((self.layer, self.construction, self.style.clone()), |e| {
+                (e.layer, e.construction, e.style.clone())
             });
         self.commands.push(Command::AddEntity {
             layer,

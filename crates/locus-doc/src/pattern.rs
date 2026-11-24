@@ -120,9 +120,9 @@ pub(crate) fn regenerate(
             let id = set[*i];
             // A copy keeps the style and construction it was given (#421);
             // a new copy takes its source's.
-            let (style, construction) = doc
-                .entity(id)
-                .map_or((src.style, src.construction), |e| (e.style, e.construction));
+            let (style, construction) = doc.entity(id).map_or((src.style, src.construction), |e| {
+                (e.style.clone(), e.construction)
+            });
             let e = Entity {
                 layer: src.layer,
                 construction,

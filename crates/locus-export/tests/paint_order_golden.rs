@@ -45,7 +45,7 @@ fn square(ed: &mut Editor, x0: f64, x1: f64, style: Style) {
         .collect();
     for i in 0..4 {
         let (start, end) = (pts[i], pts[(i + 1) % 4]);
-        add(ed, layer, Geom::Line { start, end }, style);
+        add(ed, layer, Geom::Line { start, end }, style.clone());
     }
 }
 

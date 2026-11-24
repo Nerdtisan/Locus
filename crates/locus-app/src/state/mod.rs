@@ -244,7 +244,7 @@ impl AppState {
             tol: self.view.tol_pt / self.view.camera.pt_per_mm,
             units,
             layer,
-            style: self.doc.current_style,
+            style: self.doc.current_style.clone(),
             construction: self.doc.construction_linetype,
             selection,
             hover,

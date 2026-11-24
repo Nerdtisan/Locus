@@ -354,7 +354,7 @@ impl Plan {
             layer: self.layer,
             construction: self.construction,
             geom,
-            style: self.style,
+            style: self.style.clone(),
         });
         EntityId::new(self.alloc())
     }
@@ -364,7 +364,7 @@ impl Plan {
             layer: self.layer,
             construction: true,
             geom,
-            style: self.style,
+            style: self.style.clone(),
         });
         EntityId::new(self.alloc())
     }
@@ -573,7 +573,12 @@ impl Draft {
 
     pub fn click(&mut self, pick: Pick, doc_next_id: u64) -> Outcome {
         let here = Node::from_pick(pick);
-        let mut plan = Plan::new(doc_next_id, self.layer, self.style, self.construction);
+        let mut plan = Plan::new(
+            doc_next_id,
+            self.layer,
+            self.style.clone(),
+            self.construction,
+        );
         match self.tool {
             Tool::Select => Outcome::Pending,
             Tool::Point => {
@@ -853,7 +858,7 @@ impl Draft {
         let Some(&first) = self.nodes.first() else {
             return Outcome::Pending;
         };
-        let plan = Plan::new(next_id, self.layer, self.style, self.construction);
+        let plan = Plan::new(next_id, self.layer, self.style.clone(), self.construction);
         if self.tool == Tool::RectThree {
             if self.nodes.len() == 1 {
                 let dir = (cursor.pos - first.pos())
@@ -1213,7 +1218,12 @@ impl Draft {
         }
         let closing = here.id().is_some() && here.id() == self.chain_first;
         let handle = if closing { None } else { handle };
-        let mut plan = Plan::new(doc_next_id, self.layer, self.style, self.construction);
+        let mut plan = Plan::new(
+            doc_next_id,
+            self.layer,
+            self.style.clone(),
+            self.construction,
+        );
         // Corners get handles a third of the way along the chord.
         let third = (here.pos() - from.pos()) / 3.0;
         let c0 = from.pos() + self.out.unwrap_or(third);
@@ -1282,7 +1292,12 @@ impl Draft {
                 let at = cursor.pos;
                 return self.click_edge_polygon(
                     Node::New(at),
-                    Plan::new(doc_next_id, self.layer, self.style, self.construction),
+                    Plan::new(
+                        doc_next_id,
+                        self.layer,
+                        self.style.clone(),
+                        self.construction,
+                    ),
                 );
             }
             _ => {}
@@ -1294,7 +1309,12 @@ impl Draft {
             .normalized(MIN_SIZE_MM)
             .unwrap_or(Vec2::new(1.0, 0.0));
         let at = Node::New(from.pos() + dir * value);
-        let mut plan = Plan::new(doc_next_id, self.layer, self.style, self.construction);
+        let mut plan = Plan::new(
+            doc_next_id,
+            self.layer,
+            self.style.clone(),
+            self.construction,
+        );
         match self.tool {
             // A typed length keeps the inferred direction and its constraint.
             Tool::Line => self.segment(from, at, plan, Some(value), cursor.line),

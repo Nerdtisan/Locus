@@ -118,8 +118,8 @@ impl AppState {
             self.tools.eyedropper = !picking;
         }
         if nothing {
-            let mut s = self.doc.current_style;
-            let shared = Shared::of(&[s]);
+            let mut s = self.doc.current_style.clone();
+            let shared = Shared::of(&[s.clone()]);
             let patch = fields(ui, shared, [0, 0, 0]);
             s = s.patched(&patch);
             if s.validate().is_ok() {
@@ -141,7 +141,7 @@ impl AppState {
         let doc = self.doc.sketcher.document();
         let styles: Vec<Style> = ids
             .iter()
-            .filter_map(|id| doc.entity(*id).map(|e| e.style))
+            .filter_map(|id| doc.entity(*id).map(|e| e.style.clone()))
             .collect();
         let layer_colour = ids
             .first()
@@ -253,7 +253,7 @@ impl AppState {
         let Some(style) = doc
             .entity(from)
             .filter(|e| !matches!(e.geom, Geom::Point { .. }))
-            .map(|e| e.style)
+            .map(|e| e.style.clone())
         else {
             return;
         };
@@ -820,7 +820,7 @@ mod tests {
             pen: 3,
             ..Style::default()
         };
-        c.doc.current_style = st;
+        c.doc.current_style = st.clone();
         c.set_tool(crate::tools::Tool::Line);
         for x in [0.0, 20.0] {
             c.tool_event(
@@ -835,7 +835,7 @@ mod tests {
             .iter()
             .filter(|(_, e)| matches!(e.geom, Geom::Line { .. }))
             .last()
-            .map(|(_, e)| e.style);
+            .map(|(_, e)| e.style.clone());
         assert_eq!(line, Some(st));
     }
 
@@ -849,7 +849,7 @@ mod tests {
             width: 0.9,
             ..Style::default()
         };
-        let src = line(&mut c, 0.0, red);
+        let src = line(&mut c, 0.0, red.clone());
         let a = line(&mut c, 5.0, Style::default());
         let b = line(&mut c, 10.0, Style::default());
         c.selection.items.set_all([a, b]);
@@ -857,12 +857,15 @@ mod tests {
         c.eyedrop(src);
         assert!(!c.tools.eyedropper);
         for id in [a, b] {
-            assert_eq!(c.document().entity(id).map(|e| e.style), Some(red));
+            assert_eq!(
+                c.document().entity(id).map(|e| e.style.clone()),
+                Some(red.clone())
+            );
         }
         c.undo();
         for id in [a, b] {
             assert_eq!(
-                c.document().entity(id).map(|e| e.style),
+                c.document().entity(id).map(|e| e.style.clone()),
                 Some(Style::default()),
                 "one undo restores both"
             );

@@ -477,7 +477,7 @@ pub(crate) fn regenerate(
     let (layer, style) = r
         .sources
         .iter()
-        .find_map(|s| doc.entity(*s).map(|e| (e.layer, e.style)))
+        .find_map(|s| doc.entity(*s).map(|e| (e.layer, e.style.clone())))
         .unwrap_or_else(|| (Document::default_layer(), Style::default()));
     write_flat(doc, rid, r, layer, style, &out, patches)
 }
@@ -518,9 +518,9 @@ pub(crate) fn write_flat(
         };
         // An instance keeps the style and construction it was given (#421);
         // a new one takes the source's style and is normal.
-        let (style, construction) = doc
-            .entity(pool[i])
-            .map_or((style, false), |e| (e.style, e.construction));
+        let (style, construction) = doc.entity(pool[i]).map_or((style.clone(), false), |e| {
+            (e.style.clone(), e.construction)
+        });
         let e = Entity {
             layer,
             construction,

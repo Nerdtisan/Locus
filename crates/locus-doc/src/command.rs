@@ -595,7 +595,7 @@ fn exec(
                 layer: *layer,
                 construction: *construction,
                 geom: geom.clone(),
-                style: *style,
+                style: style.clone(),
             };
             doc.check_entity(&e)?;
             let id = EntityId::new(doc.alloc_id()?);
@@ -756,7 +756,7 @@ fn exec(
                     continue;
                 };
                 let after = Entity {
-                    style: before.style.patched(patch),
+                    style: before.style.clone().patched(patch),
                     ..before.clone()
                 };
                 after.style.validate()?;
@@ -1332,7 +1332,7 @@ fn exec(
                             layer: g.layer,
                             construction: false,
                             geom,
-                            style: g.style,
+                            style: g.style.clone(),
                         },
                         patches,
                         &mut added,

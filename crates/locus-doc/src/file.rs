@@ -2189,7 +2189,7 @@ mod tests {
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 12"));
         let doc = load(&text).unwrap();
-        let style = |id: u64| doc.entity(EntityId::new(id)).unwrap().style;
+        let style = |id: u64| doc.entity(EntityId::new(id)).unwrap().style.clone();
         for id in [4, 5, 6] {
             assert_eq!((style(id).width, style(id).pen), (0.7, 3), "entity {id}");
         }
