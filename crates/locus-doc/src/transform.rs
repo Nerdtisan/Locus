@@ -126,12 +126,35 @@ impl Transform {
 }
 
 /// The selected entities, plus every point a selected curve is built from.
+///
+/// A text brings its own frame (#490): the construction baseline from its
+/// anchor to its direction point, whose Horizontal constraint is then the
+/// selection's own (so Rotate drops or swaps it, as for any selected line)
+/// instead of a constraint holding the text in place; and, set on a path
+/// (#392), the path's curves, which it follows, so they move together.
 fn closure(doc: &Document, sel: &[EntityId]) -> Result<BTreeSet<EntityId>, ModifyError> {
     let mut all = BTreeSet::new();
     for &id in sel {
         let e = doc.entity(id).ok_or(ModifyError::UnknownEntity(id))?;
         all.insert(id);
         all.extend(e.geom.point_refs());
+        if let Geom::Text { anchor, dir, text } = &e.geom {
+            let ends = BTreeSet::from([*anchor, *dir]);
+            for (lid, l) in doc.entities().iter() {
+                if let Geom::Line { start, end } = l.geom
+                    && l.construction
+                    && BTreeSet::from([start, end]) == ends
+                {
+                    all.insert(lid);
+                }
+            }
+            for &c in text.path.iter().flat_map(|p| &p.curves) {
+                if let Some(curve) = doc.entity(c) {
+                    all.insert(c);
+                    all.extend(curve.geom.point_refs());
+                }
+            }
+        }
     }
     if all.is_empty() {
         return Err(ModifyError::EmptySelection);
@@ -686,5 +709,135 @@ mod tests {
             ),
             Err(ModifyError::BadSize)
         );
+    }
+
+    /// Text as the Text tool places it (#180): anchor, direction point, a
+    /// construction baseline held Horizontal, and the text.
+    fn placed_text(d: &mut Document) -> (EntityId, EntityId, ConstraintId) {
+        use crate::text::TextData;
+        use locus_text::{Align, BundledFont, BundledProvider, FontRef};
+        let (anchor, dir) = (pt(d, 5.0, 5.0), pt(d, 25.0, 5.0));
+        let base = add(
+            d,
+            Geom::Line {
+                start: anchor,
+                end: dir,
+            },
+        );
+        if let Some(e) = d.entities.get_mut(base) {
+            e.construction = true;
+        }
+        let h = con(d, Constraint::Horizontal { line: base });
+        let text = TextData::new(
+            "Locus",
+            FontRef::bundled(BundledFont::HersheySans),
+            6.0,
+            Align::Left,
+            1.0,
+            &BundledProvider,
+        )
+        .unwrap();
+        let t = add(
+            d,
+            Geom::Text {
+                anchor,
+                dir,
+                text: Box::new(text),
+            },
+        );
+        (t, anchor, h)
+    }
+
+    /// #490: Rotate, Move and Scale work on placed text; Rotate drops (or,
+    /// by a quarter turn, swaps) the text's own Horizontal baseline.
+    #[test]
+    fn text_rotates_moves_and_scales_with_its_own_baseline() {
+        let mut d = Document::new();
+        let (t, anchor, h) = placed_text(&mut d);
+        let turn = Transform::Rotate {
+            center: v(5.0, 5.0),
+            angle: 0.5,
+        };
+        let plan = transform(&d, &[t], turn, false).unwrap();
+        assert_eq!(
+            plan.dropped,
+            vec![h],
+            "the baseline's Horizontal goes, named"
+        );
+        let mut sk = Sketcher::new(d.clone());
+        sk.apply(&plan.command).unwrap();
+        let (a, b) = match sk.document().entity(t).unwrap().geom {
+            Geom::Text { anchor, dir, .. } => (anchor, dir),
+            _ => unreachable!(),
+        };
+        let (pa, pb) = (
+            sk.document().point_pos(a).unwrap(),
+            sk.document().point_pos(b).unwrap(),
+        );
+        assert!(
+            ((pb - pa).y.atan2((pb - pa).x) - 0.5).abs() < 1e-6,
+            "turned 0.5 rad"
+        );
+        // A quarter turn keeps the constraint, now Vertical.
+        let quarter = Transform::Rotate {
+            center: v(5.0, 5.0),
+            angle: FRAC_PI_2,
+        };
+        let plan = transform(&d, &[t], quarter, false).unwrap();
+        assert!(plan.dropped.is_empty());
+        let mut sk = Sketcher::new(d.clone());
+        sk.apply(&plan.command).unwrap();
+        assert!(
+            sk.document()
+                .constraints()
+                .values()
+                .any(|c| matches!(c, Constraint::Vertical { .. }))
+        );
+        // Move and Scale were never blocked; they still aren't.
+        for t2 in [
+            Transform::Move(v(3.0, -2.0)),
+            Transform::Scale {
+                center: v(0.0, 0.0),
+                factor: 2.0,
+            },
+        ] {
+            let plan = transform(&d, &[t], t2, false).unwrap();
+            let mut sk = Sketcher::new(d.clone());
+            sk.apply(&plan.command).unwrap();
+            assert!(
+                sk.document()
+                    .point_pos(anchor)
+                    .unwrap()
+                    .distance(t2.point(v(5.0, 5.0)))
+                    < 1e-6
+            );
+        }
+        // A constraint the user added that ties the text to other geometry
+        // still blocks, and is named.
+        let fix = con(&mut d, Constraint::Fix { point: anchor });
+        let elsewhere = Transform::Rotate {
+            center: v(0.0, 0.0),
+            angle: 0.5,
+        };
+        assert_eq!(
+            transform(&d, &[t], elsewhere, false),
+            Err(ModifyError::Blocked(vec![fix]))
+        );
+    }
+
+    /// #490 with #392: text set on a path moves and turns with its path.
+    #[test]
+    fn text_on_a_path_moves_with_its_path() {
+        let mut d = Document::new();
+        let (t, _, _) = placed_text(&mut d);
+        let (p0, p1) = (pt(&mut d, 0.0, 20.0), pt(&mut d, 40.0, 20.0));
+        let path = line(&mut d, p0, p1);
+        if let Some(Geom::Text { text, .. }) = d.entities.get_mut(t).map(|e| &mut e.geom) {
+            text.path = Some(Box::new(crate::path_text::TextPath::new(vec![path])));
+        }
+        let plan = transform(&d, &[t], Transform::Move(v(0.0, 7.0)), false).unwrap();
+        let mut sk = Sketcher::new(d);
+        sk.apply(&plan.command).unwrap();
+        assert!(sk.document().point_pos(p0).unwrap().distance(v(0.0, 27.0)) < 1e-6);
     }
 }
