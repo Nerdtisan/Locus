@@ -2208,6 +2208,7 @@ dependencies = [
  "locus-plugin-host",
  "locus-region",
  "locus-text",
+ "locus-trace",
  "rfd",
  "serde",
  "serde_json",
