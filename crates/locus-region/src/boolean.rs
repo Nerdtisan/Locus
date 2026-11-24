@@ -8,7 +8,7 @@
 
 use crate::arrange::{GEdge, arrange, in_dir, merge_carriers, out_dir};
 use crate::seg::{Area, Edge, Loop};
-use locus_geom::{Aabb, Vec2};
+use locus_geom::{Aabb, EXPORT_TOL, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -51,7 +51,8 @@ pub fn boolean(a: &Area, b: &Area, op: BoolOp) -> Area {
     let arr = arrange(&input);
     let (fa, fb) = (Boxed::new(a), Boxed::new(b));
     let near = Near::new(&arr.edges);
-    let mut kept: Vec<GEdge> = Vec::new();
+    // Per arrangement edge: not kept, kept forward, or kept reversed.
+    let mut state: Vec<Option<bool>> = Vec::with_capacity(arr.edges.len());
     for (i, e) in arr.edges.iter().enumerate() {
         let seg = e.edge.seg;
         let m = seg.at(0.5);
@@ -60,26 +61,142 @@ pub fn boolean(a: &Area, b: &Area, op: BoolOp) -> Area {
         let n = seg.tangent(0.5).perp() * probe;
         let inside = |q: Vec2| op.keep(fa.contains(q), fb.contains(q));
         let (left, right) = (inside(m + n), inside(m - n));
-        if left != right {
-            kept.push(if left {
-                *e
-            } else {
-                GEdge {
-                    edge: Edge {
-                        seg: seg.reversed(),
-                        source: e.edge.source,
-                    },
-                    v0: e.v1,
-                    v1: e.v0,
+        state.push((left != right).then_some(left));
+    }
+    repair_micro(&arr.edges, &mut state);
+    if std::env::var("DBG_BOOL").is_ok() {
+        let mut bal: HashMap<usize, i32> = HashMap::new();
+        for (e, s) in arr.edges.iter().zip(&state) {
+            match s {
+                Some(true) => {
+                    *bal.entry(e.v0).or_default() += 1;
+                    *bal.entry(e.v1).or_default() -= 1;
                 }
-            });
+                Some(false) => {
+                    *bal.entry(e.v1).or_default() += 1;
+                    *bal.entry(e.v0).or_default() -= 1;
+                }
+                None => {}
+            }
+        }
+        for (v, b) in &bal {
+            if *b != 0 {
+                eprintln!("unbalanced v{v} {:?} bal {b}", arr.verts[*v]);
+                for (k, (e, s)) in arr.edges.iter().zip(&state).enumerate() {
+                    if e.v0 == *v || e.v1 == *v {
+                        eprintln!(
+                            "   e{k} v{}->v{} len {:.3e} state {:?} {:?}",
+                            e.v0,
+                            e.v1,
+                            e.edge.seg.length(),
+                            s,
+                            e.edge.seg
+                        );
+                    }
+                }
+            }
         }
     }
+    let kept: Vec<GEdge> = arr
+        .edges
+        .iter()
+        .zip(&state)
+        .filter_map(|(e, s)| match s {
+            Some(true) => Some(*e),
+            Some(false) => Some(GEdge {
+                edge: Edge {
+                    seg: e.edge.seg.reversed(),
+                    source: e.edge.source,
+                },
+                v0: e.v1,
+                v1: e.v0,
+            }),
+            None => None,
+        })
+        .collect();
     let loops = trace(&kept)
         .into_iter()
         .filter(|l| l.area().abs() > MIN_AREA)
         .collect();
     Area { loops }
+}
+
+/// Edges shorter than this may be re-classified to keep the result closed:
+/// changing one moves the boundary by less than the export tolerance.
+const MICRO: f64 = EXPORT_TOL;
+
+/// Repairs classification inconsistencies on micro-edges. The kept edges of a
+/// consistent classification enter and leave every vertex equally often. An
+/// edge only a few nm–µm long (near-tangent pieces that cross right next to
+/// a shared vertex leave one) has probes so close to other edges that its
+/// classification can come out wrong, which leaves an open chain that
+/// `trace` would drop with its whole loop. Each micro-edge takes whichever
+/// state (dropped, forward, reversed) best balances its two vertices;
+/// bounded passes, and a no-op when everything already balances.
+fn repair_micro(edges: &[GEdge], state: &mut [Option<bool>]) {
+    let mut bal: HashMap<usize, i32> = HashMap::new();
+    let flow = |e: &GEdge, s: Option<bool>| match s {
+        Some(true) => Some((e.v0, e.v1)),
+        Some(false) => Some((e.v1, e.v0)),
+        None => None,
+    };
+    for (e, s) in edges.iter().zip(state.iter()) {
+        if let Some((from, to)) = flow(e, *s) {
+            *bal.entry(from).or_default() += 1;
+            *bal.entry(to).or_default() -= 1;
+        }
+    }
+    if bal.values().all(|&b| b == 0) {
+        return;
+    }
+    for _ in 0..4 {
+        let mut changed = false;
+        for (e, s) in edges.iter().zip(state.iter_mut()) {
+            if e.edge.seg.length() > MICRO || e.v0 == e.v1 {
+                continue;
+            }
+            let b0 = bal.get(&e.v0).copied().unwrap_or(0);
+            let b1 = bal.get(&e.v1).copied().unwrap_or(0);
+            if b0 == 0 && b1 == 0 {
+                continue;
+            }
+            // Balances with this edge's contribution taken out.
+            let (mut c0, mut c1) = (b0, b1);
+            match *s {
+                Some(true) => (c0, c1) = (c0 - 1, c1 + 1),
+                Some(false) => (c0, c1) = (c0 + 1, c1 - 1),
+                None => {}
+            }
+            let cost = |x: i32, y: i32| x.abs() + y.abs();
+            let best = [
+                (None, cost(c0, c1)),
+                (Some(true), cost(c0 + 1, c1 - 1)),
+                (Some(false), cost(c0 - 1, c1 + 1)),
+            ]
+            .into_iter()
+            .min_by_key(|&(_, c)| c)
+            .map_or(*s, |(st, _)| st);
+            if best != *s
+                && cost(b0, b1)
+                    > cost(c0, c1)
+                        .min(cost(c0 + 1, c1 - 1))
+                        .min(cost(c0 - 1, c1 + 1))
+            {
+                let (n0, n1) = match best {
+                    Some(true) => (c0 + 1, c1 - 1),
+                    Some(false) => (c0 - 1, c1 + 1),
+                    None => (c0, c1),
+                };
+                bal.insert(e.v0, n0);
+                bal.insert(e.v1, n1);
+                *s = best;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// Uniform grid over bounding boxes, so a probe only looks at the items
