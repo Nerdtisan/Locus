@@ -460,7 +460,7 @@ fn gradient_fields(
             crate::theme::checkbox(ui, &mut gr.rotate_with_shape, "Rotate with shape").on_hover_text(
                 "Follows Rotate and Mirror. Reshaping by dragging points refits the gradient to the new outline.",
             );
-            if ui.button("⇄ Reverse").on_hover_text("Swap the gradient's ends").clicked() {
+            if ui.button("Reverse").on_hover_text("Swap the gradient's ends").clicked() {
                 for s in &mut gr.stops {
                     s.pos = 1.0 - s.pos;
                 }

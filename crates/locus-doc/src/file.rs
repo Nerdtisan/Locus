@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 26;
+pub const CURRENT_VERSION: u32 = 27;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -1254,8 +1254,63 @@ impl From<FileV25> for FileV26 {
     }
 }
 
-/// The newest on-disk shape. When adding v27, point this at `FileV27`.
-type Latest = FileV26;
+/// Version 27: gradient fills on regions (#436, ADR 0019 decision 1):
+/// `RegionFill` gains `gradient` (kind, stops, frame angle and flip, Rotate
+/// with shape, machine option), omitted while solid, so older fills read
+/// unchanged. The shape is v26's; the version stops an older build from
+/// dropping the gradient.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV27 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+    /// The timeline's feature order (#446), omitted in creation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recipe_order: Vec<RecipeId>,
+}
+
+impl From<FileV26> for FileV27 {
+    fn from(f: FileV26) -> Self {
+        FileV27 {
+            format_version: 27,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+            recipe_order: f.recipe_order,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v28, point this at `FileV28`.
+type Latest = FileV27;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -1281,9 +1336,9 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-        FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
-            FileV16::from(f),
+    FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+        FileV22::from(FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+            FileV17::from(FileV16::from(f)),
         ))))),
     )))))
 }
@@ -1369,35 +1424,40 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-            FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
-                parse::<FileV16>(text)?,
+        16 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+            FileV22::from(FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+                FileV17::from(parse::<FileV16>(text)?),
             ))))),
         ))))),
-        17 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-            FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+        17 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+            FileV22::from(FileV21::from(FileV20::from(FileV19::from(FileV18::from(
                 parse::<FileV17>(text)?,
+            ))))),
+        ))))),
+        18 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+            FileV22::from(FileV21::from(FileV20::from(FileV19::from(
+                parse::<FileV18>(text)?,
             )))),
         ))))),
-        18 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-            FileV21::from(FileV20::from(FileV19::from(parse::<FileV18>(text)?))),
+        19 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+            FileV22::from(FileV21::from(FileV20::from(parse::<FileV19>(text)?))),
         ))))),
-        19 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-            FileV21::from(FileV20::from(parse::<FileV19>(text)?)),
+        20 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+            FileV22::from(FileV21::from(parse::<FileV20>(text)?)),
         ))))),
-        20 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-            FileV21::from(parse::<FileV20>(text)?),
+        21 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+            FileV22::from(parse::<FileV21>(text)?),
         ))))),
-        21 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-            parse::<FileV21>(text)?,
-        ))))),
-        22 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+        22 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(FileV23::from(
             parse::<FileV22>(text)?,
+        ))))),
+        23 => FileV27::from(FileV26::from(FileV25::from(FileV24::from(
+            parse::<FileV23>(text)?,
         )))),
-        23 => FileV26::from(FileV25::from(FileV24::from(parse::<FileV23>(text)?))),
-        24 => FileV26::from(FileV25::from(parse::<FileV24>(text)?)),
-        25 => FileV26::from(parse::<FileV25>(text)?),
-        26 => parse::<FileV26>(text)?,
+        24 => FileV27::from(FileV26::from(FileV25::from(parse::<FileV24>(text)?))),
+        25 => FileV27::from(FileV26::from(parse::<FileV25>(text)?)),
+        26 => FileV27::from(parse::<FileV26>(text)?),
+        27 => parse::<FileV27>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -2769,22 +2829,68 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v26 fixture is frozen; it loads unchanged (no gradients, which
+    /// is all v27 adds) and saves as the current version.
     #[test]
-    fn v26_fixture_is_current_and_loads() {
+    fn v26_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v26/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v26()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 26"));
-        assert!(text.contains("recipe_order: "));
-        assert_eq!(load(&text).unwrap(), sample_v26());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v26());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// The v27 sample: `sample_v26()` with its first filled region given an
+    /// elliptical gradient, turned and not following the shape (#436).
+    pub(crate) fn sample_v27() -> Document {
+        use crate::gradient::{Gradient, GradientKind};
+        let doc = sample_v26();
+        let (key, fill) = doc
+            .region_fills()
+            .iter()
+            .next()
+            .map(|(k, f)| (k.clone(), f.clone()))
+            .expect("a region fill");
+        let mut g = Gradient::linear_from([30, 90, 200]);
+        g.kind = GradientKind::Elliptical { ratio: 0.5 };
+        g.from = locus_geom::Vec2::new(0.5, 0.5);
+        g.frame_angle = 0.25;
+        g.rotate_with_shape = false;
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetRegionFill {
+            regions: vec![key],
+            fill: Some(crate::region_fill::RegionFill {
+                gradient: Some(Box::new(g)),
+                ..fill
+            }),
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v27_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v27/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v27()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 27"));
+        assert!(text.contains("gradient: "));
+        assert!(text.contains("rotate_with_shape: false"));
+        assert_eq!(load(&text).unwrap(), sample_v27());
         assert_eq!(
-            save(&sample_v26()).unwrap(),
+            save(&sample_v27()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );

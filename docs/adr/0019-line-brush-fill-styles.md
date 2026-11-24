@@ -370,6 +370,13 @@ The w(θ) formula in this ADR offsets along the normal by the nib's support h(n)
 
 **Machine preview.** It draws the same `prepare_for` result, so Styled layers show perforations, outlines and hatch exactly as cut. The legend gains a "styled" note per layer.
 
+### As built: gradients, part 1 (#436, 2026-11-24)
+
+- **Model:** `RegionFill.gradient` (format v27): Linear, Radial, Elliptical (ratio) or Conic; ends and up to 32 stops in the region's **unit frame**, the region's box fitted along `frame_angle`. The canvas, PNG and the bands all sample `locus_doc::gradient::paint_at`.
+- **Rotate with shape:** a Rotate whose selection holds every boundary of a region adds the angle to that fill's `frame_angle` in the same undo step. Off, the frame stays axis-aligned. Moves and scales follow anyway, because the frame is refitted to the region. Mirror makes copies, so `frame_flip` is stored but no command sets it yet.
+- **Export:** SVG writes native `linearGradient` / `radialGradient` in `userSpaceOnUse` with the frame as `gradientTransform`; conic is 64 clipped wedge polygons. PNG is per pixel. **PDF writes 64 clipped bands, not native shading**, and ignores stop opacity there (the fill's opacity still applies through the existing path). DXF/HPGL and machine layers ignore gradients, as the table says.
+- **Part 2** (still open on #436): native PDF axial/radial shading, on-canvas gradient handles, the machine hatch and Power results, presets and the library, Expand to bands, and "—" for mixed selections in the Inspector.
+
 ## Decision 5: history and timeline (#446) on top of the existing undo stack
 
 ### Options
