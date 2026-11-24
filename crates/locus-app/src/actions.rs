@@ -188,6 +188,8 @@ pub enum Op {
     SelectLayer,
     /// Explode the recipes that made the selection (#386).
     ExplodeRecipe,
+    /// Expand the selection's strokes to geometry (#428).
+    ExpandStyle,
     Fit,
     Zoom(Zoom),
     /// Something only the shell can do, because it owns the dock, its
@@ -254,6 +256,7 @@ impl Action {
             | Op::Delete
             | Op::ToggleConstruction
             | Op::ExplodeRecipe
+            | Op::ExpandStyle
             | Op::Plugin { .. } => true,
             Op::Undo
             | Op::Redo
@@ -636,6 +639,23 @@ pub static BUILTIN: &[Action] = &[
         &[],
         KeyScope::Canvas,
         Op::ExplodeRecipe,
+    ),
+    a(
+        "modify.expand_style",
+        "Expand to geometry",
+        Group::Modify,
+        &[
+            "expand",
+            "outline",
+            "stroke",
+            "caps",
+            "joins",
+            "outline stroke",
+        ],
+        "Select styled curves to turn each stroke into the plain curves of its outline",
+        &[cmd_shift(Key::E)],
+        KeyScope::Canvas,
+        Op::ExpandStyle,
     ),
     // The style lives in the Inspector (design §6.2); this brings it up.
     a(
@@ -1388,6 +1408,7 @@ impl Registry {
             Op::ExplodeRecipe => {
                 Enabled::when(!canvas.selected_recipes().is_empty(), a.hint.clone())
             }
+            Op::ExpandStyle => Enabled::when(!canvas.selected_curves().is_empty(), a.hint.clone()),
             Op::ToggleConstruction => {
                 Enabled::when(canvas.construction_toggle().is_some(), a.hint.clone())
             }
@@ -1464,6 +1485,7 @@ impl Registry {
             Op::SelectChain => canvas.select_chains(),
             Op::SelectLayer => canvas.select_layer(),
             Op::ExplodeRecipe => canvas.explode_selected_recipes(),
+            Op::ExpandStyle => canvas.expand_selection(cx.settings.expand_tol),
             Op::Deselect => canvas.clear_selection(),
             Op::Delete => {
                 if self.enabled(a, canvas).yes() {

@@ -7,7 +7,9 @@
 //! later stage (validation, auto-fix, ordering, writers) reads or edits this
 //! model and never the [`Document`] (SPEC §11).
 
-use locus_doc::{Document, EntityId, Geom, LayerId, Operation, Stroke, Style};
+use locus_doc::{
+    Align, Document, EntityId, Geom, LayerId, LineStyle, Operation, Stroke, StrokeStyles, Style,
+};
 use locus_geom::{Aabb, Arc, Circle, Cubic, EXPORT_TOL, Line, Piece, Vec2};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -29,6 +31,9 @@ pub struct Paint {
     pub opacity: f64,
     /// The plotter pen, on Draw layers.
     pub pen: Option<u32>,
+    /// Caps, joins and alignment (#428): the object's on a Draw layer,
+    /// the default elsewhere (machine software reads the hairline only).
+    pub line: LineStyle,
 }
 
 /// One drawable primitive, in document millimetres (Y-up).
@@ -216,6 +221,8 @@ pub struct ExportLayer {
     pub hairline: f64,
     /// Each exported entity's own style (SPEC §4, #287); used on Draw layers.
     pub styles: BTreeMap<EntityId, Style>,
+    /// Machine layers: cut the centreline or the styled outline (#428).
+    pub stroke_styles: StrokeStyles,
 }
 
 impl ExportLayer {
@@ -231,6 +238,7 @@ impl ExportLayer {
             degenerate: Vec::new(),
             hairline: DEFAULT_HAIRLINE_MM,
             styles: BTreeMap::new(),
+            stroke_styles: StrokeStyles::default(),
         }
     }
 
@@ -257,6 +265,7 @@ impl ExportLayer {
                 width: self.hairline,
                 opacity: 1.0,
                 pen: None,
+                line: LineStyle::default(),
             };
         }
         let s = path
@@ -271,7 +280,24 @@ impl ExportLayer {
             width: s.width,
             opacity: s.opacity,
             pen: Some(s.pen),
+            line: s.line,
         }
+    }
+
+    /// The stroke of `path` as filled outline loops, when a writer can't
+    /// draw it as a stroke: a closed path on a Draw layer aligned inside or
+    /// outside (SVG, PDF and PNG centre every stroke). `None` otherwise, or
+    /// when the outline can't be built (the stroke is then written centred).
+    #[must_use]
+    pub fn outline(&self, path: &ExportPath) -> Option<Vec<ExportPath>> {
+        if !self.uses_object_style() || !path.closed {
+            return None;
+        }
+        let p = self.paint(path);
+        if p.line.align == Align::Centre {
+            return None;
+        }
+        outline_paths(path, p.width, &p.line)
     }
 
     /// Chain segments into paths, never joining two objects whose styles
@@ -347,9 +373,9 @@ impl ExportModel {
             .reduce(Aabb::union)
     }
 
-    /// What is drawn, ignoring the frame: each path's bounds grown by half
-    /// its stroke width, so a thick stroke is not cut off at the page edge
-    /// (#450).
+    /// What is drawn, ignoring the frame: each path's bounds grown by its
+    /// stroke's reach, caps and miters included (#450, #428), so a thick
+    /// stroke is not cut off at the page edge.
     #[must_use]
     pub fn visual_bounds(&self) -> Option<Aabb> {
         self.layers
@@ -357,7 +383,12 @@ impl ExportModel {
             .flat_map(|l| l.paths.iter().map(move |p| (l, p)))
             .filter_map(|(l, p)| {
                 let b = p.bbox()?;
-                let r = Vec2::new(1.0, 1.0) * (l.paint(p).width.max(0.0) / 2.0);
+                let paint = l.paint(p);
+                let w = paint.width.max(0.0);
+                if l.uses_object_style() && !paint.line.is_default() {
+                    return locus_stroke::bounds(&path_chain(p), w, &paint.line);
+                }
+                let r = Vec2::new(1.0, 1.0) * (w / 2.0);
                 Some(Aabb::from_points(b.min - r, b.max + r))
             })
             .reduce(Aabb::union)
@@ -466,10 +497,9 @@ pub fn collect(doc: &Document) -> ExportModel {
         .iter()
         .filter(|(_, l)| layer_exported(l))
         .map(|(id, l)| {
-            (
-                ExportLayer::new(*id, l.name.clone(), l.colour, l.operation),
-                Vec::new(),
-            )
+            let mut el = ExportLayer::new(*id, l.name.clone(), l.colour, l.operation);
+            el.stroke_styles = l.stroke_styles;
+            (el, Vec::new())
         })
         .collect();
     layers.sort_by_key(|(l, _)| {
@@ -546,6 +576,115 @@ pub fn collect(doc: &Document) -> ExportModel {
         fills,
         ..Default::default()
     }
+}
+
+/// Machine layers set to **Styled** (#428, ADR 0019 decision 4) cut, score
+/// or engrave each object's stroke outline instead of its centreline: the
+/// width, caps and joins become real geometry (Engrave then hatches it).
+/// Centreline layers, Draw and Reference layers are left alone. A path
+/// whose outline can't be built keeps its centreline.
+pub fn apply_stroke_styles(model: &mut ExportModel) {
+    for layer in &mut model.layers {
+        let machine = matches!(
+            layer.operation,
+            Operation::Cut(_) | Operation::Score | Operation::Engrave(_) | Operation::DragKnife(_)
+        );
+        if !machine || layer.stroke_styles != StrokeStyles::Styled {
+            continue;
+        }
+        let mut out = Vec::new();
+        for p in std::mem::take(&mut layer.paths) {
+            let st = p
+                .segs
+                .first()
+                .map_or_else(Style::default, |s| layer.style_of(s.entity));
+            match outline_paths(&p, st.width, &st.line) {
+                Some(loops) if !loops.is_empty() => out.extend(loops),
+                _ => out.push(p),
+            }
+        }
+        layer.paths = out;
+    }
+}
+
+/// An export path as the pieces a stroke follows: lines and arcs in travel
+/// order (Béziers as biarcs within [`EXPORT_TOL`]).
+#[must_use]
+pub fn path_chain(p: &ExportPath) -> locus_stroke::Chain {
+    use locus_region::Seg;
+    let arc = |a: &Arc| Seg::Arc {
+        center: a.center,
+        radius: a.radius(),
+        start: a.start_angle(),
+        sweep: a.sweep(),
+    };
+    let mut segs = Vec::new();
+    for s in &p.segs {
+        let mut part: Vec<Seg> = match s.shape {
+            Shape::Line(l) => vec![Seg::Line { a: l.a, b: l.b }],
+            Shape::Arc(a) => vec![arc(&a)],
+            Shape::Circle(c) => vec![Seg::Arc {
+                center: c.center,
+                radius: c.radius,
+                start: 0.0,
+                sweep: core::f64::consts::TAU,
+            }],
+            // Biarc pieces are stored CCW: orient each along the curve.
+            Shape::Cubic(c) => c
+                .to_pieces_oriented(EXPORT_TOL)
+                .into_iter()
+                .map(|(pc, back)| match pc {
+                    Piece::Line(l) => Seg::Line { a: l.a, b: l.b },
+                    Piece::Arc(a) => {
+                        if back {
+                            arc(&a).reversed()
+                        } else {
+                            arc(&a)
+                        }
+                    }
+                })
+                .collect(),
+        };
+        if s.reversed {
+            part.reverse();
+            for q in &mut part {
+                *q = q.reversed();
+            }
+        }
+        segs.extend(part);
+    }
+    locus_stroke::Chain {
+        segs,
+        closed: p.closed,
+    }
+}
+
+/// The outline of `path` stroked at `width` with `line`, as closed export
+/// paths; `None` when it can't be built.
+#[must_use]
+pub fn outline_paths(path: &ExportPath, width: f64, line: &LineStyle) -> Option<Vec<ExportPath>> {
+    let entity = path.segs.first()?.entity;
+    let area = locus_stroke::expand(
+        &path_chain(path),
+        width,
+        line,
+        &locus_stroke::Limits::default(),
+    )
+    .ok()?;
+    Some(
+        area.loops
+            .iter()
+            .filter_map(loop_path)
+            .map(|mut p| {
+                // Keep the source entity, so validation and selection export
+                // still know where each piece came from.
+                for s in &mut p.segs {
+                    s.entity = entity;
+                }
+                p
+            })
+            .collect(),
+    )
 }
 
 /// `shape` moved by `d`.

@@ -9,6 +9,7 @@
 
 use crate::error::DocError;
 use crate::operation::{MAX_LENGTH, MAX_PEN};
+use locus_stroke::{Align, Cap, Join, LineStyle};
 use serde::{Deserialize, Serialize};
 
 /// Stroke colour.
@@ -78,6 +79,30 @@ pub struct Style {
     pub fill: Fill,
     /// `0..=1`.
     pub opacity: f64,
+    /// Caps, joins and alignment (#428, format v24; ADR 0019 decision 1).
+    /// Omitted at its default (round caps and joins, centred), so files
+    /// that never styled a line are unchanged.
+    #[serde(default, skip_serializing_if = "LineStyle::is_default")]
+    pub line: LineStyle,
+}
+
+/// How a machine layer (Cut, Score, Engrave, Drag knife) treats its
+/// objects' line styles (#428, ADR 0019 decision 4; owner default
+/// 2026-11-24: Centreline). Draw layers ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum StrokeStyles {
+    /// Cut or mark the real path, as before M6. Styles are visual only.
+    #[default]
+    Centreline,
+    /// Cut or mark the stroke's outline (Engrave hatches it).
+    Styled,
+}
+
+impl StrokeStyles {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The pen a Draw layer had before M5 (`DrawParams::default()`), so files that
@@ -92,6 +117,7 @@ impl Default for Style {
             pen: 1,
             fill: Fill::None,
             opacity: 1.0,
+            line: LineStyle::default(),
         }
     }
 }
@@ -125,6 +151,12 @@ impl Style {
                 value: self.opacity,
             });
         }
+        self.line.validate().map_err(|e| match e {
+            locus_stroke::StrokeError::BadValue { what, value } => {
+                DocError::BadValue { what, value }
+            }
+            other => DocError::Invalid(other.to_string()),
+        })?;
         // Fills belong to regions since format v19 (#451): an object has
         // none, so no fill can hide another object's line.
         if self.fill != Fill::None {
@@ -156,6 +188,15 @@ impl Style {
         if let Some(o) = patch.opacity {
             self.opacity = o;
         }
+        if let Some(c) = patch.cap {
+            self.line.cap = c;
+        }
+        if let Some(j) = patch.join {
+            self.line.join = j;
+        }
+        if let Some(a) = patch.align {
+            self.line.align = a;
+        }
         self
     }
 }
@@ -176,6 +217,10 @@ pub struct StylePatch {
     /// a mixed selection keeps its colours. With this set, `fill` is only
     /// the colour for objects that never had one.
     pub fill_on: Option<bool>,
+    /// End caps, corner joins and alignment (#428).
+    pub cap: Option<Cap>,
+    pub join: Option<Join>,
+    pub align: Option<Align>,
 }
 
 impl StylePatch {
@@ -189,6 +234,9 @@ impl StylePatch {
             fill: Some(style.fill),
             opacity: Some(style.opacity),
             fill_on: None,
+            cap: Some(style.line.cap),
+            join: Some(style.line.join),
+            align: Some(style.line.align),
         }
     }
 

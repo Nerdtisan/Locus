@@ -271,6 +271,16 @@ pub enum Command {
         layer: LayerId,
         transform: crate::transform::Transform,
     },
+    /// Expand to geometry (#428, ADR 0019 decision 4): replace the styled
+    /// strokes of `entities` with the plain curves of their outlines, on the
+    /// same layers, in one undo step. Curves are joined end to end as the
+    /// canvas joins them; Béziers are lowered to arcs within `tol` mm (the
+    /// Expand tolerance, default 0.01 mm). Recipe instances are refused:
+    /// explode them first (ADR 0011).
+    ExpandStyle {
+        entities: Vec<EntityId>,
+        tol: f64,
+    },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
         label: String,
@@ -349,6 +359,7 @@ impl Command {
                 | crate::transform::Transform::Stretch { .. } => "Scale reference",
             }
             .to_owned(),
+            Command::ExpandStyle { .. } => "Expand to geometry".to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -374,6 +385,9 @@ pub struct LayerProps {
     pub export_order: Option<u32>,
     pub visible: Option<bool>,
     pub export_enabled: Option<bool>,
+    /// Centreline or Styled, on machine layers (#428).
+    #[serde(default)]
+    pub stroke_styles: Option<crate::style::StrokeStyles>,
 }
 
 /// One reversible state change: the state of an item before and after.
@@ -989,6 +1003,7 @@ fn exec(
                 visible: true,
                 locked: false,
                 export_enabled: true,
+                stroke_styles: Default::default(),
             };
             Document::check_layer(&layer)?;
             let id = LayerId::new(doc.alloc_id()?);
@@ -1023,6 +1038,9 @@ fn exec(
             }
             if let Some(v) = props.export_enabled {
                 after.export_enabled = v;
+            }
+            if let Some(v) = props.stroke_styles {
+                after.stroke_styles = v;
             }
             Document::check_layer(&after)?;
             if doc.image(*id).is_some() && !matches!(after.operation, Operation::Reference) {
@@ -1238,6 +1256,54 @@ fn exec(
                         after: Some(after),
                     },
                 );
+            }
+        }
+        Command::ExpandStyle { entities, tol } => {
+            use crate::offset::Out;
+            let (groups, sources) = crate::expand::plan(doc, entities, *tol)?;
+            let delete = crate::delete::delete_entities(doc, &sources);
+            for g in groups {
+                let mut ids: Vec<EntityId> = Vec::with_capacity(g.out.len());
+                for o in &g.out {
+                    let at = |i: usize| {
+                        ids.get(i)
+                            .copied()
+                            .ok_or_else(|| DocError::Invalid("expand: bad output".to_owned()))
+                    };
+                    let geom = match *o {
+                        Out::Point(pos) => Geom::Point { pos },
+                        Out::Line(a, b) => Geom::Line {
+                            start: at(a)?,
+                            end: at(b)?,
+                        },
+                        Out::Arc(c, a, b) => Geom::Arc {
+                            center: at(c)?,
+                            start: at(a)?,
+                            end: at(b)?,
+                        },
+                        Out::Circle(c, radius) => Geom::Circle {
+                            center: at(c)?,
+                            radius,
+                        },
+                    };
+                    let mut added = Applied::default();
+                    exec(
+                        doc,
+                        &Command::AddEntity {
+                            layer: g.layer,
+                            construction: false,
+                            geom,
+                            style: g.style,
+                        },
+                        patches,
+                        &mut added,
+                    )?;
+                    ids.extend(added.entities.iter().copied());
+                    out.entities.extend(added.entities);
+                }
+            }
+            if let Some(d) = delete {
+                exec(doc, &d, patches, &mut Applied::default())?;
             }
         }
         Command::Compound { commands, .. } => {

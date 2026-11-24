@@ -53,6 +53,9 @@ pub fn prepare_for(doc: &Document, auto_fix: bool, profile: Option<&MachineProfi
     } else {
         Vec::new()
     };
+    // Styled machine layers cut the stroke outline (#428), before kerf and
+    // hatch, so those apply to what is cut.
+    crate::pipeline::apply_stroke_styles(&mut model);
     // SPEC §8: operation transforms before validation, so what is checked
     // is what will be cut.
     apply_operations(&mut model);

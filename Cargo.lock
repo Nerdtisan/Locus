@@ -2207,6 +2207,7 @@ dependencies = [
  "locus-mcp",
  "locus-plugin-host",
  "locus-region",
+ "locus-stroke",
  "locus-text",
  "rfd",
  "serde",
@@ -2241,6 +2242,7 @@ dependencies = [
  "locus-geom",
  "locus-region",
  "locus-solver",
+ "locus-stroke",
  "locus-text",
  "proptest",
  "ron",
@@ -2255,6 +2257,7 @@ dependencies = [
  "locus-doc",
  "locus-geom",
  "locus-region",
+ "locus-stroke",
  "locus-text",
  "serde",
  "serde_json",
@@ -2367,6 +2370,17 @@ version = "0.0.0"
 dependencies = [
  "locus-geom",
  "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "locus-stroke"
+version = "0.0.0"
+dependencies = [
+ "locus-geom",
+ "locus-region",
+ "proptest",
+ "serde",
  "thiserror 2.0.21",
 ]
 

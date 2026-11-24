@@ -79,6 +79,15 @@ pub struct Settings {
     /// Grid, snaps and display toggles (M5 design §2.4): per user, shared
     /// by the navigation bar, the View menu and the sketch palette.
     pub display: Display,
+    /// Expand to geometry's tolerance, mm (#428; owner decision 2026-11-24:
+    /// 0.01 mm keeps expanded outlines editable). Export always uses
+    /// `EXPORT_TOL`.
+    #[serde(default = "default_expand_tol")]
+    pub expand_tol: f64,
+}
+
+fn default_expand_tol() -> f64 {
+    locus_doc::expand::DEFAULT_EXPAND_TOL
 }
 
 /// The view settings behind the navigation bar's Grid and snaps ▾ and
@@ -128,6 +137,7 @@ impl Default for Settings {
             auto_constrain: true,
             profiles: Vec::new(),
             display: Display::default(),
+            expand_tol: default_expand_tol(),
         }
     }
 }
@@ -217,6 +227,7 @@ mod tests {
                 snap_grid: false,
                 ..Display::default()
             },
+            expand_tol: Default::default(),
         };
         assert_eq!(Settings::from_json(&s.to_json().unwrap_or_default()), s);
     }

@@ -35,6 +35,7 @@ mod pattern_tool;
 pub mod plugin_objects;
 mod polygon_dialog;
 mod regions;
+mod strokes;
 mod text_dialog;
 
 pub(crate) use calibrate_tool::CalibrateDraft;
@@ -46,6 +47,7 @@ pub(crate) use offset_tool::OffsetDraft;
 pub(crate) use path_text_tool::{PathTextDraft, Slide};
 pub(crate) use pattern_tool::PatternDraft;
 pub(crate) use regions::RegionUi;
+pub(crate) use strokes::StrokeMesh;
 
 /// Pick radius while a finger drives the pointer (#251): a fingertip covers
 /// far more than a mouse pixel. Mouse and pen keep `HIT_TOL_PT`.

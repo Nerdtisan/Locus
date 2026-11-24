@@ -842,6 +842,7 @@ impl AppState {
     }
 
     pub(crate) fn rebuild(&mut self) {
+        self.doc.scene_stamp += 1;
         self.doc.scene = Scene::build_showing(
             self.doc.sketcher.document(),
             &self.doc.sketcher.state().fully_constrained,
@@ -1001,6 +1002,25 @@ impl AppState {
                 .collect(),
         };
         self.apply_reporting(&cmd);
+    }
+
+    /// Expand to geometry (#428): the selected curves' strokes become the
+    /// plain curves of their outlines, as one `ExpandStyle` step. `tol` is
+    /// the Expand tolerance setting (owner default 0.01 mm).
+    pub fn expand_selection(&mut self, tol: f64) {
+        let ids = self.selected_curves();
+        if ids.is_empty() {
+            self.doc.notice = Some("Select styled curves to expand".to_owned());
+            return;
+        }
+        use locus_doc::expand::{DEFAULT_EXPAND_TOL, MAX_EXPAND_TOL, MIN_EXPAND_TOL};
+        // A stored setting is untrusted: out of range means the default.
+        let tol = if (MIN_EXPAND_TOL..=MAX_EXPAND_TOL).contains(&tol) {
+            tol
+        } else {
+            DEFAULT_EXPAND_TOL
+        };
+        self.apply_reporting(&Command::ExpandStyle { entities: ids, tol });
     }
 
     /// Select exactly these entities (the pre-export panel's highlight, #128).

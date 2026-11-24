@@ -70,6 +70,12 @@ impl AppState {
         } else {
             Color32::from_rgba_unmultiplied(230, 120, 0, 90)
         };
-        frame.draw_strokes(&self.doc.scene, |id| doc.stroke_width(id), colour);
+        // Caps and joins (#428): cached triangles, rebuilt when the scene is.
+        let mut cache = self.doc.stroke_mesh.borrow_mut();
+        if cache.stamp != self.doc.scene_stamp || cache.tris.is_empty() {
+            cache.tris = super::strokes::triangles(doc, &self.doc.scene);
+            cache.stamp = self.doc.scene_stamp;
+        }
+        frame.draw_triangles(&cache.tris, colour);
     }
 }

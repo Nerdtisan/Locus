@@ -13,6 +13,7 @@ use crate::error::DocError;
 use crate::ids::{BooleanId, ConstraintId, EntityId, LayerId, MAX_ID, RecipeId};
 use crate::operation::Operation;
 use crate::recipe::Recipe;
+use crate::style::StrokeStyles;
 use locus_geom::{Arc, Circle, Cubic, Line, Unit, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +31,10 @@ pub struct Layer {
     pub visible: bool,
     pub locked: bool,
     pub export_enabled: bool,
+    /// Machine layers: cut the centreline or the styled outline (#428,
+    /// format v24). Omitted at its default, Centreline.
+    #[serde(default, skip_serializing_if = "StrokeStyles::is_default")]
+    pub stroke_styles: StrokeStyles,
 }
 
 /// A named document parameter (SPEC §5). Stored with its last evaluated value;
@@ -200,6 +205,7 @@ impl Document {
             visible: true,
             locked: false,
             export_enabled: true,
+            stroke_styles: Default::default(),
         };
         Self {
             units: Unit::Mm,

@@ -254,6 +254,50 @@ impl AppState {
                 },
             });
         }
+        // Machine layers: cut the centreline or the styled outline (#428,
+        // design §8; owner default Centreline).
+        if matches!(
+            l.operation,
+            locus_doc::Operation::Cut(_)
+                | locus_doc::Operation::Score
+                | locus_doc::Operation::Engrave(_)
+                | locus_doc::Operation::DragKnife(_)
+        ) {
+            use locus_doc::StrokeStyles;
+            let picked = row(ui, "Stroke styles", |ui| {
+                let mut picked = None;
+                for (v, label, tip) in [
+                    (
+                        StrokeStyles::Centreline,
+                        "Centreline",
+                        "Cut or mark the path itself; line styles are visual only",
+                    ),
+                    (
+                        StrokeStyles::Styled,
+                        "Styled",
+                        "Cut or mark each stroke's outline: width, caps and joins become real (Engrave hatches it)",
+                    ),
+                ] {
+                    if ui
+                        .radio(l.stroke_styles == v, label)
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        picked = Some(v);
+                    }
+                }
+                picked
+            });
+            if let Some(v) = picked.filter(|v| *v != l.stroke_styles) {
+                self.apply_reporting(&Command::SetLayerProps {
+                    id,
+                    props: locus_doc::LayerProps {
+                        stroke_styles: Some(v),
+                        ..locus_doc::LayerProps::default()
+                    },
+                });
+            }
+        }
         row(ui, "Order", |ui| {
             ui.monospace((l.export_order + 1).to_string())
         });
@@ -527,6 +571,19 @@ impl AppState {
             ) {
                 settings.units = u;
             }
+        });
+        // Expand to geometry's tolerance (#428, owner default 0.01 mm).
+        row(ui, "Expand tolerance", |ui| {
+            use locus_doc::expand::{MAX_EXPAND_TOL, MIN_EXPAND_TOL};
+            ui.add(
+                egui::DragValue::new(&mut settings.expand_tol)
+                    .range(MIN_EXPAND_TOL..=MAX_EXPAND_TOL)
+                    .speed(0.001)
+                    .suffix(" mm"),
+            )
+            .on_hover_text(
+                "How closely Expand to geometry follows curved strokes. Smaller is more exact, with more nodes to edit. Export always uses 0.001 mm.",
+            );
         });
     }
 
