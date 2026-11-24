@@ -123,6 +123,7 @@ pub fn reference_image(bytes: &[u8], centre: Vec2) -> Result<RefImage, ImportErr
             origin: centre - size * 0.5,
             mm_per_px: DEFAULT_MM_PER_PX,
             opacity: 0.5,
+            rotation: 0.0,
         },
     };
     image

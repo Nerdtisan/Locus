@@ -324,13 +324,39 @@ impl AppState {
 
     /// True when the selection has something to move, rotate or scale.
     pub fn can_transform(&self) -> bool {
-        !self.selection.items.is_empty()
+        !self.selection.items.is_empty() || self.reference_target().is_some()
+    }
+
+    /// The reference the Move / Rotate / Scale tools act on (#463, ADR 0019
+    /// decision 9): a Reference layer picked in the Browser or by clicking
+    /// its image, or a selection made only of one reference's geometry.
+    /// The tools then move the whole reference with one
+    /// `TransformReference`, since its locked layer refuses edits by hand.
+    pub(crate) fn reference_target(&self) -> Option<locus_doc::LayerId> {
+        let doc = self.doc.sketcher.document();
+        let is_ref = |l: locus_doc::LayerId| {
+            doc.layer(l)
+                .is_some_and(|l| matches!(l.operation, locus_doc::Operation::Reference))
+        };
+        if self.selection.items.is_empty() {
+            return self.view.browser_layer.filter(|l| is_ref(*l));
+        }
+        let mut layers = self
+            .selection
+            .items
+            .iter()
+            .map(|id| doc.entity(id).map(|e| e.layer));
+        let first = layers.next()??;
+        (is_ref(first) && layers.all(|l| l == Some(first))).then_some(first)
     }
 
     /// The centre of the selection's bounding box: where the manipulator
     /// sits and, unless a pivot was placed, what Rotate and Scale turn
     /// about (design §6.7).
     pub fn selection_center(&self) -> Option<Vec2> {
+        if let Some(layer) = self.reference_target() {
+            return locus_doc::reference::centre(self.doc.sketcher.document(), layer);
+        }
         self.doc
             .scene
             .items
@@ -347,6 +373,12 @@ impl AppState {
     /// in the status bar; when constraints forbid it, they are named and
     /// highlighted instead. Returns whether it was applied.
     pub fn apply_transform(&mut self, mode: TransformMode, units: Units) -> bool {
+        if let Some(layer) = self.reference_target() {
+            // A reference moves as a whole, never copied (#463).
+            let center = self.selection_center().unwrap_or(Vec2::ZERO);
+            let transform = self.tools.transform.transform(mode, center);
+            return self.apply_reporting(&Command::TransformReference { layer, transform });
+        }
         let sel: Vec<EntityId> = self.selection.items.iter().collect();
         let center = self.selection_center().unwrap_or(Vec2::ZERO);
         let t = self.tools.transform.transform(mode, center);

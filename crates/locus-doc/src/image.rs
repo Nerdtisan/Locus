@@ -67,6 +67,23 @@ pub struct ImagePlacement {
     pub mm_per_px: f64,
     /// `0..=1`.
     pub opacity: f64,
+    /// Turned counter-clockwise about the image's centre, radians, in
+    /// `-π..=π` (#463, format v22). Omitted while 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation: f64,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's signature
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
+/// `a` wrapped into `-π..=π`.
+#[must_use]
+pub fn wrap_angle(a: f64) -> f64 {
+    use std::f64::consts::{PI, TAU};
+    let w = a.rem_euclid(TAU);
+    if w > PI { w - TAU } else { w }
 }
 
 impl ImagePlacement {
@@ -96,6 +113,13 @@ impl ImagePlacement {
                 value: self.opacity,
             });
         }
+        let pi = std::f64::consts::PI;
+        if !(self.rotation.is_finite() && (-pi..=pi).contains(&self.rotation)) {
+            return Err(DocError::BadValue {
+                what: "image rotation",
+                value: self.rotation,
+            });
+        }
         Ok(())
     }
 }
@@ -120,11 +144,71 @@ impl RefImage {
         Vec2::new(f64::from(self.width_px) * s, f64::from(self.height_px) * s)
     }
 
-    /// The image's corners, bottom-left and top-right, mm.
+    /// The image's corners before its rotation, bottom-left and top-right,
+    /// mm. With a rotation, see [`RefImage::corners`].
     #[must_use]
     pub fn rect(&self) -> (Vec2, Vec2) {
         let o = self.placement.origin;
         (o, o + self.size_mm())
+    }
+
+    /// The centre it turns about, mm.
+    #[must_use]
+    pub fn centre(&self) -> Vec2 {
+        self.placement.origin + self.size_mm() * 0.5
+    }
+
+    /// Its corners as drawn: bottom-left, bottom-right, top-right, top-left
+    /// of the image, turned by its rotation (#463).
+    #[must_use]
+    pub fn corners(&self) -> [Vec2; 4] {
+        let (lo, hi) = self.rect();
+        let turn = crate::transform::Transform::Rotate {
+            center: self.centre(),
+            angle: self.placement.rotation,
+        };
+        [lo, Vec2::new(hi.x, lo.y), hi, Vec2::new(lo.x, hi.y)].map(|p| turn.point(p))
+    }
+
+    /// Whether the drawn image covers `w`.
+    #[must_use]
+    pub fn contains(&self, w: Vec2) -> bool {
+        let back = crate::transform::Transform::Rotate {
+            center: self.centre(),
+            angle: -self.placement.rotation,
+        };
+        let q = back.point(w);
+        let (lo, hi) = self.rect();
+        q.x >= lo.x && q.x <= hi.x && q.y >= lo.y && q.y <= hi.y
+    }
+
+    /// The box around the drawn image.
+    #[must_use]
+    pub fn bounds(&self) -> locus_geom::Aabb {
+        let c = self.corners();
+        locus_geom::Aabb::from_points(c[0], c[2]).union(locus_geom::Aabb::from_points(c[1], c[3]))
+    }
+
+    /// Its placement after `t` (#463): the centre moves with `t`, the
+    /// rotation adds a turn and the pixel size a scale.
+    #[must_use]
+    pub fn transformed_placement(&self, t: &crate::transform::Transform) -> ImagePlacement {
+        use crate::transform::Transform;
+        let p = self.placement;
+        let centre = t.point(self.centre());
+        let (mm_per_px, rotation) = match *t {
+            Transform::Move(_) => (p.mm_per_px, p.rotation),
+            Transform::Rotate { angle, .. } => (p.mm_per_px, wrap_angle(p.rotation + angle)),
+            Transform::Scale { factor, .. } => (p.mm_per_px * factor, p.rotation),
+        };
+        let half =
+            Vec2::new(f64::from(self.width_px), f64::from(self.height_px)) * (mm_per_px / 2.0);
+        ImagePlacement {
+            origin: centre - half,
+            mm_per_px,
+            rotation,
+            ..p
+        }
     }
 
     /// The image's own invariants (it is untrusted input).
@@ -201,6 +285,7 @@ pub(crate) fn tiny_png() -> RefImage {
             origin: Vec2::new(1.0, 2.0),
             mm_per_px: 0.5,
             opacity: 0.5,
+            rotation: 0.0,
         },
     }
 }
@@ -312,6 +397,104 @@ mod tests {
         assert!(op.is_err());
         ed.undo().unwrap();
         assert!(ed.document().images().is_empty(), "one undo step");
+    }
+
+    /// #463: a reference image moves, turns about a point and scales with
+    /// `TransformReference` on its locked layer, one undo step each; the
+    /// turn is stored and wraps into -π..=π.
+    #[test]
+    fn transform_reference_moves_turns_and_scales_the_image() {
+        use crate::Command;
+        use crate::transform::Transform;
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let (mut ed, layer) = with_image();
+        let start = ed.document().image(layer).cloned().unwrap();
+        let c0 = start.centre();
+        let close = |a: Vec2, b: Vec2| a.distance(b) < 1e-9;
+        let apply = |ed: &mut crate::Editor, transform| {
+            ed.apply(&Command::TransformReference { layer, transform })
+                .unwrap();
+            ed.document().image(layer).cloned().unwrap()
+        };
+        let moved = apply(&mut ed, Transform::Move(Vec2::new(3.0, -1.0)));
+        assert!(close(moved.centre(), c0 + Vec2::new(3.0, -1.0)));
+        assert_eq!(ed.undo_label(), Some("Move reference"));
+        // A quarter turn about the centre.
+        let turned = apply(
+            &mut ed,
+            Transform::Rotate {
+                center: moved.centre(),
+                angle: FRAC_PI_2,
+            },
+        );
+        assert!((turned.placement.rotation - FRAC_PI_2).abs() < 1e-12);
+        assert!(close(turned.centre(), moved.centre()));
+        let [bl, ..] = turned.corners();
+        let (lo, _) = moved.rect();
+        let c = moved.centre();
+        // (x, y) about c by +90° is (-y, x).
+        assert!(close(bl, c + Vec2::new(c.y - lo.y, lo.x - c.x)));
+        // Two more quarter turns: π, then wrapped to -π/2.
+        apply(
+            &mut ed,
+            Transform::Rotate {
+                center: c,
+                angle: FRAC_PI_2,
+            },
+        );
+        let wrapped = apply(
+            &mut ed,
+            Transform::Rotate {
+                center: c,
+                angle: FRAC_PI_2,
+            },
+        );
+        assert!((wrapped.placement.rotation + FRAC_PI_2).abs() < 1e-12);
+        assert!(wrapped.placement.rotation >= -PI);
+        // Scale about a corner keeps that corner and doubles the pixel.
+        let corner = wrapped.corners()[0];
+        let scaled = apply(
+            &mut ed,
+            Transform::Scale {
+                center: corner,
+                factor: 2.0,
+            },
+        );
+        assert!(close(scaled.corners()[0], corner));
+        assert!((scaled.placement.mm_per_px - 2.0 * wrapped.placement.mm_per_px).abs() < 1e-12);
+        assert_eq!(ed.undo_label(), Some("Scale reference"));
+        for _ in 0..5 {
+            ed.undo().unwrap();
+        }
+        assert_eq!(ed.document().image(layer), Some(&start));
+    }
+
+    /// A turned image covers its turned corners, not its old box.
+    #[test]
+    fn a_turned_image_contains_points_by_its_drawn_shape() {
+        let mut img = tiny_png();
+        img.placement.mm_per_px = 1.0;
+        img.placement.origin = Vec2::new(0.0, 0.0);
+        img.width_px = 10;
+        img.height_px = 2;
+        assert!(img.contains(Vec2::new(9.0, 1.0)));
+        img.placement.rotation = std::f64::consts::FRAC_PI_2;
+        // Now 2 wide and 10 tall about the centre (5, 1).
+        assert!(!img.contains(Vec2::new(9.0, 1.0)));
+        assert!(img.contains(Vec2::new(5.0, 5.0)));
+        let b = img.bounds();
+        assert!((b.max.y - b.min.y - 10.0).abs() < 1e-9);
+        assert!((b.max.x - b.min.x - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bad_rotations_are_refused() {
+        let ok = tiny_png();
+        for r in [f64::NAN, f64::INFINITY, 4.0, -4.0] {
+            let mut img = ok.clone();
+            img.placement.rotation = r;
+            assert!(img.validate().is_err(), "{r}");
+        }
     }
 
     /// Placement and opacity change on the locked layer, as one undo step

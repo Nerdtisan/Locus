@@ -366,16 +366,25 @@ impl AppState {
         let t = &self.tools.transform;
         if !t.is_identity(mode) {
             let xf = t.transform(mode, center);
-            let ghost: Vec<Shape> = self
+            let doc = self.doc.sketcher.document();
+            // A reference moves whole (#463): all its curves and its image.
+            let reference = self.reference_target();
+            let mut ghost: Vec<Shape> = self
                 .doc
                 .scene
                 .items
                 .iter()
-                .filter(|i| {
-                    self.selection.items.contains(i.id) && !matches!(i.shape, Shape::Point(_))
+                .filter(|i| match reference {
+                    Some(l) => doc.entity(i.id).is_some_and(|e| e.layer == l),
+                    None => self.selection.items.contains(i.id),
                 })
+                .filter(|i| !matches!(i.shape, Shape::Point(_)))
                 .map(|i| moved_shape(&i.shape, &xf))
                 .collect();
+            if let Some(img) = reference.and_then(|l| doc.image(l)) {
+                let c = img.corners().map(|p| xf.point(p));
+                ghost.extend((0..4).map(|k| Shape::Line(Line::new(c[k], c[(k + 1) % 4]))));
+            }
             frame.draw_preview(&ghost);
         }
         let hot = t.grip.map(|(g, _, _)| g);

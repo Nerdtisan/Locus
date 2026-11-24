@@ -1108,6 +1108,15 @@ impl AppState {
                 if hit.is_none() {
                     self.combine_click(region);
                 }
+            } else if let Some(layer) = (hit.is_none() && region.is_none() && plain)
+                .then(|| self.reference_image_at(self.view.camera.to_world(p, rect)))
+                .flatten()
+            {
+                // A click on a reference image picks the reference (#463),
+                // as its Browser row does: the Inspector shows it and the
+                // Move / Rotate / Scale tools act on it. It never edits it.
+                self.clear_selection();
+                self.view.browser_layer = Some(layer);
             } else if hit.is_some() || region.is_none() {
                 self.selection.items.click(hit, mods);
                 if plain {

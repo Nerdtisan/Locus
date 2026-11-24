@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 21;
+pub const CURRENT_VERSION: u32 = 22;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -998,8 +998,59 @@ impl From<FileV20> for FileV21 {
     }
 }
 
-/// The newest on-disk shape. When adding v22, point this at `FileV22`.
-type Latest = FileV21;
+/// Version 22: reference images can be turned (#463, ADR 0019 decision 9).
+/// `ImagePlacement` gains `rotation` (radians about the image's centre,
+/// omitted while 0); an older image has none and reads as unturned. The
+/// shape is v21's; the version stops an older build from dropping the
+/// rotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV22 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+}
+
+impl From<FileV21> for FileV22 {
+    fn from(f: FileV21) -> Self {
+        FileV22 {
+            format_version: 22,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v23, point this at `FileV23`.
+type Latest = FileV22;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -1025,8 +1076,8 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
-        FileV16::from(f),
+    FileV22::from(FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+        FileV17::from(FileV16::from(f)),
     )))))
 }
 
@@ -1110,16 +1161,19 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
-            parse::<FileV16>(text)?,
+        16 => FileV22::from(FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+            FileV17::from(parse::<FileV16>(text)?),
         ))))),
-        17 => FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+        17 => FileV22::from(FileV21::from(FileV20::from(FileV19::from(FileV18::from(
             parse::<FileV17>(text)?,
+        ))))),
+        18 => FileV22::from(FileV21::from(FileV20::from(FileV19::from(
+            parse::<FileV18>(text)?,
         )))),
-        18 => FileV21::from(FileV20::from(FileV19::from(parse::<FileV18>(text)?))),
-        19 => FileV21::from(FileV20::from(parse::<FileV19>(text)?)),
-        20 => FileV21::from(parse::<FileV20>(text)?),
-        21 => parse::<FileV21>(text)?,
+        19 => FileV22::from(FileV21::from(FileV20::from(parse::<FileV19>(text)?))),
+        20 => FileV22::from(FileV21::from(parse::<FileV20>(text)?)),
+        21 => FileV22::from(parse::<FileV21>(text)?),
+        22 => parse::<FileV22>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -2286,24 +2340,74 @@ mod tests {
         sample_v20()
     }
 
+    /// The v21 fixture is frozen; it loads unchanged (no image rotation,
+    /// which is all v22 adds) and saves as the current version.
     #[test]
-    fn v21_fixture_is_current_and_loads() {
+    fn v21_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v21/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v21()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 21"));
-        assert_eq!(load(&text).unwrap(), sample_v21());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v21());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// The v22 sample: `sample_v21()` with its reference image moved, turned
+    /// a quarter and scaled by one `TransformReference` each (#463).
+    pub(crate) fn sample_v22() -> Document {
+        use crate::transform::Transform;
+        let doc = sample_v21();
+        let layer = *doc.images().keys().next().expect("an image");
+        let mut ed = Editor::new(doc);
+        for transform in [
+            Transform::Move(locus_geom::Vec2::new(5.0, -2.0)),
+            Transform::Rotate {
+                center: locus_geom::Vec2::new(1.0, 1.0),
+                angle: std::f64::consts::FRAC_PI_2,
+            },
+            Transform::Scale {
+                center: locus_geom::Vec2::new(0.0, 0.0),
+                factor: 2.0,
+            },
+        ] {
+            ed.apply(&Command::TransformReference { layer, transform })
+                .unwrap();
+        }
+        ed.into_document()
+    }
+
+    #[test]
+    fn v22_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v22/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v22()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 22"));
+        assert!(text.contains("rotation: "));
+        assert_eq!(load(&text).unwrap(), sample_v22());
         assert_eq!(
-            save(&sample_v21()).unwrap(),
+            save(&sample_v22()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    #[test]
+    fn an_unturned_image_saves_without_a_rotation() {
+        // Older apps' files stay byte-identical until something is turned.
+        let out = save(&sample_v21()).unwrap();
+        assert!(out.contains("images: {"));
+        assert!(!out.contains("rotation"));
     }
 
     /// The owner's file (#457): a filled circle on Layer 1, then an

@@ -262,6 +262,15 @@ pub enum Command {
         about: Vec2,
         factor: f64,
     },
+    /// Move, turn or scale a whole reference (#463, ADR 0019 decision 9),
+    /// as the shapes' Move / Rotate / Scale tools do: everything on
+    /// Reference layer `layer`, its image included (its rotation is stored,
+    /// format v22). Like Calibrate it is allowed while the layer is locked,
+    /// since only these tools may move a reference.
+    TransformReference {
+        layer: LayerId,
+        transform: crate::transform::Transform,
+    },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
         label: String,
@@ -333,6 +342,12 @@ impl Command {
             Command::AddImage { .. } => "Add image".to_owned(),
             Command::SetImagePlacement { .. } => "Change image".to_owned(),
             Command::ScaleReference { .. } => "Calibrate reference".to_owned(),
+            Command::TransformReference { transform, .. } => match transform {
+                crate::transform::Transform::Move(_) => "Move reference",
+                crate::transform::Transform::Rotate { .. } => "Rotate reference",
+                crate::transform::Transform::Scale { .. } => "Scale reference",
+            }
+            .to_owned(),
             Command::Compound { label, .. } => label.clone(),
             Command::ApplySolution { .. } => "Apply solution".to_owned(),
         }
@@ -1188,6 +1203,9 @@ fn exec(
             about,
             factor,
         } => crate::reference::scale(doc, *layer, *about, *factor, patches)?,
+        Command::TransformReference { layer, transform } => {
+            crate::reference::transform(doc, *layer, transform, patches)?;
+        }
         Command::MoveToLayer { entities, layer } => {
             doc.check_unlocked(*layer)?;
             if !doc.layers.contains_key(layer) {

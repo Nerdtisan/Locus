@@ -264,6 +264,41 @@ impl AppState {
             (false, true) => "Hidden, locked",
         };
         row(ui, "State", |ui| ui.label(state));
+        // The shapes' Move / Rotate / Scale tools place a whole reference
+        // (#463), with its manipulator and typed values.
+        if matches!(l.operation, locus_doc::Operation::Reference) {
+            use crate::modify_tool::{Modify, TransformMode};
+            let pick = row(ui, "Place", |ui| {
+                let mut pick = None;
+                for (mode, label, tip) in [
+                    (
+                        TransformMode::Move,
+                        "Move",
+                        "Move this reference: drag an arrow or type X / Y",
+                    ),
+                    (
+                        TransformMode::Rotate,
+                        "Rotate",
+                        "Turn this reference: drag the ring or type an angle",
+                    ),
+                    (
+                        TransformMode::Scale,
+                        "Scale",
+                        "Scale this reference: drag the handle or type a factor",
+                    ),
+                ] {
+                    if ui.button(label).on_hover_text(tip).clicked() {
+                        pick = Some(mode);
+                    }
+                }
+                pick
+            });
+            if let Some(mode) = pick {
+                self.clear_selection();
+                self.set_modify(Modify::Transform(mode));
+                self.view.browser_layer = Some(id);
+            }
+        }
         // A reference's scale from a known distance (#391), high in the
         // section so a short Inspector doesn't clip it.
         if matches!(l.operation, locus_doc::Operation::Reference)
@@ -355,6 +390,7 @@ impl AppState {
             "Type the width: the image keeps its centre. Or Calibrate from a known distance."
         });
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
+        self.image_position(ui, id, &img, settled);
         if p == img.placement {
             ui.data_mut(|d| d.remove::<ImagePlacement>(key));
         } else if settled {
@@ -365,6 +401,62 @@ impl AppState {
             });
         } else {
             ui.data_mut(|d| d.insert_temp(key, p));
+        }
+    }
+
+    /// A reference image's centre and angle (#463). Typing or dragging a
+    /// value is held until it settles, then commits one `TransformReference`
+    /// (a move, or a turn about the centre), as the Move and Rotate tools do.
+    fn image_position(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: locus_doc::LayerId,
+        img: &locus_doc::RefImage,
+        settled: bool,
+    ) {
+        use crate::views::canvas::dialog::row;
+        use locus_doc::transform::Transform;
+        let key = egui::Id::new(("image-position", id.get()));
+        let c = img.centre();
+        let now = (c.x, c.y, img.placement.rotation.to_degrees());
+        let (mut x, mut y, mut deg) = ui.data(|d| d.get_temp(key)).unwrap_or(now);
+        let mut changed = false;
+        for (label, v) in [("Centre X", &mut x), ("Centre Y", &mut y)] {
+            changed |= row(ui, label, |ui| {
+                ui.add(egui::DragValue::new(v).speed(0.1).suffix(" mm"))
+                    .changed()
+            });
+        }
+        changed |= row(ui, "Angle", |ui| {
+            ui.add(egui::DragValue::new(&mut deg).speed(1.0).suffix("°"))
+                .on_hover_text("Counter-clockwise, about the image's centre")
+                .changed()
+        });
+        if changed {
+            ui.data_mut(|d| d.insert_temp(key, (x, y, deg)));
+        }
+        if !settled || ui.data(|d| d.get_temp::<(f64, f64, f64)>(key)).is_none() {
+            return;
+        }
+        ui.data_mut(|d| d.remove::<(f64, f64, f64)>(key));
+        let finite = x.is_finite() && y.is_finite() && deg.is_finite();
+        let transform = if !finite {
+            None
+        } else if (x, y) != (now.0, now.1) {
+            Some(Transform::Move(Vec2::new(x - now.0, y - now.1)))
+        } else if deg != now.2 {
+            Some(Transform::Rotate {
+                center: c,
+                angle: (deg - now.2).to_radians(),
+            })
+        } else {
+            None
+        };
+        if let Some(transform) = transform {
+            self.apply_reporting(&Command::TransformReference {
+                layer: id,
+                transform,
+            });
         }
     }
 
@@ -761,11 +853,20 @@ fn scaled_placement(
     corner: bool,
 ) -> locus_doc::ImagePlacement {
     let size = |s: f64| locus_geom::Vec2::new(f64::from(width_px) * s, f64::from(height_px) * s);
-    let origin = if corner {
-        p.origin
+    // The pivot is where it is drawn: a turned image's anchor corner turns
+    // with it (#463).
+    let centre = p.origin + size(p.mm_per_px) * 0.5;
+    let pivot = if corner {
+        locus_doc::transform::Transform::Rotate {
+            center: centre,
+            angle: p.rotation,
+        }
+        .point(p.origin)
     } else {
-        p.origin + (size(p.mm_per_px) - size(mm_per_px)) * 0.5
+        centre
     };
+    let new_centre = pivot + (centre - pivot) * (mm_per_px / p.mm_per_px);
+    let origin = new_centre - size(mm_per_px) * 0.5;
     locus_doc::ImagePlacement {
         origin,
         mm_per_px,
@@ -849,6 +950,7 @@ mod tests {
             origin: locus_geom::Vec2::new(-50.0, -25.0),
             mm_per_px: 1.0,
             opacity: 1.0,
+            rotation: 0.0,
         };
         // 100 × 50 px, centred on 0,0; halve it.
         let c = super::scaled_placement(p, 100, 50, 0.5, false);

@@ -18,6 +18,7 @@ use crate::error::DocError;
 use crate::generated::{GenPath, GenShape};
 use crate::ids::{EntityId, LayerId};
 use crate::operation::Operation;
+use crate::transform::Transform;
 
 /// Colour of imported reference layers: neutral grey, so it reads as "not mine".
 pub const REFERENCE_COLOUR: [u8; 3] = [128, 128, 128];
@@ -166,7 +167,8 @@ pub const MAX_SCALE_FACTOR: f64 = 1.0e6;
 #[must_use]
 pub fn anchor(doc: &Document, layer: LayerId) -> Option<Vec2> {
     if let Some(img) = doc.image(layer) {
-        return Some(img.placement.origin);
+        // The image's own bottom-left, where it is drawn (turned, #463).
+        return Some(img.corners()[0]);
     }
     geometry_bounds(doc, layer).map(|b| b.min)
 }
@@ -176,10 +178,7 @@ pub fn anchor(doc: &Document, layer: LayerId) -> Option<Vec2> {
 /// it is (the default pivot).
 #[must_use]
 pub fn centre(doc: &Document, layer: LayerId) -> Option<Vec2> {
-    let image = doc.image(layer).map(|img| {
-        let (lo, hi) = img.rect();
-        locus_geom::Aabb::from_points(lo, hi)
-    });
+    let image = doc.image(layer).map(crate::image::RefImage::bounds);
     let b = match (image, geometry_bounds(doc, layer)) {
         (Some(a), Some(b)) => a.union(b),
         (a, b) => a.or(b)?,
@@ -213,13 +212,6 @@ pub(crate) fn scale(
     factor: f64,
     patches: &mut Vec<crate::command::Patch>,
 ) -> Result<(), DocError> {
-    use crate::command::{Patch, record};
-    let l = doc.layer(layer).ok_or(DocError::UnknownLayer(layer))?;
-    if !matches!(l.operation, Operation::Reference) {
-        return Err(DocError::Invalid(
-            "only a Reference layer can be calibrated".to_owned(),
-        ));
-    }
     if !(factor.is_finite() && factor > 1.0 / MAX_SCALE_FACTOR && factor < MAX_SCALE_FACTOR) {
         return Err(DocError::BadValue {
             what: "calibration factor",
@@ -230,6 +222,47 @@ pub(crate) fn scale(
         return Err(DocError::BadValue {
             what: "calibration point",
             value: about.x,
+        });
+    }
+    let t = Transform::Scale {
+        center: about,
+        factor,
+    };
+    transform(doc, layer, &t, patches)
+}
+
+/// [`Command::TransformReference`] (#463, generalising Calibrate's scale):
+/// move, turn or scale everything on Reference layer `layer` by `t`. Points
+/// go where `t` takes them, circle radii scale with it, and the image's
+/// placement follows ([`crate::image::RefImage::transformed_placement`]).
+/// Lines, arcs and Béziers hang off their points. Allowed while the layer is
+/// locked: the lock only stops editing the reference by hand.
+pub(crate) fn transform(
+    doc: &mut Document,
+    layer: LayerId,
+    t: &Transform,
+    patches: &mut Vec<crate::command::Patch>,
+) -> Result<(), DocError> {
+    use crate::command::{Patch, record};
+    let l = doc.layer(layer).ok_or(DocError::UnknownLayer(layer))?;
+    if !matches!(l.operation, Operation::Reference) {
+        return Err(DocError::Invalid(
+            "only a Reference layer can be placed this way".to_owned(),
+        ));
+    }
+    let bad = |what| DocError::BadValue {
+        what,
+        value: f64::NAN,
+    };
+    if !t.valid() {
+        return Err(bad("reference transform"));
+    }
+    if let Transform::Scale { factor, .. } = *t
+        && !(factor > 1.0 / MAX_SCALE_FACTOR && factor < MAX_SCALE_FACTOR)
+    {
+        return Err(DocError::BadValue {
+            what: "reference scale",
+            value: factor,
         });
     }
     let on_layer: Vec<(EntityId, crate::entity::Entity)> = doc
@@ -244,16 +277,14 @@ pub(crate) fn scale(
     }
     for (id, before) in on_layer {
         let geom = match &before.geom {
-            Geom::Point { pos } => Geom::Point {
-                pos: about + (*pos - about) * factor,
-            },
+            Geom::Point { pos } => Geom::Point { pos: t.point(*pos) },
             Geom::Circle { center, radius } => Geom::Circle {
                 center: *center,
-                radius: radius * factor,
+                radius: t.length(*radius),
             },
             Geom::Text { .. } => {
                 return Err(DocError::Invalid(
-                    "a reference with text cannot be calibrated".to_owned(),
+                    "a reference with text cannot be moved, turned or scaled".to_owned(),
                 ));
             }
             g => g.clone(),
@@ -277,13 +308,8 @@ pub(crate) fn scale(
         );
     }
     if let Some(before) = image {
-        let p = before.placement;
         let after = crate::image::RefImage {
-            placement: crate::image::ImagePlacement {
-                origin: about + (p.origin - about) * factor,
-                mm_per_px: p.mm_per_px * factor,
-                ..p
-            },
+            placement: before.transformed_placement(t),
             ..before.clone()
         };
         after.validate()?;
@@ -314,6 +340,54 @@ mod tests {
             },
             reversed: false,
         }
+    }
+
+    /// #463: a vector reference turns about a point on its locked layer,
+    /// as one undo step; a drawing layer is refused.
+    #[test]
+    fn transform_reference_turns_a_vector_reference() {
+        let mut ed = Editor::new(Document::new());
+        let path = GenPath {
+            segments: vec![line((0.0, 0.0), (10.0, 0.0))],
+            closed: false,
+        };
+        let cmd = import_command(ed.document(), "plan.dxf", &[path]).unwrap();
+        let layer = ed.apply(&cmd).unwrap().layers[0];
+        let before = ed.document().clone();
+        ed.apply(&Command::TransformReference {
+            layer,
+            transform: Transform::Rotate {
+                center: Vec2::ZERO,
+                angle: std::f64::consts::FRAC_PI_2,
+            },
+        })
+        .unwrap();
+        let doc = ed.document();
+        let pos: Vec<Vec2> = doc
+            .entities()
+            .iter()
+            .filter_map(|(id, _)| doc.point_pos(id))
+            .collect();
+        assert!(
+            pos.iter().any(|p| p.distance(Vec2::new(0.0, 10.0)) < 1e-12),
+            "{pos:?}"
+        );
+        assert_eq!(ed.undo_label(), Some("Rotate reference"));
+        ed.undo().unwrap();
+        assert_eq!(ed.document().entities(), before.entities());
+        let refused = ed.apply(&Command::TransformReference {
+            layer: Document::default_layer(),
+            transform: Transform::Move(Vec2::new(1.0, 0.0)),
+        });
+        assert!(refused.is_err());
+        let bad = ed.apply(&Command::TransformReference {
+            layer,
+            transform: Transform::Scale {
+                center: Vec2::ZERO,
+                factor: f64::NAN,
+            },
+        });
+        assert!(bad.is_err());
     }
 
     /// #391: calibrating scales the reference's points, radii and image

@@ -27,7 +27,7 @@ use locus_geom::{SOLVER_TOL, Vec2};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A rigid motion or a uniform scale.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Transform {
     Move(Vec2),
     /// About `center`, CCW, radians.
@@ -66,7 +66,7 @@ impl Transform {
         }
     }
 
-    fn valid(&self) -> bool {
+    pub(crate) fn valid(&self) -> bool {
         match *self {
             Transform::Move(d) => d.is_finite(),
             Transform::Rotate { center, angle } => center.is_finite() && angle.is_finite(),
