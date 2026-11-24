@@ -111,11 +111,9 @@ impl AppState {
         if let Some((_, layer, q)) = near.min_by(|a, b| a.0.total_cmp(&b.0)) {
             return Some((layer, q));
         }
-        doc.images().iter().find_map(|(l, img)| {
-            let (lo, hi) = img.rect();
-            (is_ref(*l) && w.x >= lo.x && w.x <= hi.x && w.y >= lo.y && w.y <= hi.y)
-                .then_some((*l, w))
-        })
+        doc.images()
+            .iter()
+            .find_map(|(l, img)| (is_ref(*l) && img.contains(w)).then_some((*l, w)))
     }
 
     /// The calibration command, or why there isn't one yet.
@@ -377,6 +375,45 @@ mod tests {
             .filter(|(_, e)| e.layer == layer)
             .filter_map(|(id, _)| doc.point_pos(id))
             .collect()
+    }
+
+    /// #463: with the reference's geometry selected, the shapes' Move and
+    /// Rotate tools place the whole reference with one TransformReference
+    /// each; its layer stays locked.
+    #[test]
+    fn move_and_rotate_tools_place_a_selected_reference() {
+        use crate::modify_tool::TransformMode;
+        let (mut c, layer) = with_reference();
+        let ids: Vec<_> = c
+            .document()
+            .entities()
+            .iter()
+            .filter(|(_, e)| e.layer == layer)
+            .map(|(id, _)| id)
+            .collect();
+        c.selection.items.set_all(ids);
+        assert_eq!(c.reference_target(), Some(layer));
+        assert!(c.can_transform());
+        let before = points(&c, layer);
+        c.tools.transform.dx = 5.0;
+        c.tools.transform.dy = -1.0;
+        assert!(c.apply_transform(TransformMode::Move, Units::Mm));
+        let moved = points(&c, layer);
+        for (a, b) in before.iter().zip(&moved) {
+            assert!(a.distance(*b - Vec2::new(5.0, -1.0)) < 1e-9, "{a:?} {b:?}");
+        }
+        assert_eq!(c.undo_label(), Some("Move reference"));
+        c.tools.transform.reset();
+        c.tools.transform.angle_deg = 90.0;
+        assert!(c.apply_transform(TransformMode::Rotate, Units::Mm));
+        assert_eq!(c.undo_label(), Some("Rotate reference"));
+        assert!(c.document().layer(layer).unwrap().locked);
+        // A mixed selection is not a reference: the shapes' path takes it.
+        c.selection.items.clear();
+        c.view.browser_layer = Some(locus_doc::Document::default_layer());
+        assert_eq!(c.reference_target(), None);
+        c.view.browser_layer = Some(layer);
+        assert_eq!(c.reference_target(), Some(layer));
     }
 
     /// #464: with "Anchor corner", Calibrate keeps the reference's anchor

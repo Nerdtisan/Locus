@@ -135,6 +135,10 @@ impl AppState {
             cam.to_world(rect.right_top(), rect),
         );
         for (layer, img) in images {
+            if img.placement.rotation != 0.0 {
+                self.draw_turned_image(ctx, painter, rect, layer, &img, dark);
+                continue;
+            }
             let (lo, hi) = img.rect();
             let Some((a, b, uv)) = visible_part(lo, hi, c0, c1) else {
                 continue;
@@ -166,6 +170,77 @@ impl AppState {
                         ink,
                     );
                 }
+            }
+        }
+    }
+}
+
+impl AppState {
+    /// The visible Reference layer whose image covers `w`, the one drawn on
+    /// top first (#463: a click there picks the reference).
+    pub(crate) fn reference_image_at(&self, w: Vec2) -> Option<LayerId> {
+        let doc = self.doc.sketcher.document();
+        doc.layer_order().into_iter().rev().find(|l| {
+            doc.layer(*l).is_some_and(|l| {
+                l.visible && matches!(l.operation, locus_doc::Operation::Reference)
+            }) && doc.image(*l).is_some_and(|img| img.contains(w))
+        })
+    }
+
+    /// A turned reference image (#463): a textured quad on its four drawn
+    /// corners. Off-screen images are skipped by their box; a turned image
+    /// isn't clipped to the view, which egui's painter does for it.
+    fn draw_turned_image(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &Painter,
+        rect: Rect,
+        layer: LayerId,
+        img: &locus_doc::RefImage,
+        dark: bool,
+    ) {
+        let cam = self.view.camera;
+        let b = img.bounds();
+        let (v0, v1) = (
+            cam.to_world(rect.left_bottom(), rect),
+            cam.to_world(rect.right_top(), rect),
+        );
+        if b.max.x < v0.x || b.min.x > v1.x || b.max.y < v0.y || b.min.y > v1.y {
+            return;
+        }
+        let corners = img.corners().map(|w| cam.to_screen(w, rect));
+        match self.view.images.texture(ctx, layer, &img.data) {
+            Some(tex) => {
+                let alpha = (img.placement.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let tint = Color32::from_white_alpha(alpha);
+                let mut mesh = egui::Mesh::with_texture(tex.id());
+                // Bottom-left, bottom-right, top-right, top-left; v runs down.
+                let uvs = [
+                    pos2(0.0, 1.0),
+                    pos2(1.0, 1.0),
+                    pos2(1.0, 0.0),
+                    pos2(0.0, 0.0),
+                ];
+                for (p, uv) in corners.iter().zip(uvs) {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos: *p,
+                        uv,
+                        color: tint,
+                    });
+                }
+                mesh.add_triangle(0, 1, 2);
+                mesh.add_triangle(0, 2, 3);
+                painter.add(egui::Shape::mesh(mesh));
+            }
+            None => {
+                let ink = if dark {
+                    Color32::from_gray(150)
+                } else {
+                    Color32::from_gray(110)
+                };
+                let mut ring = corners.to_vec();
+                ring.push(corners[0]);
+                painter.add(egui::Shape::line(ring, Stroke::new(1.0, ink)));
             }
         }
     }
@@ -230,6 +305,21 @@ mod tests {
         run(&mut c);
         run(&mut c);
         assert_eq!(c.view.images.decoded(layer), Some(true));
+        // #463: the image picks its reference where it is drawn, turned
+        // too, and a turned image still draws.
+        let centre = c.document().image(layer).unwrap().centre();
+        assert_eq!(c.reference_image_at(centre), Some(layer));
+        assert_eq!(c.reference_image_at(Vec2::new(-9.0e3, 0.0)), None);
+        c.apply(&locus_doc::Command::TransformReference {
+            layer,
+            transform: locus_doc::transform::Transform::Rotate {
+                center: centre,
+                angle: 0.5,
+            },
+        })
+        .unwrap();
+        run(&mut c);
+        assert_eq!(c.reference_image_at(centre), Some(layer));
         // A file whose image bytes are damaged (but still claim PNG) loads,
         // since the document checks only the signature and sizes, and draws
         // a note.
