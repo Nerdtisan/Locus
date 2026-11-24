@@ -25,7 +25,6 @@
       visible: true,
       locked: false,
       export_enabled: true,
-      stroke_styles: Styled,
     ),
     21: (
       name: "Score layer",
@@ -144,12 +143,6 @@
         pen: 2,
         fill: r#None,
         opacity: 0.5,
-        line: (
-          cap: Square,
-          join: Miter(
-            limit: 6.0,
-          ),
-        ),
       ),
     ),
     7: (
@@ -328,24 +321,6 @@
       geom: Circle(
         center: 42,
         radius: 5.0,
-      ),
-    ),
-    47: (
-      layer: 1,
-      construction: false,
-      geom: Point(
-        pos: (
-          x: 30.0,
-          y: 20.0,
-        ),
-      ),
-    ),
-    48: (
-      layer: 1,
-      construction: false,
-      geom: Circle(
-        center: 47,
-        radius: 6.5,
       ),
     ),
     49: (
@@ -1627,8 +1602,9 @@
           48,
         ],
       ],
-      active: 2,
+      active: 0,
       constraints: [],
+      feature_suppressed: true,
     ),
     54: (
       kind: Generated(

@@ -466,7 +466,10 @@ pub(crate) fn regenerate(
         return Ok(());
     };
     let d = distance(doc, &r.kind).unwrap_or(0.0);
-    let out = if d.abs() > SOLVER_TOL {
+    // A suppressed offset (#446) writes nothing and keeps its IDs.
+    let out = if r.feature_suppressed {
+        Vec::new()
+    } else if d.abs() > SOLVER_TOL {
         generate(doc, &r.sources, d, sharp).unwrap_or_default()
     } else {
         Vec::new()

@@ -79,7 +79,7 @@ pub struct Style {
     pub fill: Fill,
     /// `0..=1`.
     pub opacity: f64,
-    /// Caps, joins and alignment (#428, format v24; ADR 0019 decision 1).
+    /// Caps, joins and alignment (#428, format v25; ADR 0019 decision 1).
     /// Omitted at its default (round caps and joins, centred), so files
     /// that never styled a line are unchanged.
     #[serde(default, skip_serializing_if = "LineStyle::is_default")]

@@ -356,6 +356,7 @@ impl App {
                 Shell::Export => self.files.open_export(&self.state, &self.settings),
                 Shell::ExportPng => self.files.open_export_png(&self.state, &self.settings),
                 Shell::Profiles => self.files.open_profiles(),
+                Shell::AutoTrace => self.state.open_trace(None),
                 Shell::InsertReference(kind) => {
                     self.files.begin_import_reference(&mut self.state, kind);
                 }
@@ -980,6 +981,7 @@ impl eframe::App for App {
             egui::Panel::top("options").show(ui, |ui| self.options_bar(ui));
         }
         self.shell_requests(ui.ctx());
+        self.state.trace_dialog(ui.ctx());
         self.sync_machine_pane();
         egui::Panel::bottom("status")
             .frame(crate::theme::bar(ui, tk.panel_2))

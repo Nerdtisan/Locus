@@ -32,7 +32,7 @@ pub struct Layer {
     pub locked: bool,
     pub export_enabled: bool,
     /// Machine layers: cut the centreline or the styled outline (#428,
-    /// format v24). Omitted at its default, Centreline.
+    /// format v25). Omitted at its default, Centreline.
     #[serde(default, skip_serializing_if = "StrokeStyles::is_default")]
     pub stroke_styles: StrokeStyles,
 }

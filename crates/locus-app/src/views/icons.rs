@@ -462,6 +462,11 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.dot((4.0, 11.0));
             d.dot((12.0, 5.0));
         }
+        // Auto trace (#461): a picture frame with a traced curve.
+        "insert.auto_trace" => {
+            d.rect(1.5, 1.5, 14.5, 14.5);
+            d.poly(&[(3.5, 12.0), (6.0, 6.0), (9.0, 10.0), (12.5, 4.0)], false);
+        }
         "insert.svg" | "insert.dxf" | "insert.image" => {
             // The mockup's import: an arrow down into a tray.
             d.line((8.0, 2.7), (8.0, 10.0));

@@ -235,6 +235,7 @@ pub(crate) fn empty(kind: crate::recipe::RecipeKind, sources: Vec<EntityId>) -> 
         pool: Vec::new(),
         active: 0,
         suppressed: std::collections::BTreeSet::new(),
+        feature_suppressed: false,
         constraints: Vec::new(),
     }
 }
