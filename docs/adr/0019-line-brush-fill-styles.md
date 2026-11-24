@@ -190,13 +190,13 @@ Expansion {
   - **Exact.**
 - **Multi-strokes (#429):** each `StrokeLayer` is the ADR 0010 open-chain offset of the path, then dashed and widened like the base stroke. **Exact.**
 - **Variable width (#426), calligraphic (#430) and paint (#434):**
-  - The width is a function w(s) of arc length: the profile, or the nib's projection on the path normal, w(θ) = √((a·sin(θ−α))² + (b·cos(θ−α))²), with a the nib size and b = size × roundness.
+  - The width is a function w(s) of arc length: the profile, or the nib's projection on the path normal, w(θ) = √((a·sin(θ−α))² + (b·cos(θ−α))²), with a the nib size and b = size × roundness. **Superseded by S2:** that offset is off by up to 1.8 mm. Nib sides are C ± p\*(n), the nib's support point (see *Decisions from S1–S3*, item 5).
   - Each side is sampled adaptively until the chord error is under the tolerance and fitted with cubics. The two sides and the caps then go through one `locus-region` boolean, which removes the loops that tight curves make. The boolean works on lines and arcs only (ADR 0008), so the cubics are lowered to biarcs (`to_pieces`) for it.
-  - **Arcs or Béziers (owner question, 2026-11-24): pending spike S1.**
+  - **Arcs or Béziers (owner question, 2026-11-24): measured by S1. Option (b) is chosen**, pending the owner's confirmation (see *Decisions from S1–S3*, item 3).
     - Option **(a) biarcs only:** one representation everywhere, as today.
     - Option **(b) keep the fitted cubics:** for the canvas, SVG/PDF and **Expand to geometry**, with biarcs only where they're needed (region booleans, DXF R12, lasers and other arc-based machine output).
     - In (b), the boolean cleanup still runs on biarcs. Each cleaned piece then maps back to the cubic span it came from, and spans the cleanup cut are refitted.
-    - S1 measures both, and the decision is recorded here after S1.
+    - S1 measured both. The decision is recorded below, after the spike results.
   - Spans where the width is constant use the exact constant-width path.
   - **This is an approximation.** The tolerance is a parameter: `EXPORT_TOL` (0.001 mm) for export and Expand, 0.05 screen px for the canvas.
   - **Spike S1** measures whether that is fast enough (below).
@@ -225,6 +225,120 @@ Expansion {
 | **S3 canvas cost** | Can the egui painter draw expanded areas within the frame budget? | Frame time with 500 styled paths, cached, with the current tessellator; compare with the wgpu callback upgrade path (ADR 0001) | #426 onward |
 
 If S1 misses the budget (expanding 500 styled paths for the canvas in < 50 ms native, so a style edit doesn't stall), the fallback is a coarser canvas tolerance plus exact expansion only at export and Expand time. That is not a different engine.
+
+### Spike results S1–S3 (2026-11-24, Track A step A0)
+
+Harness: [`spikes/stroke/`](../../spikes/stroke/) (standalone workspace; full tables in its [`results.md`](../../spikes/stroke/results.md)). Built in the `locus-dev` container (Rust 1.99), native x86-64 release, single thread, on the owner's Windows 11 host. wasm32 timings: the same code as a `wasm32-unknown-unknown` module (opt-level 3, fat LTO), timed from JS in the desktop app's Chromium pane. Canvas timings: a real eframe 0.35 / wgpu window on the host, vsync off.
+
+**Oracle (S1).** A width-profile stroke is *defined* as the union of the normal segments [R(s), L(s)] over the path, plus the join sectors and caps. The oracle samples that definition every ≤ 2 µm as thin triangles, and adds the sectors exactly. The error of an outline is measured both ways:
+- **outline → truth:** from every boundary sample (flattened at 10 nm), the distance along the outline's normal to where the oracle's membership flips, found by bisection;
+- **truth → outline:** a 240 × 240 probe grid. Where the outline and the oracle disagree, the probe's distance to the outline boundary.
+
+**Oracle (S2).** The exact sweep path ⊕ nib: the union, over a ≤ 2 µm polyline of the path, of segment ⊕ ellipse. It is tested exactly in the nib's scaled frame, or with a segment test for a flat nib.
+
+**Pipeline measured.** Each side is fitted with Hermite cubics within T/2. Bands are built per span of the centreline. Each span is cut where the tangent has turned 90°, where a side curve has a cusp, and, for nibs, where the tangent is parallel to the nib. Each band is normalised alone, then one `locus_region` union takes the bands, the join sectors (or nib copies) and the caps. Biarcs are lowered within T/2.
+- **(a):** keep the cleaned lines and arcs.
+- **(b):** map each cleaned run back to the cubic it came from: whole, or a sub-curve split at the run's ends and snapped to them. A run keeps its arcs when the sub-curve strays more than T/2 from it. That happens where the side is itself an arc, so the arcs are the better answer there.
+
+#### S1: variable-width outline (width profile), T = `EXPORT_TOL` = 0.001 mm
+
+| Fixture | Fitted cubics | (a) pieces | (a) error mm | (b) pieces (cubic/line/arc) | (b) error mm | ms per path |
+|---|---|---|---|---|---|---|
+| taper line 50 mm, w 0.5→4 | 4 | 34 | 0.00014 | 6 (4/0/2) | 0.00001 | 0.9 |
+| S-curve cubic, bulge 0.2→5→0.2 | 85 | 230 | 0.00050 | 87 (85/0/2) | 0.00047 | 4.8 |
+| arc r 1.5, 270°, w 4 (inside side flips) | 22 | 20 | 0.00025 | 19 (1/0/18) | 0.00025 | 1.8 |
+| zigzag, 30–150° corners, varying w | 20 | 86 | 0.00019 | 26 (20/0/6) | 0.00014 | 1.8 |
+| arc spiral r 6→2, w 0.5↔3 | 104 | 157 | 0.00048 | 62 (61/0/1) | 0.00048 | 7.9 |
+| closed blob (4 cubics), asymmetric L/R | 65 | 254 | 0.00055 | 65 (65/0/0) | 0.00048 | 7.7 |
+| self-looping cubic + cusp cubic | 73 | 272 | 0.00055 | 78 (74/1/3) | 0.00053 | 6.6 |
+| **500 random 4-cubic strokes, ~100 mm** | | | **0.00071 (all within T)** | | **0.00054 (all within T)** | 7.8 (a), 11.2 (b) |
+
+**Node count after Expand to geometry** ((b) / (a)), and the error at a looser Expand tolerance:
+
+| Fixture | T = 0.001 | T = 0.01 | T = 0.05 |
+|---|---|---|---|
+| S-curve, bulge | 87 / 230 | 22 / 88 (err 0.004) | 15 / 52 (err 0.023) |
+| arc spiral | 62 / 157 | 39 / 85 (err 0.005) | 28 / 51 (err 0.020) |
+| closed blob | 65 / 254 | 35 / 124 (err 0.005) | 24 / 84 (err 0.020) |
+| self-looping + cusp | 78 / 272 | 45 / 139 (err 0.004) | 32 / 88 (err 0.021) |
+
+**Speed, 500 random styled paths:**
+
+| Mode | Native | wasm32 |
+|---|---|---|
+| Canvas: sides sampled at 0.013 mm into a triangle strip, no fit, no cleanup | **16.6 ms** (0.033 ms/path) | **44 ms** |
+| Canvas tolerance, full fit + biarcs + union | 2.4 s | 9.0 s |
+| Export / Expand (a), T = 0.001 | 3.9 s (7.8 ms/path) | 14.0 s |
+| Export / Expand (b), T = 0.001 | 5.6 s (11.2 ms/path) | 22.7 s |
+
+About 18 % of the export time is side fitting. The rest is lowering and the arrangement. Normalising each band costs little: a raw union of the same bands takes 3.6 s against 3.9 s. But a raw union is wrong, because a band that crosses a side cusp can wind 0 over points it covers (a 7 × 60 µm false hole on 1 of the first 100 random paths, before cusp splitting).
+
+**Two `locus-region` bugs found and fixed** (Nerdtisan/Locus#485, with regression tests from this spike, `crates/locus-region/tests/stroke_bands.rs`). Both lost a whole loop of a union, silently:
+1. `merge_carriers` merged arcs on circles that differed by up to 10 × SNAP, but kept the first circle, so the merged arc ended up to ~8 µm from the shared vertex. The next boolean saw a gap and dropped the loop. The merged arc now runs through its start, the shared point and its end.
+2. Two near-tangent arcs crossing next to a shared vertex leave a ~1 µm arrangement edge. Its side probes sit ≤ 0.1 µm off, it was misclassified, and `trace` dropped the open chain with its loop. Edges shorter than `EXPORT_TOL` are now re-classified, only when the kept edges don't balance at a vertex, to whichever state balances it. Changing one moves the boundary by less than the export tolerance.
+
+Before the fixes, 2 of the first 100 random strokes and 2 of the 12 S2 cases lost their outline.
+
+#### S2: calligraphic nib, size 4 mm at 45°, against the exact sweep
+
+| Path | Roundness | ADR formula w(θ) (normal offset) | **Minkowski support point** | (a) / (b) pieces |
+|---|---|---|---|---|
+| S-curve cubic | 0 / 0.3 / 1 | 1.78 / 0.25 / 0.0005 mm | **0.00025 / 0.00047 / 0.00047** | 180·192·266 / 28·41·118 |
+| arc r 5, 330° | 0 / 0.3 / 1 | 1.43 / 0.39 / 0.0005 | **0.00050 / 0.00048 / 0.00050** | 62·197·39 / 55·128·35 |
+| zigzag (corners) | 0 / 0.3 / 1 | 1.69 / 0.25 / 0.0000 | **0.00000 / 0.00027 / 0.00001** | 6·113·10 / 6·113·10 |
+| looping cubic | 0 / 0.3 / 1 | 0.63 / 0.35 / 0.0005 | **0.00019\* / 0.00047 / 0.00047** | 122·206·103 / 23·108·29 |
+
+\* The worst point is a zero-width spur where the path starts tangent to a flat nib. It has no area to flip across, so its distance to the true sweep is bounded by growing the nib test until it touches.
+
+The w(θ) formula in this ADR offsets along the normal by the nib's support h(n). That is the right *width* but the wrong *point*: the sweep's boundary is C + p\*(n), the nib point farthest along n, which sits off the normal. The error is 0.25–0.39 mm for an oval nib and up to 1.8 mm for a flat one, because the formula can't make the straight nib edges at all.
+
+#### S3: canvas draw cost, 500 styled paths (117 451 triangles), Windows host, eframe 0.35 + wgpu
+
+| Mode | ms/frame wall | ms/frame CPU building shapes |
+|---|---|---|
+| Baseline: today's plain centrelines (`painter.line`) | 7.60 | 0.22 |
+| **Strip meshes built once in world space, `Arc<Mesh>` under a layer transform** | **7.53** | **0.03** |
+| Strip meshes transformed to screen every frame | 8.11 | 3.06 |
+| Cleaned outlines filled per screen row (today's region-fill method) | 45.7 | 36.3 |
+
+7.5 ms is this machine's present floor with vsync off, so 117 k cached triangles are free on the GPU. The wgpu paint-callback upgrade path isn't needed.
+
+### Decisions from S1–S3
+
+1. **Canvas:**
+   - The canvas does **not** run the exact engine. It samples each side at the canvas tolerance (0.05 px) into a triangle strip, with fans for joins and caps. There is no fit and no cleanup.
+   - The strip is cached per entity in world space. The key is the hashes of the geometry, the style and the brush, plus a zoom bucket, because the tolerance is in screen pixels.
+   - It is drawn as `Arc<Mesh>` under a layer transform, so a pan or zoom inside the bucket rebuilds nothing.
+   - This is the fallback the ADR already allowed, and it meets the 50 ms budget with room to spare: 16.6 ms native and 44 ms wasm for 500 paths.
+   - **Known limit:** strips overlap at tight inner corners and swallowtails, so a stroke with opacity < 1 looks slightly darker there. The cleaned outline is still used for hit-testing, export and Machine preview.
+2. **Export, Expand and Machine preview:**
+   - These use the exact pipeline above. It is within T on every fixture and on all 500 random strokes.
+   - It takes about 8–11 ms per variable-width stroke natively and about 3.6× that in wasm. It runs off the UI thread on the desktop and in chunks on the web, as auto trace does.
+   - Machine preview uses the per-entity cache.
+   - Constant-width spans keep the exact ADR 0010 path, as decided. This cost applies only to profiles, nibs and paint.
+3. **Outline representation: option (b).**
+   - Fitted cubics are kept for the canvas, SVG/PDF and Expand. Biarcs are used only for the cleanup boolean and for arc-based output (DXF R12, lasers, region booleans), as this ADR's option (b) describes.
+   - It has the same accuracy as (a) on every case (within T, both ways).
+   - It gives **2.5–4× fewer nodes** after Expand, and 1.1–4× fewer at looser tolerances.
+   - Map-back costs about 40 % more time.
+   - Runs whose side is a true arc keep their arcs automatically.
+   - *Owner question of 2026-11-24, answered by measurement; the lead relays it for confirmation.*
+4. **Expand tolerance (new, needs the owner's OK):**
+   - At T = 0.001 mm a 50 mm bulging stroke expands to 87 cubic nodes, which is exact but tedious to edit.
+   - Proposal: **Expand to geometry** gets a tolerance setting, default **0.01 mm**. That gives 22–45 nodes, with a measured error of 0.004–0.005 mm, still under any pen, kerf or blade width.
+   - Export always uses T.
+5. **Calligraphic model replaced (spec of #430 changes, flagged):**
+   - The side curves are **C ± p\*(n)**, the nib's support point, not C ± n·w(θ).
+   - The nib itself is placed at every corner and at both ends. An exact circle is used for a round nib, and a fitted ellipse otherwise.
+   - Spans are cut where the tangent is parallel to the nib. There a flat nib's support point jumps, and each side is an exact translate of the path (lines, arcs and cubics stay as they are).
+   - This is within T for roundness 0, 0.3 and 1.
+6. **Band rules (for the engine):**
+   - Split each centreline piece at 90° of turn, at side cusps and at nib flips.
+   - Normalise each band alone, then run one union.
+   - Derivatives are clamped to the band, so a jump is never differenced across.
+7. **Rejected:**
+   - A least-squares (Schneider) tangent-length fit gave no fewer cubics at T (87 against 85). Sampled checks can also miss its overshoot: 1.8 mm in one case. Hermite fitting stays.
+   - Scanline-filling the cleaned outline on the canvas costs 36 ms of CPU per frame for 500 strokes.
 
 ## Decision 4: how each style reaches each export format and machine operation
 
@@ -412,7 +526,7 @@ Also:
   - §1 is reworded (conflict 1).
   - Gradient fills get **Rotate with shape**, default on (decision 1).
   - Auto trace is Locus's own implementation from the Potrace paper (decision 8).
-  - Arcs vs Béziers for variable-width outlines is pending S1 (decision 3).
+  - Arcs vs Béziers for variable-width outlines: S1 measured it and chose (b), kept cubics (decision 3), pending the owner's confirmation.
 - **Defaults still standing unless the owner says otherwise:**
   - **Stroke styles = Centreline** on machine layers.
   - Gradients on regions only.

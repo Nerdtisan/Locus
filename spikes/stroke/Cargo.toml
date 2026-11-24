@@ -1,0 +1,37 @@
+# Standalone spike workspace (#425, ADR 0019 spikes S1–S3): not part of the
+# root workspace.
+[package]
+name = "stroke-spike"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+default-run = "stroke-spike"
+
+[workspace]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# The egui frame-time bench (S3); Windows host run.
+canvas = ["dep:eframe", "dep:egui"]
+
+[dependencies]
+locus-geom = { path = "../../crates/locus-geom" }
+locus-region = { path = "../../crates/locus-region" }
+eframe = { version = "0.35", default-features = false, features = ["wgpu", "default_fonts"], optional = true }
+egui = { version = "0.35", optional = true }
+
+[[bin]]
+name = "canvas-bench"
+required-features = ["canvas"]
+
+[profile.release]
+debug = false
+
+[profile.wasm]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
