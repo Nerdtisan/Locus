@@ -345,6 +345,7 @@ impl AppState {
             units: settings.units,
         };
         let (selection, hovered) = (&self.selection.items, self.selection.hover);
+        let highlight = &self.selection.highlight;
         let (flag_constraints, flag_entities) = self.flagged();
         self.draw_regions(&painter, rect, dark);
         self.draw_bed(&painter, rect, dark, settings);
@@ -354,7 +355,7 @@ impl AppState {
                 Emphasis::Conflict
             } else if selection.contains(item.id) {
                 Emphasis::Selected
-            } else if hovered == Some(item.id) {
+            } else if hovered == Some(item.id) || highlight.contains(&item.id) {
                 Emphasis::Hover
             } else if (!display.points || item.derived_point)
                 && item.handle.is_none()

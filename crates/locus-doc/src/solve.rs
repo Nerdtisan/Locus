@@ -229,6 +229,20 @@ impl Sketcher {
         Ok(label)
     }
 
+    /// Jump to step `step` of the history (#446): every undo or redo in
+    /// between as one batch, then one refresh. Returns the steps moved.
+    ///
+    /// # Errors
+    /// [`DocError::NothingToDo`] past the newest step; refused mid-drag.
+    pub fn go_to(&mut self, step: usize) -> Result<usize, DocError> {
+        self.not_dragging()?;
+        let moved = self.editor.go_to(step)?;
+        if moved > 0 {
+            self.refresh();
+        }
+        Ok(moved)
+    }
+
     /// Applies a command without solving or recording a solve: for scratch
     /// copies that only probe constraints ([`Self::precheck`]).
     pub(crate) fn apply_unsolved(&mut self, cmd: &Command) -> Result<Applied, DocError> {

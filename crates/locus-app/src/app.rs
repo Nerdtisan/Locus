@@ -48,6 +48,7 @@ struct Panes {
     parameters: ParametersView,
     shortcuts: ShortcutsView,
     machine: crate::views::machine_panel::MachinePanel,
+    history: crate::views::history::HistoryView,
 }
 
 /// A pane in its own OS window (#285, design §2.2). The builder keeps the
@@ -889,6 +890,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Constraints => self.state.constraints_ui(ui, self.settings),
             Tab::Parameters => self.panes.parameters.ui(ui, self.state),
             Tab::Shortcuts => self.panes.shortcuts.ui(ui, self.registry),
+            Tab::History => self.panes.history.ui(ui, self.state),
             Tab::MachinePreview => {
                 let manage = self.panes.machine.ui(ui, self.state, self.settings);
                 if manage {

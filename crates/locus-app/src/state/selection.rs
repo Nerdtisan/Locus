@@ -14,6 +14,9 @@ pub struct SelectionState {
     pub(crate) hover: Option<EntityId>,
     /// Béziers whose handles are shown: selected, or with a selected point (#160).
     pub(crate) handles: BTreeSet<EntityId>,
+    /// Geometry the History pane's Timeline highlights while a feature is
+    /// hovered (#446), drawn as hover.
+    pub(crate) highlight: BTreeSet<EntityId>,
     /// Region selection, hover and the boolean combine (#122, #124).
     pub(crate) regions: RegionUi,
 }

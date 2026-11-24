@@ -1766,6 +1766,18 @@ fn apply_solution(
     Ok(())
 }
 
+/// Most undo steps kept; the oldest is dropped (#446, ADR 0019 decision 5).
+pub const MAX_HISTORY: usize = 1000;
+
+/// The session's linear history (#446): every step's label, oldest first,
+/// and how many of them are applied. Steps from `current` on are the redo
+/// steps; doing something new there drops them (linear, ADR 0019).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct History {
+    pub steps: Vec<String>,
+    pub current: usize,
+}
+
 /// A document plus its undo/redo history: the only way to change a document.
 #[derive(Debug, Clone)]
 pub struct Editor {
@@ -1829,8 +1841,48 @@ impl Editor {
                 patches,
             });
             self.redo.clear();
+            if self.undo.len() > MAX_HISTORY {
+                let extra = self.undo.len() - MAX_HISTORY;
+                self.undo.drain(..extra);
+            }
         }
         Ok(out)
+    }
+
+    /// The history panel's list (#446).
+    #[must_use]
+    pub fn history(&self) -> History {
+        History {
+            steps: self
+                .undo
+                .iter()
+                .chain(self.redo.iter().rev())
+                .map(|t| t.label.clone())
+                .collect(),
+            current: self.undo.len(),
+        }
+    }
+
+    /// Undo or redo to just after step `step` of [`Self::history`] (0 =
+    /// before the first), as one batch: the caller re-solves once, not
+    /// once per step. Returns how many steps moved.
+    ///
+    /// # Errors
+    /// [`DocError::NothingToDo`] when `step` is past the newest step.
+    pub fn go_to(&mut self, step: usize) -> Result<usize, DocError> {
+        if step > self.undo.len() + self.redo.len() {
+            return Err(DocError::NothingToDo("history step"));
+        }
+        let mut moved = 0;
+        while self.undo.len() > step {
+            self.undo()?;
+            moved += 1;
+        }
+        while self.undo.len() < step {
+            self.redo()?;
+            moved += 1;
+        }
+        Ok(moved)
     }
 
     /// Undo the last step, returning its label. Re-solve afterwards.
@@ -2545,5 +2597,49 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn history_jumps_as_one_batch_and_truncates_when_edited() {
+        // #446: the History panel's list, jump and linear truncation.
+        let mut ed = Editor::new(Document::new());
+        for x in 0..4 {
+            add_pt(&mut ed, f64::from(x), 0.0);
+        }
+        let h = ed.history();
+        assert_eq!(h.steps.len(), 4);
+        assert_eq!(h.current, 4);
+        let all = ed.document().clone();
+        assert_eq!(ed.go_to(1).unwrap(), 3);
+        assert_eq!(ed.document().entities().len(), 1);
+        let h = ed.history();
+        assert_eq!(
+            (h.steps.len(), h.current),
+            (4, 1),
+            "later steps stay as redo"
+        );
+        assert_eq!(ed.go_to(4).unwrap(), 3);
+        assert!(same_content(ed.document(), &all));
+        assert!(ed.go_to(5).is_err());
+        assert_eq!(ed.go_to(4).unwrap(), 0);
+        // Something new after jumping back drops the later steps.
+        ed.go_to(2).unwrap();
+        add_pt(&mut ed, 9.0, 9.0);
+        let h = ed.history();
+        assert_eq!((h.steps.len(), h.current), (3, 3));
+        assert!(!ed.can_redo());
+    }
+
+    #[test]
+    fn history_keeps_the_newest_max_steps() {
+        let mut ed = Editor::new(Document::new());
+        for x in 0..(MAX_HISTORY + 5) {
+            add_pt(&mut ed, x as f64, 0.0);
+        }
+        let h = ed.history();
+        assert_eq!(h.steps.len(), MAX_HISTORY);
+        ed.go_to(0).unwrap();
+        // The five oldest points can no longer be undone.
+        assert_eq!(ed.document().entities().len(), 5);
     }
 }
