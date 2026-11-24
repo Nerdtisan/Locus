@@ -166,6 +166,23 @@ impl AppState {
         if let Some(sentence) = machine_row(doc, &ids) {
             ui.weak(sentence);
         }
+        // The layer's Stroke styles, switchable right here (#502).
+        let mut switch = None;
+        if let Some((layer, cur)) = machine_layer(doc, &ids) {
+            ui.horizontal(|ui| {
+                ui.label("Stroke styles");
+                for (v, label) in [
+                    (StrokeStyles::Centreline, "Centreline"),
+                    (StrokeStyles::Styled, "Styled"),
+                ] {
+                    if ui.selectable_label(cur == v, label).clicked() && cur != v {
+                        switch = Some((layer, v));
+                    }
+                }
+            })
+            .response
+            .on_hover_text("For the whole layer: cut the path itself, or the styled strokes (dashes perforate, extra strokes cut in parallel, wide strokes cut their outline)");
+        }
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
         if !pending.is_empty() && settled {
             ui.data_mut(|d| d.remove::<(Vec<EntityId>, StylePatch)>(key));
@@ -177,6 +194,15 @@ impl AppState {
             ui.data_mut(|d| d.remove::<(Vec<EntityId>, StylePatch)>(key));
         } else {
             ui.data_mut(|d| d.insert_temp(key, (ids, pending)));
+        }
+        if let Some((id, v)) = switch {
+            self.apply_reporting(&Command::SetLayerProps {
+                id,
+                props: locus_doc::LayerProps {
+                    stroke_styles: Some(v),
+                    ..locus_doc::LayerProps::default()
+                },
+            });
         }
     }
 
@@ -587,6 +613,25 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
         join: edit.join.or(into.join),
         dash: edit.dash.or(into.dash),
     };
+}
+
+/// The selection's one machine layer (Cut, Score, Engrave, Drag knife) and
+/// its Stroke styles, or `None` for any other or a mixed selection (#502).
+fn machine_layer(doc: &Document, ids: &[EntityId]) -> Option<(locus_doc::LayerId, StrokeStyles)> {
+    let mut layers = ids.iter().filter_map(|id| doc.entity(*id).map(|e| e.layer));
+    let first = layers.next()?;
+    if layers.any(|l| l != first) {
+        return None;
+    }
+    let l = doc.layer(first)?;
+    matches!(
+        l.operation.kind(),
+        OperationKind::Cut
+            | OperationKind::Score
+            | OperationKind::Engrave
+            | OperationKind::DragKnife
+    )
+    .then_some((first, l.stroke_styles))
 }
 
 /// The Machine row (design §3): what the object's layer does with its line
@@ -1037,6 +1082,29 @@ mod tests {
             .last()
             .map(|(_, e)| e.style);
         assert_eq!(line, Some(st));
+    }
+
+    /// #502: an object on a Cut layer offers its layer's Stroke styles in
+    /// the Style section; on a Draw layer it doesn't.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn stroke_styles_are_offered_for_machine_layer_objects() {
+        let mut c = AppState::default();
+        let id = line(&mut c, 0.0, Style::default());
+        let doc = c.document();
+        assert!(machine_layer(doc, &[id]).is_none(), "Draw layer");
+        let layer = doc.entity(id).unwrap().layer;
+        c.apply_reporting(&Command::SetLayerProps {
+            id: layer,
+            props: locus_doc::LayerProps {
+                operation: Some(locus_doc::Operation::Cut(Default::default())),
+                ..locus_doc::LayerProps::default()
+            },
+        });
+        assert_eq!(
+            machine_layer(c.document(), &[id]),
+            Some((layer, StrokeStyles::Centreline))
+        );
     }
 
     /// The eyedropper copies a style to the selection as one undo step, or

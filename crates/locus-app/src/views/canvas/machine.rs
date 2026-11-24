@@ -14,6 +14,7 @@
 
 use crate::state::AppState;
 use egui::{Painter, Pos2, Rect, Stroke};
+use locus_doc::StrokeStyles;
 use locus_doc::{Compensation, Document, Operation, OperationKind};
 use locus_export::{ExportModel, MachineProfile, PathSeg, Shape};
 use locus_geom::{EXPORT_TOL, Vec2};
@@ -140,6 +141,61 @@ pub(crate) fn paths(model: &ExportModel) -> Vec<MachinePath> {
     out
 }
 
+/// What the preview draws: the exported model, without hidden layers (#503).
+/// A hidden layer is still exported (export follows the layer's Export
+/// switch, not its eye), so [`layer_notes`] says so instead of drawing it.
+pub(crate) fn preview_model(doc: &Document, profile: Option<&MachineProfile>) -> ExportModel {
+    let mut model = locus_export::prepare_for(doc, false, profile).model;
+    let shown = |id: locus_doc::LayerId| doc.layer(id).is_some_and(|l| l.visible);
+    model.layers.retain(|l| shown(l.id));
+    model.fills.retain(|f| shown(f.layer));
+    model
+}
+
+/// Does `layer` hold an object whose line style a Centreline machine layer
+/// ignores (caps, joins, dashes, extra strokes, #502)?
+fn has_line_styles(doc: &Document, layer: locus_doc::LayerId) -> bool {
+    doc.entities()
+        .iter()
+        .any(|(_, e)| e.layer == layer && !e.construction && !e.style.line.is_default())
+}
+
+/// Per-layer notes the export model can't give (#502, #503): hidden layers
+/// that still export, and machine layers on Centreline that ignore their
+/// objects' line styles.
+pub(crate) fn layer_notes(doc: &Document) -> Vec<String> {
+    let mut layers: Vec<_> = doc.layers().iter().collect();
+    layers.sort_by_key(|(id, l)| (l.export_order, id.get()));
+    let mut out = Vec::new();
+    for (id, l) in layers {
+        let exported = l.export_enabled && l.operation.is_exportable();
+        if !l.visible && exported {
+            out.push(format!(
+                "{}: hidden, so not shown here, but still exported. Turn its Export off to leave it out.",
+                l.name
+            ));
+        }
+        if l.visible
+            && is_machine(&l.operation)
+            && l.stroke_styles == StrokeStyles::Centreline
+            && has_line_styles(doc, *id)
+        {
+            out.push(format!(
+                "{}: cuts centrelines, so its objects' dashes, caps and extra strokes are ignored. Switch it to Styled to cut them.",
+                l.name
+            ));
+        }
+    }
+    out
+}
+
+fn is_machine(op: &Operation) -> bool {
+    matches!(
+        op,
+        Operation::Cut(_) | Operation::Score | Operation::Engrave(_) | Operation::DragKnife(_)
+    )
+}
+
 /// Why the preview may look like the sketch, for the legend (#423).
 pub(crate) fn notes(profile: Option<&MachineProfile>, model: &ExportModel) -> Vec<String> {
     let mut out = Vec::new();
@@ -226,11 +282,12 @@ impl AppState {
         if self.view.machine_on {
             let doc = self.doc.sketcher.document();
             let profile = self.view.machine_profile.as_ref();
-            let model = locus_export::prepare_for(doc, false, profile).model;
+            let model = preview_model(doc, profile);
             self.view.machine_offset =
                 locus_export::prepare::placement(doc, profile).map_or(Vec2::ZERO, |(o, _)| o);
             self.view.machine = paths(&model);
             self.view.machine_notes = notes(profile, &model);
+            self.view.machine_notes.extend(layer_notes(doc));
         } else {
             self.view.machine = Vec::new();
             self.view.machine_notes = Vec::new();
@@ -286,6 +343,12 @@ pub(crate) struct LegendRow {
     pub layer: String,
     /// Not exported (Reference, or export turned off): drawn dim.
     pub idle: bool,
+    /// Hidden with its eye: not drawn in the preview (#503).
+    pub hidden: bool,
+    /// The layer, for the row's Stroke styles switch.
+    pub id: locus_doc::LayerId,
+    /// Machine layers: Centreline or Styled (#502); `None` elsewhere.
+    pub stroke_styles: Option<StrokeStyles>,
 }
 
 /// The legend's rows: every layer in export order with its operation (#420),
@@ -295,12 +358,15 @@ pub(crate) fn legend(doc: &Document) -> Vec<LegendRow> {
     layers.sort_by_key(|(id, l)| (l.export_order, id.get()));
     layers
         .into_iter()
-        .map(|(_, l)| {
+        .map(|(id, l)| {
             let kind = l.operation.kind();
             LegendRow {
                 kind,
                 layer: l.name.clone(),
                 idle: kind == OperationKind::Reference || !l.export_enabled,
+                hidden: !l.visible,
+                id: *id,
+                stroke_styles: is_machine(&l.operation).then_some(l.stroke_styles),
             }
         })
         .collect()
@@ -311,6 +377,166 @@ pub(crate) fn legend(doc: &Document) -> Vec<LegendRow> {
 mod tests {
     use super::*;
     use locus_doc::{Command, CutParams, Document, Editor, Geom, LayerProps};
+
+    /// A 20 mm line, 3 mm wide, on `layer`.
+    fn wide_line(ed: &mut Editor, layer: locus_doc::LayerId, style: locus_doc::Style) {
+        let mut pt = |x: f64| {
+            ed.apply(&Command::AddEntity {
+                layer,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Point {
+                    pos: Vec2::new(x, 0.0),
+                },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let (a, b) = (pt(0.0), pt(20.0));
+        ed.apply(&Command::AddEntity {
+            layer,
+            construction: false,
+            style,
+            geom: Geom::Line { start: a, end: b },
+        })
+        .unwrap();
+    }
+
+    /// #503: a hidden layer is not drawn in the preview, with or without a
+    /// profile, and the notes say it still exports.
+    #[test]
+    fn a_hidden_layer_is_not_previewed_but_says_it_exports() {
+        let mut ed = Editor::new(Document::new());
+        let l = Document::default_layer();
+        wide_line(&mut ed, l, locus_doc::Style::default());
+        ed.apply(&Command::SetLayerProps {
+            id: l,
+            props: LayerProps {
+                visible: Some(false),
+                ..LayerProps::default()
+            },
+        })
+        .unwrap();
+        let lb = locus_export::profile::find("lightburn", &[]).unwrap();
+        for profile in [None, Some(&lb)] {
+            assert!(paths(&preview_model(ed.document(), profile)).is_empty());
+        }
+        let n = layer_notes(ed.document());
+        assert!(
+            n.iter()
+                .any(|s| s.contains("hidden") && s.contains("still exported")),
+            "{n:?}"
+        );
+        assert!(legend(ed.document())[0].hidden);
+    }
+
+    /// #502: a Centreline machine layer with styled objects says it ignores
+    /// them; the legend row carries the switch.
+    #[test]
+    fn a_centreline_layer_says_it_ignores_line_styles() {
+        let mut ed = Editor::new(Document::new());
+        let cut = ed
+            .apply(&Command::AddLayer {
+                name: "Cut".to_owned(),
+                colour: [255, 0, 0],
+                operation: Operation::Cut(CutParams::default()),
+            })
+            .unwrap()
+            .layers[0];
+        let mut st = locus_doc::Style {
+            width: 3.0,
+            ..locus_doc::Style::default()
+        };
+        st.line.dash = locus_doc::Dash::new(&[8.0, 3.0], 0.0, locus_doc::DashAlign::Exact).ok();
+        wide_line(&mut ed, cut, st);
+        let n = layer_notes(ed.document());
+        assert!(
+            n.iter().any(|s| s.contains("Cut: cuts centrelines")),
+            "{n:?}"
+        );
+        let row = legend(ed.document())
+            .into_iter()
+            .find(|r| r.layer == "Cut")
+            .unwrap();
+        assert_eq!(row.stroke_styles, Some(StrokeStyles::Centreline));
+        // Switched to Styled: no note, and the preview perforates.
+        ed.apply(&Command::SetLayerProps {
+            id: cut,
+            props: LayerProps {
+                stroke_styles: Some(StrokeStyles::Styled),
+                ..LayerProps::default()
+            },
+        })
+        .unwrap();
+        assert!(
+            !layer_notes(ed.document())
+                .iter()
+                .any(|s| s.contains("centrelines"))
+        );
+        let lb = locus_export::profile::find("lightburn", &[]).unwrap();
+        let cuts = paths(&preview_model(ed.document(), Some(&lb)));
+        assert!(cuts.len() > 1, "dashes cut separately: {}", cuts.len());
+    }
+
+    /// #504: after Expand to geometry the preview shows the expanded
+    /// outline: on a Draw layer, and on a Cut layer under both Stroke styles.
+    #[test]
+    fn the_preview_shows_an_expanded_stroke() {
+        for (op, styles) in [
+            (Operation::Draw, StrokeStyles::Centreline),
+            (
+                Operation::Cut(CutParams::default()),
+                StrokeStyles::Centreline,
+            ),
+            (Operation::Cut(CutParams::default()), StrokeStyles::Styled),
+        ] {
+            let mut ed = Editor::new(Document::new());
+            let layer = Document::default_layer();
+            ed.apply(&Command::SetLayerProps {
+                id: layer,
+                props: LayerProps {
+                    operation: Some(op),
+                    stroke_styles: Some(styles),
+                    ..LayerProps::default()
+                },
+            })
+            .unwrap();
+            let st = locus_doc::Style {
+                width: 3.0,
+                ..locus_doc::Style::default()
+            };
+            wide_line(&mut ed, layer, st);
+            let mut app = crate::state::AppState::default();
+            app.load(ed.into_document());
+            app.set_machine_preview(true);
+            let line = app
+                .document()
+                .entities()
+                .iter()
+                .find(|(_, e)| matches!(e.geom, Geom::Line { .. }))
+                .map(|(i, _)| i)
+                .unwrap();
+            app.select_entities(&[line]);
+            app.expand_selection(locus_doc::expand::DEFAULT_EXPAND_TOL, false);
+            assert!(app.document().entity(line).is_none(), "{op:?}: expanded");
+            // The outline: a 20 × 3 stadium (round caps), 23 mm long, its
+            // arcs flattened for drawing.
+            let pts: Vec<Vec2> = app
+                .view
+                .machine
+                .iter()
+                .flat_map(|p| p.points.clone())
+                .collect();
+            assert!(!pts.is_empty(), "{op:?} {styles:?}: nothing previewed");
+            let (lo, hi) = pts
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(l, h), p| (l.min(p.x), h.max(p.x)));
+            assert!(
+                (lo + 1.5).abs() < 0.01 && (hi - 21.5).abs() < 0.01,
+                "{op:?} {styles:?}: {lo}..{hi}"
+            );
+        }
+    }
 
     /// #420: the legend lists every layer's operation in export order and
     /// dims the ones that are not exported.
