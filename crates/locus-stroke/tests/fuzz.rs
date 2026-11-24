@@ -10,7 +10,7 @@ use core::f64::consts::PI;
 use locus_geom::Vec2;
 use locus_region::Seg;
 use locus_stroke::{
-    Align, Cap, Chain, Dash, DashAlign, Join, Limits, LineStyle, bounds, expand, mesh,
+    Align, Cap, Chain, Dash, DashAlign, Join, Limits, LineStyle, StrokeLayer, bounds, expand, mesh,
 };
 use proptest::prelude::*;
 
@@ -60,8 +60,17 @@ fn style_strategy() -> impl Strategy<Value = LineStyle> {
     (
         (0u8..3, 0u8..3, 1.0f64..10.0, 0u8..3),
         prop::option::of((0.0f64..4.0, 0.1f64..4.0, -5.0f64..5.0, any::<bool>())),
+        prop::option::of((-3.0f64..3.0, 0.1f64..3.0)),
     )
-        .prop_map(|((c, j, limit, a), dash)| LineStyle {
+        .prop_map(|((c, j, limit, a), dash, extra)| LineStyle {
+            extra: extra
+                .map(|(offset, width)| StrokeLayer {
+                    offset,
+                    width,
+                    ..StrokeLayer::default()
+                })
+                .into_iter()
+                .collect(),
             cap: [Cap::Butt, Cap::Round, Cap::Square][usize::from(c)],
             join: [Join::Round, Join::Miter { limit }, Join::Bevel][usize::from(j)],
             align: [Align::Centre, Align::Inside, Align::Outside][usize::from(a)],

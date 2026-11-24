@@ -25,10 +25,12 @@
 
 mod chain;
 mod dash;
+mod multi;
 mod style;
 
 pub use chain::{Chain, chains};
 pub use dash::{CORNER_TURN, Dash, DashAlign, MAX_DASH_LEN, MAX_DASH_PAIRS, dashes};
+pub use multi::{LayerStroke, MAX_STROKE_LAYERS, StrokeLayer, layer_strokes, offset_chain};
 pub use style::{Align, Cap, DEFAULT_MITER, Join, LineStyle, MAX_MITER, MIN_MITER};
 
 use core::f64::consts::{PI, TAU};
@@ -319,13 +321,23 @@ pub fn expand(
     if chain.segs.is_empty() {
         return Ok(Area::default());
     }
+    // Extra strokes (#429): the union of every stroke's outline.
+    if !style.extra.is_empty() {
+        let mut loops = Vec::new();
+        for ls in layer_strokes(chain, width, style, limits)? {
+            for c in &ls.chains {
+                loops.extend(expand(c, ls.width, &ls.line, limits)?.loops);
+            }
+        }
+        return Ok(boolean(&Area { loops }, &Area::default(), BoolOp::Union));
+    }
     // A dashed stroke is the union of its dashes, each capped and joined
     // like a stroke of its own, always centred.
     if let Some(d) = style.dash {
         let solid = LineStyle {
             dash: None,
             align: Align::Centre,
-            ..*style
+            ..style.clone()
         };
         let mut loops = Vec::new();
         for c in dashes(chain, &d, limits)? {
@@ -362,6 +374,18 @@ pub fn expand(
 /// smaller than the outline, so a page never clips it (§8, #450).
 #[must_use]
 pub fn bounds(chain: &Chain, width: f64, style: &LineStyle) -> Option<Aabb> {
+    if !style.extra.is_empty() {
+        // Every stroke's bounds, at its offset.
+        let strokes = layer_strokes(chain, width, style, &Limits::default()).ok()?;
+        return strokes
+            .iter()
+            .flat_map(|ls| {
+                ls.chains
+                    .iter()
+                    .filter_map(|c| bounds(c, ls.width, &ls.line))
+            })
+            .reduce(Aabb::union);
+    }
     let w = if width.is_finite() {
         width.max(0.0)
     } else {
@@ -421,11 +445,19 @@ pub fn mesh(
     out: &mut Vec<[Vec2; 3]>,
 ) -> Result<(), StrokeError> {
     check(chain, width, style, limits)?;
+    if !style.extra.is_empty() {
+        for ls in layer_strokes(chain, width, style, limits)? {
+            for c in &ls.chains {
+                mesh(c, ls.width, &ls.line, tol, limits, out)?;
+            }
+        }
+        return Ok(());
+    }
     if let Some(d) = style.dash {
         let solid = LineStyle {
             dash: None,
             align: Align::Centre,
-            ..*style
+            ..style.clone()
         };
         for c in dashes(chain, &d, limits)? {
             mesh(&c, width, &solid, tol, limits, out)?;
@@ -576,6 +608,7 @@ mod tests {
             join,
             align,
             dash: None,
+            extra: Default::default(),
         }
     }
 

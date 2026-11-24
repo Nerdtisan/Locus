@@ -73,7 +73,7 @@ pub(crate) fn triangles(doc: &Document, scene: &Scene) -> Vec<[Vec2; 3]> {
             continue;
         }
         let line = match doc.layer(e.layer).map(|l| &l.operation) {
-            Some(Operation::Draw) => e.style.line,
+            Some(Operation::Draw) => e.style.line.clone(),
             _ => LineStyle::default(),
         };
         let s = segs(&item.shape);

@@ -200,6 +200,9 @@ impl Style {
         if let Some(d) = patch.dash {
             self.line.dash = d;
         }
+        if let Some(x) = &patch.extra {
+            self.line.extra.clone_from(x);
+        }
         self
     }
 }
@@ -208,7 +211,7 @@ impl Style {
 /// `None` leaves that field as each object has it. This is how a mixed
 /// selection is edited: typing a width sets every width and keeps each
 /// object's own colour (`docs/ux/m5-design.md` §2.1).
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StylePatch {
     pub stroke: Option<Stroke>,
@@ -226,6 +229,8 @@ pub struct StylePatch {
     pub align: Option<Align>,
     /// Dash pattern (#427): `Some(None)` makes the line solid.
     pub dash: Option<Option<Dash>>,
+    /// Extra strokes (#429): the whole list, in paint order.
+    pub extra: Option<Vec<locus_stroke::StrokeLayer>>,
 }
 
 impl StylePatch {
@@ -243,6 +248,7 @@ impl StylePatch {
             join: Some(style.line.join),
             align: Some(style.line.align),
             dash: Some(style.line.dash),
+            extra: Some(style.line.extra.clone()),
         }
     }
 
@@ -268,24 +274,33 @@ mod tests {
     fn out_of_range_values_are_rejected() {
         let d = Style::default();
         for bad in [
-            Style { width: 0.0, ..d },
+            Style {
+                width: 0.0,
+                ..d.clone()
+            },
             Style {
                 width: f64::NAN,
-                ..d
+                ..d.clone()
             },
             Style {
                 width: MAX_LENGTH + 1.0,
-                ..d
+                ..d.clone()
             },
-            Style { pen: 0, ..d },
+            Style {
+                pen: 0,
+                ..d.clone()
+            },
             Style {
                 pen: MAX_PEN + 1,
-                ..d
+                ..d.clone()
             },
-            Style { opacity: 1.5, ..d },
+            Style {
+                opacity: 1.5,
+                ..d.clone()
+            },
             Style {
                 opacity: f64::INFINITY,
-                ..d
+                ..d.clone()
             },
         ] {
             assert!(matches!(bad.validate(), Err(DocError::BadValue { .. })));

@@ -13,7 +13,7 @@
 use crate::state::AppState;
 use egui::{DragValue, Ui};
 use locus_doc::region_fill::RegionFill;
-use locus_doc::{Align, Cap, Dash, DashAlign, Join, StrokeStyles};
+use locus_doc::{Align, Cap, Dash, DashAlign, Join, StrokeLayer, StrokeStyles};
 use locus_doc::{
     Command, Document, EntityId, Fill, Geom, OperationKind, Stroke, Style, StylePatch,
     operation::MAX_PEN,
@@ -22,7 +22,7 @@ use locus_region::RegionKey;
 use locus_stroke::{DEFAULT_MITER, MAX_MITER, MIN_MITER};
 
 /// One field across the selection: `None` when the objects differ.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Shared {
     pub stroke: Option<Stroke>,
     pub width: Option<f64>,
@@ -33,6 +33,8 @@ pub(crate) struct Shared {
     pub align: Option<Align>,
     /// `None` when the objects differ; `Some(None)` is solid.
     pub dash: Option<Option<Dash>>,
+    /// Extra strokes (#429); `None` when the objects differ.
+    pub extra: Option<Vec<StrokeLayer>>,
 }
 
 impl Shared {
@@ -51,6 +53,11 @@ impl Shared {
             join: same(styles.iter().map(|s| s.line.join)),
             align: same(styles.iter().map(|s| s.line.align)),
             dash: same(styles.iter().map(|s| s.line.dash)),
+            extra: {
+                let mut it = styles.iter().map(|s| &s.line.extra);
+                let first = it.next();
+                first.filter(|f| it.all(|x| x == *f)).cloned()
+            },
         }
     }
 
@@ -63,6 +70,9 @@ impl Shared {
         self.join = p.join.or(self.join);
         self.align = p.align.or(self.align);
         self.dash = p.dash.or(self.dash);
+        if let Some(x) = &p.extra {
+            self.extra = Some(x.clone());
+        }
         self
     }
 }
@@ -388,6 +398,7 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
         cap: edit.cap.or(into.cap),
         join: edit.join.or(into.join),
         dash: edit.dash.or(into.dash),
+        extra: edit.extra.clone().or_else(|| into.extra.clone()),
     };
 }
 
@@ -621,6 +632,133 @@ fn dashes_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut
     ui.end_row();
 }
 
+/// The Strokes list (design §3, #429): the object's own stroke, then each
+/// extra stroke with its offset, width, colour, pen and dash. Rows paint in
+/// list order; Up and Down reorder, Remove drops a row, + adds a copy of the last row offset
+/// by its width. At most 15 extra strokes.
+fn strokes_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut Ui, bool)) {
+    ui.label("Strokes");
+    ui.vertical(|ui| {
+        let Some(mut rows) = s.extra.clone() else {
+            mixed(ui, true);
+            return;
+        };
+        ui.weak("● The object's own stroke (width and colour above)");
+        let mut changed = false;
+        let mut action: Option<(usize, i32)> = None; // (row, -1 up / +1 down / 0 remove)
+        for (i, r) in rows.iter_mut().enumerate() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!("{}.", i + 1));
+                changed |= ui
+                    .add(
+                        DragValue::new(&mut r.offset)
+                            .range(-locus_stroke::MAX_WIDTH..=locus_stroke::MAX_WIDTH)
+                            .speed(0.05)
+                            .prefix("offset ")
+                            .suffix(" mm"),
+                    )
+                    .on_hover_text("Distance from the path: + is left of travel (outside on a clockwise shape)")
+                    .changed();
+                changed |= ui
+                    .add(
+                        DragValue::new(&mut r.width)
+                            .range(0.001..=locus_stroke::MAX_WIDTH)
+                            .speed(0.01)
+                            .prefix("w ")
+                            .suffix(" mm"),
+                    )
+                    .on_hover_text("This stroke's width")
+                    .changed();
+                let mut own = r.colour.is_none();
+                if crate::theme::checkbox(ui, &mut own, "Object colour").changed() {
+                    r.colour = if own { None } else { Some([0, 0, 0]) };
+                    changed = true;
+                }
+                if let Some(c) = &mut r.colour {
+                    changed |= crate::theme::swatch(ui, c).changed();
+                }
+                let mut pen = r.pen.unwrap_or(0);
+                if ui
+                    .add(DragValue::new(&mut pen).range(0..=MAX_PEN).prefix("pen "))
+                    .on_hover_text("Plotter pen; 0 uses the object's pen")
+                    .changed()
+                {
+                    r.pen = (pen > 0).then_some(pen);
+                    changed = true;
+                }
+                let name = r.dash.map_or("Solid", |d| {
+                    DASH_PRESETS
+                        .iter()
+                        .find(|(_, p)| *p == d.pattern())
+                        .map_or("Custom", |(n, _)| *n)
+                });
+                egui::ComboBox::from_id_salt(("stroke-dash", i))
+                    .selected_text(name)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(r.dash.is_none(), "Solid").clicked() {
+                            r.dash = None;
+                            changed = true;
+                        }
+                        for (n, p) in DASH_PRESETS {
+                            if ui.selectable_label(name == n, n).clicked() {
+                                r.dash = Dash::new(p, 0.0, DashAlign::Exact).ok();
+                                changed = true;
+                            }
+                        }
+                    });
+                if ui.small_button("Up").on_hover_text("Paint earlier").clicked() {
+                    action = Some((i, -1));
+                }
+                if ui.small_button("Down").on_hover_text("Paint later").clicked() {
+                    action = Some((i, 1));
+                }
+                if ui.small_button("Remove").on_hover_text("Remove this stroke").clicked() {
+                    action = Some((i, 0));
+                }
+            });
+        }
+        if let Some((i, d)) = action {
+            match d {
+                0 => {
+                    rows.remove(i);
+                }
+                -1 if i > 0 => rows.swap(i, i - 1),
+                1 if i + 1 < rows.len() => rows.swap(i, i + 1),
+                _ => {}
+            }
+            changed = true;
+        }
+        if rows.len() < locus_stroke::MAX_STROKE_LAYERS
+            && ui
+                .small_button("+ Add stroke")
+                .on_hover_text("A copy of the last stroke, offset by its width")
+                .clicked()
+        {
+            let next = rows.last().map_or(
+                StrokeLayer {
+                    offset: 1.0,
+                    ..StrokeLayer::default()
+                },
+                |l| StrokeLayer {
+                    // Next to the last stroke, on the same side, a width further.
+                    offset: if l.offset >= 0.0 {
+                        l.offset + l.width
+                    } else {
+                        l.offset - l.width
+                    },
+                    ..*l
+                },
+            );
+            rows.push(next);
+            changed = true;
+        }
+        if changed && rows.iter().all(|r| r.validate().is_ok()) {
+            out.extra = Some(rows);
+        }
+    });
+    ui.end_row();
+}
+
 /// Draw the fields; returns what the user changed this frame. Objects
 /// have no Fill: regions do (#451).
 fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
@@ -693,6 +831,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
 
             caps_joins(ui, &s, &mut out, &mixed);
             dashes_row(ui, &s, &mut out, &mixed);
+            strokes_row(ui, &s, &mut out, &mixed);
 
             ui.label("Opacity");
             ui.horizontal(|ui| {

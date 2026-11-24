@@ -54,7 +54,7 @@ fn is_default<T: Default + PartialEq>(v: &T) -> bool {
 
 /// An entity's line style beyond colour and width (#428). Every field is
 /// omitted from `.locus` at its default, so an unstyled file is unchanged.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LineStyle {
     #[serde(skip_serializing_if = "is_default")]
@@ -66,6 +66,10 @@ pub struct LineStyle {
     /// Dash pattern (#427); `None` is a solid line.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dash: Option<Dash>,
+    /// Extra strokes drawn with this one (#429), in paint order; at most
+    /// [`crate::MAX_STROKE_LAYERS`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<crate::multi::StrokeLayer>,
 }
 
 impl LineStyle {
@@ -87,6 +91,15 @@ impl LineStyle {
         }
         if let Some(d) = &self.dash {
             d.validate()?;
+        }
+        if self.extra.len() > crate::multi::MAX_STROKE_LAYERS {
+            return Err(StrokeError::Limit {
+                what: "extra strokes",
+                count: self.extra.len(),
+            });
+        }
+        for l in &self.extra {
+            l.validate()?;
         }
         Ok(())
     }
