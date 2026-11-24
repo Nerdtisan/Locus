@@ -680,6 +680,13 @@ pub fn apply_stroke_styles(model: &mut ExportModel) {
                 .segs
                 .first()
                 .map_or_else(Style::default, |s| layer.style_of(s.entity));
+            // An unstyled object (default width, no line style) is plain
+            // geometry: cut its centreline. This is what Expand to geometry
+            // leaves, so its result isn't outlined a second time (#504).
+            if st.width == locus_doc::style::DEFAULT_WIDTH && st.line.is_default() {
+                out.push(p);
+                continue;
+            }
             // Dashes become separate cuts or marks (a perforation, #427);
             // otherwise the stroke's outline.
             let styled = if st.line.dash.is_some() {

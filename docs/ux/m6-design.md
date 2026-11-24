@@ -277,6 +277,11 @@ The full table is ADR 0019 decision 4. In short:
 - A recipe instance must be exploded first (ADR 0011), and the dialog says so.
 
 **Machine preview** (the M5 pane) shows Styled layers as the machine makes them. Its legend gains one line per styled layer, for example "Score · Styled: 120 dashes → perforation".
+- **Owner tests, 2026-11-25 (#502, #503, #504):**
+  - Each machine layer's legend row has a **Centreline | Styled** switch. The Style section shows the same switch under its Machine sentence for a selection on one machine layer.
+  - When a Centreline layer holds styled objects, the preview says so, for example: "Layer 2: cuts centrelines, so its objects' dashes, caps and extra strokes are ignored. Switch it to Styled to cut them."
+  - Hidden layers aren't drawn in the preview. Their row reads *(hidden)*, and a note says they are still exported, because export follows the Export switch, not the eye.
+  - On a Styled layer, an object with the default unstyled stroke (default width, no line style) is cut on its centreline. That is what Expand to geometry leaves, so its result isn't outlined twice.
 
 ## 10. Auto trace (#461)
 

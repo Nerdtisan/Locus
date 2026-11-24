@@ -491,8 +491,9 @@ impl MachinePanel {
 
 /// Each layer's operation in its colour (#420) and why the preview may look
 /// like the sketch (#423).
-fn legend_ui(ui: &mut Ui, app: &AppState) {
+fn legend_ui(ui: &mut Ui, app: &mut AppState) {
     let dark = ui.visuals().dark_mode;
+    let mut switch: Option<(locus_doc::LayerId, locus_doc::StrokeStyles)> = None;
     for row in crate::views::canvas::legend(app.document()) {
         ui.horizontal(|ui| {
             let c = crate::views::op_chip::colour(row.kind, dark);
@@ -509,14 +510,50 @@ fn legend_ui(ui: &mut Ui, app: &AppState) {
             ui.add_sized(vec2(58.0, 14.0), egui::Label::new(short));
             let name = if row.idle && row.kind != OperationKind::Reference {
                 format!("{} (not exported)", row.layer)
+            } else if row.hidden {
+                format!("{} (hidden)", row.layer)
             } else {
                 row.layer.clone()
             };
-            if row.idle {
+            if row.idle || row.hidden {
                 ui.weak(name);
             } else {
                 ui.label(name);
             }
+            // Stroke styles, one click away (#502).
+            if let Some(cur) = row.stroke_styles {
+                use locus_doc::StrokeStyles;
+                for (v, label, tip) in [
+                    (
+                        StrokeStyles::Centreline,
+                        "Centreline",
+                        "Cut or mark the path itself; line styles are visual only",
+                    ),
+                    (
+                        StrokeStyles::Styled,
+                        "Styled",
+                        "Cut or mark the strokes: dashes perforate, extra strokes cut in parallel, wide strokes cut their outline",
+                    ),
+                ] {
+                    if ui
+                        .selectable_label(cur == v, egui::RichText::new(label).small())
+                        .on_hover_text(tip)
+                        .clicked()
+                        && cur != v
+                    {
+                        switch = Some((row.id, v));
+                    }
+                }
+            }
+        });
+    }
+    if let Some((id, v)) = switch {
+        app.apply_reporting(&locus_doc::Command::SetLayerProps {
+            id,
+            props: locus_doc::LayerProps {
+                stroke_styles: Some(v),
+                ..locus_doc::LayerProps::default()
+            },
         });
     }
     for n in &app.view.machine_notes {
