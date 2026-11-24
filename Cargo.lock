@@ -2209,6 +2209,7 @@ dependencies = [
  "locus-region",
  "locus-stroke",
  "locus-text",
+ "locus-trace",
  "rfd",
  "serde",
  "serde_json",
