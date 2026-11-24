@@ -201,9 +201,29 @@ fn params(sys: &System, sk: &Sketch) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
 fn freedom(sys: &System, sk: &Sketch, ech: &Echelon) -> (Vec<Freedom>, Vec<Freedom>) {
     let (pp, cp) = params(sys, sk);
     let null = ech.null_space();
+    // Which null vectors move each unknown, so an entity looks only at the
+    // vectors that can move it instead of all of them (#505).
+    let mut by_var: Vec<Vec<usize>> = vec![Vec::new(); sys.n];
+    for (k, v) in null.iter().enumerate() {
+        for &(i, _) in v {
+            if let Some(list) = by_var.get_mut(i) {
+                list.push(k);
+            }
+        }
+    }
     let rank_of = |vars: &Vec<usize>| {
-        let proj: Vec<Vec<f64>> = null
+        let mut hit: Vec<usize> = vars
             .iter()
+            .filter_map(|&i| by_var.get(i))
+            .flatten()
+            .copied()
+            .collect();
+        // The null-space order, as before, so `small_rank` sees the same rows.
+        hit.sort_unstable();
+        hit.dedup();
+        let proj: Vec<Vec<f64>> = hit
+            .iter()
+            .map(|&k| &null[k])
             .map(|v| {
                 vars.iter()
                     .map(|&i| v.binary_search_by_key(&i, |e| e.0).map_or(0.0, |k| v[k].1))

@@ -115,6 +115,8 @@ pub struct Sketcher {
     /// Each region's fill, by [`crate::region_fill::resolve`] (#457).
     fills: Vec<Option<crate::region_fill::RegionFill>>,
     results: BTreeMap<BooleanId, Result<locus_region::Area, BooleanError>>,
+    /// Béziers' arc chains, kept between refreshes (#505).
+    pieces: crate::regions::BezierPieces,
 }
 
 impl Sketcher {
@@ -132,6 +134,7 @@ impl Sketcher {
             regions: Vec::new(),
             fills: Vec::new(),
             results: BTreeMap::new(),
+            pieces: crate::regions::BezierPieces::default(),
         };
         if let Ok(sol) = solve(&mut s.solver, s.editor.document()) {
             // Can only fail on a solver bug (non-finite output); the stored
@@ -569,7 +572,7 @@ impl Sketcher {
     fn refresh(&mut self) {
         self.state = analyse(&mut self.solver, self.editor.document());
         let doc = self.editor.document();
-        self.regions = crate::regions::regions(doc);
+        self.regions = crate::regions::regions_with(doc, &mut self.pieces);
         self.fills = crate::region_fill::resolve(doc, &self.regions);
         self.results = doc
             .booleans()
@@ -1124,4 +1127,45 @@ fn entities(set: &ls::ConstraintSet) -> Vec<EntityId> {
         .chain(&set.curves)
         .map(|k| EntityId::new(k.0))
         .collect()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod profile_505 {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore = "profiling; needs LOCUS_PROFILE_FILE"]
+    fn solve_pieces() {
+        let Some(p) = std::env::var_os("LOCUS_PROFILE_FILE") else {
+            return;
+        };
+        let doc = crate::file::load(&std::fs::read_to_string(p).unwrap()).unwrap();
+        let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+        let mut s = ls::LmSolver::new();
+        let t = Instant::now();
+        let low = lower(&doc).unwrap();
+        println!("lower: {:.1} ms", ms(t));
+        let t = Instant::now();
+        let _ = solve_lowered(&mut s, &doc, low);
+        println!("solve: {:.1} ms", ms(t));
+        let t = Instant::now();
+        let _ = analyse(&mut s, &doc);
+        println!("analyse: {:.1} ms", ms(t));
+        let t = Instant::now();
+        let curves = crate::regions::region_curves(&doc);
+        println!("region_curves: {:.1} ms, {} curves", ms(t), curves.len());
+        let t = Instant::now();
+        let rs = locus_region::detect(&curves);
+        println!("detect (all layers): {:.1} ms, {} regions", ms(t), rs.len());
+        let t = Instant::now();
+        let rs = crate::regions::regions(&doc);
+        println!("regions: {:.1} ms, {} regions", ms(t), rs.len());
+        let mut ed = crate::Editor::new(doc.clone());
+        let t = Instant::now();
+        let sol = solve(&mut s, &doc).unwrap();
+        let _ = ed.apply_solution_unrecorded(&sol);
+        println!("solve + apply_solution: {:.1} ms", ms(t));
+    }
 }
