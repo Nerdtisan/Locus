@@ -553,6 +553,12 @@ Also:
 - **DXF / HPGL on Draw layers keep the centreline (flagged).** Decision 4's table says "outline geometry". This ticket keeps the plotter rule, "a centreline when the width ≤ the pen": on a Draw layer the object's width *is* its pen. Writing every Draw path's outline would change every existing DXF. This is open for the owner.
 - **Expand to geometry** writes outlines only. The design's dialog, with Outline or Centrelines, Keep original and a preview count, follows with dashes (#427), when Centrelines first differ from the path.
 
+### Built in #427 (2026-11-24)
+
+- **The dash pattern is a fixed-size array** of up to 8 pairs, stored in `.locus` as `pattern: [..]`. So `LineStyle` and `Style` stay `Copy`, and a hostile file can't make a style grow. This replaces the `Arc<LineStyle>` the decision planned. The cost is a bigger `Command` (an app enum gained a `large_enum_variant` allow).
+- `locus_stroke::dashes` splits by arc length, exactly on lines and arcs. **Corners** uses turns over 15°, a whole number of repeats per span, and half a dash at each span end, merged across corners. Placements are bounded at 10 000 per path (§6.2.1).
+- **Expand** now has the **Centrelines** mode (`ExpandStyle.mode`). The app offers it as a second action, **Expand to centrelines**, instead of the design's dialog with Keep original and a preview count. The dialog stays open for a later pass.
+
 ## Consequences
 
 - **New core crate `locus-stroke`**, and `locus-trace` (#461). Both are UI-agnostic and added to the CI wasm32 check list; editing CI is out of this pass, so the first ticket that adds a crate asks for the check list change.

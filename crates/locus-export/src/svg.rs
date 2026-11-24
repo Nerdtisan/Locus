@@ -49,6 +49,9 @@ pub fn to_svg(doc: &Document) -> Vec<u8> {
 /// (closed paths end in `Z`); circles stay `<circle>`.
 #[must_use]
 pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
+    // Corner-aligned dashes are drawn as paths of their own; exact ones
+    // natively (#427).
+    let model = &model.dashes_as_paths(true);
     let empty = locus_geom::Aabb::from_points(Vec2::ZERO, Vec2::new(EMPTY_SIZE_MM, EMPTY_SIZE_MM));
     let (anchor, page) = model.page().unwrap_or((empty, empty));
     // A zero-width stroke on a straight line has no height; keep it valid.
@@ -195,6 +198,13 @@ fn paint_attrs(p: &Paint) -> String {
                     " stroke-linejoin=\"miter\" stroke-miterlimit=\"{}\"",
                     num(limit)
                 );
+            }
+        }
+        if let Some(d) = p.line.dash {
+            let arr: Vec<String> = d.pattern().iter().map(|v| num(*v)).collect();
+            let _ = write!(s, " stroke-dasharray=\"{}\"", arr.join(" "));
+            if d.phase != 0.0 {
+                let _ = write!(s, " stroke-dashoffset=\"{}\"", num(d.phase));
             }
         }
         let _ = write!(s, " data-pen=\"{pen}\"");

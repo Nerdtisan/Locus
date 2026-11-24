@@ -310,6 +310,9 @@ impl Node {
 
 /// The result of a click, typed value or finish.
 #[derive(Clone, Debug, PartialEq)]
+// A finished command carries a whole style (dash pattern included, #427);
+// outcomes are short-lived, so boxing it would buy nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Outcome {
     /// Nothing to run yet (or the input was ignored).
     Pending,

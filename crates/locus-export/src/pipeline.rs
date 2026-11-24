@@ -223,6 +223,9 @@ pub struct ExportLayer {
     pub styles: BTreeMap<EntityId, Style>,
     /// Machine layers: cut the centreline or the styled outline (#428).
     pub stroke_styles: StrokeStyles,
+    /// The dashes are already paths of their own (#427): writers draw these
+    /// paths solid.
+    pub dashes_done: bool,
 }
 
 impl ExportLayer {
@@ -239,6 +242,7 @@ impl ExportLayer {
             hairline: DEFAULT_HAIRLINE_MM,
             styles: BTreeMap::new(),
             stroke_styles: StrokeStyles::default(),
+            dashes_done: false,
         }
     }
 
@@ -280,8 +284,35 @@ impl ExportLayer {
             width: s.width,
             opacity: s.opacity,
             pen: Some(s.pen),
-            line: s.line,
+            line: if self.dashes_done {
+                LineStyle {
+                    dash: None,
+                    ..s.line
+                }
+            } else {
+                s.line
+            },
         }
+    }
+
+    /// The dashes of `path` as paths of their own (pen-down strokes, #427),
+    /// when it has a dash pattern; `None` otherwise or past the dash limit
+    /// (the path is then written solid; export reports nothing extra).
+    #[must_use]
+    pub fn dash_paths(&self, path: &ExportPath) -> Option<Vec<ExportPath>> {
+        let entity = path.segs.first()?.entity;
+        let d = self.style_of(entity).line.dash?;
+        let runs =
+            locus_stroke::dashes(&path_chain(path), &d, &locus_stroke::Limits::default()).ok()?;
+        Some(
+            runs.iter()
+                .filter(|c| !c.segs.is_empty())
+                .map(|c| ExportPath {
+                    segs: c.segs.iter().map(|s| seg_path(*s, entity)).collect(),
+                    closed: false,
+                })
+                .collect(),
+        )
     }
 
     /// The stroke of `path` as filled outline loops, when a writer can't
@@ -455,6 +486,57 @@ impl ExportModel {
         self.layers.iter().all(|l| l.paths.is_empty())
     }
 
+    /// This model with dashed Draw-layer paths split into one path per dash
+    /// (#427): every dash for writers without dashes (DXF, plugins such as
+    /// HPGL: one pen-down per dash), or only corner-aligned ones for SVG,
+    /// PDF and PNG, which draw exact dashes natively.
+    #[must_use]
+    pub fn dashes_as_paths(&self, corners_only: bool) -> ExportModel {
+        let mut m = self.clone();
+        for l in &mut m.layers {
+            if !l.uses_object_style() || l.dashes_done {
+                continue;
+            }
+            let mut out = Vec::new();
+            let mut any = false;
+            for p in std::mem::take(&mut l.paths) {
+                let corners = p
+                    .segs
+                    .first()
+                    .and_then(|s| l.style_of(s.entity).line.dash)
+                    .is_some_and(|d| d.align == locus_stroke::DashAlign::Corners);
+                match (corners || !corners_only)
+                    .then(|| l.dash_paths(&p))
+                    .flatten()
+                {
+                    Some(ds) => {
+                        any = true;
+                        out.extend(ds);
+                    }
+                    None => out.push(p),
+                }
+            }
+            l.paths = out;
+            // Exact dashes left for a native writer keep their pattern.
+            l.dashes_done = !corners_only && any;
+            if corners_only && any {
+                // Split corner dashes are solid now; native ones still dash.
+                // Mark per path is not possible, so drop the pattern from
+                // the corner-aligned styles only.
+                for st in l.styles.values_mut() {
+                    if st
+                        .line
+                        .dash
+                        .is_some_and(|d| d.align == locus_stroke::DashAlign::Corners)
+                    {
+                        st.line.dash = None;
+                    }
+                }
+            }
+        }
+        m
+    }
+
     /// Move every path (and the frame) by `d`, mm: the job placement (#443).
     pub fn translate(&mut self, d: Vec2) {
         for seg in self
@@ -598,8 +680,15 @@ pub fn apply_stroke_styles(model: &mut ExportModel) {
                 .segs
                 .first()
                 .map_or_else(Style::default, |s| layer.style_of(s.entity));
-            match outline_paths(&p, st.width, &st.line) {
-                Some(loops) if !loops.is_empty() => out.extend(loops),
+            // Dashes become separate cuts or marks (a perforation, #427);
+            // otherwise the stroke's outline.
+            let styled = if st.line.dash.is_some() {
+                layer.dash_paths(&p)
+            } else {
+                outline_paths(&p, st.width, &st.line)
+            };
+            match styled {
+                Some(paths) if !paths.is_empty() => out.extend(paths),
                 _ => out.push(p),
             }
         }
@@ -706,6 +795,48 @@ fn translated(shape: Shape, d: Vec2) -> Shape {
             c1: c.c1 + d,
             p1: c.p1 + d,
         }),
+    }
+}
+
+/// One region piece as an export segment: a clockwise arc is the
+/// counter-clockwise arc travelled backwards.
+fn seg_path(seg: locus_region::Seg, entity: EntityId) -> PathSeg {
+    let (shape, reversed) = match seg {
+        locus_region::Seg::Line { a, b } => (Shape::Line(Line::new(a, b)), false),
+        locus_region::Seg::Arc {
+            center,
+            radius,
+            start,
+            sweep,
+        } => {
+            let at = |t: f64| center + Vec2::from_angle(t) * radius;
+            if sweep.abs() >= core::f64::consts::TAU - 1e-9 {
+                (Shape::Circle(Circle { center, radius }), false)
+            } else if sweep >= 0.0 {
+                (
+                    Shape::Arc(Arc {
+                        center,
+                        start: at(start),
+                        end: at(start + sweep),
+                    }),
+                    false,
+                )
+            } else {
+                (
+                    Shape::Arc(Arc {
+                        center,
+                        start: at(start + sweep),
+                        end: at(start),
+                    }),
+                    true,
+                )
+            }
+        }
+    };
+    PathSeg {
+        entity,
+        shape,
+        reversed,
     }
 }
 

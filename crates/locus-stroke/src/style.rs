@@ -5,6 +5,7 @@
 //! without a dependency cycle; `locus-doc` re-exports them.
 
 use crate::StrokeError;
+use crate::dash::Dash;
 use serde::{Deserialize, Serialize};
 
 /// End cap of an open path.
@@ -62,6 +63,9 @@ pub struct LineStyle {
     pub join: Join,
     #[serde(skip_serializing_if = "is_default")]
     pub align: Align,
+    /// Dash pattern (#427); `None` is a solid line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dash: Option<Dash>,
 }
 
 impl LineStyle {
@@ -80,6 +84,9 @@ impl LineStyle {
                 what: "miter limit",
                 value: limit,
             });
+        }
+        if let Some(d) = &self.dash {
+            d.validate()?;
         }
         Ok(())
     }

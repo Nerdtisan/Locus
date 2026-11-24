@@ -18,13 +18,25 @@ use crate::offset::{Out, emit, pieces_within};
 use crate::recipe::MAX_INSTANCE_ENTITIES;
 use crate::style::{DEFAULT_WIDTH, Style};
 use locus_region::Seg;
-use locus_stroke::{Limits, LineStyle, chains, expand};
+use locus_stroke::{Limits, LineStyle, chains, dashes, expand};
+use serde::{Deserialize, Serialize};
 
 /// The Expand tolerance's default, mm (owner decision 2026-11-24).
 pub const DEFAULT_EXPAND_TOL: f64 = 0.01;
 /// Accepted Expand tolerances, mm.
 pub const MIN_EXPAND_TOL: f64 = 1e-4;
 pub const MAX_EXPAND_TOL: f64 = 1.0;
+
+/// What Expand to geometry writes (design §9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ExpandMode {
+    /// The stroke's filled outline as closed curves.
+    #[default]
+    Outline,
+    /// The pen paths: each dash as an open curve (a solid stroke gives its
+    /// path back as plain curves).
+    Centrelines,
+}
 
 /// One group's output: the entities to add on `layer` in `style`.
 pub(crate) struct Expanded {
@@ -44,6 +56,7 @@ pub(crate) fn plan(
     doc: &Document,
     ids: &[EntityId],
     tol: f64,
+    mode: ExpandMode,
 ) -> Result<(Vec<Expanded>, Vec<EntityId>), DocError> {
     if !(tol.is_finite() && (MIN_EXPAND_TOL..=MAX_EXPAND_TOL).contains(&tol)) {
         return Err(DocError::BadValue {
@@ -91,11 +104,31 @@ pub(crate) fn plan(
     let mut total = 0usize;
     for (layer, style, items) in groups {
         let mut out = Vec::new();
+        let err = |e: locus_stroke::StrokeError| DocError::Invalid(format!("expand: {e}"));
         for chain in chains(items) {
-            let area = expand(&chain, style.width, &style.line, &limits)
-                .map_err(|e| DocError::Invalid(format!("expand: {e}")))?;
-            for l in &area.loops {
-                emit(&l.edges, true, &mut out);
+            match mode {
+                ExpandMode::Outline => {
+                    let area = expand(&chain, style.width, &style.line, &limits).map_err(err)?;
+                    for l in &area.loops {
+                        emit(&l.edges, true, &mut out);
+                    }
+                }
+                ExpandMode::Centrelines => {
+                    let runs = match &style.line.dash {
+                        Some(d) => dashes(&chain, d, &limits).map_err(err)?,
+                        None => vec![chain],
+                    };
+                    for run in runs {
+                        let edges: Vec<locus_region::Edge> = run
+                            .segs
+                            .iter()
+                            // A dot has no length to draw as a curve.
+                            .filter(|s| s.length() > locus_region::SNAP)
+                            .map(|s| locus_region::Edge { seg: *s, source: 0 })
+                            .collect();
+                        emit(&edges, run.closed, &mut out);
+                    }
+                }
             }
         }
         total += out.len();
@@ -204,6 +237,7 @@ mod tests {
         ed.apply(&Command::ExpandStyle {
             entities: ids.clone(),
             tol: super::DEFAULT_EXPAND_TOL,
+            mode: super::ExpandMode::Outline,
         })
         .unwrap();
         let doc = ed.document();
@@ -227,13 +261,45 @@ mod tests {
     }
 
     #[test]
+    fn centrelines_give_one_open_curve_per_dash() {
+        let (mut ed, ids) = l_doc(1.0);
+        ed.apply(&Command::SetStyle {
+            entities: ids.clone(),
+            patch: StylePatch {
+                dash: Some(Some(
+                    locus_stroke::Dash::new(&[4.0, 1.0], 2.0, locus_stroke::DashAlign::Exact)
+                        .unwrap(),
+                )),
+                ..StylePatch::default()
+            },
+        })
+        .unwrap();
+        ed.apply(&Command::ExpandStyle {
+            entities: ids,
+            tol: super::DEFAULT_EXPAND_TOL,
+            mode: super::ExpandMode::Centrelines,
+        })
+        .unwrap();
+        // 20 mm of path, dash 4 gap 1, phase 2: dashes 0–2, 3–7, 8–12
+        // (across the corner: two lines), 13–17, 18–20 → six lines.
+        let lines = ed
+            .document()
+            .entities()
+            .iter()
+            .filter(|(_, e)| matches!(e.geom, Geom::Line { .. }))
+            .count();
+        assert_eq!(lines, 6);
+    }
+
+    #[test]
     fn nothing_to_expand_and_bad_tolerances_are_refused() {
         let (mut ed, ids) = l_doc(1.0);
         for tol in [0.0, f64::NAN, 5.0] {
             assert!(
                 ed.apply(&Command::ExpandStyle {
                     entities: ids.clone(),
-                    tol
+                    tol,
+                    mode: super::ExpandMode::Outline,
                 })
                 .is_err()
             );
@@ -241,7 +307,8 @@ mod tests {
         assert!(
             ed.apply(&Command::ExpandStyle {
                 entities: Vec::new(),
-                tol: 0.01
+                tol: 0.01,
+                mode: super::ExpandMode::Outline,
             })
             .is_err()
         );

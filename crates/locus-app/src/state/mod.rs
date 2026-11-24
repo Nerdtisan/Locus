@@ -1007,7 +1007,7 @@ impl AppState {
     /// Expand to geometry (#428): the selected curves' strokes become the
     /// plain curves of their outlines, as one `ExpandStyle` step. `tol` is
     /// the Expand tolerance setting (owner default 0.01 mm).
-    pub fn expand_selection(&mut self, tol: f64) {
+    pub fn expand_selection(&mut self, tol: f64, centrelines: bool) {
         let ids = self.selected_curves();
         if ids.is_empty() {
             self.doc.notice = Some("Select styled curves to expand".to_owned());
@@ -1020,7 +1020,15 @@ impl AppState {
         } else {
             DEFAULT_EXPAND_TOL
         };
-        self.apply_reporting(&Command::ExpandStyle { entities: ids, tol });
+        self.apply_reporting(&Command::ExpandStyle {
+            entities: ids,
+            tol,
+            mode: if centrelines {
+                locus_doc::expand::ExpandMode::Centrelines
+            } else {
+                locus_doc::expand::ExpandMode::Outline
+            },
+        });
     }
 
     /// Select exactly these entities (the pre-export panel's highlight, #128).
