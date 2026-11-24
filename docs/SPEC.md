@@ -364,7 +364,8 @@ Export is always one-way. Native file is the source of truth.
 - Engrave `mode` and `overlap` (format v20, #455). An Engrave layer without them reads as Line + Fill with even-odd overlaps, which is what it exported before.
 - Region keys (fills, boolean recipes) name per-layer regions from format v21 (#457). The shape of the file is unchanged; an older file's keys that named a face cut by another layer are moved on load.
 - Reference images can be turned (format v22, #463): `ImagePlacement.rotation`, radians counter-clockwise about the image's centre, in -π..=π and omitted while 0. An older image reads as unturned.
-- Reference images can have non-square pixels (format v23, #463): `ImagePlacement.mm_per_px_y`, the pixel height in mm, omitted while it equals `mm_per_px`.
+- Reference images can have non-square pixels (format v23, #463): `ImagePlacement.mm_per_px_y`, the pixel height in mm, omitted while it equals `mm_per_px`.
+- A timeline feature can be suppressed (format v24, #446): `Recipe.feature_suppressed`, omitted while false. The timeline's feature order (format v26, #446): `recipe_order`, omitted while features are in creation order.
 - Line styles (format v25, #428): `Style.line` (cap, join, align) and `Layer.stroke_styles` (Centreline or Styled), each omitted at its default, so an older file reads with round caps and joins and centreline cuts.
 - The job's placement on the machine bed (`placement`, an offset in mm; format v18, #443) is omitted while unset, so a v17 file migrates unchanged.
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.
