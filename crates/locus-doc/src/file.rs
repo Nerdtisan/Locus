@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 23;
+pub const CURRENT_VERSION: u32 = 24;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -1099,8 +1099,58 @@ impl From<FileV22> for FileV23 {
     }
 }
 
-/// The newest on-disk shape. When adding v24, point this at `FileV24`.
-type Latest = FileV23;
+/// Version 24: a timeline feature can be suppressed (#446, ADR 0019
+/// decision 5): `Recipe` gains `feature_suppressed`, omitted while false, so
+/// older recipes read unchanged. The shape is v23's; the version stops an
+/// older build from dropping the flag (and regenerating the copies).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV24 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+}
+
+impl From<FileV23> for FileV24 {
+    fn from(f: FileV23) -> Self {
+        FileV24 {
+            format_version: 24,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v25, point this at `FileV25`.
+type Latest = FileV24;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -1126,8 +1176,8 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-        FileV18::from(FileV17::from(FileV16::from(f))),
+    FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+        FileV19::from(FileV18::from(FileV17::from(FileV16::from(f)))),
     )))))
 }
 
@@ -1211,22 +1261,25 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-            FileV18::from(FileV17::from(parse::<FileV16>(text)?)),
+        16 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+            FileV19::from(FileV18::from(FileV17::from(parse::<FileV16>(text)?))),
         ))))),
-        17 => FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-            FileV18::from(parse::<FileV17>(text)?),
+        17 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+            FileV19::from(FileV18::from(parse::<FileV17>(text)?)),
         ))))),
-        18 => FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-            parse::<FileV18>(text)?,
+        18 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+            FileV19::from(parse::<FileV18>(text)?),
         ))))),
-        19 => FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+        19 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
             parse::<FileV19>(text)?,
+        ))))),
+        20 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+            parse::<FileV20>(text)?,
         )))),
-        20 => FileV23::from(FileV22::from(FileV21::from(parse::<FileV20>(text)?))),
-        21 => FileV23::from(FileV22::from(parse::<FileV21>(text)?)),
-        22 => FileV23::from(parse::<FileV22>(text)?),
-        23 => parse::<FileV23>(text)?,
+        21 => FileV24::from(FileV23::from(FileV22::from(parse::<FileV21>(text)?))),
+        22 => FileV24::from(FileV23::from(parse::<FileV22>(text)?)),
+        23 => FileV24::from(parse::<FileV23>(text)?),
+        24 => parse::<FileV24>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -2472,22 +2525,58 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v23 fixture is frozen; it loads unchanged (no suppressed
+    /// feature, which is all v24 adds) and saves as the current version.
     #[test]
-    fn v23_fixture_is_current_and_loads() {
+    fn v23_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v23/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v23()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 23"));
-        assert!(text.contains("mm_per_px_y: "));
-        assert_eq!(load(&text).unwrap(), sample_v23());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v23());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// The v24 sample: `sample_v23()` with its first pattern-or-offset
+    /// feature suppressed (#446).
+    pub(crate) fn sample_v24() -> Document {
+        let doc = sample_v23();
+        let id = doc
+            .recipes()
+            .iter()
+            .find(|(_, r)| !matches!(r.kind, crate::recipe::RecipeKind::Mirror { .. }))
+            .map(|(id, _)| *id)
+            .expect("a pattern, offset or plugin object");
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetRecipeSuppressed {
+            id,
+            suppressed: true,
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v24_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v24/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v24()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 24"));
+        assert!(text.contains("feature_suppressed: true"));
+        assert_eq!(load(&text).unwrap(), sample_v24());
         assert_eq!(
-            save(&sample_v23()).unwrap(),
+            save(&sample_v24()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
