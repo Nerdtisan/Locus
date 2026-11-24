@@ -419,6 +419,7 @@ mod tests {
             derived_point: false,
             ends: None,
             text: false,
+            handle: None,
         }
     }
 
@@ -460,6 +461,7 @@ mod tests {
     fn text_outlines_are_not_snapped_onto() {
         let text = |a, b| Item {
             text: true,
+            handle: None,
             ..line_item(7, a, b)
         };
         let items = [

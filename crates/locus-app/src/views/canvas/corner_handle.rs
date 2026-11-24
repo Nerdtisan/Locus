@@ -457,7 +457,16 @@ impl AppState {
                     Stroke::NONE,
                 ));
             }
-            p.circle_filled(at, if dragging { 5.0 } else { 4.0 }, c);
+            crate::render::handle_mark(
+                p,
+                at,
+                crate::scene::Handle::Control,
+                c,
+                frame.pal.background,
+            );
+            if dragging {
+                p.circle_stroke(at, crate::theme::HANDLE_PX / 2.0 + 3.0, Stroke::new(1.5, c));
+            }
             p.circle_stroke(at, GRAB_PT - 2.0, Stroke::new(1.0, c.gamma_multiply(0.5)));
             let text = match h.field {
                 SizeField::Radius => format!("R {}", t.radius),

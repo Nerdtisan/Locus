@@ -162,7 +162,20 @@ pub(super) fn draw_offset_arrow(
         c,
         Stroke::NONE,
     ));
-    p.circle_filled(tip, if dragging { 5.0 } else { 4.0 }, c);
+    crate::render::handle_mark(
+        p,
+        tip,
+        crate::scene::Handle::Control,
+        c,
+        frame.pal.background,
+    );
+    if dragging {
+        p.circle_stroke(
+            tip,
+            crate::theme::HANDLE_PX / 2.0 + 3.0,
+            Stroke::new(1.5, c),
+        );
+    }
     p.circle_stroke(tip, GRAB_PT - 2.0, Stroke::new(1.0, c.gamma_multiply(0.5)));
     // The read-out beyond the tip, on the side the arrow points to.
     let anchor = if dir.x < -0.3 {

@@ -62,6 +62,17 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Pick tolerances at the current zoom and input (#470): Bézier handles
+    /// are grabbed within half the theme's handle target, or the touch
+    /// tolerance when that is larger.
+    pub(crate) fn pick_tol(&self) -> crate::hit::Tol {
+        let per_mm = self.view.camera.pt_per_mm;
+        crate::hit::Tol {
+            curve: self.view.tol_pt / per_mm,
+            handle: f64::from(crate::theme::HANDLE_HIT_PX / 2.0).max(self.view.tol_pt) / per_mm,
+        }
+    }
+
     /// A new, empty untitled document, centred on the origin: how the app
     /// opens, ready to draw (#383, #366), as File ▸ New leaves it.
     pub fn untitled() -> Self {

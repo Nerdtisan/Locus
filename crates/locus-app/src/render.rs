@@ -7,7 +7,7 @@
 //! are flattened with a screen-space tolerance, so cost follows what is on
 //! screen rather than the document size.
 
-use crate::scene::{Annot, DimKind, Item, Scene, Shape, Symbol};
+use crate::scene::{Annot, DimKind, Handle, Item, Scene, Shape, Symbol};
 use crate::settings::Units;
 use crate::view::View;
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape as EShape, Stroke, Vec2 as EVec2};
@@ -115,6 +115,23 @@ pub struct Frame<'a> {
 }
 
 const STROKE_W: f32 = 1.6;
+
+/// One canvas handle (#470, M6 design §12): `HANDLE_PX` across, filled
+/// with `fill` and outlined in `outline` (the canvas colour) so it reads
+/// over fills and strokes. Anchors are squares, control points circles.
+pub fn handle_mark(painter: &Painter, at: Pos2, kind: Handle, fill: Color32, outline: Color32) {
+    use crate::theme::{HANDLE_OUTLINE_PX, HANDLE_PX};
+    let stroke = Stroke::new(HANDLE_OUTLINE_PX, outline);
+    match kind {
+        Handle::Anchor => {
+            let r = Rect::from_center_size(at, EVec2::splat(HANDLE_PX));
+            painter.rect(r, 0.0, fill, stroke, egui::StrokeKind::Outside);
+        }
+        Handle::Control => {
+            painter.circle(at, HANDLE_PX / 2.0, fill, stroke);
+        }
+    }
+}
 const DASH: (f32, f32) = (7.0, 4.0);
 /// Max distance, in points, between a flattened curve and the true curve.
 const FLATNESS_PT: f64 = 0.2;
@@ -204,12 +221,14 @@ impl Frame<'_> {
         }
     }
 
-    /// Draw the geometry, calling `emphasis` for each visible item.
+    /// Draw the geometry, calling `emphasis` for each visible item. Bézier
+    /// handles are left to [`Frame::draw_handles`], so they go on top of
+    /// their guide lines.
     pub fn draw_items(&self, scene: &Scene, emphasis: impl Fn(&Item) -> Emphasis) -> usize {
         let (lo, hi) = self.visible(4.0);
         let mut drawn = 0;
         for item in &scene.items {
-            if !intersects(&item.bbox, lo, hi) {
+            if item.handle.is_some() || !intersects(&item.bbox, lo, hi) {
                 continue;
             }
             let e = emphasis(item);
@@ -449,6 +468,39 @@ impl Frame<'_> {
             symbol.name,
             self.pal.glyph_text,
         );
+    }
+
+    /// The shown Béziers' anchors (squares) and control points (circles)
+    /// at the theme's fixed handle size (#470, M6 design §12), with a ring
+    /// in the selection colour on the hovered one.
+    pub fn draw_handles(&self, scene: &Scene, emphasis: impl Fn(&Item) -> Emphasis) {
+        let pad = f64::from(crate::theme::HANDLE_HIT_PX);
+        let (lo, hi) = self.visible(pad);
+        for item in &scene.items {
+            let (Some(kind), Shape::Point(p)) = (item.handle, item.shape) else {
+                continue;
+            };
+            if !intersects(&item.bbox, lo, hi) {
+                continue;
+            }
+            let e = emphasis(item);
+            if e == Emphasis::Hidden {
+                continue;
+            }
+            let at = self.s(p);
+            handle_mark(
+                self.painter,
+                at,
+                kind,
+                self.colour(item, e),
+                self.pal.background,
+            );
+            if e == Emphasis::Hover {
+                let r = crate::theme::HANDLE_PX / 2.0 + 3.0;
+                self.painter
+                    .circle_stroke(at, r, Stroke::new(1.5, self.pal.selected));
+            }
+        }
     }
 
     /// Lines from a selected Bézier's end points to their handles (#160).

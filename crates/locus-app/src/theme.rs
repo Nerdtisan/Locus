@@ -38,6 +38,16 @@ pub struct Tokens {
     pub canvas: Color32,
 }
 
+/// Canvas handles (#470, M6 design §12): Bézier anchors and control
+/// points, and the dots of the M5 offset and fillet handles, are drawn this
+/// size (points, at every zoom) ...
+pub const HANDLE_PX: f32 = 9.0;
+/// ... with an outline this wide in the canvas colour, so they read over
+/// fills and strokes ...
+pub const HANDLE_OUTLINE_PX: f32 = 1.5;
+/// ... and are grabbed within a target this wide, larger than the handle.
+pub const HANDLE_HIT_PX: f32 = 16.0;
+
 const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }

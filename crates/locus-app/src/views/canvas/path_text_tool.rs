@@ -133,7 +133,7 @@ impl AppState {
             }
             return;
         }
-        let tol = self.view.tol_pt / self.view.camera.pt_per_mm;
+        let tol = self.pick_tol();
         let doc = self.doc.sketcher.document();
         let hit = resp
             .hover_pos()
