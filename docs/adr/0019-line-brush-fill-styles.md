@@ -547,8 +547,8 @@ What S5 sets:
   - a progress line and Cancel: a noisy 4 MP photo's centreline takes seconds
   - a warning: a photo in Threshold mode makes about 168 k pieces, close to the 200 000 entity limit, so "raise speckles or use Colours"
 - **Not yet done:**
-  - curve optimisation (merging consecutive Béziers, the paper's §2.4)
   - lines and arcs as an output option (the dialog's "Curve fit")
+- **Curve optimisation, as built (#505, 2026-11-25):** the dialog's **Simplify** (px, default 0.2 as Potrace's `opttolerance`, 0 = off) joins runs of smooth curves that turn one way through under 179° into one cubic. The cubic keeps the run's end tangents, has its handle lengths fitted by least squares, and is kept only if every sampled point of the run is within the tolerance. It is greedy rather than the paper's optimal search, and corners stay. On the owner's 12 500-entity test trace (1 612 lines, 2 311 curves with it off), it gives 2 241 curves at 0.2 px, 1 726 at 0.5 px and 1 444 at 1 px. Trace time is unchanged at about 65 ms.
 
 Also:
 - Input is the decoded reference, downscaled to ≤ 4 MP for tracing.

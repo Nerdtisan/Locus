@@ -1119,6 +1119,150 @@ mod drop_tests {
     }
 }
 
+/// A frame-time harness (#505): the whole app, headless, on a document
+/// given by `LOCUS_PROFILE_FILE`, with the pointer moving over the canvas.
+/// Prints the median UI and tessellation times. Run with `--ignored
+/// --nocapture` in a release build.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::unwrap_used)]
+mod frame_profile {
+    use super::App;
+    use egui::{Pos2, Rect, pos2, vec2};
+    use std::time::{Duration, Instant};
+
+    fn median(mut v: Vec<Duration>) -> f64 {
+        v.sort();
+        v[v.len() / 2].as_secs_f64() * 1000.0
+    }
+
+    #[test]
+    #[ignore = "profiling harness; needs LOCUS_PROFILE_FILE"]
+    fn frame_time_on_a_large_document() {
+        let Some(path) = std::env::var_os("LOCUS_PROFILE_FILE") else {
+            return;
+        };
+        let text = std::fs::read_to_string(path).unwrap();
+        let t = Instant::now();
+        let doc = locus_doc::file::load(&text).unwrap();
+        println!("load: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+        let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+        let t = Instant::now();
+        let sk = locus_doc::Sketcher::new(doc.clone());
+        println!("Sketcher::new: {:.1} ms", ms(t));
+        let t = Instant::now();
+        let rs = locus_doc::regions::regions(&doc);
+        println!("regions: {:.1} ms ({} regions)", ms(t), rs.len());
+        let t = Instant::now();
+        let _ = crate::scene::Scene::build_showing(
+            sk.document(),
+            &sk.state().fully_constrained,
+            &Default::default(),
+            true,
+        );
+        println!("Scene::build: {:.1} ms", ms(t));
+        // One small edit: restyle one curve, as the Inspector does.
+        let mut sk = sk;
+        let id = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| !matches!(e.geom, locus_doc::Geom::Point { .. }))
+            .map(|(i, _)| i)
+            .unwrap();
+        let t = Instant::now();
+        sk.apply(&locus_doc::Command::SetStyle {
+            entities: vec![id],
+            patch: locus_doc::style::StylePatch {
+                width: Some(0.5),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        println!("one SetStyle via Sketcher::apply: {:.1} ms", ms(t));
+        let ctx = egui::Context::default();
+        let mut app = App::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
+        let t = Instant::now();
+        app.state.load(doc);
+        println!("state.load: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+        let mut frame = eframe::Frame::_new_kittest();
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0));
+        let mut clock = 0.0;
+        let mut run = |app: &mut App, events: Vec<egui::Event>| {
+            clock += 1.0 / 60.0;
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(clock),
+                events,
+                ..Default::default()
+            };
+            let t0 = Instant::now();
+            let out = ctx.run_ui(input, |ui| eframe::App::ui(app, ui, &mut frame));
+            let t1 = Instant::now();
+            let shapes = out.shapes.len();
+            let prims = ctx.tessellate(out.shapes, out.pixels_per_point);
+            let verts: usize = prims
+                .iter()
+                .map(|p| match &p.primitive {
+                    egui::epaint::Primitive::Mesh(m) => m.vertices.len(),
+                    egui::epaint::Primitive::Callback(_) => 0,
+                })
+                .sum();
+            (t1 - t0, t1.elapsed(), shapes, verts)
+        };
+        for _ in 0..5 {
+            run(&mut app, Vec::new());
+        }
+        let (mut ui, mut tess) = (Vec::new(), Vec::new());
+        let mut last = (0, 0);
+        for i in 0..40 {
+            let x = 500.0 + 15.0 * i as f32;
+            let (u, t, s, v) = run(&mut app, vec![egui::Event::PointerMoved(pos2(x, 520.0))]);
+            ui.push(u);
+            tess.push(t);
+            last = (s, v);
+        }
+        println!(
+            "pointer moving: ui {:.2} ms, tessellate {:.2} ms (median of 40), {} shapes, {} vertices",
+            median(ui),
+            median(tess),
+            last.0,
+            last.1
+        );
+        let (mut ui, mut tess) = (Vec::new(), Vec::new());
+        for _ in 0..20 {
+            let (u, t, _, _) = run(&mut app, Vec::new());
+            ui.push(u);
+            tess.push(t);
+        }
+        println!(
+            "idle: ui {:.2} ms, tessellate {:.2} ms (median of 20)",
+            median(ui),
+            median(tess)
+        );
+        // Everything selected: the Inspector and selection drawing see all
+        // 12 500 entities each frame.
+        app.state.select_all();
+        let t = Instant::now();
+        app.state.rebuild();
+        println!(
+            "rebuild with all {} selected: {:.1} ms",
+            app.state.selection.items.len(),
+            t.elapsed().as_secs_f64() * 1000.0
+        );
+        let (mut ui, mut tess) = (Vec::new(), Vec::new());
+        for i in 0..20 {
+            let x = 500.0 + 15.0 * i as f32;
+            let (u, t, _, _) = run(&mut app, vec![egui::Event::PointerMoved(pos2(x, 520.0))]);
+            ui.push(u);
+            tess.push(t);
+        }
+        println!(
+            "all selected, pointer moving: ui {:.2} ms, tessellate {:.2} ms (median of 20)",
+            median(ui),
+            median(tess)
+        );
+    }
+}
+
 /// The first argument (after the program name) naming a `.locus` file.
 #[cfg(not(target_arch = "wasm32"))]
 fn startup_file(args: impl Iterator<Item = String>) -> Option<std::path::PathBuf> {
