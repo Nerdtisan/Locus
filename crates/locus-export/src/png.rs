@@ -191,6 +191,31 @@ pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, E
     }
     for layer in &model.layers {
         for path in &layer.paths {
+            // An inside/outside stroke is filled as its outline (#428).
+            if let Some(loops) = layer.outline(path) {
+                let p = layer.paint(path);
+                let mut pb = PathBuilder::new();
+                for l in &loops {
+                    push(&mut pb, l, &map, k, &to32);
+                }
+                if let Some(skpath) = pb.finish() {
+                    let alpha = (p.opacity.clamp(0.0, 1.0) * 255.0).round();
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let a = alpha as u8;
+                    let [r, g, b] = p.stroke;
+                    let mut paint = Paint::default();
+                    paint.set_color_rgba8(r, g, b, a);
+                    paint.anti_alias = true;
+                    pixmap.fill_path(
+                        &skpath,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
+                }
+                continue;
+            }
             let Some(skpath) = build(path, &map, k, &to32) else {
                 continue;
             };
@@ -205,8 +230,20 @@ pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, E
             let stroke = Stroke {
                 // Thinner than a pixel would vanish: hairlines show as one pixel.
                 width: to32((p.width * k).max(1.0)),
-                line_cap: LineCap::Round,
-                line_join: LineJoin::Round,
+                line_cap: match p.line.cap {
+                    locus_doc::Cap::Butt => LineCap::Butt,
+                    locus_doc::Cap::Round => LineCap::Round,
+                    locus_doc::Cap::Square => LineCap::Square,
+                },
+                line_join: match p.line.join {
+                    locus_doc::Join::Round => LineJoin::Round,
+                    locus_doc::Join::Bevel => LineJoin::Bevel,
+                    locus_doc::Join::Miter { .. } => LineJoin::Miter,
+                },
+                miter_limit: match p.line.join {
+                    locus_doc::Join::Miter { limit } => to32(limit),
+                    _ => 4.0,
+                },
                 ..Stroke::default()
             };
             pixmap.stroke_path(&skpath, &paint, &stroke, Transform::identity(), None);

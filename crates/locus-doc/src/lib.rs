@@ -16,6 +16,7 @@ pub mod delete;
 pub mod document;
 pub mod entity;
 pub mod error;
+pub mod expand;
 pub mod explode;
 pub mod expr;
 pub mod file;
@@ -53,11 +54,12 @@ pub use explode::Exploded;
 pub use file::FileError;
 pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 pub use image::{ImageFormat, ImagePlacement, RefImage};
+pub use locus_stroke::{Align, Cap, Join, LineStyle};
 pub use operation::{
     Compensation, CutParams, DragKnifeParams, EngraveMode, EngraveParams, Operation, OperationKind,
     Overlap,
 };
 pub use recipe::{Axis, LinearDir, MAX_INSTANCE_ENTITIES, MAX_INSTANCES, Recipe, RecipeKind};
 pub use solve::{ConstraintGroup, DragFrame, LockReport, Sketcher, SolveState, Status};
-pub use style::{Fill, Stroke, Style, StylePatch};
+pub use style::{Fill, Stroke, StrokeStyles, Style, StylePatch};
 pub use text::TextData;

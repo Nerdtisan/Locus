@@ -11,7 +11,7 @@ use crate::scene::{Annot, DimKind, Handle, Item, Scene, Shape, Symbol};
 use crate::settings::Units;
 use crate::view::View;
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Shape as EShape, Stroke, Vec2 as EVec2};
-use locus_doc::{ConstraintId, Edge, EntityId};
+use locus_doc::{ConstraintId, Edge};
 use locus_geom::{Aabb, Arc, Circle, Cubic, Vec2};
 use std::collections::BTreeSet;
 
@@ -262,31 +262,29 @@ impl Frame<'_> {
         drawn
     }
 
-    /// The stroke width of Draw (pen) and Cut (kerf) geometry at true scale,
-    /// under the sketch, so the edges a dimension can measure to are visible
-    /// (SPEC §5, §7, #240). `width_of` gives an entity's stroke width in mm
-    /// (0 = none). Never less than a hairline.
-    pub fn draw_strokes(&self, scene: &Scene, width_of: impl Fn(EntityId) -> f64, colour: Color32) {
+    /// Filled triangles given in world mm (the stroke preview, #428); those
+    /// wholly outside the view are skipped.
+    pub fn draw_triangles(&self, tris: &[[Vec2; 3]], colour: Color32) {
         let (lo, hi) = self.visible(4.0);
-        for item in &scene.items {
-            if item.construction || !intersects(&item.bbox, lo, hi) {
+        let mut mesh = egui::Mesh::default();
+        for t in tris {
+            let all = |f: &dyn Fn(&Vec2) -> bool| t.iter().all(f);
+            if all(&|p| p.x < lo.x)
+                || all(&|p| p.x > hi.x)
+                || all(&|p| p.y < lo.y)
+                || all(&|p| p.y > hi.y)
+            {
                 continue;
             }
-            let w = width_of(item.id);
-            if w <= 0.0 {
-                continue;
+            let Ok(i) = u32::try_from(mesh.vertices.len()) else {
+                break;
+            };
+            for p in t {
+                mesh.colored_vertex(self.s(*p), colour);
             }
-            // Capped: deep in, a 0.3 mm pen would be a 10¹¹-point stroke.
-            let px = (w * self.view.pt_per_mm).clamp(1.0, 1.0e5) as f32;
-            let stroke = Stroke::new(px, colour);
-            match item.shape {
-                Shape::Point(_) => {}
-                Shape::Line(l) => self.world_polyline(&[l.a, l.b], stroke, false),
-                Shape::Circle(c) => self.circle(c, stroke, false),
-                Shape::Arc(a) => self.arc(a, stroke, false),
-                Shape::Cubic(c) => self.cubic(&c, stroke, false),
-            }
+            mesh.add_triangle(i, i + 1, i + 2);
         }
+        self.painter.add(mesh);
     }
 
     /// A polyline given in world mm: each segment is clipped to the padded

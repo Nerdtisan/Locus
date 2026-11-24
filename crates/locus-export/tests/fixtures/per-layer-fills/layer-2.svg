@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="32.4mm" height="20.4mm" viewBox="0 0 32.4 20.4">
   <g id="layer-2" data-name="Layer 2" data-operation="Draw">
-    <circle fill="none" stroke="#0000ff" stroke-width="0.4" data-pen="1" cx="22.2" cy="10.2" r="10"/>
+    <circle fill="none" stroke="#0000ff" stroke-width="0.4" stroke-linecap="round" stroke-linejoin="round" data-pen="1" cx="22.2" cy="10.2" r="10"/>
   </g>
 </svg>

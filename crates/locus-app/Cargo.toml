@@ -19,6 +19,7 @@ path = "src/main.rs"
 locus-geom.workspace = true
 locus-doc.workspace = true
 locus-region.workspace = true
+locus-stroke.workspace = true
 locus-export.workspace = true
 locus-text.workspace = true
 locus-import.workspace = true

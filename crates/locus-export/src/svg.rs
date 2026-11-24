@@ -25,6 +25,7 @@
 use crate::order::order;
 use crate::pipeline::{ExportModel, Paint, PathSeg, Shape, collect};
 use locus_doc::Document;
+use locus_doc::{Cap, Join};
 use locus_geom::Vec2;
 use std::f64::consts::PI;
 use std::fmt::Write as _;
@@ -107,6 +108,25 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
             op = layer.operation.kind(),
         );
         for p in &layer.paths {
+            // An inside/outside stroke is written as its filled outline
+            // (#428): SVG centres every stroke.
+            if let Some(loops) = layer.outline(p) {
+                let paint = layer.paint(p);
+                let mut d = String::new();
+                for l in &loops {
+                    write_loop(&mut d, l, &map);
+                }
+                let [r, g, b] = paint.stroke;
+                let mut attrs = format!("fill=\"#{r:02x}{g:02x}{b:02x}\" stroke=\"none\"");
+                if paint.opacity < 1.0 {
+                    let _ = write!(attrs, " opacity=\"{}\"", num(paint.opacity));
+                }
+                if let Some(pen) = paint.pen {
+                    let _ = write!(attrs, " data-pen=\"{pen}\"");
+                }
+                let _ = writeln!(out, "    <path {attrs} d=\"{}\"/>", d.trim_start());
+                continue;
+            }
             // On every shape, not the group (see the module docs: Cricut).
             let style = paint_attrs(&layer.paint(p));
             if let [seg] = p.segs.as_slice()
@@ -157,6 +177,26 @@ fn paint_attrs(p: &Paint) -> String {
         let _ = write!(s, " opacity=\"{}\"", num(p.opacity));
     }
     if let Some(pen) = p.pen {
+        // A Draw layer's object style: its caps and joins too (#428). SVG's
+        // defaults (butt, miter) differ from Locus's (round), so they are
+        // always written.
+        let cap = match p.line.cap {
+            Cap::Butt => "butt",
+            Cap::Round => "round",
+            Cap::Square => "square",
+        };
+        let _ = write!(s, " stroke-linecap=\"{cap}\"");
+        match p.line.join {
+            Join::Round => s.push_str(" stroke-linejoin=\"round\""),
+            Join::Bevel => s.push_str(" stroke-linejoin=\"bevel\""),
+            Join::Miter { limit } => {
+                let _ = write!(
+                    s,
+                    " stroke-linejoin=\"miter\" stroke-miterlimit=\"{}\"",
+                    num(limit)
+                );
+            }
+        }
         let _ = write!(s, " data-pen=\"{pen}\"");
     }
     s

@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 24;
+pub const CURRENT_VERSION: u32 = 25;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -140,6 +140,7 @@ impl From<LayerV2> for Layer {
             visible: l.visible,
             locked: l.locked,
             export_enabled: l.export_enabled,
+            stroke_styles: Default::default(),
         }
     }
 }
@@ -1149,8 +1150,59 @@ impl From<FileV23> for FileV24 {
     }
 }
 
-/// The newest on-disk shape. When adding v25, point this at `FileV25`.
-type Latest = FileV24;
+/// Version 25: line styles (#428, ADR 0019). `Style` gains `line` (caps,
+/// joins, alignment) and `Layer` gains `stroke_styles` (Centreline or
+/// Styled), both omitted at their defaults, so an older file reads with
+/// round caps and joins and centreline cuts, as before. The shape is v24's;
+/// the version stops an older build from dropping the styles.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV25 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+}
+
+impl From<FileV24> for FileV25 {
+    fn from(f: FileV24) -> Self {
+        FileV25 {
+            format_version: 25,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v26, point this at `FileV26`.
+type Latest = FileV25;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -1176,8 +1228,10 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-        FileV19::from(FileV18::from(FileV17::from(FileV16::from(f)))),
+    FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+        FileV20::from(FileV19::from(FileV18::from(FileV17::from(FileV16::from(
+            f,
+        ))))),
     )))))
 }
 
@@ -1261,25 +1315,30 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-            FileV19::from(FileV18::from(FileV17::from(parse::<FileV16>(text)?))),
+        16 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+            FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+                parse::<FileV16>(text)?,
+            )))),
         ))))),
-        17 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-            FileV19::from(FileV18::from(parse::<FileV17>(text)?)),
+        17 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+            FileV20::from(FileV19::from(FileV18::from(parse::<FileV17>(text)?))),
         ))))),
-        18 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-            FileV19::from(parse::<FileV18>(text)?),
+        18 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+            FileV20::from(FileV19::from(parse::<FileV18>(text)?)),
         ))))),
-        19 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-            parse::<FileV19>(text)?,
+        19 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+            FileV20::from(parse::<FileV19>(text)?),
         ))))),
-        20 => FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+        20 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
             parse::<FileV20>(text)?,
+        ))))),
+        21 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+            parse::<FileV21>(text)?,
         )))),
-        21 => FileV24::from(FileV23::from(FileV22::from(parse::<FileV21>(text)?))),
-        22 => FileV24::from(FileV23::from(parse::<FileV22>(text)?)),
-        23 => FileV24::from(parse::<FileV23>(text)?),
-        24 => parse::<FileV24>(text)?,
+        22 => FileV25::from(FileV24::from(FileV23::from(parse::<FileV22>(text)?))),
+        23 => FileV25::from(FileV24::from(parse::<FileV23>(text)?)),
+        24 => FileV25::from(parse::<FileV24>(text)?),
+        25 => parse::<FileV25>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -1666,6 +1725,7 @@ mod tests {
                     visible: true,
                     locked: false,
                     export_enabled: true,
+                    stroke_styles: Default::default(),
                 },
             );
         }
@@ -2047,6 +2107,9 @@ mod tests {
                 fill: None,
                 opacity: Some(0.5),
                 fill_on: None,
+                align: Default::default(),
+                cap: Default::default(),
+                join: Default::default(),
             },
         })
         .unwrap();
@@ -2561,25 +2624,83 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v24 fixture is frozen; it loads unchanged (no line styles, which
+    /// is all v25 adds) and saves as the current version.
     #[test]
-    fn v24_fixture_is_current_and_loads() {
+    fn v24_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v24/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v24()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 24"));
-        assert!(text.contains("feature_suppressed: true"));
-        assert_eq!(load(&text).unwrap(), sample_v24());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v24());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert!(!out.contains("cap:") && !out.contains("join:") && !out.contains("stroke_styles"));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// The v25 sample: `sample_v24()` with one curve given square caps and
+    /// miter joins, and its layer set to cut the styled outline (#428).
+    pub(crate) fn sample_v25() -> Document {
+        let doc = sample_v24();
+        let (id, layer) = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Line { .. }) && !e.construction)
+            .map(|(i, e)| (i, e.layer))
+            .expect("a line");
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetStyle {
+            entities: vec![id],
+            patch: crate::style::StylePatch {
+                cap: Some(locus_stroke::Cap::Square),
+                join: Some(locus_stroke::Join::Miter { limit: 6.0 }),
+                ..crate::style::StylePatch::default()
+            },
+        })
+        .unwrap();
+        ed.apply(&Command::SetLayerProps {
+            id: layer,
+            props: crate::command::LayerProps {
+                stroke_styles: Some(crate::style::StrokeStyles::Styled),
+                ..crate::command::LayerProps::default()
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v25_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v25/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v25()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 25"));
+        assert!(text.contains("cap: Square"));
+        assert!(text.contains("stroke_styles: Styled"));
+        assert_eq!(load(&text).unwrap(), sample_v25());
         assert_eq!(
-            save(&sample_v24()).unwrap(),
+            save(&sample_v25()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    #[test]
+    fn a_bad_miter_limit_in_a_file_is_refused() {
+        let text = save(&sample_v25())
+            .unwrap()
+            .replace("limit: 6.0", "limit: 1e9");
+        assert!(load(&text).is_err());
     }
 
     #[test]

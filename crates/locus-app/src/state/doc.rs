@@ -44,6 +44,11 @@ pub struct DocState {
     /// transient state (an expanded row, a half-typed name) that referred
     /// to the old one.
     pub(crate) generation: u64,
+    /// Bumped on every scene rebuild, so caches derived from the scene know
+    /// when to rebuild.
+    pub(crate) scene_stamp: u64,
+    /// The Stroke width view's triangles (#428), built on demand per scene.
+    pub(crate) stroke_mesh: std::cell::RefCell<crate::views::canvas::StrokeMesh>,
 }
 
 impl Default for DocState {
@@ -58,6 +63,8 @@ impl Default for DocState {
             notice: None,
             refusal: None,
             generation: 0,
+            scene_stamp: 0,
+            stroke_mesh: Default::default(),
         }
     }
 }

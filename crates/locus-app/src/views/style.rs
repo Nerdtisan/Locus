@@ -13,11 +13,13 @@
 use crate::state::AppState;
 use egui::{DragValue, Ui};
 use locus_doc::region_fill::RegionFill;
+use locus_doc::{Align, Cap, Join, StrokeStyles};
 use locus_doc::{
     Command, Document, EntityId, Fill, Geom, OperationKind, Stroke, Style, StylePatch,
     operation::MAX_PEN,
 };
 use locus_region::RegionKey;
+use locus_stroke::{DEFAULT_MITER, MAX_MITER, MIN_MITER};
 
 /// One field across the selection: `None` when the objects differ.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -26,6 +28,9 @@ pub(crate) struct Shared {
     pub width: Option<f64>,
     pub pen: Option<u32>,
     pub opacity: Option<f64>,
+    pub cap: Option<Cap>,
+    pub join: Option<Join>,
+    pub align: Option<Align>,
 }
 
 impl Shared {
@@ -40,6 +45,9 @@ impl Shared {
             width: same(styles.iter().map(|s| s.width)),
             pen: same(styles.iter().map(|s| s.pen)),
             opacity: same(styles.iter().map(|s| s.opacity)),
+            cap: same(styles.iter().map(|s| s.line.cap)),
+            join: same(styles.iter().map(|s| s.line.join)),
+            align: same(styles.iter().map(|s| s.line.align)),
         }
     }
 
@@ -48,6 +56,9 @@ impl Shared {
         self.width = p.width.or(self.width);
         self.pen = p.pen.or(self.pen);
         self.opacity = p.opacity.or(self.opacity);
+        self.cap = p.cap.or(self.cap);
+        self.join = p.join.or(self.join);
+        self.align = p.align.or(self.align);
         self
     }
 }
@@ -146,6 +157,9 @@ impl AppState {
         merge(&mut pending, &edit);
         if machine {
             ui.weak("Cut, Score, Engrave and Drag-knife layers export in the machine profile's colour and hairline.");
+        }
+        if let Some(sentence) = machine_row(doc, &ids) {
+            ui.weak(sentence);
         }
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
         if !pending.is_empty() && settled {
@@ -366,7 +380,137 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
         } else {
             edit.fill_on.or(into.fill_on)
         },
+        align: edit.align.or(into.align),
+        cap: edit.cap.or(into.cap),
+        join: edit.join.or(into.join),
     };
+}
+
+/// The Machine row (design §3): what the object's layer does with its line
+/// style (#428). `None` for a mixed-layer selection.
+fn machine_row(doc: &Document, ids: &[EntityId]) -> Option<String> {
+    let layer = ids
+        .iter()
+        .filter_map(|id| doc.entity(*id).map(|e| e.layer))
+        .try_fold(None, |acc: Option<locus_doc::LayerId>, l| match acc {
+            Some(a) if a != l => Err(()),
+            _ => Ok(Some(l)),
+        })
+        .ok()
+        .flatten()?;
+    let l = doc.layer(layer)?;
+    let kind = l.operation.kind();
+    Some(match kind {
+        OperationKind::Draw => {
+            "Draw layer: SVG, PDF and PNG draw the caps and joins; a plotter draws the centreline."
+                .to_owned()
+        }
+        OperationKind::Reference => return None,
+        _ => match l.stroke_styles {
+            StrokeStyles::Centreline => format!(
+                "{} layer: cuts the centreline (Stroke styles: Centreline, in the layer's Inspector).",
+                kind.name()
+            ),
+            StrokeStyles::Styled => format!(
+                "{} layer: cuts the stroke's outline (Stroke styles: Styled).",
+                kind.name()
+            ),
+        },
+    })
+}
+
+/// The Caps & joins row (design §3, #428): cap, join, miter limit, align.
+fn caps_joins(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut Ui, bool)) {
+    ui.label("Cap");
+    ui.horizontal(|ui| {
+        for (c, name, tip) in [
+            (Cap::Butt, "Butt", "Flat, at the end point"),
+            (Cap::Round, "Round", "A half disc, as a round pen draws"),
+            (Cap::Square, "Square", "Flat, half the width past the end"),
+        ] {
+            if ui
+                .selectable_label(s.cap == Some(c), name)
+                .on_hover_text(tip)
+                .clicked()
+            {
+                out.cap = Some(c);
+            }
+        }
+        mixed(ui, s.cap.is_none());
+    });
+    ui.end_row();
+
+    ui.label("Join");
+    ui.horizontal(|ui| {
+        let miter = match s.join {
+            Some(Join::Miter { limit }) => Some(limit),
+            _ => None,
+        };
+        if ui
+            .selectable_label(miter.is_some(), "Miter")
+            .on_hover_text("Sharp corners, bevelled past the miter limit")
+            .clicked()
+        {
+            out.join = Some(Join::Miter {
+                limit: miter.unwrap_or(DEFAULT_MITER),
+            });
+        }
+        if ui
+            .selectable_label(s.join == Some(Join::Round), "Round")
+            .on_hover_text("Rounded corners")
+            .clicked()
+        {
+            out.join = Some(Join::Round);
+        }
+        if ui
+            .selectable_label(s.join == Some(Join::Bevel), "Bevel")
+            .on_hover_text("Corners cut straight across")
+            .clicked()
+        {
+            out.join = Some(Join::Bevel);
+        }
+        if let Some(mut limit) = miter
+            && ui
+                .add(
+                    DragValue::new(&mut limit)
+                        .range(MIN_MITER..=MAX_MITER)
+                        .speed(0.1),
+                )
+                .on_hover_text("Miter limit: the longest miter, in stroke widths")
+                .changed()
+        {
+            out.join = Some(Join::Miter { limit });
+        }
+        mixed(ui, s.join.is_none());
+    });
+    ui.end_row();
+
+    ui.label("Align");
+    ui.horizontal(|ui| {
+        for (a, name, tip) in [
+            (Align::Centre, "Centre", "The stroke straddles the path"),
+            (
+                Align::Inside,
+                "Inside",
+                "Closed paths: the stroke lies inside",
+            ),
+            (
+                Align::Outside,
+                "Outside",
+                "Closed paths: the stroke lies outside",
+            ),
+        ] {
+            if ui
+                .selectable_label(s.align == Some(a), name)
+                .on_hover_text(tip)
+                .clicked()
+            {
+                out.align = Some(a);
+            }
+        }
+        mixed(ui, s.align.is_none());
+    });
+    ui.end_row();
 }
 
 /// Draw the fields; returns what the user changed this frame. Objects
@@ -438,6 +582,8 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
                 });
                 ui.end_row();
             }
+
+            caps_joins(ui, &s, &mut out, &mixed);
 
             ui.label("Opacity");
             ui.horizontal(|ui| {

@@ -16,6 +16,7 @@ base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 locus-geom.workspace = true
 locus-region.workspace = true
 locus-solver.workspace = true
+locus-stroke.workspace = true
 locus-text.workspace = true
 ron.workspace = true
 serde.workspace = true

@@ -188,7 +188,9 @@ fn draw_objects_keep_their_width_and_machine_layers_their_hairline() {
         "{svg}"
     );
     assert!(svg.contains("fill-opacity=\"0.5\""), "{svg}");
-    assert!(svg.contains("opacity=\"0.5\" data-pen=\"2\""));
+    assert!(svg.contains(
+        "opacity=\"0.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" data-pen=\"2\""
+    ));
     // The Cut square ignores its green 2 mm style: layer colour, hairline.
     assert!(svg.contains("stroke=\"#0a141e\" stroke-width=\"0.1\""));
     assert!(!svg.contains("#00ff00") && !svg.contains("stroke-width=\"2\""));
