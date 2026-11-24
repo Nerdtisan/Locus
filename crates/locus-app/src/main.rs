@@ -20,6 +20,8 @@ mod layout;
 mod mcp;
 mod modify_tool;
 #[cfg(not(target_arch = "wasm32"))]
+mod os_fonts;
+#[cfg(not(target_arch = "wasm32"))]
 mod plugin_job;
 mod plugin_ui;
 #[cfg(not(target_arch = "wasm32"))]

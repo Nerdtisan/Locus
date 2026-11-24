@@ -224,3 +224,46 @@ fn alignment_is_the_same_for_every_font() {
         );
     }
 }
+
+/// Figtree wrapped as a two-face collection (`.ttc`), both faces sharing
+/// one table directory whose offsets are shifted past the header.
+fn figtree_ttc() -> Vec<u8> {
+    let font = include_bytes!("../fonts/figtree/Figtree.ttf");
+    let head = 20u32; // 'ttcf', version, count, two offsets
+    let mut out = b"ttcf".to_vec();
+    out.extend(0x0001_0000u32.to_be_bytes());
+    out.extend(2u32.to_be_bytes());
+    out.extend(head.to_be_bytes());
+    out.extend(head.to_be_bytes());
+    let mut f = font.to_vec();
+    let tables = usize::from(u16::from_be_bytes([f[4], f[5]]));
+    for t in 0..tables {
+        let at = 12 + 16 * t + 8;
+        let off = u32::from_be_bytes([f[at], f[at + 1], f[at + 2], f[at + 3]]) + head;
+        f[at..at + 4].copy_from_slice(&off.to_be_bytes());
+    }
+    out.extend(f);
+    out
+}
+
+#[test]
+fn face_index_finds_the_named_face_of_a_collection() {
+    // #477: macOS lists collection faces by name and file only.
+    let single = include_bytes!("../fonts/figtree/Figtree.ttf");
+    assert_eq!(crate::face_index(single, "anything", "at all"), Some(0));
+    assert_eq!(crate::face_index(b"not a font", "Figtree", "Regular"), None);
+    let ttc = figtree_ttc();
+    // Figtree's typographic names are "Figtree" / "Light" (IDs 16/17),
+    // which win over the legacy "Figtree Light" / "Regular".
+    assert_eq!(crate::face_index(&ttc, "Figtree", "Light"), Some(0));
+    assert_eq!(crate::face_index(&ttc, "Figtree", "Regular"), None);
+    let second = OutlineFont::from_bytes_at("Figtree", ttc.clone(), 1).unwrap();
+    assert!(
+        !Font::Outline(second)
+            .layout("ab", &style(5.0))
+            .unwrap()
+            .contours
+            .is_empty()
+    );
+    assert!(OutlineFont::from_bytes_at("Figtree", ttc, 7).is_err());
+}

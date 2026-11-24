@@ -25,7 +25,7 @@ pub use bundled::BundledFont;
 pub use error::TextError;
 pub use geometry::{Contour, Seg, TextGeometry};
 pub use library::{BundledProvider, FontLibrary, FontProvider, FontRef, SystemFontSource};
-pub use outline::OutlineFont;
+pub use outline::{OutlineFont, face_index};
 pub use stroke::{StrokeFont, StrokeGlyph};
 
 /// Most characters laid out in one text entity; bounds work on untrusted

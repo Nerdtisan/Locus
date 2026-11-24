@@ -66,6 +66,12 @@ pub trait SystemFontSource {
     fn families(&self) -> Vec<String>;
     /// The bytes of the regular face of `family`, if installed.
     fn load(&self, family: &str) -> Option<Vec<u8>>;
+    /// The bytes of `family` and its face index in a font collection
+    /// (`.ttc`), as the OS lists it (#477). Defaults to [`Self::load`] at
+    /// index 0.
+    fn load_face(&self, family: &str) -> Option<(Vec<u8>, u32)> {
+        self.load(family).map(|b| (b, 0))
+    }
 }
 
 /// Anything that can turn a [`FontRef`] into a font.
@@ -173,8 +179,8 @@ impl FontProvider for FontLibrary {
                     .borrow_mut()
                     .entry(family.clone())
                     .or_insert_with(|| {
-                        let bytes = source.load(family)?;
-                        OutlineFont::from_bytes(family, bytes)
+                        let (bytes, index) = source.load_face(family)?;
+                        OutlineFont::from_bytes_at(family, bytes, index)
                             .ok()
                             .map(Font::Outline)
                     })
