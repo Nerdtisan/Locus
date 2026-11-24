@@ -434,9 +434,12 @@ pub fn controls(
             ui.label("Letter spacing");
             out.style |= ui
                 .add(
-                    egui::Slider::new(&mut s.tracking, -2.0..=10.0)
-                        .clamping(egui::SliderClamping::Never)
-                        .step_by(0.05)
+                    // A draggable box like Height and Line spacing (#491):
+                    // no slider, no 10 mm cap; bounded as the document
+                    // bounds tracking (|tracking| ≤ the largest text size).
+                    egui::DragValue::new(&mut s.tracking)
+                        .range(-locus_doc::text::MAX_TEXT_SIZE..=locus_doc::text::MAX_TEXT_SIZE)
+                        .speed(0.05)
                         .suffix(" mm"),
                 )
                 .on_hover_text("Space added between letters (tracking): drag, or click to type; negative tightens")
@@ -775,5 +778,41 @@ mod web {
         pub fn poll(&mut self) -> Option<(String, Vec<u8>)> {
             self.rx.try_recv().ok()
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod spacing_tests {
+    use super::*;
+
+    /// #491: Letter spacing is a draggable box like Height and Line
+    /// spacing: no slider, and no 10 mm cap on what it shows or keeps.
+    #[test]
+    fn letter_spacing_has_no_slider_and_no_cap() {
+        use egui::accesskit::Role;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut cat = FontCatalog::new(&ctx);
+        let mut s = TextSettings {
+            tracking: 13.5,
+            ..TextSettings::default()
+        };
+        let mut run = || {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = controls(ui, &mut s, &mut cat, true, 2, false);
+            })
+        };
+        let _ = run();
+        let out = run();
+        let tree = out
+            .platform_output
+            .accesskit_update
+            .expect("accesskit tree");
+        assert!(
+            !tree.nodes.iter().any(|(_, n)| n.role() == Role::Slider),
+            "no slider in the text controls"
+        );
+        assert_eq!(s.tracking, 13.5);
     }
 }
