@@ -96,6 +96,7 @@ crates/
   locus-region/      # Closed-profile/region detection, non-destructive booleans, offsets
   locus-export/      # Validation pipeline + SVG / PDF / DXF writers, kerf/tool offset application
   locus-text/        # Single-line (Hershey/EMS) + outline font → geometry
+  locus-trace/       # Auto trace of raster references (M6, #461): Locus's own Potrace-method tracer, centrelines, colours
   locus-plugin-api/  # WIT interface definitions + Rust guest SDK for plugin authors (see §15)
   locus-plugin-host/ # wasmtime-based plugin runtime, capability enforcement, plugin registry
   locus-mcp/         # MCP server exposing document/sketch operations to external AI clients (see §16)

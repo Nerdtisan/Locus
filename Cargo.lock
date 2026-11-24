@@ -2383,6 +2383,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "locus-trace"
+version = "0.0.0"
+dependencies = [
+ "locus-geom",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"

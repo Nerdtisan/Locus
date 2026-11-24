@@ -376,6 +376,35 @@ Locus writes its own tracer in `locus-trace`, implemented from the published Pot
 
 **Spike S5 becomes a benchmark,** not a choice. It runs on four fixtures: a logo, scanned line art, a photo and a handwritten signature. It measures node count, maximum deviation from the source edge in pixels, time for a 4 MP image native and wasm, and wasm size. These set the default tolerances and the step budget.
 
+**Spike S5 results (2026-11-24, #461).** Measured on `locus-trace` as built for #461 (threshold with Otsu's level, speckles ≤ 4 px, `alpha_max` 1.0, centreline tolerance 0.5 px). The four fixtures are 2000 × 2000 (4 MP), drawn procedurally in the crate's tests so the repo carries no images: a logo (ring, bar, triangle), scanned line art (12 thin rings and two diagonals, with 3 % grain), a photo-like shaded field with noise, and a handwritten-style signature. Native timings are `--release` in the dev container. Wasm timings are a release `wasm32-unknown-unknown` build run in the browser pane, with fixture building subtracted. The probe module is 123 KB including its fixture code.
+
+| Fixture | Mode | Pieces | Max deviation | Native | Wasm | Steps |
+|---|---|---|---|---|---|---|
+| Logo | Threshold | 138 | 1.06 px | 48 ms | 44 ms | 14 M |
+| Logo | Centreline | 739 | n/a | 0.9 s | 0.29 s | 60 M |
+| Line art | Threshold | 5 540 | 2.13 px | 80 ms | 74 ms | 33 M |
+| Line art | Centreline | 10 413 | n/a | 184 ms | 90 ms | 17 M |
+| Photo | Threshold | 167 958 | 3.35 px | 280 ms | 301 ms | 329 M |
+| Photo | Centreline | 19 750 | n/a | 13.3 s | 4.8 s | 616 M |
+| Signature | Threshold | 117 | 1.03 px | 53 ms | 20 ms | 12 M |
+| Signature | Centreline | 423 | n/a | 55 ms | 19 ms | 12 M |
+
+"Max deviation" is the largest distance from the source's pixel boundary (every 4th lattice point) to the traced curves. About 1 px is the corner-rounding the method intends, at the default `alpha_max`. Native numbers vary with the container's load (the centreline rows ran while other builds did), so treat wasm and native as the same order.
+
+What S5 sets:
+
+- **Defaults:**
+  - speckles ≤ 4 px
+  - Corners `alpha_max` 1.0
+  - centreline tolerance 0.5 px
+  - **step budget 1 000 M**, which covers every fixture, including a centreline of a noisy photo
+- **The dialog needs:**
+  - a progress line and Cancel: a noisy 4 MP photo's centreline takes seconds
+  - a warning: a photo in Threshold mode makes about 168 k pieces, close to the 200 000 entity limit, so "raise speckles or use Colours"
+- **Not yet done:**
+  - curve optimisation (merging consecutive Béziers, the paper's §2.4)
+  - lines and arcs as an output option (the dialog's "Curve fit")
+
 Also:
 - Input is the decoded reference, downscaled to ≤ 4 MP for tracing.
 - Work is bounded by a step budget, not a clock (§3), and cancellable through a callback.
