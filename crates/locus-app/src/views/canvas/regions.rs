@@ -107,6 +107,20 @@ impl Tints {
 /// rarely convex; this keeps the fill exact to a point without a
 /// tessellation dependency.
 fn fill(painter: &Painter, view: &View, rect: Rect, loops: &[Loop], colour: Color32) {
+    fill_with(painter, view, rect, loops, &|_| colour, false);
+}
+
+/// [`fill`] with a colour per point (a gradient, #436): each span is cut
+/// into pieces a few points wide, each in the colour at its middle.
+fn fill_with(
+    painter: &Painter,
+    view: &View,
+    rect: Rect,
+    loops: &[Loop],
+    colour_at: &dyn Fn(Vec2) -> Color32,
+    varies: bool,
+) {
+    const PIECE_PT: f32 = 3.0;
     // Rows are found in world space (f64) against the exact line and arc
     // edges, so the fill stays exact at any zoom without flattening (#333,
     // #338); only the clipped spans are narrowed to screen points.
@@ -145,11 +159,22 @@ fn fill(painter: &Painter, view: &View, rect: Rect, loops: &[Loop], colour: Colo
             if w == 0 {
                 let l = to_x(start).max(rect.left());
                 let r = to_x(x).min(rect.right());
-                if r > l {
+                if r > l && !varies {
                     mesh.add_colored_rect(
                         Rect::from_min_max(Pos2::new(l, y - 0.5), Pos2::new(r, y + 0.5)),
-                        colour,
+                        colour_at(Vec2::ZERO),
                     );
+                } else if r > l {
+                    let mut a = l;
+                    while a < r {
+                        let b = (a + PIECE_PT).min(r);
+                        let mid = view.to_world(Pos2::new((a + b) / 2.0, y), rect);
+                        mesh.add_colored_rect(
+                            Rect::from_min_max(Pos2::new(a, y - 0.5), Pos2::new(b, y + 0.5)),
+                            colour_at(mid),
+                        );
+                        a = b;
+                    }
                 }
             }
         }
@@ -254,7 +279,24 @@ impl AppState {
     ) -> Option<locus_doc::region_fill::RegionFill> {
         let rs = self.regions();
         let i = rs.binary_search_by(|r| r.key.cmp(k)).ok()?;
-        self.doc.sketcher.region_fills().get(i).copied().flatten()
+        self.doc.sketcher.region_fills().get(i).cloned().flatten()
+    }
+
+    /// A region's gradient (#436), its frame on the page and the fill's
+    /// opacity, when its fill is on and has one.
+    pub(crate) fn region_gradient(
+        &self,
+        r: &Region,
+    ) -> Option<(
+        locus_doc::gradient::Gradient,
+        locus_doc::gradient::Frame,
+        f64,
+    )> {
+        let f = self.resolved_fill(&r.key)?;
+        f.painted()?;
+        let g = *f.gradient?;
+        let frame = locus_doc::gradient::region_frame(r, &g)?;
+        Some((g, frame, f.opacity))
     }
 
     /// A region's own fill (#451), at its opacity.
@@ -425,7 +467,19 @@ impl AppState {
                 locus_doc::regions::layer_of(doc, r).and_then(|l| rank.get(&l).copied())
             });
             for r in filled {
-                if let Some(c) = self.region_fill(r) {
+                // A gradient (#436), sampled per piece of each span.
+                if let Some((g, frame, opacity)) = self.region_gradient(r) {
+                    let at = |w: Vec2| {
+                        let (c, a) = locus_doc::gradient::paint_at(&g, &frame, opacity, w);
+                        Color32::from_rgba_unmultiplied(
+                            c[0].round() as u8,
+                            c[1].round() as u8,
+                            c[2].round() as u8,
+                            (a * 255.0).round() as u8,
+                        )
+                    };
+                    fill_with(painter, view, rect, &region_loops(r), &at, true);
+                } else if let Some(c) = self.region_fill(r) {
                     fill(painter, view, rect, &region_loops(r), c);
                 }
             }
@@ -779,6 +833,7 @@ mod tests {
             fill: Some(locus_doc::region_fill::RegionFill {
                 fill: locus_doc::Fill::Colour([10, 200, 30]),
                 opacity: 0.5,
+                gradient: None,
             }),
         }));
         let r = c.regions().first().cloned().expect("a region");

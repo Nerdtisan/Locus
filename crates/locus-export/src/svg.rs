@@ -81,16 +81,61 @@ pub fn to_svg_model(model: &ExportModel) -> Vec<u8> {
     // line (#451). Each region fills even-odd, so its holes stay open.
     if !model.fills.is_empty() {
         out.push_str("  <g id=\"fills\" data-name=\"Fills\">\n");
+        let mut gradients = 0usize;
         for f in &model.fills {
             let mut d = String::new();
             for p in &f.paths {
                 write_loop(&mut d, p, &map);
             }
             let hex = |[r, g, b]: [u8; 3]| format!("#{r:02x}{g:02x}{b:02x}");
+            // A gradient (#436): native linear / radial (elliptical by its
+            // transform), or clipped bands for conic.
+            let paint = match &f.gradient {
+                None => hex(f.colour),
+                Some((g, frame)) => {
+                    let id = format!("grad{}", gradients);
+                    gradients += 1;
+                    if let Some(def) = gradient_def(&id, g, frame, &map) {
+                        out.push_str(&def);
+                        format!("url(#{id})")
+                    } else {
+                        // Conic: the region as a clip path, bands inside it.
+                        let _ = writeln!(
+                            out,
+                            "    <clipPath id=\"{id}\"><path clip-rule=\"evenodd\" d=\"{}\"/></clipPath>",
+                            d.trim_start()
+                        );
+                        let _ = writeln!(
+                            out,
+                            "    <g clip-path=\"url(#{id})\" data-layer=\"{}\">",
+                            f.layer
+                        );
+                        for b in crate::gradient::bands(g, frame, f.opacity) {
+                            let pts: Vec<String> = b
+                                .polygon
+                                .iter()
+                                .map(|p| {
+                                    let q = map(*p);
+                                    format!("{},{}", num(q.x), num(q.y))
+                                })
+                                .collect();
+                            let c = b.colour.map(|v| v.round().clamp(0.0, 255.0) as u8);
+                            let _ = writeln!(
+                                out,
+                                "      <polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\" stroke=\"none\"/>",
+                                pts.join(" "),
+                                hex(c),
+                                num(b.alpha)
+                            );
+                        }
+                        out.push_str("    </g>\n");
+                        continue;
+                    }
+                }
+            };
             let mut attrs = format!(
                 "fill=\"{}\" fill-rule=\"evenodd\" stroke=\"none\" data-layer=\"{}\"",
-                hex(f.colour),
-                f.layer
+                paint, f.layer
             );
             if f.opacity < 1.0 {
                 let _ = write!(attrs, " fill-opacity=\"{}\"", num(f.opacity));
@@ -210,6 +255,71 @@ fn paint_attrs(p: &Paint) -> String {
         let _ = write!(s, " data-pen=\"{pen}\"");
     }
     s
+}
+
+/// A `<linearGradient>` or `<radialGradient>` for `g` (#436), in the
+/// region's frame: `userSpaceOnUse` with a transform from the unit frame
+/// to the drawing, so it matches the canvas exactly. `None` for conic,
+/// which SVG 1.1 can't express.
+fn gradient_def(
+    id: &str,
+    g: &locus_doc::gradient::Gradient,
+    frame: &locus_doc::gradient::Frame,
+    map: &dyn Fn(Vec2) -> Vec2,
+) -> Option<String> {
+    use locus_doc::gradient::GradientKind;
+    let o = map(frame.origin);
+    let ax = map(frame.origin + frame.ax) - o;
+    let ay = map(frame.origin + frame.ay) - o;
+    let m = format!(
+        "matrix({} {} {} {} {} {})",
+        num(ax.x),
+        num(ax.y),
+        num(ay.x),
+        num(ay.y),
+        num(o.x),
+        num(o.y)
+    );
+    let stops: String = g
+        .stops
+        .iter()
+        .map(|s| {
+            let [r, gg, b] = s.colour;
+            format!(
+                "      <stop offset=\"{}\" stop-color=\"#{r:02x}{gg:02x}{b:02x}\" stop-opacity=\"{}\"/>\n",
+                num(s.pos),
+                num(s.opacity)
+            )
+        })
+        .collect();
+    let (a, d) = (g.from, g.to - g.from);
+    match g.kind {
+        GradientKind::Linear => Some(format!(
+            "    <linearGradient id=\"{id}\" gradientUnits=\"userSpaceOnUse\" gradientTransform=\"{m}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">\n{stops}    </linearGradient>\n",
+            num(a.x),
+            num(a.y),
+            num(g.to.x),
+            num(g.to.y)
+        )),
+        GradientKind::Radial | GradientKind::Elliptical { .. } => {
+            let ratio = match g.kind {
+                GradientKind::Elliptical { ratio } => ratio,
+                _ => 1.0,
+            };
+            let r = d.length();
+            // The ellipse: about `from`, turned to `to`, squashed by ratio.
+            let ang = d.y.atan2(d.x).to_degrees();
+            Some(format!(
+                "    <radialGradient id=\"{id}\" gradientUnits=\"userSpaceOnUse\" gradientTransform=\"{m} translate({} {}) rotate({}) scale(1 {})\" cx=\"0\" cy=\"0\" r=\"{}\">\n{stops}    </radialGradient>\n",
+                num(a.x),
+                num(a.y),
+                num(ang),
+                num(ratio),
+                num(r)
+            ))
+        }
+        GradientKind::Conic => None,
+    }
 }
 
 /// One closed loop of a region fill as path data: a lone circle as two

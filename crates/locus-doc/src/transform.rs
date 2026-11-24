@@ -291,6 +291,26 @@ fn in_place(doc: &Document, all: &BTreeSet<EntityId>, t: Transform) -> Result<Pl
             });
         }
     }
+    // Rotate with shape (#436, ADR 0019 decision 1): a gradient fill on a
+    // region whose curves all turn turns with them, in the same step.
+    if let Transform::Rotate { angle, .. } = t {
+        for (key, fill) in doc.region_fills() {
+            let Some(g) = fill.gradient.as_deref().filter(|g| g.rotate_with_shape) else {
+                continue;
+            };
+            if key.bounds.iter().all(|e| all.contains(&EntityId::new(*e))) {
+                let mut next = fill.clone();
+                next.gradient = Some(Box::new(crate::gradient::Gradient {
+                    frame_angle: crate::image::wrap_angle(g.frame_angle + angle),
+                    ..g.clone()
+                }));
+                b.commands.push(Command::SetRegionFill {
+                    regions: vec![key.clone()],
+                    fill: Some(next),
+                });
+            }
+        }
+    }
     Ok(b.finish(t.label(false), dropped))
 }
 
@@ -839,5 +859,49 @@ mod tests {
         let mut sk = Sketcher::new(d);
         sk.apply(&plan.command).unwrap();
         assert!(sk.document().point_pos(p0).unwrap().distance(v(0.0, 27.0)) < 1e-6);
+    }
+
+    /// #436: a gradient with Rotate with shape turns with its region's
+    /// curves; with it off the frame stays page-aligned.
+    #[test]
+    fn a_gradient_turns_with_its_shape_unless_told_not_to() {
+        for follow in [true, false] {
+            let mut d = Document::new();
+            let _ = rectangle(&mut d);
+            let mut sk = Sketcher::new(d);
+            let key = sk.regions().first().unwrap().key.clone();
+            let mut g = crate::gradient::Gradient::linear_from([0, 0, 0]);
+            g.rotate_with_shape = follow;
+            sk.apply(&Command::SetRegionFill {
+                regions: vec![key.clone()],
+                fill: Some(crate::region_fill::RegionFill {
+                    fill: crate::style::Fill::Colour([0, 0, 0]),
+                    opacity: 1.0,
+                    gradient: Some(Box::new(g)),
+                }),
+            })
+            .unwrap();
+            let doc = sk.document().clone();
+            let curves: Vec<EntityId> = key.bounds.iter().map(|b| EntityId::new(*b)).collect();
+            let plan = transform(
+                &doc,
+                &curves,
+                Transform::Rotate {
+                    center: v(0.0, 0.0),
+                    angle: 0.3,
+                },
+                false,
+            )
+            .unwrap();
+            let turned = plan.command.clone();
+            let has_fill = match &turned {
+                Command::Compound { commands, .. } => commands.iter().any(|c| {
+                    matches!(c, Command::SetRegionFill { fill: Some(f), .. }
+                        if f.gradient.as_ref().is_some_and(|g| (g.frame_angle - 0.3).abs() < 1e-12))
+                }),
+                _ => false,
+            };
+            assert_eq!(has_fill, follow, "follow = {follow}");
+        }
     }
 }

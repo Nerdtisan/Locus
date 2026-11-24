@@ -368,6 +368,7 @@ Export is always one-way. Native file is the source of truth.
 
 - A timeline feature can be suppressed (format v24, #446): `Recipe.feature_suppressed`, omitted while false. The timeline's feature order (format v26, #446): `recipe_order`, omitted while features are in creation order.
 - Line styles (format v25, #428): `Style.line` (cap, join, align) and `Layer.stroke_styles` (Centreline or Styled), each omitted at its default, so an older file reads with round caps and joins and centreline cuts.
+- Gradient region fills (format v28, #436): `RegionFill.gradient` (kind, ends and stops in the region's unit frame, machine result, `rotate_with_shape`, frame angle and flip), omitted while the fill is solid. The shape is v27's; the version stops an older build from dropping the gradient.
 - Dash patterns (format v27, #427): `LineStyle.dash` (`pattern`, `phase`, `align`), omitted for a solid line. A file whose pattern is empty, odd, over 8 pairs, negative or all zero is refused.
 - The job's placement on the machine bed (`placement`, an offset in mm; format v18, #443) is omitted while unset, so a v17 file migrates unchanged.
 - Stores **solved positions** as well as constraints so files open instantly and degrade gracefully if a solve fails.

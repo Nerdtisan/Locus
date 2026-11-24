@@ -1122,6 +1122,7 @@ mod tests {
             fill: Some(locus_doc::region_fill::RegionFill {
                 fill: Fill::Colour([200, 40, 40]),
                 opacity: 0.6,
+                gradient: None,
             }),
         }));
         let region = state.region(&key).unwrap().clone();
