@@ -393,6 +393,25 @@ The w(θ) formula in this ADR offsets along the normal by the nib's support h(n)
   - **Reorder** is offered only between features that don't depend on each other. It changes their display and regeneration order, and when a dependency exists it is refused with the dependency named. In a single solved sketch, reordering never changes geometry, so this is honest about what it can do.
   - **Failures:** a recipe whose regeneration fails (an offset that collapses, a limit hit, a plugin error) keeps its last good instances, shows red with the error in the timeline and the Inspector, and never stops the solve.
 
+### As built (#446, 2026-11-24)
+
+- **Memory per step, measured** (`command::tests::memory_per_step`, release build):
+  - One patch is 536 B. Points and lines own no heap memory, so that is their whole cost.
+  - On a 500-entity sketch (250 points, 250 lines), a step that moves every point costs **134 KB**, and a one-object edit costs **0.5 KB**.
+  - So **1 000 steps cost under 1 MB for ordinary editing, and 134 MB at most** if every step moved everything.
+  - The cap stays at 1 000. Boxing the large `Patch` variants would cut the worst case if it ever matters.
+- **Suppress:** `SetRecipeSuppressed` and `Recipe.feature_suppressed` (format v24; the existing `suppressed` field is single pattern copies). Copies go and their IDs stay.
+  - **Mirrors:** their copies and owned Symmetric/Equal constraints are removed and come back under the same IDs, reflected from the current sources.
+  - **Refused**, with the reason, when a user constraint or another feature uses the copies.
+- **Failures:**
+  - A feature whose regeneration fails keeps its last good copies. The command that changed its input still applies, and `Editor::recipe_failures()` gives the reason, which the Timeline shows in red.
+  - Integrity guards (`EntityInUse`, `RecipeInUse`) still refuse the command.
+  - A pattern whose count stops evaluating is now reported, where it used to be skipped silently.
+- **Reorder:** `ReorderRecipe { id, to }` and `Document.recipe_order` (format v26, omitted in creation order).
+  - Regeneration follows the timeline order.
+  - A move that would put a feature before one whose copies it uses is refused, naming both.
+  - The Timeline offers Move earlier / Move later. Dragging is not built.
+
 ## Decision 6: layer blending and interaction vs regions per layer (#457)
 
 Owner clarification on #459 (2026-11-19): an **Interact / Don't interact** switch (default Don't interact), plus per-layer blending and opacity, plus opt-in links between chosen layers, including cut-by and knockout. All of it is in scope.

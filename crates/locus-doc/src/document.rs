@@ -167,6 +167,9 @@ pub struct Document {
     pub(crate) booleans: BTreeMap<BooleanId, Boolean>,
     /// Associative recipes (SPEC §6.2.1, ADR 0011).
     pub(crate) recipes: BTreeMap<RecipeId, Recipe>,
+    /// The timeline's order of features when it isn't creation order
+    /// (#446, format v26); recipes not listed follow in ID order.
+    pub(crate) recipe_order: Vec<RecipeId>,
     /// Expressions behind dimension values (SPEC §5): the dimension's value
     /// is re-evaluated from these when a parameter changes.
     pub(crate) dim_exprs: BTreeMap<ConstraintId, String>,
@@ -222,6 +225,7 @@ impl Document {
             images: BTreeMap::new(),
             placement: None,
             region_fills: BTreeMap::new(),
+            recipe_order: Vec::new(),
         }
     }
 
@@ -418,6 +422,35 @@ impl Document {
     #[must_use]
     pub fn recipes(&self) -> &BTreeMap<RecipeId, Recipe> {
         &self.recipes
+    }
+
+    /// The features in timeline order (#446): the stored order, then any
+    /// recipe it doesn't list, by ID. Regeneration runs in this order.
+    #[must_use]
+    pub fn recipe_order(&self) -> Vec<RecipeId> {
+        let mut v: Vec<RecipeId> = Vec::with_capacity(self.recipes.len());
+        for id in &self.recipe_order {
+            if self.recipes.contains_key(id) && !v.contains(id) {
+                v.push(*id);
+            }
+        }
+        for id in self.recipes.keys() {
+            if !v.contains(id) {
+                v.push(*id);
+            }
+        }
+        v
+    }
+
+    /// Whether feature `later` is built on feature `earlier`'s copies, so
+    /// it must regenerate after it (#446).
+    #[must_use]
+    pub fn recipe_depends_on(&self, later: RecipeId, earlier: RecipeId) -> bool {
+        let (Some(l), Some(e)) = (self.recipes.get(&later), self.recipes.get(&earlier)) else {
+            return false;
+        };
+        let made: std::collections::BTreeSet<EntityId> = e.instances().collect();
+        l.inputs(self).iter().any(|i| made.contains(i))
     }
 
     #[must_use]
