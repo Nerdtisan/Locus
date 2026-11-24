@@ -1086,3 +1086,45 @@ fn a_mirrored_shape_can_be_patterned() {
     assert_eq!(&back, s.document());
     assert_eq!(locus_doc::file::save(&back).unwrap(), text);
 }
+
+/// #446 part 3: a feature whose regeneration fails (here a pattern pushed
+/// past the instance limit by a parameter) keeps its last good copies and
+/// reports why; the parameter change still applies, and fixing it clears
+/// the failure.
+#[test]
+fn a_failing_feature_keeps_its_copies_and_reports_why() {
+    let mut s = Sketcher::new(Document::new());
+    s.apply(&Command::SetParameter {
+        name: "n".into(),
+        expr: "3".into(),
+    })
+    .unwrap();
+    let p = pt(&mut s, 0.0, 0.0);
+    let r = add(
+        &mut s,
+        RecipeKind::Linear {
+            dir1: dir(Axis::X, "n", "5"),
+            dir2: None,
+        },
+        &[p],
+    )
+    .unwrap();
+    let copies = |s: &Sketcher| s.document().recipe(r).unwrap().instances().count();
+    assert_eq!(copies(&s), 2);
+    assert!(s.editor().recipe_failures().is_empty());
+    s.apply(&Command::SetParameter {
+        name: "n".into(),
+        expr: "20000".into(),
+    })
+    .unwrap();
+    assert_eq!(copies(&s), 2, "the last good copies stay");
+    let why = s.editor().recipe_failures().get(&r).cloned();
+    assert!(why.is_some_and(|w| !w.is_empty()));
+    s.apply(&Command::SetParameter {
+        name: "n".into(),
+        expr: "4".into(),
+    })
+    .unwrap();
+    assert_eq!(copies(&s), 3);
+    assert!(s.editor().recipe_failures().is_empty());
+}

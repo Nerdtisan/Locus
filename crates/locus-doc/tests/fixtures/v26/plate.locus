@@ -149,14 +149,6 @@
           join: Miter(
             limit: 6.0,
           ),
-          dash: Some((
-            pattern: [
-              3.0,
-              2.0,
-            ],
-            phase: 0.5,
-            align: Corners,
-          )),
         ),
       ),
     ),
@@ -1729,5 +1721,10 @@
       fill: Colour((255, 0, 0)),
       opacity: 0.4,
     )),
+  ],
+  recipe_order: [
+    54,
+    41,
+    46,
   ],
 )

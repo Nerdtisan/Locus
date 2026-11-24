@@ -141,12 +141,18 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
         if doc.recipes().is_empty() {
             ui.weak("Patterns, mirrors, offsets and plugin objects appear here, in the order they were made.");
         }
+        let failures = app.doc.sketcher.editor().recipe_failures();
         let mut seen = std::collections::BTreeMap::<&str, usize>::new();
         ui.horizontal_wrapped(|ui| {
-            for (rid, r) in doc.recipes() {
+            // Timeline order (#446): reorderable where nothing depends on it.
+            let order = doc.recipe_order();
+            let count = order.len();
+            for (pos, rid) in order.iter().enumerate() {
+                let Some(r) = doc.recipe(*rid) else { continue };
                 let n = seen.entry(r.kind.name()).or_default();
                 *n += 1;
                 let name = format!("{} {n}", r.kind.name());
+                let failed = failures.get(rid);
                 let geometry: Vec<EntityId> =
                     r.sources.iter().copied().chain(r.instances()).collect();
                 let resp = ui
@@ -162,7 +168,10 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                         }
                         // Suppressed features are dim and struck through.
                         let off = r.feature_suppressed;
-                        let c = if off {
+                        // A failed feature shows red with its reason (#446).
+                        let c = if failed.is_some() {
+                            ui.visuals().error_fg_color
+                        } else if off {
                             ui.visuals().weak_text_color()
                         } else {
                             ui.visuals().text_color()
@@ -175,13 +184,23 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                             c,
                         );
                         let label = egui::RichText::new(&name).small();
+                        let label = if failed.is_some() {
+                            label.color(ui.visuals().error_fg_color)
+                        } else {
+                            label
+                        };
                         ui.label(if off { label.strikethrough().weak() } else { label });
                         resp
                     })
                     .inner
-                    .on_hover_text(format!(
-                        "{name}: click to select its geometry, double-click to edit it; right-click for more"
-                    ));
+                    .on_hover_text(match failed {
+                        Some(why) => format!(
+                            "{name} failed: {why}. It keeps its last good copies; edit it or its inputs to fix it."
+                        ),
+                        None => format!(
+                            "{name}: click to select its geometry, double-click to edit it; right-click for more"
+                        ),
+                    });
                 if resp.hovered() {
                     hover = Some(geometry.clone());
                 }
@@ -193,7 +212,26 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                 }
                 let off = r.feature_suppressed;
                 let mirror = matches!(r.kind, locus_doc::RecipeKind::Mirror { .. });
-                resp.context_menu(|ui| menu(ui, *rid, off, mirror, &mut cmds, &mut edit));
+                resp.context_menu(|ui| {
+                    menu(ui, *rid, off, mirror, &mut cmds, &mut edit);
+                    ui.separator();
+                    for (label, to, ok) in [
+                        ("Move earlier", pos.saturating_sub(1), pos > 0),
+                        ("Move later", pos + 1, pos + 1 < count),
+                    ] {
+                        if ui
+                            .add_enabled(ok, egui::Button::new(label))
+                            .on_hover_text("Change its place in the timeline; refused if it would come before a feature it uses")
+                            .clicked()
+                        {
+                            cmds.push(Command::ReorderRecipe {
+                                id: *rid,
+                                to: u32::try_from(to).unwrap_or(u32::MAX),
+                            });
+                            ui.close();
+                        }
+                    }
+                });
             }
         });
     }
