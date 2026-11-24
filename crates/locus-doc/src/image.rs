@@ -194,8 +194,8 @@ impl RefImage {
     #[must_use]
     pub fn pixel_to_world(&self, p: Vec2) -> Vec2 {
         let px = self.placement.pixel();
-        let local = self.placement.origin
-            + Vec2::new(p.x * px.x, (f64::from(self.height_px) - p.y) * px.y);
+        let local =
+            self.placement.origin + Vec2::new(p.x * px.x, (f64::from(self.height_px) - p.y) * px.y);
         crate::transform::Transform::Rotate {
             center: self.centre(),
             angle: self.placement.rotation,

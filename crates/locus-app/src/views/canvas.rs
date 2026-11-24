@@ -380,6 +380,7 @@ impl AppState {
             .collect();
         frame.draw_handle_guides(&guides);
         frame.draw_handles(&self.doc.scene, emphasis);
+        self.draw_trace_preview(&frame);
         let hot = hover
             .filter(|_| self.view.marking.is_none())
             .and_then(|p| self.glyph_at(p));

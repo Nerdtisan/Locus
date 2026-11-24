@@ -17,7 +17,7 @@ use crate::render::Frame;
 use crate::state::AppState;
 use egui::{Color32, Stroke};
 use locus_doc::reference::{ImportShape, ShapeGroup, ShapeTarget, shapes_command};
-use locus_doc::{Command, LayerId, Operation, RefImage};
+use locus_doc::{LayerId, Operation, RefImage};
 use locus_geom::Vec2;
 use locus_trace::{Budget, CurveParams, Limits, Mode, Params, Seg, TraceError, Traced};
 
@@ -169,7 +169,12 @@ fn to_shape(img: &RefImage, s: &Seg) -> ImportShape {
 
 /// The groups Trace commits: one per colour in Colours mode, else one on
 /// `output`.
-pub(crate) fn groups(img: &RefImage, traced: &Traced, kind: Kind, output: Output) -> Vec<ShapeGroup> {
+pub(crate) fn groups(
+    img: &RefImage,
+    traced: &Traced,
+    kind: Kind,
+    output: Output,
+) -> Vec<ShapeGroup> {
     traced
         .groups
         .iter()
@@ -215,7 +220,8 @@ impl AppState {
                 self.tools.trace.cancel();
             }
             None => {
-                self.doc.notice = Some("Insert a PNG or JPEG reference first, then trace it".to_owned());
+                self.doc.notice =
+                    Some("Insert a PNG or JPEG reference first, then trace it".to_owned());
             }
         }
     }
@@ -347,8 +353,11 @@ impl AppState {
                 let s = &mut t.settings;
                 if s.kind == Kind::Colours {
                     row(ui, "Colours", |ui| {
-                        ui.add(egui::Slider::new(&mut s.colours, 2..=locus_trace::MAX_COLOURS as u8))
-                            .on_hover_text("Each colour goes on its own new layer")
+                        ui.add(egui::Slider::new(
+                            &mut s.colours,
+                            2..=locus_trace::MAX_COLOURS as u8,
+                        ))
+                        .on_hover_text("Each colour goes on its own new layer")
                     });
                 } else {
                     row(ui, "Threshold", |ui| {
@@ -361,8 +370,12 @@ impl AppState {
                     });
                 }
                 row(ui, "Speckles <", |ui| {
-                    ui.add(egui::DragValue::new(&mut s.speckle).range(0..=10_000).suffix(" px"))
-                        .on_hover_text("Shapes this small are dropped")
+                    ui.add(
+                        egui::DragValue::new(&mut s.speckle)
+                            .range(0..=10_000)
+                            .suffix(" px"),
+                    )
+                    .on_hover_text("Shapes this small are dropped")
                 });
                 if s.kind == Kind::Centreline {
                     row(ui, "Tolerance", |ui| {
@@ -385,15 +398,21 @@ impl AppState {
                         let current = t.output.unwrap_or(Output::NewLayer);
                         let name = match current {
                             Output::NewLayer => "New layer \"Trace\"".to_owned(),
-                            Output::Layer(l) => drawing
-                                .iter()
-                                .find(|(id, _)| *id == l)
-                                .map_or_else(|| "New layer \"Trace\"".to_owned(), |(_, n)| n.clone()),
+                            Output::Layer(l) => {
+                                drawing.iter().find(|(id, _)| *id == l).map_or_else(
+                                    || "New layer \"Trace\"".to_owned(),
+                                    |(_, n)| n.clone(),
+                                )
+                            }
                         };
                         egui::ComboBox::from_id_salt("trace-output")
                             .selected_text(name)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut t.output, Some(Output::NewLayer), "New layer \"Trace\"");
+                                ui.selectable_value(
+                                    &mut t.output,
+                                    Some(Output::NewLayer),
+                                    "New layer \"Trace\"",
+                                );
                                 for (l, n) in &drawing {
                                     ui.selectable_value(&mut t.output, Some(Output::Layer(*l)), n);
                                 }
@@ -599,7 +618,9 @@ mod tests {
         };
         let gs = groups(&img, &traced, Kind::Colours, Output::NewLayer);
         assert_eq!(gs.len(), 2);
-        assert!(matches!(&gs[0].target, ShapeTarget::NewLayer { name, .. } if name == "Trace #c80000"));
+        assert!(
+            matches!(&gs[0].target, ShapeTarget::NewLayer { name, .. } if name == "Trace #c80000")
+        );
         assert_eq!(group_digits(1284), "1 284");
     }
 }

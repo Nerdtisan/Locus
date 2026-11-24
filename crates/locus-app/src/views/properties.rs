@@ -299,6 +299,15 @@ impl AppState {
                 self.view.browser_layer = Some(id);
             }
         }
+        // Auto trace (#461) for an image reference.
+        if self.doc.sketcher.document().image(id).is_some()
+            && ui
+                .button("Auto trace…")
+                .on_hover_text("Turn this image into lines and curves you can edit")
+                .clicked()
+        {
+            self.open_trace(Some(id));
+        }
         // A reference's scale from a known distance (#391), high in the
         // section so a short Inspector doesn't clip it.
         if matches!(l.operation, locus_doc::Operation::Reference)

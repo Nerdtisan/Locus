@@ -132,7 +132,11 @@ pub struct ShapeGroup {
 /// # Errors
 /// [`DocError::Invalid`] when there's nothing to add, or a target layer is
 /// missing or locked.
-pub fn shapes_command(doc: &Document, label: &str, groups: &[ShapeGroup]) -> Result<Command, DocError> {
+pub fn shapes_command(
+    doc: &Document,
+    label: &str,
+    groups: &[ShapeGroup],
+) -> Result<Command, DocError> {
     if groups.iter().all(|g| g.shapes.is_empty()) {
         return Err(DocError::Invalid("there is no geometry to add".into()));
     }
@@ -584,9 +588,14 @@ mod tests {
     fn shapes_command_adds_groups_as_one_step() {
         let mut ed = Editor::new(Document::new());
         let sq = |o: f64| -> Vec<ImportShape> {
-            let p = [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)]
-                .map(|(x, y)| Vec2::new(x + o, y));
-            (0..4).map(|k| ImportShape::Line { a: p[k], b: p[(k + 1) % 4] }).collect()
+            let p =
+                [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)].map(|(x, y)| Vec2::new(x + o, y));
+            (0..4)
+                .map(|k| ImportShape::Line {
+                    a: p[k],
+                    b: p[(k + 1) % 4],
+                })
+                .collect()
         };
         let groups = [
             ShapeGroup {
