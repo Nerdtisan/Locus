@@ -56,6 +56,29 @@ pub(crate) fn moved_shape(s: &Shape, t: &Transform) -> Shape {
     }
 }
 
+/// [`moved_shape`], except that a free X/Y scale (#463) turns circles and
+/// arcs into Béziers, as the command does.
+pub(crate) fn moved_shapes(s: &Shape, t: &Transform) -> Vec<Shape> {
+    let curves = match (*s, t) {
+        (Shape::Circle(c), Transform::Stretch { .. }) => Some(locus_geom::arc_cubics(
+            c.center,
+            c.radius,
+            0.0,
+            std::f64::consts::TAU,
+            locus_geom::EXPORT_TOL,
+        )),
+        (Shape::Arc(a), Transform::Stretch { .. }) => Some(a.to_cubics(locus_geom::EXPORT_TOL)),
+        _ => None,
+    };
+    match curves {
+        Some(cs) => cs
+            .into_iter()
+            .map(|c| moved_shape(&Shape::Cubic(c), t))
+            .collect(),
+        None => vec![moved_shape(s, t)],
+    }
+}
+
 /// Where the manipulator's parts are on screen.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Gizmo {
@@ -204,6 +227,12 @@ impl AppState {
         use egui::{Key, Modifiers};
         let over = resp.hovered();
         let selected = self.can_transform();
+        // A free scale goes along a reference image's own edges (#463).
+        let doc = self.doc.sketcher.document();
+        self.tools.transform.axes = self
+            .reference_target()
+            .and_then(|l| doc.image(l))
+            .map_or(0.0, |img| img.placement.rotation);
         // Keys first, consumed, so Select's own Esc / Enter don't see them.
         if over || !self.tools.typed.is_empty() || self.tools.transform.grip.is_some() {
             let (esc, enter, text, back) = ui.ctx().input_mut(|i| {
@@ -274,8 +303,10 @@ impl AppState {
                     // The pivot snaps to points (#69), so it can sit on a corner.
                     to = self.designate(to, false).pos;
                 }
-                let coarse = ui.input(|i| i.modifiers.shift);
-                self.tools.transform.drag(to, center, coarse);
+                let (coarse, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
+                // Alt: free X/Y, for a reference only (#463).
+                let free = alt && self.reference_target().is_some();
+                self.tools.transform.drag_with(to, center, coarse, free);
             }
             if !resp.dragged_by(PointerButton::Primary) {
                 self.tools.transform.grip = None;
@@ -301,8 +332,8 @@ impl AppState {
         let mode = self.transform_mode();
         let t = &mut self.tools.transform;
         if let Some((_, _, v)) = t.grip.take() {
-            (t.dx, t.dy, t.angle_deg, t.factor, t.pivot) =
-                (v.dx, v.dy, v.angle_deg, v.factor, v.pivot);
+            (t.dx, t.dy, t.angle_deg, t.factor, t.factor_y, t.pivot) =
+                (v.dx, v.dy, v.angle_deg, v.factor, v.factor_y, v.pivot);
         } else if !self.tools.typed.is_empty() {
             self.tools.typed.clear();
         } else if mode.is_some_and(|m| !t.is_identity(m)) || t.pivot.is_some() {
@@ -379,7 +410,7 @@ impl AppState {
                     None => self.selection.items.contains(i.id),
                 })
                 .filter(|i| !matches!(i.shape, Shape::Point(_)))
-                .map(|i| moved_shape(&i.shape, &xf))
+                .flat_map(|i| moved_shapes(&i.shape, &xf))
                 .collect();
             if let Some(img) = reference.and_then(|l| doc.image(l)) {
                 let c = img.corners().map(|p| xf.point(p));
@@ -436,6 +467,9 @@ impl AppState {
         let mut ok = false;
         let mut cancel = false;
         let selected = self.selection.items.iter().count();
+        // A picked reference is placed as a whole (#463).
+        let reference = self.reference_target();
+        let has_target = selected > 0 || reference.is_some();
         let mut clear = false;
         let icon = match mode {
             TransformMode::Move => "modify.move",
@@ -460,12 +494,14 @@ impl AppState {
                     ],
                 );
                 dialog::row(ui, "Objects", |ui| {
-                    let text = if selected == 0 {
+                    let text = if reference.is_some() {
+                        "Reference".to_owned()
+                    } else if selected == 0 {
                         "Select geometry".to_owned()
                     } else {
                         dialog::count(selected, "curve", "curves")
                     };
-                    clear = dialog::selection(ui, &text, selected > 0, selected == 0).1;
+                    clear = dialog::selection(ui, &text, has_target, !has_target).1;
                 });
                 let t = &mut self.tools.transform;
                 let (scale, suffix) = match units {
@@ -518,6 +554,31 @@ impl AppState {
                                         .suffix("°"),
                                 );
                             });
+                        } else if reference.is_some() {
+                            // References scale uniformly or freely (#463).
+                            dialog::row(ui, "", |ui| {
+                                crate::theme::checkbox(ui, &mut t.uniform, "Uniform").on_hover_text(
+                                    "Off: X and Y scale separately (or Alt+drag the handle)",
+                                )
+                            });
+                            let factor = |ui: &mut egui::Ui, v: &mut f64| {
+                                ui.add(
+                                    egui::DragValue::new(v)
+                                        .range(0.001..=1000.0)
+                                        .speed(0.01)
+                                        .max_decimals(4),
+                                )
+                                .changed()
+                            };
+                            if t.uniform {
+                                if dialog::row(ui, "Scale factor", |ui| factor(ui, &mut t.factor)) {
+                                    t.factor_y = t.factor;
+                                }
+                            } else {
+                                dialog::row(ui, "X factor", |ui| factor(ui, &mut t.factor));
+                                dialog::row(ui, "Y factor", |ui| factor(ui, &mut t.factor_y));
+                                ui.weak("Free scale goes along the reference's own edges and turns circles and arcs into curves.");
+                            }
                         } else {
                             dialog::row(ui, "Scale factor", |ui| {
                                 ui.add(
@@ -530,12 +591,14 @@ impl AppState {
                         }
                     }
                 }
-                dialog::row(ui, "", |ui| {
-                    crate::theme::checkbox(ui, &mut t.copy, "Create copy")
-                });
+                if reference.is_none() {
+                    dialog::row(ui, "", |ui| {
+                        crate::theme::checkbox(ui, &mut t.copy, "Create copy")
+                    });
+                }
                 (ok, cancel) = dialog::footer(
                     ui,
-                    if selected > 0 {
+                    if has_target {
                         Ok(())
                     } else {
                         Err("Select geometry first")

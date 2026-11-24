@@ -257,13 +257,18 @@ pub(crate) fn transform(
     if !t.valid() {
         return Err(bad("reference transform"));
     }
-    if let Transform::Scale { factor, .. } = *t
-        && !(factor > 1.0 / MAX_SCALE_FACTOR && factor < MAX_SCALE_FACTOR)
-    {
-        return Err(DocError::BadValue {
-            what: "reference scale",
-            value: factor,
-        });
+    let factors = match *t {
+        Transform::Scale { factor, .. } => vec![factor],
+        Transform::Stretch { sx, sy, .. } => vec![sx, sy],
+        _ => Vec::new(),
+    };
+    for factor in factors {
+        if !(factor > 1.0 / MAX_SCALE_FACTOR && factor < MAX_SCALE_FACTOR) {
+            return Err(DocError::BadValue {
+                what: "reference scale",
+                value: factor,
+            });
+        }
     }
     let on_layer: Vec<(EntityId, crate::entity::Entity)> = doc
         .entities()
@@ -275,7 +280,37 @@ pub(crate) fn transform(
     if on_layer.is_empty() && image.is_none() {
         return Err(DocError::Invalid("this reference is empty".to_owned()));
     }
+    // A free X/Y scale can't keep circles and arcs: they become Béziers,
+    // which the scale maps exactly (#463, owner decision 2026-11-24).
+    let curved: Vec<EntityId> = if matches!(t, Transform::Stretch { .. }) {
+        on_layer
+            .iter()
+            .filter(|(_, e)| matches!(e.geom, Geom::Circle { .. } | Geom::Arc { .. }))
+            .map(|(id, _)| *id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for &id in &curved {
+        if doc
+            .constraints()
+            .values()
+            .any(|c| c.references().contains(&id))
+        {
+            return Err(DocError::Invalid(
+                "a constraint holds a circle or arc of this reference, so it can only scale uniformly"
+                    .to_owned(),
+            ));
+        }
+    }
+    let mut centres = Vec::new();
+    for &id in &curved {
+        curve_to_beziers(doc, id, t, patches, &mut centres)?;
+    }
     for (id, before) in on_layer {
+        if curved.contains(&id) {
+            continue;
+        }
         let geom = match &before.geom {
             Geom::Point { pos } => Geom::Point { pos: t.point(*pos) },
             Geom::Circle { center, radius } => Geom::Circle {
@@ -307,9 +342,34 @@ pub(crate) fn transform(
             },
         );
     }
+    // Centres that only placed the converted circles and arcs go too.
+    for c in centres {
+        let used = doc
+            .entities()
+            .iter()
+            .any(|(_, e)| e.geom.point_refs().contains(&c))
+            || doc
+                .constraints()
+                .values()
+                .any(|k| k.references().contains(&c));
+        if let (false, Some(before)) = (used, doc.entity(c).cloned()) {
+            record(
+                doc,
+                patches,
+                Patch::Entity {
+                    id: c,
+                    before: Some(before),
+                    after: None,
+                },
+            );
+        }
+    }
     if let Some(before) = image {
+        let placement = before.transformed_placement(t).ok_or_else(|| {
+            DocError::Invalid("a free scale of an image goes along its own edges".to_owned())
+        })?;
         let after = crate::image::RefImage {
-            placement: before.transformed_placement(t),
+            placement,
             ..before.clone()
         };
         after.validate()?;
@@ -322,6 +382,109 @@ pub(crate) fn transform(
                 after: Some(after),
             },
         );
+    }
+    Ok(())
+}
+
+/// Replace circle or arc `id` by cubic Béziers within `EXPORT_TOL`, mapped
+/// by `t` (a free X/Y scale), keeping an arc's end points so its path stays
+/// joined. Its centre is pushed onto `centres` for the caller to tidy.
+fn curve_to_beziers(
+    doc: &mut Document,
+    id: EntityId,
+    t: &Transform,
+    patches: &mut Vec<crate::command::Patch>,
+    centres: &mut Vec<EntityId>,
+) -> Result<(), DocError> {
+    use crate::command::{Patch, record};
+    use locus_geom::{EXPORT_TOL, arc_cubics};
+    let before = doc.entity(id).cloned().ok_or(DocError::UnknownEntity(id))?;
+    let (pieces, ends, centre) = match before.geom {
+        Geom::Circle { center, radius } => {
+            let c = doc
+                .point_pos(center)
+                .ok_or(DocError::UnknownEntity(center))?;
+            let full = arc_cubics(c, radius, 0.0, std::f64::consts::TAU, EXPORT_TOL);
+            (full, None, center)
+        }
+        Geom::Arc { center, start, end } => {
+            let arc = doc.arc(id).ok_or(DocError::UnknownEntity(id))?;
+            (arc.to_cubics(EXPORT_TOL), Some((start, end)), center)
+        }
+        _ => return Ok(()),
+    };
+    if pieces.is_empty() {
+        return Ok(());
+    }
+    centres.push(centre);
+    record(
+        doc,
+        patches,
+        Patch::Entity {
+            id,
+            before: Some(before.clone()),
+            after: None,
+        },
+    );
+    let point =
+        |doc: &mut Document, patches: &mut Vec<Patch>, p: Vec2| -> Result<EntityId, DocError> {
+            let pid = EntityId::new(doc.alloc_id()?);
+            let e = crate::entity::Entity {
+                layer: before.layer,
+                construction: before.construction,
+                geom: Geom::Point { pos: t.point(p) },
+                style: Default::default(),
+            };
+            record(
+                doc,
+                patches,
+                Patch::Entity {
+                    id: pid,
+                    before: None,
+                    after: Some(e),
+                },
+            );
+            Ok(pid)
+        };
+    let n = pieces.len();
+    // Anchors: an arc keeps its own end points (moved by the caller's point
+    // pass); a circle closes on its first new anchor.
+    let first = match ends {
+        Some((s, _)) => s,
+        None => point(doc, patches, pieces[0].p0)?,
+    };
+    let mut prev = first;
+    for (k, c) in pieces.iter().enumerate() {
+        let last = k + 1 == n;
+        let next = match (last, ends) {
+            (true, Some((_, e))) => e,
+            (true, None) => first,
+            (false, _) => point(doc, patches, c.p1)?,
+        };
+        let geom = Geom::Bezier {
+            start: prev,
+            start_ctrl: point(doc, patches, c.c0)?,
+            end_ctrl: point(doc, patches, c.c1)?,
+            end: next,
+        };
+        let bid = EntityId::new(doc.alloc_id()?);
+        let e = crate::entity::Entity {
+            layer: before.layer,
+            construction: before.construction,
+            geom,
+            style: before.style,
+        };
+        doc.check_entity(&e)?;
+        record(
+            doc,
+            patches,
+            Patch::Entity {
+                id: bid,
+                before: None,
+                after: Some(e),
+            },
+        );
+        prev = next;
     }
     Ok(())
 }
@@ -340,6 +503,110 @@ mod tests {
             },
             reversed: false,
         }
+    }
+
+    /// #463 (owner decision): a free X/Y scale stretches a vector reference;
+    /// its circles and arcs become Béziers on the stretched ellipse, joined
+    /// to the rest, as one undo step; a constraint on a circle refuses it.
+    #[test]
+    fn a_free_scale_turns_circles_and_arcs_into_curves() {
+        let mut ed = Editor::new(Document::new());
+        let arc = GenSegment {
+            shape: GenShape::Arc {
+                center: Vec2::new(10.0, 0.0),
+                start: Vec2::new(15.0, 0.0),
+                end: Vec2::new(10.0, 5.0),
+            },
+            reversed: false,
+        };
+        let paths = [
+            GenPath {
+                segments: vec![line((0.0, 0.0), (15.0, 0.0)), arc],
+                closed: false,
+            },
+            GenPath {
+                segments: vec![GenSegment {
+                    shape: GenShape::Circle {
+                        center: Vec2::new(0.0, 20.0),
+                        radius: 4.0,
+                    },
+                    reversed: false,
+                }],
+                closed: true,
+            },
+        ];
+        let cmd = import_command(ed.document(), "plan.dxf", &paths).unwrap();
+        let layer = ed.apply(&cmd).unwrap().layers[0];
+        let before = ed.document().clone();
+        let stretch = Transform::Stretch {
+            center: Vec2::ZERO,
+            sx: 2.0,
+            sy: 0.5,
+            angle: 0.0,
+        };
+        ed.apply(&Command::TransformReference {
+            layer,
+            transform: stretch,
+        })
+        .unwrap();
+        assert_eq!(ed.undo_label(), Some("Scale reference"));
+        let doc = ed.document();
+        let kinds: Vec<&Geom> = doc.entities().iter().map(|(_, e)| &e.geom).collect();
+        assert!(
+            !kinds
+                .iter()
+                .any(|g| matches!(g, Geom::Circle { .. } | Geom::Arc { .. }))
+        );
+        let curves: Vec<_> = doc
+            .entities()
+            .iter()
+            .filter_map(|(id, _)| doc.cubic(id))
+            .collect();
+        assert!(curves.len() >= 5, "{}", curves.len());
+        // The circle's curves lie on the ellipse x²/8² + (y-10)²/2² = 1.
+        for c in &curves {
+            for k in 0..=8 {
+                let p = c.eval(f64::from(k) / 8.0);
+                if p.y > 5.0 {
+                    let e = (p.x / 8.0).powi(2) + ((p.y - 10.0) / 2.0).powi(2);
+                    assert!((e - 1.0).abs() < 1e-3, "{p:?} {e}");
+                }
+            }
+        }
+        // The line still meets the arc's curves at (30, 0).
+        let joined = doc.entities().iter().filter(|(_, e)| match e.geom {
+            Geom::Bezier { start, .. } => doc.point_pos(start) == Some(Vec2::new(30.0, 0.0)),
+            _ => false,
+        });
+        assert_eq!(joined.count(), 1);
+        ed.undo().unwrap();
+        assert_eq!(ed.document().entities(), before.entities());
+        // A constraint on the circle keeps it uniform-only.
+        let circle = before
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Circle { .. }))
+            .map(|(id, _)| id)
+            .unwrap();
+        ed.apply(&Command::SetLayerLocked {
+            id: layer,
+            locked: false,
+        })
+        .unwrap();
+        ed.apply(&Command::AddConstraint {
+            constraint: crate::constraint::Constraint::Diameter {
+                curve: circle,
+                dim: crate::constraint::Dimension::driving(8.0),
+            },
+        })
+        .unwrap();
+        assert!(
+            ed.apply(&Command::TransformReference {
+                layer,
+                transform: stretch
+            })
+            .is_err()
+        );
     }
 
     /// #463: a vector reference turns about a point on its locked layer,

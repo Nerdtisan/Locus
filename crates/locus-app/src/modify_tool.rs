@@ -134,7 +134,7 @@ impl Modify {
                 "Rotate: select geometry, then drag the ring's knob or type an angle (drag the centre to move the pivot); Enter applies"
             }
             (Modify::Transform(TransformMode::Scale), _) => {
-                "Scale: select geometry, then drag the corner handle or type a factor (drag the centre to move the base point); Enter applies"
+                "Scale: select geometry (or a reference), then drag the corner handle or type a factor (drag the centre to move the base point; Alt+drag scales a reference's X and Y freely); Enter applies"
             }
         }
     }
@@ -326,6 +326,7 @@ pub struct TransformValues {
     pub dy: f64,
     pub angle_deg: f64,
     pub factor: f64,
+    pub factor_y: f64,
     pub pivot: Option<Vec2>,
 }
 
@@ -346,6 +347,13 @@ pub struct TransformSettings {
     pub grip: Option<(Grip, Vec2, TransformValues)>,
     /// The axis a typed Move distance goes along: X unless Y was dragged last.
     pub along_y: bool,
+    /// Scale keeps the aspect (default). Off (references only, #463):
+    /// `factor` goes along `axes` and `factor_y` across it.
+    pub uniform: bool,
+    pub factor_y: f64,
+    /// The free scale's axis, radians: a reference image's own edges, else
+    /// the page's. Set by the canvas each frame.
+    pub axes: f64,
 }
 
 impl Default for TransformSettings {
@@ -359,6 +367,9 @@ impl Default for TransformSettings {
             pivot: None,
             grip: None,
             along_y: false,
+            uniform: true,
+            factor_y: 1.0,
+            axes: 0.0,
         }
     }
 }
@@ -368,6 +379,8 @@ impl TransformSettings {
     pub fn reset(&mut self) {
         *self = Self {
             copy: self.copy,
+            uniform: self.uniform,
+            axes: self.axes,
             ..Self::default()
         };
     }
@@ -378,6 +391,7 @@ impl TransformSettings {
             dy: self.dy,
             angle_deg: self.angle_deg,
             factor: self.factor,
+            factor_y: self.factor_y,
             pivot: self.pivot,
         }
     }
@@ -391,6 +405,14 @@ impl TransformSettings {
                 center,
                 angle: self.angle_deg.to_radians(),
             },
+            TransformMode::Scale if !self.uniform && self.factor != self.factor_y => {
+                Transform::Stretch {
+                    center,
+                    sx: self.factor,
+                    sy: self.factor_y,
+                    angle: self.axes,
+                }
+            }
             TransformMode::Scale => Transform::Scale {
                 center,
                 factor: self.factor,
@@ -403,7 +425,7 @@ impl TransformSettings {
         match mode {
             TransformMode::Move => self.dx == 0.0 && self.dy == 0.0,
             TransformMode::Rotate => self.angle_deg.rem_euclid(360.0) == 0.0,
-            TransformMode::Scale => self.factor == 1.0,
+            TransformMode::Scale => self.factor == 1.0 && (self.uniform || self.factor_y == 1.0),
         }
     }
 
@@ -414,7 +436,12 @@ impl TransformSettings {
             TransformMode::Move if self.along_y => self.dy = v,
             TransformMode::Move => self.dx = v,
             TransformMode::Rotate => self.angle_deg = v,
-            TransformMode::Scale => self.factor = v,
+            TransformMode::Scale => {
+                self.factor = v;
+                if self.uniform {
+                    self.factor_y = v;
+                }
+            }
         }
     }
 
@@ -422,7 +449,14 @@ impl TransformSettings {
     /// selection's centre. `coarse` (Shift) snaps rotation to 15° and the
     /// factor to 0.1 and distances to 1 mm; otherwise to 1°, 0.01 and
     /// 0.1 mm. The pivot isn't rounded: it snaps to points instead.
+    #[cfg(test)]
     pub fn drag(&mut self, to: Vec2, center: Vec2, coarse: bool) {
+        self.drag_with(to, center, coarse, false);
+    }
+
+    /// [`Self::drag`]; with `free` (Alt, references only, #463) the scale
+    /// handle sets X and Y separately along [`Self::axes`].
+    pub fn drag_with(&mut self, to: Vec2, center: Vec2, coarse: bool, free: bool) {
         let Some((grip, from, v)) = self.grip else {
             return;
         };
@@ -455,12 +489,33 @@ impl TransformSettings {
                 let step = if coarse { 15.0 } else { 1.0 };
                 self.angle_deg = (deg / step).round() * step;
             }
+            Grip::Factor if free => {
+                // Into the free scale's axes: each axis by its own ratio.
+                let (s, c) = self.axes.sin_cos();
+                let local = |p: Vec2| {
+                    let q = p - pivot;
+                    Vec2::new(q.x * c + q.y * s, -q.x * s + q.y * c)
+                };
+                let (a, b) = (local(from), local(to));
+                let step = if coarse { 0.1 } else { 0.01 };
+                let snap = |f: f64| ((f / step).round() * step).max(step);
+                if a.x.abs() > f64::EPSILON {
+                    self.factor = snap(v.factor * b.x / a.x);
+                }
+                if a.y.abs() > f64::EPSILON {
+                    self.factor_y = snap(v.factor_y * b.y / a.y);
+                }
+                self.uniform = false;
+            }
             Grip::Factor => {
                 let r0 = from.distance(pivot);
                 if r0 > f64::EPSILON {
                     let f = v.factor * to.distance(pivot) / r0;
                     let step = if coarse { 0.1 } else { 0.01 };
                     self.factor = ((f / step).round() * step).max(step);
+                    if self.uniform {
+                        self.factor_y = self.factor;
+                    }
                 }
             }
         }
@@ -543,6 +598,11 @@ mod tests {
         s.grip = Some((Grip::Ring, Vec2::new(10.0, 0.0), s.values()));
         s.drag(Vec2::new(10.0, 2.0), c, true);
         assert!((s.angle_deg - 105.0).abs() < 1e-9);
+        // #463: Alt-dragging the handle sets X and Y separately.
+        let mut f = TransformSettings::default();
+        f.grip = Some((Grip::Factor, Vec2::new(10.0, 10.0), f.values()));
+        f.drag_with(Vec2::new(20.0, 15.0), Vec2::ZERO, false, true);
+        assert!((f.factor - 2.0).abs() < 1e-9 && (f.factor_y - 1.5).abs() < 1e-9 && !f.uniform);
         // Pulling the corner handle twice as far doubles the factor.
         s.grip = Some((Grip::Factor, Vec2::new(4.0, 4.0), s.values()));
         s.drag(Vec2::new(8.0, 8.0), c, false);
