@@ -25,6 +25,7 @@ locus-doc = { path = "crates/locus-doc" }
 locus-solver = { path = "crates/locus-solver" }
 locus-export = { path = "crates/locus-export" }
 locus-region = { path = "crates/locus-region" }
+locus-stroke = { path = "crates/locus-stroke" }
 locus-text = { path = "crates/locus-text" }
 locus-import = { path = "crates/locus-import" }
 locus-trace = { path = "crates/locus-trace" }

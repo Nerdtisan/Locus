@@ -334,6 +334,11 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.dot((9.5, 10.0));
             d.line((8.0, 2.0), (8.0, 7.0));
         }
+        // A centreline turned into the outline of its stroke (#428).
+        "modify.expand_style" => {
+            d.dashed((3.0, 8.0), (13.0, 8.0));
+            d.poly(&[(3.0, 5.0), (13.0, 5.0), (13.0, 11.0), (3.0, 11.0)], true);
+        }
         "modify.fillet" => {
             d.line((3.0, 2.0), (3.0, 8.0));
             d.arc((9.0, 8.0), 6.0, PI, FRAC_PI_2);

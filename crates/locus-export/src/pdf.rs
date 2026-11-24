@@ -16,6 +16,7 @@ use crate::order::order;
 use crate::pipeline::{DEFAULT_HAIRLINE_MM, ExportModel, PathSeg, Shape, collect};
 use crate::svg::num;
 use locus_doc::Document;
+use locus_doc::{Cap, Join};
 use locus_geom::{Arc, Vec2};
 use std::f64::consts::FRAC_PI_2;
 use std::fmt::Write as _;
@@ -84,6 +85,7 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
     let mut width = DEFAULT_HAIRLINE_MM;
     let _ = writeln!(content, "{} w 1 J 1 j", num(width * PT_PER_MM));
     let mut alpha = 1.0;
+    let (mut cur_cap, mut cur_join, mut cur_limit) = (1, 1, None::<f64>);
     // Fills first, each under its layer's optional content group, so no
     // fill hides a line (#451); even-odd keeps the holes open.
     for (i, l) in layers.iter().enumerate() {
@@ -119,6 +121,52 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
         for p in &l.paths {
             // Only what changes is written (SPEC §8: per-object style, #284).
             let paint = l.paint(p);
+            // An inside/outside stroke is filled as its outline (#428).
+            if let Some(loops) = l.outline(p) {
+                if paint.opacity != alpha
+                    && let Some(k) = alphas.iter().position(|a| *a == paint.opacity)
+                {
+                    alpha = paint.opacity;
+                    let _ = writeln!(content, "/GS{k} gs");
+                }
+                let _ = writeln!(content, "{} rg", rgb(paint.stroke));
+                for lp in &loops {
+                    let s = map(lp.start());
+                    let _ = writeln!(content, "{} {} m", num(s.x), num(s.y));
+                    for seg in &lp.segs {
+                        write_seg(&mut content, seg, &map);
+                    }
+                    content.push_str("h\n");
+                }
+                content.push_str("f\n");
+                continue;
+            }
+            // Caps and joins (#428): PDF codes 0/1/2 match butt/round/square
+            // and miter/round/bevel. The page starts round (`1 J 1 j`).
+            let cap = match paint.line.cap {
+                Cap::Butt => 0,
+                Cap::Round => 1,
+                Cap::Square => 2,
+            };
+            let (join, limit) = match paint.line.join {
+                Join::Miter { limit } => (0, Some(limit)),
+                Join::Round => (1, None),
+                Join::Bevel => (2, None),
+            };
+            if cap != cur_cap {
+                cur_cap = cap;
+                let _ = writeln!(content, "{cap} J");
+            }
+            if join != cur_join {
+                cur_join = join;
+                let _ = writeln!(content, "{join} j");
+            }
+            if let Some(m) = limit
+                && Some(m) != cur_limit
+            {
+                cur_limit = Some(m);
+                let _ = writeln!(content, "{} M", num(m));
+            }
             if paint.width != width {
                 width = paint.width;
                 let _ = writeln!(content, "{} w", num(width * PT_PER_MM));

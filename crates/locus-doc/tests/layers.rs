@@ -92,6 +92,7 @@ fn set_props_changes_only_named_fields_and_undoes_exactly() {
             export_order: Some(5),
             visible: Some(false),
             export_enabled: Some(false),
+            stroke_styles: Default::default(),
         },
     })
     .unwrap();

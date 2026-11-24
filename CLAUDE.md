@@ -98,7 +98,7 @@ $d cargo clippy --workspace --all-targets -- -D warnings
 $d cargo test --workspace
 $d cargo deny check
 # Core crates must build for the browser (§3)
-$d cargo check --target wasm32-unknown-unknown -p locus-geom -p locus-solver -p locus-doc -p locus-region -p locus-export -p locus-text
+$d cargo check --target wasm32-unknown-unknown -p locus-geom -p locus-solver -p locus-doc -p locus-region -p locus-export -p locus-text -p locus-stroke
 # Web build of the app shell
 $d bash -c "cd crates/locus-app && trunk build --release --cargo-profile wasm-release"   # output: crates/locus-app/dist
 # Windows cross-build

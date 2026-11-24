@@ -545,6 +545,14 @@ Also:
   - Anchors share the same size.
   - This is purely in `locus-app`.
 
+### Built in #428 (2026-11-24)
+
+- `locus-stroke` holds `LineStyle { cap, join, align }`, the exact constant-width expansion (bands, discs, kites, bevel triangles and square caps, one union), the canvas mesh, analytic bounds and end-to-end chaining. A proptest fuzz runs random paths × random styles.
+- **`Style` stays `Copy` for now.** `LineStyle` is three small `Copy` fields, so `Style.line` is a plain field, not `Option<Arc<LineStyle>>`. It becomes the `Arc` when the first heap field arrives (dashes, #427), as this ADR planned. That avoids churn in this ticket.
+- **Stroke styles** is a `Layer` field, not an operation parameter, because `Operation::Score` has no parameter struct.
+- **DXF / HPGL on Draw layers keep the centreline (flagged).** Decision 4's table says "outline geometry". This ticket keeps the plotter rule, "a centreline when the width ≤ the pen": on a Draw layer the object's width *is* its pen. Writing every Draw path's outline would change every existing DXF. This is open for the owner.
+- **Expand to geometry** writes outlines only. The design's dialog, with Outline or Centrelines, Keep original and a preview count, follows with dashes (#427), when Centrelines first differ from the path.
+
 ## Consequences
 
 - **New core crate `locus-stroke`**, and `locus-trace` (#461). Both are UI-agnostic and added to the CI wasm32 check list; editing CI is out of this pass, so the first ticket that adds a crate asks for the check list change.

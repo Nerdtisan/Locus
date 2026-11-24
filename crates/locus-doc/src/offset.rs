@@ -125,6 +125,11 @@ pub(crate) fn chain(
 
 /// A source curve as region pieces in travel order.
 pub(crate) fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> {
+    pieces_within(doc, id, backwards, EXPORT_TOL)
+}
+
+/// [`pieces`] with Béziers lowered to biarcs within `tol` mm.
+pub(crate) fn pieces_within(doc: &Document, id: EntityId, backwards: bool, tol: f64) -> Vec<Seg> {
     let mut out: Vec<Seg> = match doc.entity(id).map(|e| &e.geom) {
         Some(Geom::Line { .. }) => doc
             .line(id)
@@ -152,7 +157,10 @@ pub(crate) fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> 
                 }]
             })
             .unwrap_or_default(),
-        Some(Geom::Bezier { .. }) => doc.cubic(id).map(|c| cubic_segs(&c)).unwrap_or_default(),
+        Some(Geom::Bezier { .. }) => doc
+            .cubic(id)
+            .map(|c| cubic_segs(&c, tol))
+            .unwrap_or_default(),
         _ => Vec::new(),
     };
     if backwards {
@@ -165,9 +173,9 @@ pub(crate) fn pieces(doc: &Document, id: EntityId, backwards: bool) -> Vec<Seg> 
 }
 
 /// A cubic as line and arc pieces (biarcs) in travel order.
-fn cubic_segs(c: &Cubic) -> Vec<Seg> {
+fn cubic_segs(c: &Cubic, tol: f64) -> Vec<Seg> {
     let mut out: Vec<Seg> = c
-        .to_pieces_oriented(EXPORT_TOL)
+        .to_pieces_oriented(tol)
         .into_iter()
         .map(|(p, back)| match p {
             Piece::Line(l) => Seg::Line { a: l.a, b: l.b },
@@ -234,7 +242,7 @@ fn text_edges(doc: &Document, id: EntityId) -> (Vec<Loop>, Vec<Vec<Edge>>) {
                     }
                 }
                 locus_text::Seg::Cubic { c0, c1, end } => {
-                    segs.extend(cubic_segs(&Cubic::new(from, c0, c1, end)));
+                    segs.extend(cubic_segs(&Cubic::new(from, c0, c1, end), EXPORT_TOL));
                 }
             }
             from = s.end();
@@ -393,7 +401,7 @@ fn finish(runs: Vec<(Vec<Edge>, bool)>) -> Result<Vec<Out>, DocError> {
     Ok(out)
 }
 
-fn emit(run: &[Edge], closed: bool, out: &mut Vec<Out>) {
+pub(crate) fn emit(run: &[Edge], closed: bool, out: &mut Vec<Out>) {
     if run.is_empty() {
         return;
     }

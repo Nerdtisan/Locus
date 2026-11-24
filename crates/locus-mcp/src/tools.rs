@@ -1219,6 +1219,7 @@ fn set_layer_props(
         export_order: a.export_order,
         visible: a.visible,
         export_enabled: a.export_enabled,
+        stroke_styles: Default::default(),
     };
     let mut cmds = Vec::new();
     if a.locked == Some(false) {

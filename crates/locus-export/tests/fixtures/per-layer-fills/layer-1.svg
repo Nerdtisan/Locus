@@ -4,6 +4,6 @@
     <path fill="#f35e5e" fill-rule="evenodd" stroke="none" data-layer="1" d="M 20.2 10.2 A 10 10 0 1 0 0.2 10.2 A 10 10 0 1 0 20.2 10.2 Z"/>
   </g>
   <g id="layer-1" data-name="Layer 1" data-operation="Draw">
-    <circle fill="none" stroke="#000000" stroke-width="0.4" data-pen="1" cx="10.2" cy="10.2" r="10"/>
+    <circle fill="none" stroke="#000000" stroke-width="0.4" stroke-linecap="round" stroke-linejoin="round" data-pen="1" cx="10.2" cy="10.2" r="10"/>
   </g>
 </svg>

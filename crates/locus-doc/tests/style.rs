@@ -185,6 +185,7 @@ fn trimmed_pieces_keep_their_style() {
         pen: 4,
         fill: Fill::None,
         opacity: 0.5,
+        line: Default::default(),
     };
     let a = line(&mut s, (0.0, 0.0), (10.0, 0.0), st);
     line(&mut s, (5.0, -5.0), (5.0, 5.0), Style::default());
