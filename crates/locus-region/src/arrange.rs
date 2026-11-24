@@ -6,7 +6,7 @@
 //! booleans classify its edges.
 
 use crate::seg::{Edge, Seg};
-use core::f64::consts::PI;
+use core::f64::consts::{PI, TAU};
 use locus_geom::{Aabb, SOLVER_TOL, Vec2};
 use std::collections::HashMap;
 
@@ -272,6 +272,18 @@ pub(crate) fn in_dir(s: &Seg) -> Vec2 {
 
 /// Joins consecutive edges of a closed loop that lie on one line or one
 /// circle (and, when `same_source`, come from the same entity).
+/// Centre of the circle through three points; `None` when they are
+/// (nearly) collinear.
+fn circumcentre(a: Vec2, b: Vec2, c: Vec2) -> Option<Vec2> {
+    let (ab, ac) = (b - a, c - a);
+    let d = 2.0 * ab.cross(ac);
+    if d.abs() <= 1e-12 * ab.length_sq().max(ac.length_sq()) {
+        return None;
+    }
+    let (l1, l2) = (ab.length_sq(), ac.length_sq());
+    Some(a + Vec2::new(ac.y * l1 - ab.y * l2, ab.x * l2 - ac.x * l1) * (1.0 / d))
+}
+
 pub(crate) fn merge_carriers(mut edges: Vec<Edge>, same_source: bool) -> Vec<Edge> {
     let join = |x: &Edge, y: &Edge| -> Option<Edge> {
         if same_source && x.source != y.source {
@@ -286,8 +298,8 @@ pub(crate) fn merge_carriers(mut edges: Vec<Edge>, same_source: bool) -> Vec<Edg
                 Seg::Arc {
                     center,
                     radius,
-                    start,
                     sweep,
+                    ..
                 },
                 Seg::Arc {
                     center: c1,
@@ -299,12 +311,28 @@ pub(crate) fn merge_carriers(mut edges: Vec<Edge>, same_source: bool) -> Vec<Edg
                 let same = center.distance(c1) <= 10.0 * SNAP
                     && (radius - r1).abs() <= 10.0 * SNAP
                     && sweep.signum() == s1.signum();
-                same.then_some(Seg::Arc {
-                    center,
-                    radius,
-                    start,
-                    sweep: sweep + s1,
-                })?
+                if !same {
+                    return None;
+                }
+                // The two circles differ by up to 10 × SNAP, so neither one
+                // reaches both outer ends. Use the circle through the start,
+                // the shared point and the end: the merged arc keeps both
+                // ends, so it still meets its neighbours within SNAP (a gap
+                // there would open the loop in the next boolean).
+                let (p0, pm, p1) = (x.seg.start(), x.seg.end(), y.seg.end());
+                let c = circumcentre(p0, pm, p1).unwrap_or(center);
+                let r = 0.5 * (c.distance(p0) + c.distance(p1));
+                let (a0, a1) = ((p0 - c).angle(), (p1 - c).angle());
+                // The sweep that ends exactly at p1: the old total, corrected
+                // by the (tiny) angular difference, wrapped to (-π, π].
+                let total = sweep + s1;
+                let fix = (a1 - a0 - total + PI).rem_euclid(TAU) - PI;
+                Seg::Arc {
+                    center: c,
+                    radius: r,
+                    start: a0,
+                    sweep: total + fix,
+                }
             }
             _ => return None,
         };
