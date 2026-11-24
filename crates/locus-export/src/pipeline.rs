@@ -22,7 +22,7 @@ pub const DEFAULT_HAIRLINE_MM: f64 = 0.1;
 /// object's style on a Draw layer, or the layer colour and hairline on a
 /// machine layer. Paths have no fill: fills belong to regions (#451,
 /// [`ExportFill`]) and are written under every stroke.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Paint {
     pub stroke: [u8; 3],
     /// Stroke width, mm.
@@ -182,6 +182,10 @@ impl PathSeg {
 pub struct ExportPath {
     pub segs: Vec<PathSeg>,
     pub closed: bool,
+    /// How this path is written when it isn't its object's own stroke: an
+    /// extra stroke (#429) or a dash already split off (#427). `None` uses
+    /// the object's style.
+    pub paint: Option<Paint>,
 }
 
 impl ExportPath {
@@ -223,9 +227,6 @@ pub struct ExportLayer {
     pub styles: BTreeMap<EntityId, Style>,
     /// Machine layers: cut the centreline or the styled outline (#428).
     pub stroke_styles: StrokeStyles,
-    /// The dashes are already paths of their own (#427): writers draw these
-    /// paths solid.
-    pub dashes_done: bool,
 }
 
 impl ExportLayer {
@@ -242,7 +243,6 @@ impl ExportLayer {
             hairline: DEFAULT_HAIRLINE_MM,
             styles: BTreeMap::new(),
             stroke_styles: StrokeStyles::default(),
-            dashes_done: false,
         }
     }
 
@@ -256,13 +256,16 @@ impl ExportLayer {
     }
 
     fn style_of(&self, entity: EntityId) -> Style {
-        self.styles.get(&entity).copied().unwrap_or_default()
+        self.styles.get(&entity).cloned().unwrap_or_default()
     }
 
     /// How `path` is written. A path is chained from segments of one style
     /// ([`ExportLayer::chain`]), so its first segment speaks for it.
     #[must_use]
     pub fn paint(&self, path: &ExportPath) -> Paint {
+        if let Some(p) = &path.paint {
+            return p.clone();
+        }
         if !self.uses_object_style() {
             return Paint {
                 stroke: self.colour,
@@ -284,14 +287,7 @@ impl ExportLayer {
             width: s.width,
             opacity: s.opacity,
             pen: Some(s.pen),
-            line: if self.dashes_done {
-                LineStyle {
-                    dash: None,
-                    ..s.line
-                }
-            } else {
-                s.line
-            },
+            line: s.line,
         }
     }
 
@@ -301,18 +297,69 @@ impl ExportLayer {
     #[must_use]
     pub fn dash_paths(&self, path: &ExportPath) -> Option<Vec<ExportPath>> {
         let entity = path.segs.first()?.entity;
-        let d = self.style_of(entity).line.dash?;
+        let paint = self.paint(path);
+        let d = paint.line.dash?;
         let runs =
             locus_stroke::dashes(&path_chain(path), &d, &locus_stroke::Limits::default()).ok()?;
+        // Each dash is drawn solid, in the stroke's paint.
+        let solid = Paint {
+            line: LineStyle {
+                dash: None,
+                ..paint.line.clone()
+            },
+            ..paint
+        };
         Some(
             runs.iter()
                 .filter(|c| !c.segs.is_empty())
                 .map(|c| ExportPath {
                     segs: c.segs.iter().map(|s| seg_path(*s, entity)).collect(),
                     closed: false,
+                    paint: Some(solid.clone()),
                 })
                 .collect(),
         )
+    }
+
+    /// The extra strokes of `path` (#429) as paths of their own, each at its
+    /// offset with its own width, colour, pen, dash and cap; the object's
+    /// own stroke is `path` itself. Empty without extras, or when they can't
+    /// be built.
+    #[must_use]
+    pub fn extra_stroke_paths(&self, path: &ExportPath) -> Vec<ExportPath> {
+        let Some(entity) = path.segs.first().map(|s| s.entity) else {
+            return Vec::new();
+        };
+        let base = self.paint(path);
+        if base.line.extra.is_empty() {
+            return Vec::new();
+        }
+        let Ok(strokes) = locus_stroke::layer_strokes(
+            &path_chain(path),
+            base.width,
+            &base.line,
+            &locus_stroke::Limits::default(),
+        ) else {
+            return Vec::new();
+        };
+        strokes
+            .into_iter()
+            .skip(1)
+            .flat_map(|ls| {
+                let paint = Paint {
+                    stroke: ls.colour.unwrap_or(base.stroke),
+                    width: ls.width,
+                    opacity: base.opacity,
+                    pen: base.pen.map(|p| ls.pen.unwrap_or(p)),
+                    line: ls.line,
+                };
+                ls.chains.into_iter().map(move |c| ExportPath {
+                    segs: c.segs.iter().map(|s| seg_path(*s, entity)).collect(),
+                    closed: c.closed,
+                    paint: Some(paint.clone()),
+                })
+            })
+            .collect()
     }
 
     /// The stroke of `path` as filled outline loops, when a writer can't
@@ -494,47 +541,47 @@ impl ExportModel {
     /// PDF and PNG, which draw exact dashes natively.
     #[must_use]
     pub fn dashes_as_paths(&self, corners_only: bool) -> ExportModel {
-        let mut m = self.clone();
+        let mut m = self.with_extra_strokes();
         for l in &mut m.layers {
-            if !l.uses_object_style() || l.dashes_done {
+            if !l.uses_object_style() {
                 continue;
             }
             let mut out = Vec::new();
-            let mut any = false;
             for p in std::mem::take(&mut l.paths) {
-                let corners = p
-                    .segs
-                    .first()
-                    .and_then(|s| l.style_of(s.entity).line.dash)
-                    .is_some_and(|d| d.align == locus_stroke::DashAlign::Corners);
-                match (corners || !corners_only)
-                    .then(|| l.dash_paths(&p))
-                    .flatten()
-                {
-                    Some(ds) => {
-                        any = true;
-                        out.extend(ds);
-                    }
+                let split =
+                    l.paint(&p).line.dash.is_some_and(|d| {
+                        !corners_only || d.align == locus_stroke::DashAlign::Corners
+                    });
+                match split.then(|| l.dash_paths(&p)).flatten() {
+                    Some(ds) => out.extend(ds),
                     None => out.push(p),
                 }
             }
             l.paths = out;
-            // Exact dashes left for a native writer keep their pattern.
-            l.dashes_done = !corners_only && any;
-            if corners_only && any {
-                // Split corner dashes are solid now; native ones still dash.
-                // Mark per path is not possible, so drop the pattern from
-                // the corner-aligned styles only.
-                for st in l.styles.values_mut() {
-                    if st
-                        .line
-                        .dash
-                        .is_some_and(|d| d.align == locus_stroke::DashAlign::Corners)
-                    {
-                        st.line.dash = None;
-                    }
-                }
+        }
+        m
+    }
+
+    /// This model with every Draw-layer path's extra strokes (#429) added as
+    /// paths of their own, after the path, in paint order.
+    #[must_use]
+    pub fn with_extra_strokes(&self) -> ExportModel {
+        let mut m = self.clone();
+        for l in &mut m.layers {
+            if !l.uses_object_style() {
+                continue;
             }
+            let mut out = Vec::new();
+            for p in std::mem::take(&mut l.paths) {
+                let extra = if p.paint.is_none() {
+                    l.extra_stroke_paths(&p)
+                } else {
+                    Vec::new()
+                };
+                out.push(p);
+                out.extend(extra);
+            }
+            l.paths = out;
         }
         m
     }
@@ -606,7 +653,7 @@ pub fn collect(doc: &Document) -> ExportModel {
             && !e.style.is_default()
             && let Some((layer, _)) = layers.iter_mut().find(|(l, _)| l.id == e.layer)
         {
-            layer.styles.insert(eid, e.style);
+            layer.styles.insert(eid, e.style.clone());
         }
         if matches!(e.geom, Geom::Text { .. }) {
             // Text exports as the geometry cached in the document (SPEC §9,
@@ -695,10 +742,13 @@ pub fn apply_stroke_styles(model: &mut ExportModel) {
                 out.push(p);
                 continue;
             }
-            // Dashes become separate cuts or marks (a perforation, #427);
-            // otherwise the stroke's outline.
-            let styled = if st.line.dash.is_some() {
-                layer.dash_paths(&p)
+            // Extra strokes become parallel cuts or marks (#429), each
+            // dashed if it is; dashes become separate cuts (a perforation,
+            // #427); otherwise the stroke's outline.
+            let styled = if !st.line.extra.is_empty() {
+                styled_strokes(&p, &st)
+            } else if st.line.dash.is_some() {
+                dash_runs(&p, &st.line)
             } else {
                 outline_paths(&p, st.width, &st.line)
             };
@@ -709,6 +759,52 @@ pub fn apply_stroke_styles(model: &mut ExportModel) {
         }
         layer.paths = out;
     }
+}
+
+/// The dashes of `path` under `line`, as open centreline paths.
+fn dash_runs(path: &ExportPath, line: &LineStyle) -> Option<Vec<ExportPath>> {
+    let entity = path.segs.first()?.entity;
+    let d = line.dash?;
+    let runs =
+        locus_stroke::dashes(&path_chain(path), &d, &locus_stroke::Limits::default()).ok()?;
+    Some(
+        runs.iter()
+            .filter(|c| !c.segs.is_empty())
+            .map(|c| ExportPath {
+                segs: c.segs.iter().map(|s| seg_path(*s, entity)).collect(),
+                closed: false,
+                paint: None,
+            })
+            .collect(),
+    )
+}
+
+/// Every stroke of `path` (its own and the extras, #429) as centreline
+/// paths for a machine: each at its offset, dashes split.
+fn styled_strokes(path: &ExportPath, st: &Style) -> Option<Vec<ExportPath>> {
+    let entity = path.segs.first()?.entity;
+    let strokes = locus_stroke::layer_strokes(
+        &path_chain(path),
+        st.width,
+        &st.line,
+        &locus_stroke::Limits::default(),
+    )
+    .ok()?;
+    let mut out = Vec::new();
+    for ls in strokes {
+        for c in ls.chains {
+            let p = ExportPath {
+                segs: c.segs.iter().map(|s| seg_path(*s, entity)).collect(),
+                closed: c.closed,
+                paint: None,
+            };
+            match dash_runs(&p, &ls.line) {
+                Some(ds) => out.extend(ds),
+                None => out.push(p),
+            }
+        }
+    }
+    Some(out)
 }
 
 /// An export path as the pieces a stroke follows: lines and arcs in travel
@@ -902,7 +998,11 @@ fn loop_path(l: &locus_region::Loop) -> Option<ExportPath> {
             }
         })
         .collect();
-    (!segs.is_empty()).then_some(ExportPath { segs, closed: true })
+    (!segs.is_empty()).then_some(ExportPath {
+        segs,
+        closed: true,
+        paint: Default::default(),
+    })
 }
 
 /// The document's region fills (#451) on exported Draw layers. Machine
@@ -966,6 +1066,7 @@ fn text_path(entity: EntityId, c: &locus_text::Contour) -> Option<ExportPath> {
     (!segs.is_empty()).then_some(ExportPath {
         segs,
         closed: c.closed,
+        paint: Default::default(),
     })
 }
 
@@ -992,6 +1093,7 @@ pub fn chain(segs: Vec<PathSeg>) -> Vec<ExportPath> {
             out.push(ExportPath {
                 segs: vec![segs[i]],
                 closed: true,
+                paint: Default::default(),
             });
             continue;
         }
@@ -1026,6 +1128,7 @@ pub fn chain(segs: Vec<PathSeg>) -> Vec<ExportPath> {
         out.push(ExportPath {
             segs: path.into(),
             closed,
+            paint: Default::default(),
         });
     }
     out

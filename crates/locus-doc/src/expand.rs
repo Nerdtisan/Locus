@@ -18,7 +18,7 @@ use crate::offset::{Out, emit, pieces_within};
 use crate::recipe::MAX_INSTANCE_ENTITIES;
 use crate::style::{DEFAULT_WIDTH, Style};
 use locus_region::Seg;
-use locus_stroke::{Limits, LineStyle, chains, dashes, expand};
+use locus_stroke::{Limits, LineStyle, chains, dashes, expand, layer_strokes};
 use serde::{Deserialize, Serialize};
 
 /// The Expand tolerance's default, mm (owner decision 2026-11-24).
@@ -37,6 +37,9 @@ pub enum ExpandMode {
     /// path back as plain curves).
     Centrelines,
 }
+
+/// One stroke's expanded output: its colour and pen overrides, and entities.
+type StrokeOut = (Option<[u8; 3]>, Option<u32>, Vec<Out>);
 
 /// One group's output: the entities to add on `layer` in `style`.
 pub(crate) struct Expanded {
@@ -93,7 +96,7 @@ pub(crate) fn plan(
             .find(|(l, s, _)| *l == e.layer && *s == e.style)
         {
             Some((_, _, v)) => v.push(segs),
-            None => groups.push((e.layer, e.style, vec![segs])),
+            None => groups.push((e.layer, e.style.clone(), vec![segs])),
         }
     }
     if sources.is_empty() {
@@ -102,54 +105,73 @@ pub(crate) fn plan(
     let limits = Limits::default();
     let mut result = Vec::new();
     let mut total = 0usize;
+    let err = |e: locus_stroke::StrokeError| DocError::Invalid(format!("expand: {e}"));
     for (layer, style, items) in groups {
-        let mut out = Vec::new();
-        let err = |e: locus_stroke::StrokeError| DocError::Invalid(format!("expand: {e}"));
+        // One output group per stroke (#429): the object's own, then each
+        // extra stroke in its own colour and pen.
+        let mut per_stroke: Vec<StrokeOut> = Vec::new();
         for chain in chains(items) {
-            match mode {
-                ExpandMode::Outline => {
-                    let area = expand(&chain, style.width, &style.line, &limits).map_err(err)?;
-                    for l in &area.loops {
-                        emit(&l.edges, true, &mut out);
+            let strokes = layer_strokes(&chain, style.width, &style.line, &limits).map_err(err)?;
+            for ls in strokes {
+                let mut out = Vec::new();
+                for c in &ls.chains {
+                    match mode {
+                        ExpandMode::Outline => {
+                            let area = expand(c, ls.width, &ls.line, &limits).map_err(err)?;
+                            for l in &area.loops {
+                                emit(&l.edges, true, &mut out);
+                            }
+                        }
+                        ExpandMode::Centrelines => {
+                            let runs = match &ls.line.dash {
+                                Some(d) => dashes(c, d, &limits).map_err(err)?,
+                                None => vec![c.clone()],
+                            };
+                            for run in runs {
+                                let edges: Vec<locus_region::Edge> = run
+                                    .segs
+                                    .iter()
+                                    // A dot has no length to draw as a curve.
+                                    .filter(|s| s.length() > locus_region::SNAP)
+                                    .map(|s| locus_region::Edge { seg: *s, source: 0 })
+                                    .collect();
+                                emit(&edges, run.closed, &mut out);
+                            }
+                        }
                     }
                 }
-                ExpandMode::Centrelines => {
-                    let runs = match &style.line.dash {
-                        Some(d) => dashes(&chain, d, &limits).map_err(err)?,
-                        None => vec![chain],
-                    };
-                    for run in runs {
-                        let edges: Vec<locus_region::Edge> = run
-                            .segs
-                            .iter()
-                            // A dot has no length to draw as a curve.
-                            .filter(|s| s.length() > locus_region::SNAP)
-                            .map(|s| locus_region::Edge { seg: *s, source: 0 })
-                            .collect();
-                        emit(&edges, run.closed, &mut out);
-                    }
+                match per_stroke.get_mut(ls.index) {
+                    Some((_, _, o)) => o.extend(out),
+                    None => per_stroke.push((ls.colour, ls.pen, out)),
                 }
             }
         }
-        total += out.len();
-        if total > MAX_INSTANCE_ENTITIES {
-            return Err(DocError::InstanceLimit {
-                requested: total,
-                limit: MAX_INSTANCE_ENTITIES,
+        for (colour, pen, out) in per_stroke {
+            if out.is_empty() {
+                continue;
+            }
+            total += out.len();
+            if total > MAX_INSTANCE_ENTITIES {
+                return Err(DocError::InstanceLimit {
+                    requested: total,
+                    limit: MAX_INSTANCE_ENTITIES,
+                });
+            }
+            // The outline keeps the stroke's colour, pen and opacity, drawn
+            // as a plain line (its width is now geometry).
+            let plain = Style {
+                width: DEFAULT_WIDTH,
+                line: LineStyle::default(),
+                stroke: colour.map_or(style.stroke, crate::style::Stroke::Colour),
+                pen: pen.unwrap_or(style.pen),
+                ..style.clone()
+            };
+            result.push(Expanded {
+                layer,
+                style: plain,
+                out,
             });
         }
-        // The outline keeps the stroke's colour, pen and opacity, drawn as a
-        // plain line (its width is now geometry).
-        let plain = Style {
-            width: DEFAULT_WIDTH,
-            line: LineStyle::default(),
-            ..style
-        };
-        result.push(Expanded {
-            layer,
-            style: plain,
-            out,
-        });
     }
     Ok((result, sources))
 }
@@ -191,7 +213,7 @@ mod tests {
                 ed.apply(&Command::AddEntity {
                     layer,
                     construction: false,
-                    style,
+                    style: style.clone(),
                     geom: Geom::Line { start: s, end: e },
                 })
                 .unwrap()
@@ -289,6 +311,41 @@ mod tests {
             .filter(|(_, e)| matches!(e.geom, Geom::Line { .. }))
             .count();
         assert_eq!(lines, 6);
+    }
+
+    #[test]
+    fn an_extra_stroke_expands_in_its_own_colour() {
+        let (mut ed, ids) = l_doc(1.0);
+        ed.apply(&Command::SetStyle {
+            entities: ids.clone(),
+            patch: StylePatch {
+                extra: Some(vec![locus_stroke::StrokeLayer {
+                    offset: 2.0,
+                    width: 0.5,
+                    colour: Some([255, 0, 0]),
+                    ..locus_stroke::StrokeLayer::default()
+                }]),
+                ..StylePatch::default()
+            },
+        })
+        .unwrap();
+        ed.apply(&Command::ExpandStyle {
+            entities: ids,
+            tol: super::DEFAULT_EXPAND_TOL,
+            mode: super::ExpandMode::Centrelines,
+        })
+        .unwrap();
+        let red = ed
+            .document()
+            .entities()
+            .iter()
+            .filter(|(_, e)| {
+                !matches!(e.geom, Geom::Point { .. })
+                    && e.style.stroke == crate::style::Stroke::Colour([255, 0, 0])
+            })
+            .count();
+        // The L offset 2 mm to its left: two lines and a round joint.
+        assert!(red >= 2, "{red}");
     }
 
     #[test]

@@ -50,7 +50,7 @@ impl B {
         let n = if closed { ids.len() } else { ids.len() - 1 };
         for i in 0..n {
             let (start, end) = (ids[i], ids[(i + 1) % ids.len()]);
-            self.add(layer, Geom::Line { start, end }, style);
+            self.add(layer, Geom::Line { start, end }, style.clone());
         }
     }
 }

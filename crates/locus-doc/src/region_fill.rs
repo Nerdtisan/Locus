@@ -200,7 +200,7 @@ pub(crate) fn migrate_object_fills(doc: &mut Document) {
     let mut fills = std::collections::BTreeMap::new();
     for r in crate::regions::regions(doc) {
         let fill = r.outer.edges.iter().find_map(|e| {
-            let s = doc.entity(EntityId::new(e.source))?.style;
+            let s = doc.entity(EntityId::new(e.source))?.style.clone();
             s.fill.painted().map(|c| RegionFill {
                 fill: Fill::Colour(c),
                 opacity: s.opacity.clamp(0.0, 1.0),

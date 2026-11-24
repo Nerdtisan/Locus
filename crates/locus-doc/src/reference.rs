@@ -549,7 +549,7 @@ fn curve_to_beziers(
             layer: before.layer,
             construction: before.construction,
             geom,
-            style: before.style,
+            style: before.style.clone(),
         };
         doc.check_entity(&e)?;
         record(

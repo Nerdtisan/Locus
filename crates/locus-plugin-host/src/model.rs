@@ -99,7 +99,7 @@ fn operation(l: &locus_export::ExportLayer) -> Operation {
             let paint = l.paths.first().map(|p| l.paint(p));
             let pen = locus_doc::Style::default();
             Operation::Draw {
-                pen_number: paint.and_then(|p| p.pen).unwrap_or(pen.pen),
+                pen_number: paint.as_ref().and_then(|p| p.pen).unwrap_or(pen.pen),
                 pen_width: paint.map_or(pen.width, |p| p.width),
             }
         }

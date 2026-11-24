@@ -585,6 +585,13 @@ Also:
 - `locus_stroke::dashes` splits by arc length, exactly on lines and arcs. **Corners** uses turns over 15°, a whole number of repeats per span, and half a dash at each span end, merged across corners. Placements are bounded at 10 000 per path (§6.2.1).
 - **Expand** now has the **Centrelines** mode (`ExpandStyle.mode`). The app offers it as a second action, **Expand to centrelines**, instead of the design's dialog with Keep original and a preview count. The dialog stays open for a later pass.
 
+### Built in #429 (2026-11-25)
+
+- **`Style` and `LineStyle` are no longer `Copy`**, as decision 1 planned: the extra-stroke list lives on the heap. The change across crates was mechanical: clones where a style is copied out of a reference. `StrokeLayer` itself stays `Copy`.
+- `locus_stroke::layer_strokes` gives every stroke of an object: index 0 is its own, then each extra at its exact ADR 0010 offset. Open chains use `offset_open` with round joins; closed ones offset their area, with + to the left. Expand, the canvas mesh, page bounds and export all use it.
+- **Export:** an `ExportPath` can carry its own `Paint`. Extra strokes and split dashes are then plain paths in every writer, with no per-layer bookkeeping.
+- The Inspector reorders rows with **Up** and **Down** buttons rather than the design's drag grip, which is left for a polish pass.
+
 ## Consequences
 
 - **New core crate `locus-stroke`**, and `locus-trace` (#461). Both are UI-agnostic and added to the CI wasm32 check list; editing CI is out of this pass, so the first ticket that adds a crate asks for the check list change.

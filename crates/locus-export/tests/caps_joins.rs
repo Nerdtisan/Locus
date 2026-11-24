@@ -49,7 +49,7 @@ fn rect(op: Operation) -> (Editor, LayerId, Vec<locus_doc::EntityId>) {
             ed.apply(&Command::AddEntity {
                 layer,
                 construction: false,
-                style,
+                style: style.clone(),
                 geom: Geom::Line {
                     start: pts[i],
                     end: pts[(i + 1) % 4],
@@ -235,4 +235,70 @@ fn a_styled_score_layer_perforates_dashes() {
     let paths = &p.model.layers[0].paths;
     assert_eq!(paths.len(), 12, "one cut per dash");
     assert!(paths.iter().all(|x| !x.closed));
+}
+
+fn extra(layers: Vec<locus_doc::StrokeLayer>) -> StylePatch {
+    StylePatch {
+        extra: Some(layers),
+        ..StylePatch::default()
+    }
+}
+
+#[test]
+fn extra_strokes_are_their_own_svg_paths() {
+    let (mut ed, _, ids) = rect(Operation::Draw);
+    set(
+        &mut ed,
+        &ids,
+        extra(vec![locus_doc::StrokeLayer {
+            offset: -3.0,
+            width: 0.5,
+            colour: Some([0, 0, 255]),
+            pen: Some(3),
+            ..locus_doc::StrokeLayer::default()
+        }]),
+    );
+    let model = prepare(ed.document(), false).model;
+    let svg = String::from_utf8(to_svg_model(&model)).unwrap();
+    // The rectangle runs counter-clockwise, so -3 is outside: a second,
+    // blue path with pen 3, round-cornered 26 × 16.
+    assert!(
+        svg.contains("stroke=\"#0000ff\" stroke-width=\"0.5\""),
+        "{svg}"
+    );
+    assert!(svg.contains("data-pen=\"3\""), "{svg}");
+    let b = model.visual_bounds().unwrap();
+    assert!((b.min.x + 3.25).abs() < 1e-9, "{b:?}");
+}
+
+#[test]
+fn a_styled_cut_layer_cuts_every_stroke_in_parallel() {
+    let (mut ed, layer, ids) = rect(Operation::Cut(Default::default()));
+    set(
+        &mut ed,
+        &ids,
+        extra(vec![
+            locus_doc::StrokeLayer {
+                offset: 1.0,
+                ..locus_doc::StrokeLayer::default()
+            },
+            locus_doc::StrokeLayer {
+                offset: -1.0,
+                ..locus_doc::StrokeLayer::default()
+            },
+        ]),
+    );
+    ed.apply(&Command::SetLayerProps {
+        id: layer,
+        props: LayerProps {
+            stroke_styles: Some(StrokeStyles::Styled),
+            ..LayerProps::default()
+        },
+    })
+    .unwrap();
+    let lb = locus_export::profile::find("lightburn", &[]).unwrap();
+    let p = prepare_for(ed.document(), false, Some(&lb));
+    // The path, 1 mm inside and 1 mm outside: three closed cuts.
+    assert_eq!(p.model.layers[0].paths.len(), 3);
+    assert!(p.model.layers[0].paths.iter().all(|x| x.closed));
 }

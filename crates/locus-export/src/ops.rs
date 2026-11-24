@@ -153,6 +153,7 @@ fn path_of(l: &Loop) -> ExportPath {
     ExportPath {
         segs: l.edges.iter().map(path_seg).collect(),
         closed: true,
+        paint: Default::default(),
     }
 }
 
@@ -298,6 +299,7 @@ fn blade_path(p: &ExportPath, o: f64) -> ExportPath {
     ExportPath {
         segs: out.iter().map(path_seg).collect(),
         closed: p.closed,
+        paint: Default::default(),
     }
 }
 
@@ -519,6 +521,7 @@ fn scan(shape: &Fillable, spacing: f64, angle: f64) -> Vec<ExportPath> {
         out.extend(row.into_iter().map(|s| ExportPath {
             segs: vec![s],
             closed: false,
+            paint: Default::default(),
         }));
     }
     out

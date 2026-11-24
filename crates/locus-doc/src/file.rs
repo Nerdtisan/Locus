@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 28;
+pub const CURRENT_VERSION: u32 = 29;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -1363,8 +1363,62 @@ impl From<FileV27> for FileV28 {
     }
 }
 
-/// The newest on-disk shape. When adding v29, point this at `FileV29`.
-type Latest = FileV28;
+/// Version 29: multi-strokes (#429, ADR 0019). `LineStyle` gains `extra`, a
+/// list of extra strokes (offset, width, colour, pen, dash, cap), omitted
+/// while empty, so an older file reads with one stroke. The shape is v28's;
+/// the version stops an older build from dropping the strokes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV29 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+    /// The timeline's feature order (#446), omitted in creation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recipe_order: Vec<RecipeId>,
+}
+
+impl From<FileV28> for FileV29 {
+    fn from(f: FileV28) -> Self {
+        FileV29 {
+            format_version: 29,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+            recipe_order: f.recipe_order,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v30, point this at `FileV30`.
+type Latest = FileV29;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -1390,9 +1444,9 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-        FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-            FileV18::from(FileV17::from(FileV16::from(f))),
+    FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+        FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+            FileV19::from(FileV18::from(FileV17::from(FileV16::from(f)))),
         ))))),
     )))))
 }
@@ -1478,45 +1532,50 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-                FileV18::from(FileV17::from(parse::<FileV16>(text)?)),
+        16 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+                FileV19::from(FileV18::from(FileV17::from(parse::<FileV16>(text)?))),
             ))))),
         ))))),
-        17 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-                FileV18::from(parse::<FileV17>(text)?),
+        17 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+                FileV19::from(FileV18::from(parse::<FileV17>(text)?)),
             ))))),
         ))))),
-        18 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            FileV23::from(FileV22::from(FileV21::from(FileV20::from(FileV19::from(
-                parse::<FileV18>(text)?,
+        18 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+                FileV19::from(parse::<FileV18>(text)?),
             ))))),
         ))))),
-        19 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            FileV23::from(FileV22::from(FileV21::from(FileV20::from(
+        19 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
                 parse::<FileV19>(text)?,
+            ))))),
+        ))))),
+        20 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                parse::<FileV20>(text)?,
             )))),
         ))))),
-        20 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            FileV23::from(FileV22::from(FileV21::from(parse::<FileV20>(text)?))),
+        21 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(FileV23::from(FileV22::from(parse::<FileV21>(text)?))),
         ))))),
-        21 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            FileV23::from(FileV22::from(parse::<FileV21>(text)?)),
+        22 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(FileV23::from(parse::<FileV22>(text)?)),
         ))))),
-        22 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            FileV23::from(parse::<FileV22>(text)?),
+        23 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+            FileV24::from(parse::<FileV23>(text)?),
         ))))),
-        23 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(FileV24::from(
-            parse::<FileV23>(text)?,
-        ))))),
-        24 => FileV28::from(FileV27::from(FileV26::from(FileV25::from(
+        24 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
             parse::<FileV24>(text)?,
+        ))))),
+        25 => FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            parse::<FileV25>(text)?,
         )))),
-        25 => FileV28::from(FileV27::from(FileV26::from(parse::<FileV25>(text)?))),
-        26 => FileV28::from(FileV27::from(parse::<FileV26>(text)?)),
-        27 => FileV28::from(parse::<FileV27>(text)?),
-        28 => parse::<FileV28>(text)?,
+        26 => FileV29::from(FileV28::from(FileV27::from(parse::<FileV26>(text)?))),
+        27 => FileV29::from(FileV28::from(parse::<FileV27>(text)?)),
+        28 => FileV29::from(parse::<FileV28>(text)?),
+        29 => parse::<FileV29>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -2249,7 +2308,7 @@ mod tests {
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 12"));
         let doc = load(&text).unwrap();
-        let style = |id: u64| doc.entity(EntityId::new(id)).unwrap().style;
+        let style = |id: u64| doc.entity(EntityId::new(id)).unwrap().style.clone();
         for id in [4, 5, 6] {
             assert_eq!((style(id).width, style(id).pen), (0.7, 3), "entity {id}");
         }
@@ -2297,6 +2356,7 @@ mod tests {
                 cap: Default::default(),
                 join: Default::default(),
                 dash: Default::default(),
+                extra: Default::default(),
             },
         })
         .unwrap();
@@ -2977,23 +3037,83 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v28 fixture is frozen; it loads unchanged and saves as the
+    /// current version.
     #[test]
-    fn v28_fixture_is_current_and_loads() {
+    fn v28_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v28/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v28()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 28"));
-        assert!(text.contains("gradient: "));
-        assert!(text.contains("rotate_with_shape: false"));
-        assert_eq!(load(&text).unwrap(), sample_v28());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v28());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert!(!out.contains("extra:"));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    pub(crate) fn sample_v29() -> Document {
+        // `sample_v28()` with two extra strokes on its styled line: one
+        // red, 1.5 mm to the left, one dashed, 1.5 mm to the right.
+        let doc = sample_v28();
+        let id = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| e.style.line.cap == locus_stroke::Cap::Square)
+            .map(|(i, _)| i)
+            .expect("the styled line");
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetStyle {
+            entities: vec![id],
+            patch: crate::style::StylePatch {
+                extra: Some(vec![
+                    locus_stroke::StrokeLayer {
+                        offset: 1.5,
+                        width: 0.3,
+                        colour: Some([200, 0, 0]),
+                        ..locus_stroke::StrokeLayer::default()
+                    },
+                    locus_stroke::StrokeLayer {
+                        offset: -1.5,
+                        width: 0.2,
+                        pen: Some(2),
+                        dash: Some(
+                            locus_stroke::Dash::new(
+                                &[1.0, 1.0],
+                                0.0,
+                                locus_stroke::DashAlign::Exact,
+                            )
+                            .unwrap(),
+                        ),
+                        ..locus_stroke::StrokeLayer::default()
+                    },
+                ]),
+                ..crate::style::StylePatch::default()
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v29_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v29/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v29()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 29"));
+        assert!(text.contains("extra: ["));
+        assert_eq!(load(&text).unwrap(), sample_v29());
         assert_eq!(
-            save(&sample_v28()).unwrap(),
+            save(&sample_v29()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );

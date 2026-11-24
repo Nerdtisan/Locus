@@ -272,7 +272,7 @@ impl Tool for DrawTool {
 
     fn event(&mut self, ev: ToolEvent, cx: &mut ToolCx<'_>) -> Flow {
         self.draft.set_layer(cx.layer);
-        self.draft.set_style(cx.style);
+        self.draft.set_style(cx.style.clone());
         self.draft.set_construction(cx.construction);
         let next = cx.doc.next_id();
         match ev {
