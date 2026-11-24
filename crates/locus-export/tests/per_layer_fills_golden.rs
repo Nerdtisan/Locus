@@ -61,6 +61,7 @@ fn doc() -> Document {
         fill: Some(RegionFill {
             fill: Fill::Colour([243, 94, 94]),
             opacity: 1.0,
+            gradient: None,
         }),
     })
     .unwrap();

@@ -174,6 +174,47 @@ pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, E
         let Some(skpath) = pb.finish() else {
             continue;
         };
+        // A gradient (#436): each pixel inside the region in the colour the
+        // canvas would give it there.
+        if let Some((g, frame)) = &f.gradient {
+            let Some(mut mask) = tiny_skia::Mask::new(pixmap.width(), pixmap.height()) else {
+                continue;
+            };
+            mask.fill_path(&skpath, FillRule::EvenOdd, true, Transform::identity());
+            let (w, mdata) = (pixmap.width() as usize, mask.data().to_vec());
+            let pixels = pixmap.pixels_mut();
+            for (i, cov) in mdata.iter().enumerate() {
+                if *cov == 0 {
+                    continue;
+                }
+                let (px, py) = ((i % w) as f64 + 0.5, (i / w) as f64 + 0.5);
+                let world = Vec2::new(min.x + px / k, top - py / k);
+                let (c, a) = locus_doc::gradient::paint_at(g, frame, f.opacity, world);
+                let a = a * f64::from(*cov) / 255.0;
+                // Source-over on premultiplied pixels.
+                let dst = pixels[i];
+                let over = |src: f64, d: u8| {
+                    (src * a + f64::from(d) * (1.0 - a))
+                        .round()
+                        .clamp(0.0, 255.0) as u8
+                };
+                let out_a = over(255.0, dst.alpha());
+                let (r, gg, b) = (
+                    over(c[0], dst.red()),
+                    over(c[1], dst.green()),
+                    over(c[2], dst.blue()),
+                );
+                if let Some(p) = tiny_skia::PremultipliedColorU8::from_rgba(
+                    r.min(out_a),
+                    gg.min(out_a),
+                    b.min(out_a),
+                    out_a,
+                ) {
+                    pixels[i] = p;
+                }
+            }
+            continue;
+        }
         let alpha = (f.opacity.clamp(0.0, 1.0) * 255.0).round();
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let a = alpha as u8;

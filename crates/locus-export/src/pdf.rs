@@ -101,15 +101,39 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
                 alpha = f.opacity;
                 let _ = writeln!(content, "/GS{k} gs");
             }
-            let _ = writeln!(content, "{} rg", rgb(f.colour));
-            for p in &f.paths {
-                let s = map(p.start());
-                let _ = writeln!(content, "{} {} m", num(s.x), num(s.y));
-                for seg in &p.segs {
-                    write_seg(&mut content, seg, &map);
+            let outline = |content: &mut String| {
+                for p in &f.paths {
+                    let s = map(p.start());
+                    let _ = writeln!(content, "{} {} m", num(s.x), num(s.y));
+                    for seg in &p.segs {
+                        write_seg(content, seg, &map);
+                    }
+                    content.push_str("h\n");
                 }
-                content.push_str("h\n");
+            };
+            // A gradient (#436): the region as a clip, and the gradient's
+            // bands inside it, at the fill's opacity.
+            if let Some((g, frame)) = &f.gradient {
+                content.push_str("q\n");
+                outline(&mut content);
+                content.push_str("W* n\n");
+                for b in crate::gradient::bands(g, frame, 1.0) {
+                    let c = b.colour.map(|v| v.round().clamp(0.0, 255.0) as u8);
+                    let _ = writeln!(content, "{} rg", rgb(c));
+                    let mut first = true;
+                    for p in &b.polygon {
+                        let q = map(*p);
+                        let op = if first { "m" } else { "l" };
+                        first = false;
+                        let _ = writeln!(content, "{} {} {op}", num(q.x), num(q.y));
+                    }
+                    content.push_str("h f\n");
+                }
+                content.push_str("Q\n");
+                continue;
             }
+            let _ = writeln!(content, "{} rg", rgb(f.colour));
+            outline(&mut content);
             content.push_str("f*\n");
         }
         content.push_str("EMC\n");

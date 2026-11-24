@@ -515,7 +515,7 @@ impl Patch {
             }
             Patch::RegionFill { key, before, after } => {
                 match if forward { after } else { before } {
-                    Some(f) => doc.region_fills.insert(key.clone(), *f),
+                    Some(f) => doc.region_fills.insert(key.clone(), f.clone()),
                     None => doc.region_fills.remove(key),
                 };
             }
@@ -822,7 +822,7 @@ fn exec(
             keys.dedup();
             for key in keys {
                 crate::region_fill::check_key(&key)?;
-                let before = doc.region_fills.get(&key).copied();
+                let before = doc.region_fills.get(&key).cloned();
                 if before != *fill {
                     record(
                         doc,
@@ -830,7 +830,7 @@ fn exec(
                         Patch::RegionFill {
                             key,
                             before,
-                            after: *fill,
+                            after: fill.clone(),
                         },
                     );
                 }

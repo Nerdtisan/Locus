@@ -1260,7 +1260,7 @@ pub fn save(doc: &Document) -> Result<String, FileError> {
         region_fills: doc
             .region_fills
             .iter()
-            .map(|(k, v)| (k.clone(), *v))
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
     };
     let mut text = ron::ser::to_string_pretty(&file, pretty())
@@ -2417,6 +2417,7 @@ mod tests {
             fill: Some(crate::region_fill::RegionFill {
                 fill: crate::style::Fill::Colour([255, 0, 0]),
                 opacity: 0.4,
+                gradient: None,
             }),
         })
         .unwrap();
@@ -2756,11 +2757,12 @@ mod tests {
         let red = crate::region_fill::RegionFill {
             fill: crate::style::Fill::Colour([243, 94, 94]),
             opacity: 1.0,
+            gradient: None,
         };
         let fill = |ed: &mut Editor| {
             ed.apply(&Command::SetRegionFill {
                 regions: vec![key.clone()],
-                fill: Some(red),
+                fill: Some(red.clone()),
             })
             .unwrap();
         };
@@ -2788,7 +2790,7 @@ mod tests {
             .position(|r| r.key == key)
             .expect("still there");
         assert_eq!(
-            fills[i].and_then(|f| f.painted()),
+            fills[i].as_ref().and_then(|f| f.painted()),
             Some([243, 94, 94]),
             "the red fill survives"
         );
@@ -2812,7 +2814,7 @@ mod tests {
             .key
             .clone();
         let red = doc.region_fills.remove(&key).unwrap();
-        doc.region_fills.insert(crescent, red);
+        doc.region_fills.insert(crescent, red.clone());
         let mut text = save(&doc).unwrap();
         text = text.replace(&current(), "format_version: 20");
         let back = load(&text).unwrap();
@@ -2879,7 +2881,7 @@ mod tests {
                     crate::regions::layer_of(&doc, r) == Some(l1) && r.contains(Vec2::new(x, 0.0))
                 })
                 .unwrap();
-            fills[i].and_then(|f| f.painted())
+            fills[i].as_ref().and_then(|f| f.painted())
         };
         assert_eq!(at(-5.0), Some([243, 94, 94]), "left half");
         assert_eq!(at(5.0), Some([243, 94, 94]), "right half");
@@ -2915,6 +2917,7 @@ mod tests {
                 fill: Some(RegionFill {
                     fill: Fill::Colour([1, 2, 3]),
                     opacity: 1.5,
+                    gradient: None,
                 }),
             })
             .is_err()
