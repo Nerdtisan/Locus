@@ -192,7 +192,7 @@ Expansion {
 - **Variable width (#426), calligraphic (#430) and paint (#434):**
   - The width is a function w(s) of arc length: the profile, or the nib's projection on the path normal, w(θ) = √((a·sin(θ−α))² + (b·cos(θ−α))²), with a the nib size and b = size × roundness. **Superseded by S2:** that offset is off by up to 1.8 mm. Nib sides are C ± p\*(n), the nib's support point (see *Decisions from S1–S3*, item 5).
   - Each side is sampled adaptively until the chord error is under the tolerance and fitted with cubics. The two sides and the caps then go through one `locus-region` boolean, which removes the loops that tight curves make. The boolean works on lines and arcs only (ADR 0008), so the cubics are lowered to biarcs (`to_pieces`) for it.
-  - **Arcs or Béziers (owner question, 2026-11-24): measured by S1. Option (b) is chosen**, pending the owner's confirmation (see *Decisions from S1–S3*, item 3).
+  - **Arcs or Béziers (owner question, 2026-11-24): measured by S1. Option (b) is chosen and owner-approved (2026-11-24)** (see *Decisions from S1–S3*, item 3).
     - Option **(a) biarcs only:** one representation everywhere, as today.
     - Option **(b) keep the fitted cubics:** for the canvas, SVG/PDF and **Expand to geometry**, with biarcs only where they're needed (region booleans, DXF R12, lasers and other arc-based machine output).
     - In (b), the boolean cleanup still runs on biarcs. Each cleaned piece then maps back to the cubic span it came from, and spans the cleanup cut are refitted.
@@ -322,12 +322,12 @@ The w(θ) formula in this ADR offsets along the normal by the nib's support h(n)
    - It gives **2.5–4× fewer nodes** after Expand, and 1.1–4× fewer at looser tolerances.
    - Map-back costs about 40 % more time.
    - Runs whose side is a true arc keep their arcs automatically.
-   - *Owner question of 2026-11-24, answered by measurement; the lead relays it for confirmation.*
-4. **Expand tolerance (new, needs the owner's OK):**
+   - **Owner-approved, 2026-11-24.**
+4. **Expand tolerance (owner-approved, 2026-11-24):**
    - At T = 0.001 mm a 50 mm bulging stroke expands to 87 cubic nodes, which is exact but tedious to edit.
    - Proposal: **Expand to geometry** gets a tolerance setting, default **0.01 mm**. That gives 22–45 nodes, with a measured error of 0.004–0.005 mm, still under any pen, kerf or blade width.
    - Export always uses T.
-5. **Calligraphic model replaced (spec of #430 changes, flagged):**
+5. **Calligraphic model replaced (spec of #430 changes; relayed to the owner 2026-11-24, no objection):**
    - The side curves are **C ± p\*(n)**, the nib's support point, not C ± n·w(θ).
    - The nib itself is placed at every corner and at both ends. An exact circle is used for a round nib, and a fitted ellipse otherwise.
    - Spans are cut where the tangent is parallel to the nib. There a flat nib's support point jumps, and each side is an exact translate of the path (lines, arcs and cubics stay as they are).
@@ -555,7 +555,7 @@ Also:
   - §1 is reworded (conflict 1).
   - Gradient fills get **Rotate with shape**, default on (decision 1).
   - Auto trace is Locus's own implementation from the Potrace paper (decision 8).
-  - Arcs vs Béziers for variable-width outlines: S1 measured it and chose (b), kept cubics (decision 3), pending the owner's confirmation.
+  - Arcs vs Béziers for variable-width outlines: S1 measured it; (b), kept cubics, is owner-approved (decision 3). **Expand to geometry** gets a tolerance setting, default 0.01 mm, owner-approved; export always uses `EXPORT_TOL`.
 - **Defaults still standing unless the owner says otherwise:**
   - **Stroke styles = Centreline** on machine layers.
   - Gradients on regions only.
