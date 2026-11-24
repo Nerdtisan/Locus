@@ -85,68 +85,14 @@ pub fn import_shapes_command(
     if shapes.is_empty() {
         return Err(DocError::Invalid("there is no geometry to import".into()));
     }
-    let mut next = doc.next_id();
-    let mut alloc = || {
-        let id = next;
-        next += 1;
-        id
-    };
-    let layer = LayerId::new(alloc());
+    let mut ids = Ids(doc.next_id());
+    let layer = LayerId::new(ids.next());
     let mut commands = vec![Command::AddLayer {
         name: name.to_owned(),
         colour: REFERENCE_COLOUR,
         operation: Operation::Reference,
     }];
-    let mut points: HashMap<(u64, u64), EntityId> = HashMap::new();
-    let mut point = |p: Vec2, commands: &mut Vec<Command>, alloc: &mut dyn FnMut() -> u64| {
-        *points
-            .entry((p.x.to_bits(), p.y.to_bits()))
-            .or_insert_with(|| {
-                commands.push(Command::AddEntity {
-                    layer,
-                    construction: false,
-                    style: Default::default(),
-                    geom: Geom::Point { pos: p },
-                });
-                EntityId::new(alloc())
-            })
-    };
-    for shape in shapes {
-        let geom = match *shape {
-            ImportShape::Line { a, b } => {
-                let (start, end) = (
-                    point(a, &mut commands, &mut alloc),
-                    point(b, &mut commands, &mut alloc),
-                );
-                if start == end {
-                    continue;
-                }
-                Geom::Line { start, end }
-            }
-            ImportShape::Arc { center, start, end } => Geom::Arc {
-                center: point(center, &mut commands, &mut alloc),
-                start: point(start, &mut commands, &mut alloc),
-                end: point(end, &mut commands, &mut alloc),
-            },
-            ImportShape::Circle { center, radius } => Geom::Circle {
-                center: point(center, &mut commands, &mut alloc),
-                radius,
-            },
-            ImportShape::Cubic { a, c1, c2, b } => Geom::Bezier {
-                start: point(a, &mut commands, &mut alloc),
-                start_ctrl: point(c1, &mut commands, &mut alloc),
-                end_ctrl: point(c2, &mut commands, &mut alloc),
-                end: point(b, &mut commands, &mut alloc),
-            },
-        };
-        commands.push(Command::AddEntity {
-            layer,
-            construction: false,
-            style: Default::default(),
-            geom,
-        });
-        alloc();
-    }
+    push_shapes(&mut commands, &mut ids, layer, shapes);
     // Locked last: a locked layer refuses new geometry (SPEC §4 rule 3).
     commands.push(Command::SetLayerLocked {
         id: layer,
@@ -156,6 +102,133 @@ pub fn import_shapes_command(
         label: format!("Import {name}"),
         commands,
     })
+}
+
+/// Where a group of shapes goes in [`shapes_command`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShapeTarget {
+    /// An existing, unlocked layer.
+    Layer(LayerId),
+    /// A new layer, made first.
+    NewLayer {
+        name: String,
+        colour: [u8; 3],
+        operation: Operation,
+    },
+}
+
+/// Shapes for one layer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapeGroup {
+    pub target: ShapeTarget,
+    pub shapes: Vec<ImportShape>,
+}
+
+/// One compound command, labelled `label`, that adds every group's shapes
+/// on its layer: ordinary, editable geometry (Auto trace, #461). Shared end
+/// points join, as on import. IDs are predicted as in
+/// [`import_shapes_command`], so apply it to the document it was built from.
+///
+/// # Errors
+/// [`DocError::Invalid`] when there's nothing to add, or a target layer is
+/// missing or locked.
+pub fn shapes_command(doc: &Document, label: &str, groups: &[ShapeGroup]) -> Result<Command, DocError> {
+    if groups.iter().all(|g| g.shapes.is_empty()) {
+        return Err(DocError::Invalid("there is no geometry to add".into()));
+    }
+    let mut ids = Ids(doc.next_id());
+    let mut commands = Vec::new();
+    for g in groups.iter().filter(|g| !g.shapes.is_empty()) {
+        let layer = match &g.target {
+            ShapeTarget::Layer(l) => {
+                let layer = doc.layer(*l).ok_or(DocError::UnknownLayer(*l))?;
+                if layer.locked {
+                    return Err(DocError::Invalid("that layer is locked".into()));
+                }
+                *l
+            }
+            ShapeTarget::NewLayer {
+                name,
+                colour,
+                operation,
+            } => {
+                commands.push(Command::AddLayer {
+                    name: name.clone(),
+                    colour: *colour,
+                    operation: *operation,
+                });
+                LayerId::new(ids.next())
+            }
+        };
+        push_shapes(&mut commands, &mut ids, layer, &g.shapes);
+    }
+    Ok(Command::Compound {
+        label: label.to_owned(),
+        commands,
+    })
+}
+
+/// IDs as the compound's commands will allocate them, in order.
+struct Ids(u64);
+
+impl Ids {
+    fn next(&mut self) -> u64 {
+        let id = self.0;
+        self.0 += 1;
+        id
+    }
+}
+
+/// `AddEntity` commands for `shapes` on `layer`: points first where new,
+/// shared bit-for-bit, then each curve.
+fn push_shapes(commands: &mut Vec<Command>, ids: &mut Ids, layer: LayerId, shapes: &[ImportShape]) {
+    let mut points: HashMap<(u64, u64), EntityId> = HashMap::new();
+    let mut point = |p: Vec2, commands: &mut Vec<Command>, ids: &mut Ids| {
+        *points
+            .entry((p.x.to_bits(), p.y.to_bits()))
+            .or_insert_with(|| {
+                commands.push(Command::AddEntity {
+                    layer,
+                    construction: false,
+                    style: Default::default(),
+                    geom: Geom::Point { pos: p },
+                });
+                EntityId::new(ids.next())
+            })
+    };
+    for shape in shapes {
+        let geom = match *shape {
+            ImportShape::Line { a, b } => {
+                let (start, end) = (point(a, commands, ids), point(b, commands, ids));
+                if start == end {
+                    continue;
+                }
+                Geom::Line { start, end }
+            }
+            ImportShape::Arc { center, start, end } => Geom::Arc {
+                center: point(center, commands, ids),
+                start: point(start, commands, ids),
+                end: point(end, commands, ids),
+            },
+            ImportShape::Circle { center, radius } => Geom::Circle {
+                center: point(center, commands, ids),
+                radius,
+            },
+            ImportShape::Cubic { a, c1, c2, b } => Geom::Bezier {
+                start: point(a, commands, ids),
+                start_ctrl: point(c1, commands, ids),
+                end_ctrl: point(c2, commands, ids),
+                end: point(b, commands, ids),
+            },
+        };
+        commands.push(Command::AddEntity {
+            layer,
+            construction: false,
+            style: Default::default(),
+            geom,
+        });
+        ids.next();
+    }
 }
 
 /// Largest calibration factor in one step (and the inverse, the smallest).
@@ -503,6 +576,42 @@ mod tests {
             },
             reversed: false,
         }
+    }
+
+    /// #461: traced shapes land on an existing layer and on new layers as
+    /// one undo step, with shared end points joined per layer.
+    #[test]
+    fn shapes_command_adds_groups_as_one_step() {
+        let mut ed = Editor::new(Document::new());
+        let sq = |o: f64| -> Vec<ImportShape> {
+            let p = [(0.0, 0.0), (5.0, 0.0), (5.0, 5.0), (0.0, 5.0)]
+                .map(|(x, y)| Vec2::new(x + o, y));
+            (0..4).map(|k| ImportShape::Line { a: p[k], b: p[(k + 1) % 4] }).collect()
+        };
+        let groups = [
+            ShapeGroup {
+                target: ShapeTarget::Layer(Document::default_layer()),
+                shapes: sq(0.0),
+            },
+            ShapeGroup {
+                target: ShapeTarget::NewLayer {
+                    name: "Trace red".into(),
+                    colour: [200, 0, 0],
+                    operation: Operation::Draw,
+                },
+                shapes: sq(10.0),
+            },
+        ];
+        let cmd = shapes_command(ed.document(), "Auto trace", &groups).unwrap();
+        ed.apply(&cmd).unwrap();
+        let doc = ed.document();
+        assert_eq!(doc.layers().len(), 2);
+        // 4 shared points + 4 lines per square.
+        assert_eq!(doc.entities().len(), 16);
+        assert_eq!(ed.undo_label(), Some("Auto trace"));
+        ed.undo().unwrap();
+        assert!(ed.document().entities().is_empty());
+        assert!(shapes_command(ed.document(), "x", &[]).is_err());
     }
 
     /// #463 (owner decision): a free X/Y scale stretches a vector reference;
