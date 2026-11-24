@@ -343,26 +343,44 @@ impl AppState {
         if moved {
             p.opacity = (opacity / 100.0).clamp(0.0, 1.0);
         }
-        let px_w = f64::from(img.width_px);
-        let mut width = px_w * p.mm_per_px;
-        let sized = row(ui, "Width", |ui| {
-            let r = ui
-                .add(
-                    egui::DragValue::new(&mut width)
-                        .range(0.001..=1.0e6)
-                        .speed(0.1)
-                        .suffix(" mm"),
-                )
-                .on_hover_text("The image's width; its height follows");
-            ui.weak(format!(
-                "× {:.3} mm",
-                f64::from(img.height_px) * width / px_w
-            ));
-            r.changed()
-        });
-        // A typed width scales about the same pivot as Calibrate (#468):
-        // the centre by default, or the anchor corner (the image's origin).
+        // Size (#463): Uniform keeps the aspect; off, Width and Height are
+        // free. A typed size scales about the same pivot as Calibrate
+        // (#468): the centre by default, or the anchor corner.
         use crate::views::canvas::calibrate_tool::Pivot;
+        let size_key = egui::Id::new(("image-size", id.get()));
+        let now = img.size_mm();
+        let (mut w, mut h) = ui.data(|d| d.get_temp(size_key)).unwrap_or((now.x, now.y));
+        let mut uniform = self.tools.transform.uniform;
+        let mut sized = false;
+        row(ui, "Uniform", |ui| {
+            crate::theme::checkbox(ui, &mut uniform, "")
+                .on_hover_text("Off: type the width and height separately")
+        });
+        self.tools.transform.uniform = uniform;
+        let field = |ui: &mut egui::Ui, v: &mut f64| {
+            ui.add(
+                egui::DragValue::new(v)
+                    .range(0.001..=1.0e6)
+                    .speed(0.1)
+                    .suffix(" mm"),
+            )
+            .changed()
+        };
+        if row(ui, "Width", |ui| field(ui, &mut w)) {
+            sized = true;
+            if uniform && now.x > 0.0 {
+                h = now.y * w / now.x;
+            }
+        }
+        if row(ui, "Height", |ui| field(ui, &mut h)) {
+            sized = true;
+            if uniform && now.y > 0.0 {
+                w = now.x * h / now.y;
+            }
+        }
+        if sized {
+            ui.data_mut(|d| d.insert_temp(size_key, (w, h)));
+        }
         let corner = self.tools.calibrate.pivot == Pivot::AnchorCorner;
         row(ui, "Scale about", |ui| {
             if let Some(c) = crate::views::canvas::dialog::segmented(
@@ -377,20 +395,22 @@ impl AppState {
                 };
             }
         });
-        if sized && width.is_finite() && width > 0.0 {
-            let s = (width / px_w).clamp(
-                locus_doc::image::MIN_MM_PER_PX,
-                locus_doc::image::MAX_MM_PER_PX,
-            );
-            p = scaled_placement(p, img.width_px, img.height_px, s, corner);
-        }
         ui.weak(if corner {
-            "Type the width: the image keeps its anchor corner. Or Calibrate from a known distance."
+            "Type a size: the image keeps its anchor corner. Or Calibrate from a known distance."
         } else {
-            "Type the width: the image keeps its centre. Or Calibrate from a known distance."
+            "Type a size: the image keeps its centre. Or Calibrate from a known distance."
         });
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
         self.image_position(ui, id, &img, settled);
+        if settled && let Some((w, h)) = ui.data(|d| d.get_temp::<(f64, f64)>(size_key)) {
+            ui.data_mut(|d| d.remove::<(f64, f64)>(size_key));
+            if let Some(transform) = size_transform(&img, w, h, uniform, corner) {
+                self.apply_reporting(&Command::TransformReference {
+                    layer: id,
+                    transform,
+                });
+            }
+        }
         if p == img.placement {
             ui.data_mut(|d| d.remove::<ImagePlacement>(key));
         } else if settled {
@@ -843,34 +863,37 @@ pub(crate) fn describe(doc: &Document, id: EntityId, units: Units) -> Vec<(Strin
     rows
 }
 
-/// An image placement at pixel size `mm_per_px`, scaled about its centre
-/// or, with `corner`, its anchor corner (the origin) (#464, #468).
-fn scaled_placement(
-    p: locus_doc::ImagePlacement,
-    width_px: u32,
-    height_px: u32,
-    mm_per_px: f64,
+/// The scale that makes `img` `w` × `h` mm (#463, #468): uniform (from
+/// the width) or free along the image's own edges, about its centre or,
+/// with `corner`, its drawn anchor corner. `None` when nothing changes or
+/// a size isn't usable.
+fn size_transform(
+    img: &locus_doc::RefImage,
+    w: f64,
+    h: f64,
+    uniform: bool,
     corner: bool,
-) -> locus_doc::ImagePlacement {
-    let size = |s: f64| locus_geom::Vec2::new(f64::from(width_px) * s, f64::from(height_px) * s);
-    // The pivot is where it is drawn: a turned image's anchor corner turns
-    // with it (#463).
-    let centre = p.origin + size(p.mm_per_px) * 0.5;
-    let pivot = if corner {
-        locus_doc::transform::Transform::Rotate {
-            center: centre,
-            angle: p.rotation,
-        }
-        .point(p.origin)
+) -> Option<locus_doc::transform::Transform> {
+    use locus_doc::transform::Transform;
+    let now = img.size_mm();
+    let (sx, sy) = (w / now.x, h / now.y);
+    if ![sx, sy].iter().all(|f| f.is_finite() && *f > 0.0) {
+        return None;
+    }
+    let center = if corner {
+        img.corners()[0]
     } else {
-        centre
+        img.centre()
     };
-    let new_centre = pivot + (centre - pivot) * (mm_per_px / p.mm_per_px);
-    let origin = new_centre - size(mm_per_px) * 0.5;
-    locus_doc::ImagePlacement {
-        origin,
-        mm_per_px,
-        ..p
+    if uniform || (sx - sy).abs() <= 1e-12 * sx {
+        ((sx - 1.0).abs() > 1e-12).then_some(Transform::Scale { center, factor: sx })
+    } else {
+        Some(Transform::Stretch {
+            center,
+            sx,
+            sy,
+            angle: img.placement.rotation,
+        })
     }
 }
 
@@ -942,26 +965,50 @@ mod tests {
         assert_eq!(state.tools.calibrate.layer, Some(layer));
     }
 
-    /// #468: a typed width keeps the image's centre by default, or its
-    /// anchor corner when chosen.
+    /// #468, #463: a typed size keeps the centre or the anchor corner,
+    /// uniformly or free along the image's edges.
     #[test]
-    fn a_typed_width_keeps_the_centre_or_the_corner() {
-        let p = locus_doc::ImagePlacement {
-            origin: locus_geom::Vec2::new(-50.0, -25.0),
-            mm_per_px: 1.0,
-            opacity: 1.0,
-            rotation: 0.0,
+    #[allow(clippy::unwrap_used)]
+    fn a_typed_size_scales_uniformly_or_freely() {
+        use locus_doc::transform::Transform;
+        // 4 × 2 px at 1 mm, centred on 0,0 (the pixels aren't read).
+        let img = locus_doc::RefImage {
+            format: locus_doc::image::ImageFormat::Png,
+            width_px: 4,
+            height_px: 2,
+            data: std::sync::Arc::from(Vec::new()),
+            placement: locus_doc::ImagePlacement {
+                origin: locus_geom::Vec2::new(-2.0, -1.0),
+                mm_per_px: 1.0,
+                opacity: 1.0,
+                rotation: 0.0,
+                mm_per_px_y: None,
+            },
         };
-        // 100 × 50 px, centred on 0,0; halve it.
-        let c = super::scaled_placement(p, 100, 50, 0.5, false);
+        let c = img.centre();
         assert_eq!(
-            c.origin,
-            locus_geom::Vec2::new(-25.0, -12.5),
-            "still centred"
+            super::size_transform(&img, 8.0, 4.0, true, false),
+            Some(Transform::Scale {
+                center: c,
+                factor: 2.0
+            })
         );
-        let k = super::scaled_placement(p, 100, 50, 0.5, true);
-        assert_eq!(k.origin, p.origin, "the corner stays");
-        assert_eq!(k.mm_per_px, 0.5);
+        let k = super::size_transform(&img, 8.0, 4.0, true, true).unwrap();
+        assert!(matches!(k, Transform::Scale { center, .. } if center == img.corners()[0]));
+        assert_eq!(
+            super::size_transform(&img, 8.0, 3.0, false, false),
+            Some(Transform::Stretch {
+                center: c,
+                sx: 2.0,
+                sy: 1.5,
+                angle: 0.0
+            })
+        );
+        assert_eq!(super::size_transform(&img, 4.0, 2.0, false, false), None);
+        assert_eq!(
+            super::size_transform(&img, f64::NAN, 2.0, true, false),
+            None
+        );
     }
 
     /// #370, #451: selecting a region shows its own Fill; setting it fills

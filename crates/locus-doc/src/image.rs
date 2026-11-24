@@ -71,6 +71,18 @@ pub struct ImagePlacement {
     /// `-π..=π` (#463, format v22). Omitted while 0.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rotation: f64,
+    /// A pixel's height, mm, when it differs from its width `mm_per_px`
+    /// (a free X/Y scale, #463, format v23). Omitted for square pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mm_per_px_y: Option<f64>,
+}
+
+impl ImagePlacement {
+    /// A pixel's width and height, mm.
+    #[must_use]
+    pub fn pixel(&self) -> Vec2 {
+        Vec2::new(self.mm_per_px, self.mm_per_px_y.unwrap_or(self.mm_per_px))
+    }
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)] // serde's signature
@@ -99,13 +111,16 @@ impl ImagePlacement {
                 });
             }
         }
-        if !(self.mm_per_px.is_finite()
-            && (MIN_MM_PER_PX..=MAX_MM_PER_PX).contains(&self.mm_per_px))
+        for s in [Some(self.mm_per_px), self.mm_per_px_y]
+            .into_iter()
+            .flatten()
         {
-            return Err(DocError::BadValue {
-                what: "image scale",
-                value: self.mm_per_px,
-            });
+            if !(s.is_finite() && (MIN_MM_PER_PX..=MAX_MM_PER_PX).contains(&s)) {
+                return Err(DocError::BadValue {
+                    what: "image scale",
+                    value: s,
+                });
+            }
         }
         if !(self.opacity.is_finite() && (0.0..=1.0).contains(&self.opacity)) {
             return Err(DocError::BadValue {
@@ -140,8 +155,11 @@ impl RefImage {
     /// Its size on the canvas, mm.
     #[must_use]
     pub fn size_mm(&self) -> Vec2 {
-        let s = self.placement.mm_per_px;
-        Vec2::new(f64::from(self.width_px) * s, f64::from(self.height_px) * s)
+        let s = self.placement.pixel();
+        Vec2::new(
+            f64::from(self.width_px) * s.x,
+            f64::from(self.height_px) * s.y,
+        )
     }
 
     /// The image's corners before its rotation, bottom-left and top-right,
@@ -190,25 +208,45 @@ impl RefImage {
     }
 
     /// Its placement after `t` (#463): the centre moves with `t`, the
-    /// rotation adds a turn and the pixel size a scale.
+    /// rotation adds a turn and the pixel size a scale. `None` when `t` is
+    /// a free X/Y scale whose axes aren't the image's own edges: the result
+    /// would be sheared, which an image can't be.
     #[must_use]
-    pub fn transformed_placement(&self, t: &crate::transform::Transform) -> ImagePlacement {
+    pub fn transformed_placement(&self, t: &crate::transform::Transform) -> Option<ImagePlacement> {
         use crate::transform::Transform;
         let p = self.placement;
         let centre = t.point(self.centre());
-        let (mm_per_px, rotation) = match *t {
-            Transform::Move(_) => (p.mm_per_px, p.rotation),
-            Transform::Rotate { angle, .. } => (p.mm_per_px, wrap_angle(p.rotation + angle)),
-            Transform::Scale { factor, .. } => (p.mm_per_px * factor, p.rotation),
+        let px = p.pixel();
+        let (pixel, rotation) = match *t {
+            Transform::Move(_) => (px, p.rotation),
+            Transform::Rotate { angle, .. } => (px, wrap_angle(p.rotation + angle)),
+            Transform::Scale { factor, .. } => (px * factor, p.rotation),
+            Transform::Stretch { sx, sy, angle, .. } => {
+                // Quarter turns between the stretch's axes and the image's.
+                let q = (angle - p.rotation) / std::f64::consts::FRAC_PI_2;
+                if (q - q.round()).abs() > 1e-9 {
+                    return None;
+                }
+                let (fx, fy) = if (q.round() as i64).rem_euclid(2) == 0 {
+                    (sx, sy)
+                } else {
+                    (sy, sx)
+                };
+                (Vec2::new(px.x * fx, px.y * fy), p.rotation)
+            }
         };
-        let half =
-            Vec2::new(f64::from(self.width_px), f64::from(self.height_px)) * (mm_per_px / 2.0);
-        ImagePlacement {
-            origin: centre - half,
-            mm_per_px,
+        let size = Vec2::new(
+            f64::from(self.width_px) * pixel.x,
+            f64::from(self.height_px) * pixel.y,
+        );
+        let square = (pixel.x - pixel.y).abs() <= 1e-12 * pixel.x.abs();
+        Some(ImagePlacement {
+            origin: centre - size * 0.5,
+            mm_per_px: pixel.x,
+            mm_per_px_y: (!square).then_some(pixel.y),
             rotation,
             ..p
-        }
+        })
     }
 
     /// The image's own invariants (it is untrusted input).
@@ -286,6 +324,7 @@ pub(crate) fn tiny_png() -> RefImage {
             mm_per_px: 0.5,
             opacity: 0.5,
             rotation: 0.0,
+            mm_per_px_y: None,
         },
     }
 }
@@ -467,6 +506,64 @@ mod tests {
             ed.undo().unwrap();
         }
         assert_eq!(ed.document().image(layer), Some(&start));
+    }
+
+    /// #463: a free scale goes along the image's own edges, even turned
+    /// (a quarter turn swaps X and Y), and is refused across them.
+    #[test]
+    fn a_free_scale_stretches_the_image_along_its_edges() {
+        use crate::Command;
+        use crate::transform::Transform;
+        use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+        let (mut ed, layer) = with_image();
+        let img = ed.document().image(layer).cloned().unwrap();
+        let size = img.size_mm();
+        let stretch = |angle| Transform::Stretch {
+            center: img.centre(),
+            sx: 3.0,
+            sy: 1.0,
+            angle,
+        };
+        ed.apply(&Command::TransformReference {
+            layer,
+            transform: stretch(0.0),
+        })
+        .unwrap();
+        let wide = ed.document().image(layer).cloned().unwrap();
+        assert!((wide.size_mm().x - 3.0 * size.x).abs() < 1e-9);
+        assert!((wide.size_mm().y - size.y).abs() < 1e-9);
+        assert!(wide.centre().distance(img.centre()) < 1e-9);
+        assert!(wide.placement.mm_per_px_y.is_some());
+        ed.undo().unwrap();
+        // A quarter turn between the axes: the stretch goes on Y.
+        ed.apply(&Command::TransformReference {
+            layer,
+            transform: stretch(FRAC_PI_2),
+        })
+        .unwrap();
+        let tall = ed.document().image(layer).cloned().unwrap();
+        assert!((tall.size_mm().y - 3.0 * size.y).abs() < 1e-9);
+        ed.undo().unwrap();
+        // Across the edges it would shear: refused, nothing changes.
+        assert!(
+            ed.apply(&Command::TransformReference {
+                layer,
+                transform: stretch(FRAC_PI_4),
+            })
+            .is_err()
+        );
+        assert_eq!(ed.document().image(layer), Some(&img));
+        // A uniform scale back to square pixels drops the Y size.
+        let mut p = img.placement;
+        p.mm_per_px_y = Some(p.mm_per_px * 2.0);
+        assert!(
+            ImagePlacement {
+                mm_per_px_y: Some(f64::NAN),
+                ..p
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     /// A turned image covers its turned corners, not its old box.

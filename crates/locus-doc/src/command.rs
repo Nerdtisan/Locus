@@ -345,7 +345,8 @@ impl Command {
             Command::TransformReference { transform, .. } => match transform {
                 crate::transform::Transform::Move(_) => "Move reference",
                 crate::transform::Transform::Rotate { .. } => "Rotate reference",
-                crate::transform::Transform::Scale { .. } => "Scale reference",
+                crate::transform::Transform::Scale { .. }
+                | crate::transform::Transform::Stretch { .. } => "Scale reference",
             }
             .to_owned(),
             Command::Compound { label, .. } => label.clone(),

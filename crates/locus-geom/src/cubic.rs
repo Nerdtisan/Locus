@@ -364,6 +364,56 @@ fn arc_with_tangent(p: Vec2, t: Vec2, q: Vec2) -> Option<Piece> {
     }))
 }
 
+/// Cubic Béziers along a circular arc, within `tol` of the true circle
+/// (#463: a free X/Y scale turns circles and arcs into curves, and an
+/// affine map keeps Béziers exact). The arc runs CCW from `start_angle` by
+/// `sweep` radians about `center`. Each piece is the standard
+/// tangent-length approximation, whose largest radial error is
+/// `r·(4/27)·sin⁶(θ/4)/cos²(θ/4)` for a piece of angle θ; pieces are at
+/// most a quarter turn and at most 256 of them.
+#[must_use]
+pub fn arc_cubics(center: Vec2, radius: f64, start_angle: f64, sweep: f64, tol: f64) -> Vec<Cubic> {
+    if !(radius.is_finite() && radius > 0.0 && sweep.is_finite() && sweep > 0.0) {
+        return Vec::new();
+    }
+    let err = |theta: f64| {
+        let q = theta / 4.0;
+        radius * (4.0 / 27.0) * q.sin().powi(6) / q.cos().powi(2)
+    };
+    let mut n = (sweep / core::f64::consts::FRAC_PI_2).ceil().max(1.0) as usize;
+    while n < 256 && err(sweep / n as f64) > tol {
+        n += 1;
+    }
+    let step = sweep / n as f64;
+    let k = 4.0 / 3.0 * (step / 4.0).tan() * radius;
+    (0..n)
+        .map(|i| {
+            let (a0, a1) = (
+                start_angle + step * i as f64,
+                start_angle + step * (i + 1) as f64,
+            );
+            let (u0, u1) = (Vec2::from_angle(a0), Vec2::from_angle(a1));
+            let (p0, p1) = (center + u0 * radius, center + u1 * radius);
+            // Tangents: CCW perpendiculars.
+            Cubic::new(p0, p0 + u0.perp() * k, p1 - u1.perp() * k, p1)
+        })
+        .collect()
+}
+
+impl Arc {
+    /// [`arc_cubics`] for this arc.
+    #[must_use]
+    pub fn to_cubics(&self, tol: f64) -> Vec<Cubic> {
+        arc_cubics(
+            self.center,
+            self.radius(),
+            self.start_angle(),
+            self.sweep(),
+            tol,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,5 +586,23 @@ mod tests {
             at = e;
         }
         assert!(at.distance(c.p1) < 1e-9);
+    }
+
+    #[test]
+    fn arcs_become_beziers_within_tolerance() {
+        let c = Vec2::new(3.0, -2.0);
+        for (r, sweep) in [(1.0, 1.0), (50.0, core::f64::consts::TAU), (500.0, 2.0)] {
+            let pieces = super::arc_cubics(c, r, 0.3, sweep, crate::EXPORT_TOL);
+            assert!(!pieces.is_empty());
+            for p in &pieces {
+                for k in 0..=16 {
+                    let d = p.eval(f64::from(k) / 16.0).distance(c);
+                    assert!((d - r).abs() <= crate::EXPORT_TOL, "r {r}: {d}");
+                }
+            }
+            let end = c + Vec2::from_angle(0.3 + sweep) * r;
+            assert!(pieces.last().unwrap().p1.distance(end) < 1e-9);
+        }
+        assert!(super::arc_cubics(c, 0.0, 0.0, 1.0, 1e-3).is_empty());
     }
 }

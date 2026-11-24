@@ -416,6 +416,43 @@ mod tests {
         assert_eq!(c.reference_target(), Some(layer));
     }
 
+    /// #463 (owner decision): Scale is uniform by default; with Uniform off
+    /// (or an Alt-drag) X and Y scale freely, as one undo step.
+    #[test]
+    fn scale_is_uniform_or_free_for_a_reference() {
+        use crate::modify_tool::TransformMode;
+        let (mut c, layer) = with_reference();
+        c.view.browser_layer = Some(layer);
+        let before = points(&c, layer);
+        c.tools.transform.factor = 2.0;
+        c.tools.transform.factor_y = 2.0;
+        assert!(c.apply_transform(TransformMode::Scale, Units::Mm));
+        c.undo();
+        c.tools.transform.reset();
+        assert!(c.tools.transform.uniform, "uniform by default");
+        c.tools.transform.uniform = false;
+        c.tools.transform.factor = 3.0;
+        assert!(matches!(
+            c.tools.transform.transform(TransformMode::Scale, Vec2::ZERO),
+            locus_doc::transform::Transform::Stretch { sx, sy, .. } if sx == 3.0 && sy == 1.0
+        ));
+        assert!(c.apply_transform(TransformMode::Scale, Units::Mm));
+        assert_eq!(c.undo_label(), Some("Scale reference"));
+        let after = points(&c, layer);
+        // The 10 mm line on y = 50 is now 30 mm long; its y is unchanged.
+        let span = |v: &[Vec2]| {
+            v.iter().map(|p| p.x).fold(f64::MIN, f64::max)
+                - v.iter().map(|p| p.x).fold(f64::MAX, f64::min)
+        };
+        assert!((span(&after) - 3.0 * span(&before)).abs() < 1e-9);
+        assert!(
+            after
+                .iter()
+                .zip(&before)
+                .all(|(a, b)| (a.y - b.y).abs() < 1e-9)
+        );
+    }
+
     /// #464: with "Anchor corner", Calibrate keeps the reference's anchor
     /// (the bottom-left of its geometry, here the line's start) fixed,
     /// scaled ×2 then ×0.5. (`locus-doc` checks one placed at 0,0 stays.)

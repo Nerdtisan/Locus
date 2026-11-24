@@ -40,6 +40,16 @@ pub enum Transform {
         center: Vec2,
         factor: f64,
     },
+    /// About `center`, by `sx` along the axis at `angle` (radians, CCW
+    /// from +x) and `sy` across it, both > 0 (#463, owner decision
+    /// 2026-11-24). References only: a circle doesn't stay a circle, so
+    /// the shapes' tools never make one.
+    Stretch {
+        center: Vec2,
+        sx: f64,
+        sy: f64,
+        angle: f64,
+    },
 }
 
 impl Transform {
@@ -54,6 +64,19 @@ impl Transform {
                 center + Vec2::new(q.x * c - q.y * s, q.x * s + q.y * c)
             }
             Transform::Scale { center, factor } => center + (p - center) * factor,
+            Transform::Stretch {
+                center,
+                sx,
+                sy,
+                angle,
+            } => {
+                let (s, c) = angle.sin_cos();
+                let q = p - center;
+                // Into the stretch's axes, scale, and back.
+                let (u, v) = (q.x * c + q.y * s, -q.x * s + q.y * c);
+                let (u, v) = (u * sx, v * sy);
+                center + Vec2::new(u * c - v * s, u * s + v * c)
+            }
         }
     }
 
@@ -62,6 +85,8 @@ impl Transform {
     pub fn length(&self, l: f64) -> f64 {
         match *self {
             Transform::Scale { factor, .. } => l * factor,
+            // A stretch has no single length factor; this is the area's.
+            Transform::Stretch { sx, sy, .. } => l * (sx * sy).abs().sqrt(),
             _ => l,
         }
     }
@@ -72,6 +97,16 @@ impl Transform {
             Transform::Rotate { center, angle } => center.is_finite() && angle.is_finite(),
             Transform::Scale { center, factor } => {
                 center.is_finite() && factor.is_finite() && factor > SOLVER_TOL
+            }
+            Transform::Stretch {
+                center,
+                sx,
+                sy,
+                angle,
+            } => {
+                center.is_finite()
+                    && angle.is_finite()
+                    && [sx, sy].iter().all(|f| f.is_finite() && *f > SOLVER_TOL)
             }
         }
     }
@@ -84,6 +119,8 @@ impl Transform {
             (Transform::Rotate { .. }, true) => "Copy (rotate)",
             (Transform::Scale { .. }, false) => "Scale",
             (Transform::Scale { .. }, true) => "Copy (scale)",
+            (Transform::Stretch { .. }, false) => "Scale",
+            (Transform::Stretch { .. }, true) => "Copy (scale)",
         }
     }
 }
@@ -115,7 +152,8 @@ pub fn transform(
     t: Transform,
     copy: bool,
 ) -> Result<Plan, ModifyError> {
-    if !t.valid() {
+    // A free X/Y scale is for references (#463); shapes keep their circles.
+    if !t.valid() || matches!(t, Transform::Stretch { .. }) {
         return Err(ModifyError::BadSize);
     }
     let all = closure(doc, sel)?;
@@ -264,7 +302,8 @@ fn adjusted(
             continue;
         }
         match *t {
-            Transform::Move(_) => {}
+            // Refused before this point (shapes never stretch).
+            Transform::Move(_) | Transform::Stretch { .. } => {}
             Transform::Rotate { angle, .. } => {
                 let turns = quarter_turns(angle);
                 let swapped = match (c, turns) {

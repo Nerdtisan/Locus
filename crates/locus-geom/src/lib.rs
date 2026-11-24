@@ -17,7 +17,7 @@ pub mod units;
 pub mod vec2;
 
 pub use bbox::Aabb;
-pub use cubic::{Cubic, Piece};
+pub use cubic::{Cubic, Piece, arc_cubics};
 pub use primitives::{Arc, Circle, Line};
 pub use tolerance::{EXPORT_TOL, SOLVER_TOL};
 pub use transform::Affine2;
