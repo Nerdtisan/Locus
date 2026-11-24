@@ -296,6 +296,10 @@ pub enum Command {
     ExpandStyle {
         entities: Vec<EntityId>,
         tol: f64,
+        /// Outline (filled areas as closed curves, the default) or
+        /// Centrelines (the pen paths: each dash an open curve), #427.
+        #[serde(default)]
+        mode: crate::expand::ExpandMode,
     },
     /// Several commands as one labelled, atomic, single-step undo.
     Compound {
@@ -1289,9 +1293,13 @@ fn exec(
                 );
             }
         }
-        Command::ExpandStyle { entities, tol } => {
+        Command::ExpandStyle {
+            entities,
+            tol,
+            mode,
+        } => {
             use crate::offset::Out;
-            let (groups, sources) = crate::expand::plan(doc, entities, *tol)?;
+            let (groups, sources) = crate::expand::plan(doc, entities, *tol, *mode)?;
             let delete = crate::delete::delete_entities(doc, &sources);
             for g in groups {
                 let mut ids: Vec<EntityId> = Vec::with_capacity(g.out.len());

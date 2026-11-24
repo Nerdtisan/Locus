@@ -24,9 +24,11 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod chain;
+mod dash;
 mod style;
 
 pub use chain::{Chain, chains};
+pub use dash::{CORNER_TURN, Dash, DashAlign, MAX_DASH_LEN, MAX_DASH_PAIRS, dashes};
 pub use style::{Align, Cap, DEFAULT_MITER, Join, LineStyle, MAX_MITER, MIN_MITER};
 
 use core::f64::consts::{PI, TAU};
@@ -49,6 +51,8 @@ pub struct Limits {
     pub pieces: usize,
     /// Triangles of one canvas mesh.
     pub triangles: usize,
+    /// Dashes of one path (placements, ADR 0019).
+    pub dashes: usize,
 }
 
 impl Default for Limits {
@@ -56,6 +60,7 @@ impl Default for Limits {
         Self {
             pieces: 200_000,
             triangles: 2_000_000,
+            dashes: 10_000,
         }
     }
 }
@@ -314,6 +319,23 @@ pub fn expand(
     if chain.segs.is_empty() {
         return Ok(Area::default());
     }
+    // A dashed stroke is the union of its dashes, each capped and joined
+    // like a stroke of its own, always centred.
+    if let Some(d) = style.dash {
+        let solid = LineStyle {
+            dash: None,
+            align: Align::Centre,
+            ..*style
+        };
+        let mut loops = Vec::new();
+        for c in dashes(chain, &d, limits)? {
+            let h = width * 0.5;
+            loops.extend(tube(&c, h, solid.cap, solid.join));
+        }
+        let mut out = boolean(&Area { loops }, &Area::default(), BoolOp::Union);
+        locus_region::offset::drop_specks(&mut out);
+        return Ok(out);
+    }
     let align = if chain.closed {
         style.align
     } else {
@@ -345,7 +367,8 @@ pub fn bounds(chain: &Chain, width: f64, style: &LineStyle) -> Option<Aabb> {
     } else {
         0.0
     };
-    let align = if chain.closed {
+    // Dashed strokes are always centred (see `expand`).
+    let align = if chain.closed && style.dash.is_none() {
         style.align
     } else {
         Align::Centre
@@ -356,7 +379,14 @@ pub fn bounds(chain: &Chain, width: f64, style: &LineStyle) -> Option<Aabb> {
         Align::Outside => w,
     };
     let mut bb = chain.segs.iter().map(Seg::bbox).reduce(Aabb::union)?;
-    bb = Aabb::from_points(bb.min - Vec2::new(h, h), bb.max + Vec2::new(h, h));
+    // Square caps on dashes sit anywhere along the path: their corners reach
+    // h·√2 from it.
+    let r = if style.dash.is_some() && style.cap == Cap::Square {
+        h * core::f64::consts::SQRT_2
+    } else {
+        h
+    };
+    bb = Aabb::from_points(bb.min - Vec2::new(r, r), bb.max + Vec2::new(r, r));
     if h > 0.0 {
         for (v, t1, t2) in corners(chain) {
             if let Some(Corner::Poly(p)) = corner(v, t1, t2, h, style.join) {
@@ -391,6 +421,17 @@ pub fn mesh(
     out: &mut Vec<[Vec2; 3]>,
 ) -> Result<(), StrokeError> {
     check(chain, width, style, limits)?;
+    if let Some(d) = style.dash {
+        let solid = LineStyle {
+            dash: None,
+            align: Align::Centre,
+            ..*style
+        };
+        for c in dashes(chain, &d, limits)? {
+            mesh(&c, width, &solid, tol, limits, out)?;
+        }
+        return Ok(());
+    }
     let tol = if tol.is_finite() { tol.max(1e-6) } else { 1e-3 };
     let align = if chain.closed {
         style.align
@@ -530,7 +571,12 @@ mod tests {
     }
 
     fn style(cap: Cap, join: Join, align: Align) -> LineStyle {
-        LineStyle { cap, join, align }
+        LineStyle {
+            cap,
+            join,
+            align,
+            dash: None,
+        }
     }
 
     fn area(c: &Chain, w: f64, s: LineStyle) -> f64 {

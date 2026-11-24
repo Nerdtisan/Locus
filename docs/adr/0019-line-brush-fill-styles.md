@@ -372,7 +372,7 @@ The w(θ) formula in this ADR offsets along the normal by the nib's support h(n)
 
 ### As built: gradients, part 1 (#436, 2026-11-24)
 
-- **Model:** `RegionFill.gradient` (format v27): Linear, Radial, Elliptical (ratio) or Conic; ends and up to 32 stops in the region's **unit frame**, the region's box fitted along `frame_angle`. The canvas, PNG and the bands all sample `locus_doc::gradient::paint_at`.
+- **Model:** `RegionFill.gradient` (format v28): Linear, Radial, Elliptical (ratio) or Conic; ends and up to 32 stops in the region's **unit frame**, the region's box fitted along `frame_angle`. The canvas, PNG and the bands all sample `locus_doc::gradient::paint_at`.
 - **Rotate with shape:** a Rotate whose selection holds every boundary of a region adds the angle to that fill's `frame_angle` in the same undo step. Off, the frame stays axis-aligned. Moves and scales follow anyway, because the frame is refitted to the region. Mirror makes copies, so `frame_flip` is stored but no command sets it yet.
 - **Export:** SVG writes native `linearGradient` / `radialGradient` in `userSpaceOnUse` with the frame as `gradientTransform`; conic is 64 clipped wedge polygons. PNG is per pixel. **PDF writes 64 clipped bands, not native shading**, and ignores stop opacity there (the fill's opacity still applies through the existing path). DXF/HPGL and machine layers ignore gradients, as the table says.
 - **Part 2** (still open on #436): native PDF axial/radial shading, on-canvas gradient handles, the machine hatch and Power results, presets and the library, Expand to bands, and "—" for mixed selections in the Inspector.
@@ -578,6 +578,12 @@ Also:
 - **Stroke styles** is a `Layer` field, not an operation parameter, because `Operation::Score` has no parameter struct.
 - **DXF / HPGL on Draw layers keep the centreline (flagged).** Decision 4's table says "outline geometry". This ticket keeps the plotter rule, "a centreline when the width ≤ the pen": on a Draw layer the object's width *is* its pen. Writing every Draw path's outline would change every existing DXF. This is open for the owner.
 - **Expand to geometry** writes outlines only. The design's dialog, with Outline or Centrelines, Keep original and a preview count, follows with dashes (#427), when Centrelines first differ from the path.
+
+### Built in #427 (2026-11-24)
+
+- **The dash pattern is a fixed-size array** of up to 8 pairs, stored in `.locus` as `pattern: [..]`. So `LineStyle` and `Style` stay `Copy`, and a hostile file can't make a style grow. This replaces the `Arc<LineStyle>` the decision planned. The cost is a bigger `Command` (an app enum gained a `large_enum_variant` allow).
+- `locus_stroke::dashes` splits by arc length, exactly on lines and arcs. **Corners** uses turns over 15°, a whole number of repeats per span, and half a dash at each span end, merged across corners. Placements are bounded at 10 000 per path (§6.2.1).
+- **Expand** now has the **Centrelines** mode (`ExpandStyle.mode`). The app offers it as a second action, **Expand to centrelines**, instead of the design's dialog with Keep original and a preview count. The dialog stays open for a later pass.
 
 ## Consequences
 

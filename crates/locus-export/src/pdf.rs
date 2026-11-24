@@ -36,6 +36,9 @@ pub fn to_pdf(doc: &Document) -> Vec<u8> {
 /// Write a prepared model as a one-page PDF 1.5.
 #[must_use]
 pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
+    // Corner-aligned dashes are drawn as paths of their own; exact ones
+    // natively (#427).
+    let model = &model.dashes_as_paths(true);
     // Coordinates from the anchor; the page (half of every stroke included,
     // #450) is the MediaBox, whose origin takes any padding so a placed job
     // (#443) keeps its coordinates.
@@ -86,6 +89,7 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
     let _ = writeln!(content, "{} w 1 J 1 j", num(width * PT_PER_MM));
     let mut alpha = 1.0;
     let (mut cur_cap, mut cur_join, mut cur_limit) = (1, 1, None::<f64>);
+    let mut cur_dash: Option<locus_doc::Dash> = None;
     // Fills first, each under its layer's optional content group, so no
     // fill hides a line (#451); even-odd keeps the holes open.
     for (i, l) in layers.iter().enumerate() {
@@ -190,6 +194,24 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
             {
                 cur_limit = Some(m);
                 let _ = writeln!(content, "{} M", num(m));
+            }
+            // Dashes (#427): `[on off …] phase d`, in points.
+            let dash = paint.line.dash;
+            if dash != cur_dash {
+                cur_dash = dash;
+                match dash {
+                    Some(d) => {
+                        let arr: Vec<String> =
+                            d.pattern().iter().map(|v| num(v * PT_PER_MM)).collect();
+                        let _ = writeln!(
+                            content,
+                            "[{}] {} d",
+                            arr.join(" "),
+                            num(d.phase * PT_PER_MM)
+                        );
+                    }
+                    None => content.push_str("[] 0 d\n"),
+                }
             }
             if paint.width != width {
                 width = paint.width;

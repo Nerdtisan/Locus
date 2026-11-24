@@ -136,6 +136,9 @@ impl Exporter for PngExporter {
 /// [`ExportError::Unsupported`] when the image would be too large or the
 /// resolution isn't positive; [`ExportError::Failed`] if encoding fails.
 pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, ExportError> {
+    // Corner-aligned dashes are drawn as paths of their own; exact ones
+    // natively (#427).
+    let model = &model.dashes_as_paths(true);
     // The page: half of every stroke included (#450). A raster has no
     // coordinates to keep, so the anchor doesn't matter here.
     let (min, w, h) = match model.page() {
@@ -285,7 +288,13 @@ pub fn to_png_model(model: &ExportModel, opts: &PngOptions) -> Result<Vec<u8>, E
                     locus_doc::Join::Miter { limit } => to32(limit),
                     _ => 4.0,
                 },
-                ..Stroke::default()
+                // Dashes (#427), in pixels.
+                dash: p.line.dash.and_then(|d| {
+                    tiny_skia::StrokeDash::new(
+                        d.pattern().iter().map(|v| to32(v * k)).collect(),
+                        to32(d.phase * k),
+                    )
+                }),
             };
             pixmap.stroke_path(&skpath, &paint, &stroke, Transform::identity(), None);
         }

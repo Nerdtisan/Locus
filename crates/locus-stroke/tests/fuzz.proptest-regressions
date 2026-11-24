@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2f25b01bb2b7b01d0fdf8825c5924b5c214845ed23f54a4a55f28b8d3537278c # shrinks to parts = [(false, 0.2, 0.0, 0.0)], closed = true, style = LineStyle { cap: Butt, join: Round, align: Inside, dash: Some(Dash { values: [3.156080569351724, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], len: 2, phase: 0.0, align: Exact }) }, width = 0.05
+cc 32aca48e1ea7e707e0f93a19add5df3abeee5eeb9e095eec920cf8b845ad0c98 # shrinks to parts = [(true, 0.2, 0.0, -2.157237863056566)], closed = false, style = LineStyle { cap: Square, join: Round, align: Centre, dash: Some(Dash { values: [1.8147103465765728, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], len: 2, phase: 0.0, align: Corners }) }, width = 7.219511624094699

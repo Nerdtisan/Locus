@@ -14,7 +14,7 @@ use crate::state::AppState;
 use egui::{DragValue, Ui};
 use locus_doc::gradient::Gradient;
 use locus_doc::region_fill::RegionFill;
-use locus_doc::{Align, Cap, Join, StrokeStyles};
+use locus_doc::{Align, Cap, Dash, DashAlign, Join, StrokeStyles};
 use locus_doc::{
     Command, Document, EntityId, Fill, Geom, OperationKind, Stroke, Style, StylePatch,
     operation::MAX_PEN,
@@ -32,6 +32,8 @@ pub(crate) struct Shared {
     pub cap: Option<Cap>,
     pub join: Option<Join>,
     pub align: Option<Align>,
+    /// `None` when the objects differ; `Some(None)` is solid.
+    pub dash: Option<Option<Dash>>,
 }
 
 impl Shared {
@@ -49,6 +51,7 @@ impl Shared {
             cap: same(styles.iter().map(|s| s.line.cap)),
             join: same(styles.iter().map(|s| s.line.join)),
             align: same(styles.iter().map(|s| s.line.align)),
+            dash: same(styles.iter().map(|s| s.line.dash)),
         }
     }
 
@@ -60,6 +63,7 @@ impl Shared {
         self.cap = p.cap.or(self.cap);
         self.join = p.join.or(self.join);
         self.align = p.align.or(self.align);
+        self.dash = p.dash.or(self.dash);
         self
     }
 }
@@ -581,6 +585,7 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
         align: edit.align.or(into.align),
         cap: edit.cap.or(into.cap),
         join: edit.join.or(into.join),
+        dash: edit.dash.or(into.dash),
     };
 }
 
@@ -711,6 +716,109 @@ fn caps_joins(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut
     ui.end_row();
 }
 
+/// Dash presets (design §3): name and dash/gap pairs, mm.
+const DASH_PRESETS: [(&str, &[f64]); 5] = [
+    ("Dash 3/2", &[3.0, 2.0]),
+    ("Dot", &[0.0, 1.5]),
+    ("Dash-dot", &[3.0, 1.5, 0.0, 1.5]),
+    ("Long dash", &[8.0, 3.0]),
+    ("Fine 1/1", &[1.0, 1.0]),
+];
+
+/// The Dashes row (design §3, #427): Solid or a preset, then the dash/gap
+/// pairs, the phase and Align to corners.
+fn dashes_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut Ui, bool)) {
+    ui.label("Dashes");
+    ui.vertical(|ui| {
+        let current = s.dash.flatten();
+        ui.horizontal(|ui| {
+            let name = match (s.dash, current) {
+                (None, _) => "—",
+                (Some(None), _) => "Solid",
+                (Some(Some(d)), _) => DASH_PRESETS
+                    .iter()
+                    .find(|(_, p)| *p == d.pattern())
+                    .map_or("Custom", |(n, _)| *n),
+            };
+            egui::ComboBox::from_id_salt("style-dash-preset")
+                .selected_text(name)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(s.dash == Some(None), "Solid").clicked() {
+                        out.dash = Some(None);
+                    }
+                    for (n, p) in DASH_PRESETS {
+                        if ui.selectable_label(name == n, n).clicked() {
+                            let (phase, align) =
+                                current.map_or((0.0, DashAlign::Exact), |d| (d.phase, d.align));
+                            out.dash = Some(Dash::new(p, phase, align).ok());
+                        }
+                    }
+                });
+            mixed(ui, s.dash.is_none());
+        });
+        let Some(d) = current else {
+            return;
+        };
+        // Dash/gap pairs: edit in place; a blank pair at the end adds one.
+        let mut vals: Vec<f64> = d.pattern().to_vec();
+        let mut changed = false;
+        ui.horizontal_wrapped(|ui| {
+            for (i, v) in vals.iter_mut().enumerate() {
+                let tip = if i % 2 == 0 { "Dash, mm" } else { "Gap, mm" };
+                changed |= ui
+                    .add(
+                        DragValue::new(v)
+                            .range(0.0..=locus_stroke::MAX_DASH_LEN)
+                            .speed(0.05)
+                            .suffix(" mm"),
+                    )
+                    .on_hover_text(tip)
+                    .changed();
+            }
+            if vals.len() < 2 * locus_stroke::MAX_DASH_PAIRS
+                && ui.small_button("+").on_hover_text("Add a dash/gap pair").clicked()
+            {
+                vals.extend([1.0, 1.0]);
+                changed = true;
+            }
+            if vals.len() > 2 && ui.small_button("−").on_hover_text("Remove the last pair").clicked() {
+                vals.truncate(vals.len() - 2);
+                changed = true;
+            }
+        });
+        let mut phase = d.phase;
+        let mut corners = d.align == DashAlign::Corners;
+        ui.horizontal(|ui| {
+            ui.label("Phase");
+            changed |= ui
+                .add_enabled(
+                    !corners,
+                    DragValue::new(&mut phase)
+                        .range(-locus_stroke::MAX_DASH_LEN..=locus_stroke::MAX_DASH_LEN)
+                        .speed(0.05)
+                        .suffix(" mm"),
+                )
+                .on_hover_text("Shifts the pattern along the path")
+                .changed();
+            changed |= crate::theme::checkbox(ui, &mut corners, "Align to corners")
+                .on_hover_text("Fit the pattern between corners, with a dash centred on every corner and path end")
+                .changed();
+        });
+        if changed {
+            let align = if corners {
+                DashAlign::Corners
+            } else {
+                DashAlign::Exact
+            };
+            // An invalid pattern (all zero) is simply not applied.
+            if let Ok(nd) = Dash::new(&vals, phase, align) {
+                out.dash = Some(Some(nd));
+            }
+        }
+    });
+    ui.end_row();
+}
+
 /// Draw the fields; returns what the user changed this frame. Objects
 /// have no Fill: regions do (#451).
 fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
@@ -782,6 +890,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
             }
 
             caps_joins(ui, &s, &mut out, &mixed);
+            dashes_row(ui, &s, &mut out, &mixed);
 
             ui.label("Opacity");
             ui.horizontal(|ui| {
