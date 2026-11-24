@@ -6,6 +6,10 @@
 //! name makes the layer active and the Inspector's subject; the row's menu
 //! (right-click) holds rename, operation settings, order and delete.
 //!
+//! Rows reorder by dragging their grip (#462): a 2 px insertion line shows
+//! where the layer lands, Esc cancels, and Alt+↑ / Alt+↓ move the focused
+//! row. Each move is one `ReorderLayer` step (ADR 0019 decision 9).
+//!
 //! Every action is a `Sketcher` command, so each is one undo step. Slider and
 //! colour edits are held in a local copy while the pointer is down and
 //! committed once, on release, so a drag is not a hundred undo steps.
@@ -58,6 +62,10 @@ pub struct LayersView {
     /// The document generation this state belongs to.
     seen: u64,
 }
+
+/// The drag-and-drop payload of a layer row's grip (#462).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LayerDrag(LayerId);
 
 /// What the user asked for this frame; applied after the borrows end.
 #[derive(Default)]
@@ -118,10 +126,17 @@ impl LayersView {
                 selected: &selected,
                 machine: machine.as_ref(),
             };
-            let order = sorted(doc);
-            for (pos, id) in order.iter().enumerate() {
-                layer_row(ui, doc, st, &mut want, &order, pos, *id, &row);
-            }
+            let order = doc.layer_order();
+            let rects: Vec<egui::Rect> = order
+                .iter()
+                .enumerate()
+                .map(|(pos, id)| {
+                    ui.scope(|ui| layer_row(ui, doc, st, &mut want, &order, pos, *id, &row))
+                        .response
+                        .rect
+                })
+                .collect();
+            want.commands.extend(drop_layer(ui, &order, &rects));
         }
         self.apply_wants(app, want, ui, settings);
     }
@@ -322,7 +337,7 @@ impl AppState {
         if doc.layer(self.doc.active_layer).is_some() {
             self.doc.active_layer
         } else {
-            sorted(doc)
+            doc.layer_order()
                 .first()
                 .copied()
                 .unwrap_or_else(Document::default_layer)
@@ -350,13 +365,6 @@ pub(crate) fn operation_for(
     machine.map_or_else(|| kind.default_operation(), |p| p.defaults.operation(kind))
 }
 
-/// Layer IDs in export order (ties by ID).
-fn sorted(doc: &Document) -> Vec<LayerId> {
-    let mut v: Vec<_> = doc.layers().iter().collect();
-    v.sort_by_key(|(id, l)| (l.export_order, id.get()));
-    v.into_iter().map(|(id, _)| *id).collect()
-}
-
 fn unique_name(doc: &Document) -> String {
     (doc.layers().len() + 1..)
         .map(|n| format!("Layer {n}"))
@@ -379,30 +387,72 @@ fn list_constraints(ui: &mut Ui, doc: &Document, list: &[ConstraintId], settings
     }
 }
 
-/// Reorder commands that move `order[pos]` one place up (`-1`) or down
-/// (`+1`), renumbering `export_order` to the list positions.
-fn reorder(doc: &Document, order: &[LayerId], pos: usize, dir: isize) -> Option<Command> {
+/// The command that moves `order[pos]` one place up (`-1`) or down (`+1`).
+fn reorder(order: &[LayerId], pos: usize, dir: isize) -> Option<Command> {
     let to = pos.checked_add_signed(dir).filter(|t| *t < order.len())?;
-    let mut v = order.to_vec();
-    v.swap(pos, to);
-    let commands: Vec<_> = v
-        .iter()
-        .enumerate()
-        .filter_map(|(i, id)| {
-            let want = u32::try_from(i).ok()?;
-            (doc.layer(*id)?.export_order != want).then(|| Command::SetLayerProps {
-                id: *id,
-                props: LayerProps {
-                    export_order: Some(want),
-                    ..LayerProps::default()
-                },
-            })
-        })
-        .collect();
-    Some(Command::Compound {
-        label: "Reorder layers".to_owned(),
-        commands,
+    Some(Command::ReorderLayer {
+        layer: *order.get(pos)?,
+        to: u32::try_from(to).ok()?,
     })
+}
+
+/// Where a layer dropped at height `y` lands: the slot before the first
+/// row whose middle is below `y`, as a position in the list without it.
+fn drop_slot(rects: &[egui::Rect], y: f32) -> usize {
+    rects
+        .iter()
+        .position(|r| y < r.center().y)
+        .unwrap_or(rects.len())
+}
+
+/// While a row's grip is dragged (#462): the 2 px insertion line, Esc to
+/// cancel, and on release over the list the `ReorderLayer` step (none when
+/// the layer would land where it is).
+fn drop_layer(ui: &Ui, order: &[LayerId], rects: &[egui::Rect]) -> Option<Command> {
+    let ctx = ui.ctx();
+    let LayerDrag(layer) = *egui::DragAndDrop::payload::<LayerDrag>(ctx)?;
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        egui::DragAndDrop::clear_payload(ctx);
+        return None;
+    }
+    let list = rects.iter().copied().reduce(|a, b| a.union(b))?;
+    let p = ctx
+        .pointer_interact_pos()
+        .filter(|p| list.expand(8.0).contains(*p))?;
+    let slot = drop_slot(rects, p.y);
+    let y = rects.get(slot).map_or(list.bottom(), |r| r.top());
+    let accent = crate::theme::tokens(ui).accent;
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.id()))
+        .hline(list.x_range(), y, egui::Stroke::new(2.0, accent));
+    if !ui.input(|i| i.pointer.any_released()) {
+        return None;
+    }
+    egui::DragAndDrop::clear_payload(ctx);
+    let from = order.iter().position(|id| *id == layer)?;
+    let to = if slot > from { slot - 1 } else { slot };
+    (to != from).then(|| Command::ReorderLayer {
+        layer,
+        to: u32::try_from(to).unwrap_or(u32::MAX),
+    })
+}
+
+/// The row's ⋮⋮ grip: drag it to reorder the layer (#462).
+fn grip(ui: &mut Ui, id: LayerId) {
+    let r = ui.dnd_drag_source(egui::Id::new(("layer-grip", id)), LayerDrag(id), |ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 18.0), Sense::hover());
+        let c = ui.visuals().weak_text_color();
+        for dx in [-1.5, 1.5] {
+            for dy in [-4.0, 0.0, 4.0] {
+                ui.painter()
+                    .circle_filled(rect.center() + egui::vec2(dx, dy), 1.0, c);
+            }
+        }
+    });
+    if r.response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    r.response
+        .on_hover_text("Drag to reorder (export and draw order). Alt+↑ / Alt+↓ move the row.");
 }
 
 /// What every row needs to know about the app.
@@ -453,6 +503,7 @@ fn layer_row(
     let props = |p: LayerProps| Command::SetLayerProps { id, props: p };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
+        grip(ui, id);
         // Colour: held locally until the pointer is released.
         let mut c = match st.colour {
             Some((i, c)) if i == id => c,
@@ -562,10 +613,28 @@ fn layer_row(
                     if r.clicked() {
                         want.activate = Some(id);
                     }
+                    // Alt+↑ / Alt+↓ move the focused (or picked) row (#462).
+                    if (r.has_focus() || row.picked == Some(id))
+                        && !ui.ctx().egui_wants_keyboard_input()
+                    {
+                        let alt = egui::Modifiers::ALT;
+                        let up = ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowUp));
+                        let down = ui.input_mut(|i| i.consume_key(alt, egui::Key::ArrowDown));
+                        let dir = if up {
+                            -1
+                        } else if down {
+                            1
+                        } else {
+                            0
+                        };
+                        if dir != 0 {
+                            want.commands.extend(reorder(order, pos, dir));
+                        }
+                    }
                     if r.double_clicked() {
                         st.rename = Some((id, l.name.clone()));
                     }
-                    r.context_menu(|ui| row_menu(ui, l, st, want, doc, order, pos, row.selected));
+                    r.context_menu(|ui| row_menu(ui, l, st, want, order, pos, row.selected));
                 }
             });
         });
@@ -655,7 +724,6 @@ fn row_menu(
     l: &locus_doc::Layer,
     st: &mut LayersView,
     want: &mut Wants,
-    doc: &Document,
     order: &[LayerId],
     pos: usize,
     selected: &[EntityId],
@@ -688,7 +756,7 @@ fn row_menu(
         .on_hover_text("Earlier in export order")
         .clicked()
     {
-        want.commands.extend(reorder(doc, order, pos, -1));
+        want.commands.extend(reorder(order, pos, -1));
         ui.close();
     }
     if ui
@@ -696,7 +764,7 @@ fn row_menu(
         .on_hover_text("Later in export order")
         .clicked()
     {
-        want.commands.extend(reorder(doc, order, pos, 1));
+        want.commands.extend(reorder(order, pos, 1));
         ui.close();
     }
     ui.separator();
@@ -961,6 +1029,43 @@ mod tests {
 
     /// Picking a layer row makes it active and the Inspector's subject; a
     /// canvas selection takes over again (#326, design §2.1).
+    #[test]
+    fn a_dropped_row_lands_before_the_first_row_below_the_pointer() {
+        // #462: three 20 pt rows; the slot follows the row middles.
+        let rows: Vec<egui::Rect> = (0..3)
+            .map(|k| {
+                let top = 20.0 * k as f32;
+                egui::Rect::from_min_max(egui::pos2(0.0, top), egui::pos2(100.0, top + 20.0))
+            })
+            .collect();
+        assert_eq!(drop_slot(&rows, -5.0), 0);
+        assert_eq!(drop_slot(&rows, 9.0), 0);
+        assert_eq!(drop_slot(&rows, 11.0), 1);
+        assert_eq!(drop_slot(&rows, 45.0), 2);
+        assert_eq!(drop_slot(&rows, 55.0), 3);
+    }
+
+    #[test]
+    fn move_up_and_down_are_reorder_steps_that_stop_at_the_ends() {
+        let order = [LayerId::new(1), LayerId::new(2), LayerId::new(3)];
+        assert_eq!(
+            reorder(&order, 1, -1),
+            Some(Command::ReorderLayer {
+                layer: LayerId::new(2),
+                to: 0
+            })
+        );
+        assert_eq!(
+            reorder(&order, 1, 1),
+            Some(Command::ReorderLayer {
+                layer: LayerId::new(2),
+                to: 2
+            })
+        );
+        assert_eq!(reorder(&order, 0, -1), None);
+        assert_eq!(reorder(&order, 2, 1), None);
+    }
+
     #[test]
     fn a_picked_layer_is_active_until_the_canvas_selects() {
         let mut app = AppState::default();

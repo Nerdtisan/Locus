@@ -321,6 +321,15 @@ impl Document {
     }
 
     #[must_use]
+    /// Layer IDs in export order, ties by ID (#291, #462): the order the
+    /// Browser lists, the canvas draws and the exporters write.
+    pub fn layer_order(&self) -> Vec<LayerId> {
+        let mut v: Vec<_> = self.layers.iter().collect();
+        v.sort_by_key(|(id, l)| (l.export_order, id.get()));
+        v.into_iter().map(|(id, _)| *id).collect()
+    }
+
+    #[must_use]
     pub fn layers(&self) -> &BTreeMap<LayerId, Layer> {
         &self.layers
     }

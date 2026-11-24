@@ -155,6 +155,7 @@ Each entity carries:
 ### Layers
 - Layers are **properties on geometry**, not separate sketches. One shared solver space for the whole document.
 - Layer fields: `id`, `name`, `colour` (display), `operation`, `export_order`, `visible`, `locked`, `export_enabled`, operation params (see §7).
+- **Layer order (M6, #462):** `export_order` is the one layer order. The Browser lists layers in it, the canvas draws them in it (earlier layers underneath, as in the exported SVG) and the exporters write them in it. Dragging a Browser row, Move up / Move down and Alt+↑ / Alt+↓ change it with one `ReorderLayer` command, which renumbers every layer as one undo step (ADR 0019 decision 9).
 
 ### Layer rules (decided)
 1. **Constraints reference `EntityId`s only, never layers.** Moving an entity between layers preserves all constraints.

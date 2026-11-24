@@ -6,7 +6,7 @@
 //! point-entity indirection every frame. The scene is rebuilt after every
 //! successful command; it is derived state and never edited (SPEC §11).
 
-use locus_doc::{Constraint, ConstraintId, Document, Edge, EntityId, Geom};
+use locus_doc::{Constraint, ConstraintId, Document, Edge, EntityId, Geom, LayerId};
 use locus_geom::{Aabb, Arc, Circle, Cubic, Line, Vec2};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -265,7 +265,17 @@ impl Scene {
         let parked = parked_baselines(doc);
         let mut items = Vec::with_capacity(doc.entities().len());
         let mut bounds: Option<Aabb> = None;
-        for (id, e) in doc.entities().iter() {
+        // Drawn in layer order (#462): earlier layers in the export order
+        // go underneath, as in the exported SVG (#291).
+        let rank: HashMap<LayerId, usize> = doc
+            .layer_order()
+            .into_iter()
+            .enumerate()
+            .map(|(i, l)| (l, i))
+            .collect();
+        let mut entities: Vec<_> = doc.entities().iter().collect();
+        entities.sort_by_key(|(id, e)| (rank.get(&e.layer).copied(), *id));
+        for (id, e) in entities {
             if doc.layer(e.layer).is_some_and(|l| !l.visible)
                 || hidden.contains(&id)
                 || parked.contains(&id)

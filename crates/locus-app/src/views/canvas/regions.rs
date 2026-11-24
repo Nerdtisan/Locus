@@ -412,7 +412,19 @@ impl AppState {
         // Style fills (#338): each region in its objects' fill colour, as it
         // exports, while Show fills is on.
         if self.view.display.fills {
-            for r in self.regions() {
+            // In layer order (#462): earlier layers' fills underneath.
+            let doc = self.doc.sketcher.document();
+            let rank: std::collections::HashMap<_, _> = doc
+                .layer_order()
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| (l, i))
+                .collect();
+            let mut filled: Vec<&Region> = self.regions().iter().collect();
+            filled.sort_by_key(|r| {
+                locus_doc::regions::layer_of(doc, r).and_then(|l| rank.get(&l).copied())
+            });
+            for r in filled {
                 if let Some(c) = self.region_fill(r) {
                     fill(painter, view, rect, &region_loops(r), c);
                 }
