@@ -21,7 +21,7 @@ Built on these owner decisions:
 - **§1 is reworded.** Gradients are visual region fills with a defined machine result, and the timeline is undo history plus recipes, not a feature tree.
 - **Gradients get a "Rotate with shape" option per fill, default on** (§6).
 - **Auto trace is Locus's own implementation** of the published Potrace algorithm, with no Potrace code (§10).
-- **Arcs vs Béziers** for variable-width, calligraphic and paint outlines: spike S1 measured both and chose kept cubic Béziers, with biarcs only for the cleanup and arc-based output, pending the owner's confirmation ([ADR 0019, S1–S3 results](../adr/0019-line-brush-fill-styles.md#spike-results-s1s3-2026-11-24-track-a-step-a0)).
+- **Arcs vs Béziers** for variable-width, calligraphic and paint outlines: spike S1 measured both and chose kept cubic Béziers, with biarcs only for the cleanup and arc-based output (owner-approved 2026-11-24; Expand tolerance default 0.01 mm) ([ADR 0019, S1–S3 results](../adr/0019-line-brush-fill-styles.md#spike-results-s1s3-2026-11-24-track-a-step-a0)).
 
 **Defaults still standing** (ADR 0019 "Consequences"). The mockup shows the recommended option for each.
 
