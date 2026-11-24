@@ -352,6 +352,7 @@ impl AppState {
         self.draw_regions(&painter, rect, dark);
         self.draw_bed(&painter, rect, dark, settings);
         self.draw_stroke_preview(&frame, dark);
+        self.draw_stroke_guides(&frame, ui.ctx());
         let emphasis = |item: &crate::scene::Item| {
             if flag_entities.contains(&item.id) {
                 Emphasis::Conflict

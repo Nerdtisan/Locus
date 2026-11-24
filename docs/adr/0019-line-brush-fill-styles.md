@@ -347,6 +347,11 @@ The w(θ) formula in this ADR offsets along the normal by the nib's support h(n)
 - **Machine layers** (Cut, Score, Engrave, Drag knife) follow a new per-layer operation parameter, **Stroke styles: Centreline | Styled**. Centreline is the default, and stays today's behaviour.
   - **Centreline** cuts or marks the real path, as today. Styles are visual only.
   - **Styled** uses the expansion. On Cut, Score and Drag knife, `pen_paths` become separate cuts: dashes become perforations, and multi-strokes become parallel cuts. `areas` become cut outlines. On Engrave, `areas` are hatched like any closed shape. On every machine layer, colour and hairline still come from the profile (M5 rule).
+  - **Owner decision 2026-11-25 (option A, refined; #502/#504 follow-up):**
+    - Only objects with a **line style** follow their strokes on a Styled layer: dashes, multi-strokes, and later width profiles and brushes (`LineStyle::machine_styled`). Plain objects follow their centreline.
+    - **Width alone doesn't count**, and neither do caps, joins or alignment. A widened plain line still cuts once along its centreline.
+    - Machine preview draws the paths that follow styled strokes with a **soft halo**, and the legend says so.
+    - Option C, a per-object override, is filed for later and is not built.
 - **Draw** layers follow the document's machine kind (#419):
   - A **pen plotter** gets machine geometry: each dash is its own pen-down path, each multi-stroke is a path with its own pen, and filled outlines are plotted as **outline + hatch** at the object's pen width, so they read as solid. A Draw-layer setting, **Filled strokes: Outline + hatch | Outline | Hatch**, overrides this.
   - **Generic, laser or vinyl** profiles, and no profile, get the visual output below.

@@ -281,7 +281,12 @@ The full table is ADR 0019 decision 4. In short:
   - Each machine layer's legend row has a **Centreline | Styled** switch. The Style section shows the same switch under its Machine sentence for a selection on one machine layer.
   - When a Centreline layer holds styled objects, the preview says so, for example: "Layer 2: cuts centrelines, so its objects' dashes, caps and extra strokes are ignored. Switch it to Styled to cut them."
   - Hidden layers aren't drawn in the preview. Their row reads *(hidden)*, and a note says they are still exported, because export follows the Export switch, not the eye.
-  - On a Styled layer, an object with the default unstyled stroke (default width, no line style) is cut on its centreline. That is what Expand to geometry leaves, so its result isn't outlined twice.
+  - **Owner decision 2026-11-25:** on a Styled layer only objects with a line style (dashes, multi-strokes, later width profiles and brushes) follow their strokes. Plain objects, however wide, follow their centreline. Paths that follow styled strokes are drawn with a soft halo, and the legend explains the halo.
+- **Strokes (#429) in the Style section (owner feedback 2026-11-25):**
+  - A one-line hint: "Extra parallel strokes along the path: double lines, road markings, borders."
+  - Presets: **Double line**, **Road** and **Border**, plus **None**.
+  - A full-size **+ Add stroke** button.
+  - Thin dashed guides on the canvas show where each extra stroke of the selection runs, and they move while the values are edited.
 
 ## 10. Auto trace (#461)
 

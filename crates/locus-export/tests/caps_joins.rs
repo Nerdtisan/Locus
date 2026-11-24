@@ -125,7 +125,9 @@ fn an_inside_stroke_exports_as_a_filled_outline() {
 }
 
 #[test]
-fn a_styled_cut_layer_cuts_the_outline_and_centreline_is_unchanged() {
+fn a_widened_plain_line_on_a_styled_layer_cuts_its_centreline_once() {
+    // Owner decision 2026-11-25: width, caps and joins alone don't make an
+    // object follow its outline on a Styled layer; only line styles do.
     let (mut ed, layer, ids) = rect(Operation::Cut(Default::default()));
     set(
         &mut ed,
@@ -135,9 +137,6 @@ fn a_styled_cut_layer_cuts_the_outline_and_centreline_is_unchanged() {
             ..StylePatch::default()
         },
     );
-    let lb = locus_export::profile::find("lightburn", &[]).unwrap();
-    let centre = prepare_for(ed.document(), false, Some(&lb));
-    assert_eq!(centre.model.layers[0].paths.len(), 1);
     ed.apply(&Command::SetLayerProps {
         id: layer,
         props: LayerProps {
@@ -146,17 +145,12 @@ fn a_styled_cut_layer_cuts_the_outline_and_centreline_is_unchanged() {
         },
     })
     .unwrap();
+    let lb = locus_export::profile::find("lightburn", &[]).unwrap();
     let styled = prepare_for(ed.document(), false, Some(&lb));
     let paths = &styled.model.layers[0].paths;
-    // A mitred 2 mm stroke round a rectangle: an outer and an inner loop.
-    assert_eq!(paths.len(), 2);
-    assert!(paths.iter().all(|p| p.closed));
-    let bb = paths
-        .iter()
-        .filter_map(|p| p.bbox())
-        .reduce(|a, b| a.union(b))
-        .unwrap();
-    assert!((bb.min.x + 1.0).abs() < 1e-9 && (bb.max.x - 21.0).abs() < 1e-9);
+    assert_eq!(paths.len(), 1, "one centreline cut");
+    let bb = paths[0].bbox().unwrap();
+    assert!(bb.min.x.abs() < 1e-9 && (bb.max.x - 20.0).abs() < 1e-9);
 }
 
 fn dash(pattern: &[f64], phase: f64, align: locus_doc::DashAlign) -> StylePatch {

@@ -105,7 +105,7 @@ fn on_machine_layer(doc: &Document, ids: &[EntityId]) -> bool {
     })
 }
 
-const PENDING: &str = "locus.style.pending";
+pub(crate) const PENDING: &str = "locus.style.pending";
 
 impl AppState {
     /// The Style section: the selection's style, or the current style.
@@ -882,16 +882,57 @@ fn dashes_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut
 fn strokes_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut Ui, bool)) {
     ui.label("Strokes");
     ui.vertical(|ui| {
+        ui.weak("Extra parallel strokes along the path: double lines, road markings, borders.");
         let Some(mut rows) = s.extra.clone() else {
             mixed(ui, true);
             return;
         };
-        ui.weak("● The object's own stroke (width and colour above)");
+        // Presets (owner request 2026-11-25): a start that shows the idea,
+        // sized from the object's own width.
+        let w = s.width.unwrap_or(locus_doc::style::DEFAULT_WIDTH);
+        let mut preset: Option<Vec<StrokeLayer>> = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Presets:");
+            let line = |offset: f64, width: f64| StrokeLayer {
+                offset,
+                width,
+                ..StrokeLayer::default()
+            };
+            if ui
+                .button("Double line")
+                .on_hover_text("A second line beside the path, a gap of two widths away")
+                .clicked()
+            {
+                preset = Some(vec![line(3.0 * w, w)]);
+            }
+            if ui
+                .button("Road")
+                .on_hover_text("Two edge lines 3 mm either side; dash the path itself under Dashes for a centre line")
+                .clicked()
+            {
+                preset = Some(vec![line(3.0, w), line(-3.0, w)]);
+            }
+            if ui
+                .button("Border")
+                .on_hover_text("Thin lines just inside and outside the path")
+                .clicked()
+            {
+                preset = Some(vec![line(2.0 * w, 0.5 * w), line(-2.0 * w, 0.5 * w)]);
+            }
+            if !rows.is_empty() && ui.button("None").on_hover_text("Remove every extra stroke").clicked() {
+                preset = Some(Vec::new());
+            }
+        });
+        if let Some(p) = preset {
+            out.extra = Some(p);
+            return;
+        }
+        ui.weak("1. The object's own stroke (width and colour above). Dashed lines on the canvas show where extra strokes run.");
         let mut changed = false;
         let mut action: Option<(usize, i32)> = None; // (row, -1 up / +1 down / 0 remove)
         for (i, r) in rows.iter_mut().enumerate() {
             ui.horizontal_wrapped(|ui| {
-                ui.label(format!("{}.", i + 1));
+                ui.label(format!("{}.", i + 2));
                 changed |= ui
                     .add(
                         DragValue::new(&mut r.offset)
@@ -973,7 +1014,7 @@ fn strokes_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mu
         }
         if rows.len() < locus_stroke::MAX_STROKE_LAYERS
             && ui
-                .small_button("+ Add stroke")
+                .button("+ Add stroke")
                 .on_hover_text("A copy of the last stroke, offset by its width")
                 .clicked()
         {

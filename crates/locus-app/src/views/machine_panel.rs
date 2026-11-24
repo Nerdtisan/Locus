@@ -624,6 +624,7 @@ mod tests {
             hatch: false,
             band: 4.0,
             row: None,
+            styled: Default::default(),
         };
         let geom = job_bounds(std::slice::from_ref(&line)).unwrap();
         assert!(fit_message(geom, &bed, Units::Mm).is_none());
