@@ -28,6 +28,7 @@ use crate::recipe::{self, Recipe, RecipeKind};
 use crate::style::{Style, StylePatch};
 use locus_geom::Vec2;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// A document mutation. Plain data: serialise it, log it, replay it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1416,12 +1417,6 @@ fn exec(
         }
         Command::SetRecipeSuppressed { id, suppressed } => {
             let before = doc.recipe(*id).ok_or(DocError::UnknownRecipe(*id))?.clone();
-            if *suppressed && matches!(before.kind, RecipeKind::Mirror { .. }) {
-                return Err(DocError::Invalid(
-                    "a mirror can't be suppressed yet: its copies are tied by constraints"
-                        .to_owned(),
-                ));
-            }
             // Something built on this feature's copies would lose its input.
             if *suppressed {
                 let made: std::collections::BTreeSet<EntityId> = before.instances().collect();
@@ -1442,16 +1437,24 @@ fn exec(
                 ..before.clone()
             };
             if after != before {
+                let mirror = matches!(before.kind, RecipeKind::Mirror { .. });
+                if mirror && *suppressed {
+                    suppress_mirror(doc, &before, patches)?;
+                }
                 record(
                     doc,
                     patches,
                     Patch::Recipe {
                         id: *id,
-                        before: Some(before),
+                        before: Some(before.clone()),
                         after: Some(after),
                     },
                 );
-                regenerate_one(doc, *id, patches, None)?;
+                if mirror && !*suppressed {
+                    restore_mirror(doc, &before, patches)?;
+                } else {
+                    regenerate_one(doc, *id, patches, None)?;
+                }
             }
         }
         Command::ApplySolution { points, radii } => apply_solution(doc, points, radii)?,
@@ -1620,6 +1623,138 @@ fn add_recipe(
             after: Some(recipe),
         },
     );
+    Ok(())
+}
+
+/// Suppress a mirror (#446): its copies and the constraints it owns go,
+/// keeping every ID in the recipe so [`restore_mirror`] brings them back.
+/// Refused while a constraint of the user's refers to a copy.
+fn suppress_mirror(
+    doc: &mut Document,
+    r: &Recipe,
+    patches: &mut Vec<Patch>,
+) -> Result<(), DocError> {
+    let copies: Vec<EntityId> = r.instances().collect();
+    let owned: std::collections::BTreeSet<ConstraintId> = r.constraints.iter().copied().collect();
+    if doc
+        .constraints()
+        .iter()
+        .any(|(cid, c)| !owned.contains(cid) && c.references().iter().any(|e| copies.contains(e)))
+    {
+        return Err(DocError::Invalid(
+            "a constraint holds this mirror's copies; delete it before suppressing".to_owned(),
+        ));
+    }
+    for cid in &r.constraints {
+        if let Some(c) = doc.constraint(*cid).cloned() {
+            record(
+                doc,
+                patches,
+                Patch::Constraint {
+                    id: *cid,
+                    before: Some(c),
+                    after: None,
+                },
+            );
+        }
+    }
+    // Curves before the points they are built on.
+    let mut order = copies;
+    order.sort_by_key(|id| {
+        doc.entity(*id)
+            .map_or(0, |e| u8::from(e.geom.kind() == EntityKind::Point))
+    });
+    for id in order {
+        if let Some(e) = doc.entity(id).cloned() {
+            record(
+                doc,
+                patches,
+                Patch::Entity {
+                    id,
+                    before: Some(e),
+                    after: None,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Unsuppress a mirror (#446): the copies again under their kept IDs,
+/// reflected from the sources as they are now, and the owned constraints
+/// under theirs.
+fn restore_mirror(
+    doc: &mut Document,
+    r: &Recipe,
+    patches: &mut Vec<Patch>,
+) -> Result<(), DocError> {
+    let closure: Vec<EntityId> = recipe::closure(doc, &r.sources).into_iter().collect();
+    let Some(set) = r.pool.first().filter(|s| s.len() == closure.len()) else {
+        return Err(DocError::Invalid(
+            "the mirror's sources changed; delete it and mirror again".to_owned(),
+        ));
+    };
+    let xf = recipe::transform(doc, &r.kind, 0)?;
+    let rename = |id: EntityId| {
+        closure
+            .iter()
+            .position(|c| *c == id)
+            .and_then(|i| set.get(i).copied())
+            .unwrap_or(id)
+    };
+    let mut order: Vec<usize> = (0..closure.len()).collect();
+    order.sort_by_key(|i| {
+        doc.entity(closure[*i])
+            .map_or(1, |e| u8::from(e.geom.kind() != EntityKind::Point))
+    });
+    for i in order {
+        let src = doc
+            .entity(closure[i])
+            .ok_or(DocError::UnknownEntity(closure[i]))?
+            .clone();
+        let e = Entity {
+            layer: src.layer,
+            construction: src.construction,
+            geom: recipe::copy_geom(&src.geom, xf, &rename),
+            style: src.style,
+        };
+        doc.check_entity(&e)?;
+        record(
+            doc,
+            patches,
+            Patch::Entity {
+                id: set[i],
+                before: None,
+                after: Some(e),
+            },
+        );
+    }
+    let RecipeKind::Mirror { axis } = &r.kind else {
+        return Ok(());
+    };
+    let mut ids = r.constraints.iter();
+    for (i, src) in closure.iter().enumerate() {
+        let c = match doc.entity(*src).map(|e| e.geom.kind()) {
+            Some(EntityKind::Point) => Constraint::Symmetric {
+                a: *src,
+                b: set[i],
+                axis: *axis,
+            },
+            Some(EntityKind::Circle) => Constraint::Equal { a: *src, b: set[i] },
+            _ => continue,
+        };
+        let Some(cid) = ids.next() else { break };
+        c.validate(doc)?;
+        record(
+            doc,
+            patches,
+            Patch::Constraint {
+                id: *cid,
+                before: None,
+                after: Some(c),
+            },
+        );
+    }
     Ok(())
 }
 
@@ -1862,6 +1997,10 @@ pub struct Editor {
     /// Re-runs modifier plugins when their sources change (#184); none in
     /// the web build or headless tools that don't load plugins.
     runner: Option<std::sync::Arc<dyn crate::generated::PluginRunner>>,
+    /// Features whose last regeneration failed, with the reason (#446,
+    /// ADR 0019 decision 5): they keep their last good copies and the
+    /// command that changed their input still applies. Session state.
+    failures: BTreeMap<RecipeId, String>,
 }
 
 impl Editor {
@@ -1872,6 +2011,7 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             runner: None,
+            failures: BTreeMap::new(),
         }
     }
 
@@ -1902,13 +2042,18 @@ impl Editor {
     pub fn apply(&mut self, cmd: &Command) -> Result<Applied, DocError> {
         let mut patches = Vec::new();
         let mut out = Applied::default();
-        if let Err(e) = exec(&mut self.doc, cmd, &mut patches, &mut out)
-            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()))
-        {
+        let mut failures: Option<BTreeMap<RecipeId, String>> = None;
+        if let Err(e) = exec(&mut self.doc, cmd, &mut patches, &mut out).and_then(|()| {
+            regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref())
+                .map(|f| failures = Some(f))
+        }) {
             for p in patches.iter().rev() {
                 p.set(&mut self.doc, false);
             }
             return Err(e);
+        }
+        if let Some(f) = failures {
+            self.failures = f;
         }
         if !patches.is_empty() {
             self.undo.push(Transaction {
@@ -1922,6 +2067,12 @@ impl Editor {
             }
         }
         Ok(out)
+    }
+
+    /// Features whose last regeneration failed, with the reason (#446).
+    #[must_use]
+    pub fn recipe_failures(&self) -> &BTreeMap<RecipeId, String> {
+        &self.failures
     }
 
     /// The history panel's list (#446).
@@ -1966,6 +2117,8 @@ impl Editor {
     /// [`DocError::NothingToDo`] when there is nothing to undo.
     pub fn undo(&mut self) -> Result<String, DocError> {
         let t = self.undo.pop().ok_or(DocError::NothingToDo("undo"))?;
+        // The state undone to regenerated cleanly when it was made.
+        self.failures.clear();
         for p in t.patches.iter().rev() {
             p.set(&mut self.doc, false);
         }
@@ -1980,6 +2133,7 @@ impl Editor {
     /// [`DocError::NothingToDo`] when there is nothing to redo.
     pub fn redo(&mut self) -> Result<String, DocError> {
         let t = self.redo.pop().ok_or(DocError::NothingToDo("redo"))?;
+        self.failures.clear();
         for p in &t.patches {
             p.set(&mut self.doc, true);
         }
@@ -2019,13 +2173,17 @@ impl Editor {
     ) -> Result<Applied, DocError> {
         let mut patches = Vec::new();
         let mut out = Applied::default();
+        let mut failures: Option<BTreeMap<RecipeId, String>> = None;
         let result = exec(&mut self.doc, cmd, &mut patches, &mut out)
             .and_then(|()| solve(&self.doc, SolvePhase::Main))
             .and_then(|sol| match sol {
                 Some(sol) => solution_patches(&mut self.doc, &sol, &mut patches),
                 None => Ok(()),
             })
-            .and_then(|()| regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()))
+            .and_then(|()| {
+                regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref())
+                    .map(|f| failures = Some(f))
+            })
             // Phase 2 (ADR 0015): constraints that touch pattern instances,
             // solved with the freshly regenerated pattern held fixed.
             .and_then(|()| solve(&self.doc, SolvePhase::Late))
@@ -2038,6 +2196,9 @@ impl Editor {
                 p.set(&mut self.doc, false);
             }
             return Err(e);
+        }
+        if let Some(f) = failures {
+            self.failures = f;
         }
         if !patches.is_empty() {
             self.undo.push(Transaction {
@@ -2097,11 +2258,14 @@ impl Editor {
     /// last undo step, e.g. the one a drag just recorded (#164).
     pub(crate) fn regenerate_into_last(&mut self) -> Result<(), DocError> {
         let mut patches = Vec::new();
-        if let Err(e) = regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()) {
-            for p in patches.iter().rev() {
-                p.set(&mut self.doc, false);
+        match regenerate_all(&mut self.doc, &mut patches, self.runner.as_deref()) {
+            Ok(f) => self.failures = f,
+            Err(e) => {
+                for p in patches.iter().rev() {
+                    p.set(&mut self.doc, false);
+                }
+                return Err(e);
             }
-            return Err(e);
         }
         if patches.is_empty() {
             return Ok(());
@@ -2131,17 +2295,35 @@ pub(crate) fn regenerate_all(
     doc: &mut Document,
     patches: &mut Vec<Patch>,
     runner: Option<&dyn crate::generated::PluginRunner>,
-) -> Result<(), DocError> {
+) -> Result<BTreeMap<RecipeId, String>, DocError> {
     let ids: Vec<RecipeId> = doc
         .recipes()
         .iter()
         .filter(|(_, r)| !r.kind.solved())
         .map(|(id, _)| *id)
         .collect();
+    // A feature that fails (an offset that collapses, a limit hit) keeps
+    // its last good copies and reports why; it never stops the command or
+    // the solve (#446, ADR 0019 decision 5).
+    let mut failed = BTreeMap::new();
     for id in ids {
-        regenerate_one(doc, id, patches, runner)?;
+        let mark = patches.len();
+        if let Err(e) = regenerate_one(doc, id, patches, runner) {
+            // Guards that protect other geometry still refuse the command.
+            if matches!(
+                e,
+                DocError::EntityInUse { .. } | DocError::RecipeInUse { .. }
+            ) {
+                return Err(e);
+            }
+            for p in patches[mark..].iter().rev() {
+                p.set(doc, false);
+            }
+            patches.truncate(mark);
+            failed.insert(id, e.to_string());
+        }
     }
-    Ok(())
+    Ok(failed)
 }
 
 /// Regenerate one non-solved recipe, whatever its kind.
@@ -2757,5 +2939,120 @@ mod tests {
         let back: Vec<EntityId> = ed.document().recipe(r).unwrap().instances().collect();
         assert_eq!(back, copies, "the same IDs come back");
         assert!(copies.iter().all(|c| ed.document().entity(*c).is_some()));
+    }
+
+    #[test]
+    fn a_suppressed_mirror_comes_back_with_its_ids() {
+        // #446 part 3: mirrors suppress too; the copies and their owned
+        // constraints return under the same IDs.
+        let mut ed = Editor::new(Document::new());
+        let (a, b) = (add_pt(&mut ed, 1.0, 1.0), add_pt(&mut ed, 1.0, 5.0));
+        let (p, q) = (add_pt(&mut ed, 0.0, 0.0), add_pt(&mut ed, 0.0, 10.0));
+        let line = |ed: &mut Editor, start, end, construction| {
+            ed.apply(&Command::AddEntity {
+                layer: L,
+                construction,
+                style: Default::default(),
+                geom: Geom::Line { start, end },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let axis = line(&mut ed, p, q, true);
+        let seg = line(&mut ed, a, b, false);
+        let r = ed
+            .apply(&Command::AddRecipe {
+                kind: RecipeKind::Mirror { axis },
+                sources: vec![seg],
+            })
+            .unwrap()
+            .recipes[0];
+        let before = ed.document().clone();
+        let copies: Vec<EntityId> = before.recipe(r).unwrap().instances().collect();
+        let owned = before.recipe(r).unwrap().constraints.clone();
+        assert!(!owned.is_empty());
+        ed.apply(&Command::SetRecipeSuppressed {
+            id: r,
+            suppressed: true,
+        })
+        .unwrap();
+        let doc = ed.document();
+        assert!(copies.iter().all(|c| doc.entity(*c).is_none()));
+        assert!(owned.iter().all(|c| doc.constraint(*c).is_none()));
+        ed.apply(&Command::SetRecipeSuppressed {
+            id: r,
+            suppressed: false,
+        })
+        .unwrap();
+        let doc = ed.document();
+        assert_eq!(
+            doc.entities(),
+            before.entities(),
+            "the same copies come back"
+        );
+        assert!(owned.iter().all(|c| doc.constraint(*c).is_some()));
+    }
+
+    /// Memory per undo step (#446, ADR 0019 decision 5), run with
+    /// `cargo test -p locus-doc --release -- --ignored --nocapture`.
+    /// A 500-entity sketch (250 points, 250 lines); the worst step moves
+    /// every point (as Move on a select-all does), a typical one sets one
+    /// style. Patches are counted by their inline size; points and lines own
+    /// no heap memory, so this is their full cost.
+    #[test]
+    #[ignore = "measurement: prints memory per undo step"]
+    fn memory_per_step() {
+        let mut ed = Editor::new(Document::new());
+        let pts: Vec<EntityId> = (0..250)
+            .map(|i| add_pt(&mut ed, f64::from(i), 0.0))
+            .collect();
+        for w in pts.windows(2).take(250) {
+            ed.apply(&Command::AddEntity {
+                layer: L,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Line {
+                    start: w[0],
+                    end: w[1],
+                },
+            })
+            .unwrap();
+        }
+        let step_bytes = |ed: &Editor| {
+            ed.undo.last().map_or(0, |t| {
+                t.patches.len() * std::mem::size_of::<Patch>() + t.label.capacity()
+            })
+        };
+        let moves: Vec<Command> = pts
+            .iter()
+            .map(|p| Command::ModifyEntity {
+                id: *p,
+                geom: Geom::Point {
+                    pos: Vec2::new(1.0, 1.0),
+                },
+            })
+            .collect();
+        ed.apply(&Command::Compound {
+            label: "Move".into(),
+            commands: moves,
+        })
+        .unwrap();
+        let worst = step_bytes(&ed);
+        ed.apply(&Command::SetStyle {
+            entities: vec![pts[0]],
+            patch: StylePatch {
+                width: Some(0.5),
+                ..Default::default()
+            },
+        })
+        .ok();
+        let typical = step_bytes(&ed);
+        println!(
+            "memory per step: Patch = {} B; move 250 points = {} B; one edit = {} B; 1 000 worst steps = {:.1} MB",
+            std::mem::size_of::<Patch>(),
+            worst,
+            typical,
+            worst as f64 * 1000.0 / 1.0e6
+        );
     }
 }

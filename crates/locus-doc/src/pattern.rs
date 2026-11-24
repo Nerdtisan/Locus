@@ -52,9 +52,9 @@ pub(crate) fn regenerate(
         );
         return Ok(());
     }
-    let Ok(slots) = recipe::slots(doc, &next.kind, &next.sources) else {
-        return Ok(());
-    };
+    // A count or spacing that no longer evaluates is the feature's failure
+    // (#446): reported, with the last good copies kept by the caller.
+    let slots = recipe::slots(doc, &next.kind, &next.sources)?;
     let cl: Vec<EntityId> = recipe::copied(doc, &next.kind, &next.sources)
         .into_iter()
         .collect();

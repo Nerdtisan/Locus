@@ -141,12 +141,14 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
         if doc.recipes().is_empty() {
             ui.weak("Patterns, mirrors, offsets and plugin objects appear here, in the order they were made.");
         }
+        let failures = app.doc.sketcher.editor().recipe_failures();
         let mut seen = std::collections::BTreeMap::<&str, usize>::new();
         ui.horizontal_wrapped(|ui| {
             for (rid, r) in doc.recipes() {
                 let n = seen.entry(r.kind.name()).or_default();
                 *n += 1;
                 let name = format!("{} {n}", r.kind.name());
+                let failed = failures.get(rid);
                 let geometry: Vec<EntityId> =
                     r.sources.iter().copied().chain(r.instances()).collect();
                 let resp = ui
@@ -162,7 +164,10 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                         }
                         // Suppressed features are dim and struck through.
                         let off = r.feature_suppressed;
-                        let c = if off {
+                        // A failed feature shows red with its reason (#446).
+                        let c = if failed.is_some() {
+                            ui.visuals().error_fg_color
+                        } else if off {
                             ui.visuals().weak_text_color()
                         } else {
                             ui.visuals().text_color()
@@ -175,13 +180,23 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                             c,
                         );
                         let label = egui::RichText::new(&name).small();
+                        let label = if failed.is_some() {
+                            label.color(ui.visuals().error_fg_color)
+                        } else {
+                            label
+                        };
                         ui.label(if off { label.strikethrough().weak() } else { label });
                         resp
                     })
                     .inner
-                    .on_hover_text(format!(
-                        "{name}: click to select its geometry, double-click to edit it; right-click for more"
-                    ));
+                    .on_hover_text(match failed {
+                        Some(why) => format!(
+                            "{name} failed: {why}. It keeps its last good copies; edit it or its inputs to fix it."
+                        ),
+                        None => format!(
+                            "{name}: click to select its geometry, double-click to edit it; right-click for more"
+                        ),
+                    });
                 if resp.hovered() {
                     hover = Some(geometry.clone());
                 }
