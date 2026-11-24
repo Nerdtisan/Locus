@@ -43,6 +43,8 @@ pub fn to_dxf(doc: &Document) -> Vec<u8> {
 /// Write a prepared model as DXF R12.
 #[must_use]
 pub fn to_dxf_model(model: &ExportModel) -> Vec<u8> {
+    // DXF R12 has no dashes we control: one entity per dash (#427).
+    let model = &model.dashes_as_paths(false);
     let layers: Vec<&crate::pipeline::ExportLayer> = model
         .layers
         .iter()

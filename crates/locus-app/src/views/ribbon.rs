@@ -740,6 +740,7 @@ mod tests {
                 "modify.construction",
                 "modify.explode",
                 "modify.expand_style",
+                "modify.expand_centrelines",
                 "modify.style",
                 "edit.delete",
             ]

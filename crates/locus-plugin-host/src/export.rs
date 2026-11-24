@@ -49,12 +49,17 @@ impl Exporter for PluginExporter {
     }
 
     fn export(&self, model: &locus_export::ExportModel) -> Result<Exported, ExportError> {
-        let bytes = self.plugin.export(&to_model(model)).map_err(|e| match e {
-            CallError::Plugin(crate::types::PluginFailure::Unsupported(m)) => {
-                ExportError::Unsupported(m)
-            }
-            other => ExportError::Failed(other.to_string()),
-        })?;
+        // A plugin format (HPGL…) gets each dash as its own path: one
+        // pen-down per dash (#427).
+        let bytes = self
+            .plugin
+            .export(&to_model(&model.dashes_as_paths(false)))
+            .map_err(|e| match e {
+                CallError::Plugin(crate::types::PluginFailure::Unsupported(m)) => {
+                    ExportError::Unsupported(m)
+                }
+                other => ExportError::Failed(other.to_string()),
+            })?;
         Ok(Exported {
             bytes,
             extension: self.format.extension.clone(),

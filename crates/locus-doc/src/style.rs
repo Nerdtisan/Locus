@@ -9,7 +9,7 @@
 
 use crate::error::DocError;
 use crate::operation::{MAX_LENGTH, MAX_PEN};
-use locus_stroke::{Align, Cap, Join, LineStyle};
+use locus_stroke::{Align, Cap, Dash, Join, LineStyle};
 use serde::{Deserialize, Serialize};
 
 /// Stroke colour.
@@ -197,6 +197,9 @@ impl Style {
         if let Some(a) = patch.align {
             self.line.align = a;
         }
+        if let Some(d) = patch.dash {
+            self.line.dash = d;
+        }
         self
     }
 }
@@ -221,6 +224,8 @@ pub struct StylePatch {
     pub cap: Option<Cap>,
     pub join: Option<Join>,
     pub align: Option<Align>,
+    /// Dash pattern (#427): `Some(None)` makes the line solid.
+    pub dash: Option<Option<Dash>>,
 }
 
 impl StylePatch {
@@ -237,6 +242,7 @@ impl StylePatch {
             cap: Some(style.line.cap),
             join: Some(style.line.join),
             align: Some(style.line.align),
+            dash: Some(style.line.dash),
         }
     }
 

@@ -158,3 +158,81 @@ fn a_styled_cut_layer_cuts_the_outline_and_centreline_is_unchanged() {
         .unwrap();
     assert!((bb.min.x + 1.0).abs() < 1e-9 && (bb.max.x - 21.0).abs() < 1e-9);
 }
+
+fn dash(pattern: &[f64], phase: f64, align: locus_doc::DashAlign) -> StylePatch {
+    StylePatch {
+        dash: Some(Some(locus_doc::Dash::new(pattern, phase, align).unwrap())),
+        ..StylePatch::default()
+    }
+}
+
+#[test]
+fn exact_dashes_are_native_in_svg_and_pdf() {
+    let (mut ed, _, ids) = rect(Operation::Draw);
+    set(
+        &mut ed,
+        &ids,
+        dash(&[3.0, 2.0], 1.0, locus_doc::DashAlign::Exact),
+    );
+    let model = prepare(ed.document(), false).model;
+    let svg = String::from_utf8(to_svg_model(&model)).unwrap();
+    assert!(
+        svg.contains("stroke-dasharray=\"3 2\" stroke-dashoffset=\"1\""),
+        "{svg}"
+    );
+    let pdf = String::from_utf8_lossy(&locus_export::to_pdf_model(&model)).into_owned();
+    assert!(pdf.contains(" d\n"), "PDF sets a dash");
+}
+
+#[test]
+fn corner_dashes_and_dxf_write_one_path_per_dash() {
+    let (mut ed, _, ids) = rect(Operation::Draw);
+    // 60 mm round the rectangle; corners aligned: a dash on every corner.
+    set(
+        &mut ed,
+        &ids,
+        dash(&[2.0, 2.0], 0.0, locus_doc::DashAlign::Corners),
+    );
+    let model = prepare(ed.document(), false).model;
+    let svg = String::from_utf8(to_svg_model(&model)).unwrap();
+    assert!(!svg.contains("stroke-dasharray"), "{svg}");
+    let paths = svg.matches("<path").count();
+    assert!(paths > 4, "{paths} paths: {svg}");
+    // DXF: every dash its own entity, exact or not.
+    let (mut ed2, _, ids2) = rect(Operation::Draw);
+    set(
+        &mut ed2,
+        &ids2,
+        dash(&[3.0, 2.0], 0.0, locus_doc::DashAlign::Exact),
+    );
+    let dxf = String::from_utf8(locus_export::to_dxf_model(
+        &prepare(ed2.document(), false).model,
+    ))
+    .unwrap();
+    // 60 mm, period 5: 12 dashes, the ones over a corner as two lines each.
+    let lines = dxf.matches("\nLINE\n").count();
+    assert!(lines >= 12, "{lines} lines");
+}
+
+#[test]
+fn a_styled_score_layer_perforates_dashes() {
+    let (mut ed, layer, ids) = rect(Operation::Score);
+    set(
+        &mut ed,
+        &ids,
+        dash(&[3.0, 2.0], 0.0, locus_doc::DashAlign::Exact),
+    );
+    ed.apply(&Command::SetLayerProps {
+        id: layer,
+        props: LayerProps {
+            stroke_styles: Some(StrokeStyles::Styled),
+            ..LayerProps::default()
+        },
+    })
+    .unwrap();
+    let lb = locus_export::profile::find("lightburn", &[]).unwrap();
+    let p = prepare_for(ed.document(), false, Some(&lb));
+    let paths = &p.model.layers[0].paths;
+    assert_eq!(paths.len(), 12, "one cut per dash");
+    assert!(paths.iter().all(|x| !x.closed));
+}
