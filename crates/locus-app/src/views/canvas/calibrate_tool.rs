@@ -506,6 +506,110 @@ mod tests {
         }
     }
 
+    /// An image reference centred on 0,0 (#492): 40 × 20 px.
+    fn with_image_at_origin() -> (AppState, LayerId) {
+        let mut img = image::RgbaImage::new(40, 20);
+        for p in img.pixels_mut() {
+            *p = image::Rgba([90, 90, 90, 255]);
+        }
+        let mut png = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let mut c = AppState::default();
+        c.load(Document::new());
+        let (cmd, _) = locus_import::reference_command_at(
+            c.document(),
+            "photo.png",
+            png.get_ref(),
+            Vec2::ZERO,
+        )
+        .unwrap();
+        c.apply(&cmd).unwrap();
+        let layer = *c.document().images().keys().next().unwrap();
+        (c, layer)
+    }
+
+    /// #492 (regression of #468): Calibrate about the Centre keeps an image
+    /// reference centred on 0,0: plain, turned, and after a free X/Y scale.
+    #[test]
+    fn calibrate_keeps_an_images_centre_turned_or_stretched() {
+        use locus_doc::transform::Transform;
+        for prep in [
+            None,
+            Some(Transform::Rotate {
+                center: Vec2::ZERO,
+                angle: 0.7,
+            }),
+            Some(Transform::Stretch {
+                center: Vec2::ZERO,
+                sx: 2.0,
+                sy: 0.5,
+                angle: 0.0,
+            }),
+        ] {
+            let (mut c, layer) = with_image_at_origin();
+            if let Some(transform) = prep {
+                c.apply(&Command::TransformReference { layer, transform })
+                    .unwrap();
+            }
+            let centre = |c: &AppState| c.document().image(layer).unwrap().centre();
+            assert!(centre(&c).distance(Vec2::ZERO) < 1e-9);
+            assert_eq!(c.tools.calibrate.pivot, Pivot::Centre);
+            // Two picks on the image, 4 mm apart, said to be 10 mm.
+            c.set_modify(Modify::Calibrate);
+            c.tools.calibrate.layer = Some(layer);
+            c.tools.calibrate.a = Some(Vec2::new(-2.0, 0.0));
+            c.tools.calibrate.b = Some(Vec2::new(2.0, 0.0));
+            c.tools.calibrate.distance = "10".to_owned();
+            assert!(c.calibrate_ok(Units::Mm));
+            assert!(
+                centre(&c).distance(Vec2::ZERO) < 1e-9,
+                "{prep:?}: the centre moved to {:?}",
+                centre(&c)
+            );
+        }
+    }
+
+    /// #492: with the Inspector showing the reference (as Calibrate… from
+    /// it does), frames before and after Calibrate never move the centre.
+    #[test]
+    fn calibrate_with_the_inspector_open_keeps_the_centre() {
+        let (mut c, layer) = with_image_at_origin();
+        let ctx = egui::Context::default();
+        let mut settings = crate::settings::Settings::default();
+        let mut frame = |c: &mut AppState| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 900.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| c.properties_ui(ui, &mut settings));
+        };
+        c.view.browser_layer = Some(layer);
+        for _ in 0..3 {
+            frame(&mut c);
+        }
+        c.set_modify(Modify::Calibrate);
+        c.tools.calibrate.begin(Some(layer));
+        c.view.browser_layer = Some(layer);
+        frame(&mut c);
+        c.tools.calibrate.a = Some(Vec2::new(-2.0, 0.0));
+        c.tools.calibrate.b = Some(Vec2::new(2.0, 0.0));
+        c.tools.calibrate.distance = "10".to_owned();
+        assert!(c.calibrate_ok(Units::Mm));
+        for _ in 0..3 {
+            frame(&mut c);
+        }
+        let img = c.document().image(layer).unwrap();
+        assert!(
+            img.centre().distance(Vec2::ZERO) < 1e-9,
+            "{:?}",
+            img.centre()
+        );
+        assert!((img.size_mm().x - 2.5 * 40.0 * locus_doc::image::DEFAULT_MM_PER_PX).abs() < 1e-9);
+    }
+
     /// #464, #468: the anchor corner and the first point are explicit
     /// choices; the centre is the default.
     #[test]

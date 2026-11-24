@@ -627,6 +627,102 @@ mod tests {
     use crate::tools::Pick;
     use locus_doc::{Document, Geom};
 
+    /// #492: Place ▸ Move on a reference picked in the Browser (nothing
+    /// selected on the canvas): the command dialog names the reference in
+    /// Objects and enables OK, and a typed distance applies one
+    /// TransformReference that undo reverts. Rotate and Scale likewise.
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn a_picked_reference_fills_objects_and_typed_values_apply() {
+        use egui::accesskit::Role;
+        let mut img = image::RgbaImage::new(20, 10);
+        for p in img.pixels_mut() {
+            *p = image::Rgba([90, 90, 90, 255]);
+        }
+        let mut png = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let mut c = AppState::default();
+        c.load(Document::new());
+        let (cmd, _) = locus_import::reference_command_at(
+            c.document(),
+            "photo.png",
+            png.get_ref(),
+            Vec2::ZERO,
+        )
+        .unwrap();
+        c.apply(&cmd).unwrap();
+        let layer = *c.document().images().keys().next().unwrap();
+        let start = c.document().image(layer).unwrap().clone();
+        for mode in [
+            TransformMode::Move,
+            TransformMode::Rotate,
+            TransformMode::Scale,
+        ] {
+            // As the Inspector's Place buttons do.
+            c.clear_selection();
+            c.set_modify(Modify::Transform(mode));
+            c.view.browser_layer = Some(layer);
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let settings = crate::settings::Settings::default();
+            let frame = |c: &mut AppState| {
+                let input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 700.0))),
+                    ..Default::default()
+                };
+                let mut status = crate::app::Status::default();
+                ctx.run_ui(input, |ui| c.canvas_ui(ui, &settings, &mut status))
+            };
+            let _ = frame(&mut c);
+            let out = frame(&mut c);
+            let tree = out
+                .platform_output
+                .accesskit_update
+                .expect("accesskit tree");
+            // Objects reads "Reference" when this is the tools' target (the
+            // text is painted, so AccessKit can't see it).
+            assert_eq!(c.reference_target(), Some(layer), "{mode:?}");
+            assert!(c.can_transform());
+            let ok = tree
+                .nodes
+                .iter()
+                .find(|(_, n)| n.role() == Role::Button && n.label().is_some_and(|l| l == "OK"))
+                .map(|(_, n)| n.is_disabled());
+            assert_eq!(ok, Some(false), "{mode:?}: OK is enabled");
+            // A typed value, then Enter.
+            c.tools.typed = match mode {
+                TransformMode::Move => "5".to_owned(),
+                TransformMode::Rotate => "90".to_owned(),
+                TransformMode::Scale => "2".to_owned(),
+            };
+            c.transform_enter(mode, Units::Mm);
+            let now = c.document().image(layer).unwrap().clone();
+            match mode {
+                TransformMode::Move => {
+                    assert!(now.centre().distance(start.centre() + Vec2::new(5.0, 0.0)) < 1e-9);
+                }
+                TransformMode::Rotate => {
+                    assert!((now.placement.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+                    assert!(now.centre().distance(start.centre()) < 1e-9);
+                }
+                TransformMode::Scale => {
+                    assert!((now.size_mm().x - 2.0 * start.size_mm().x).abs() < 1e-9);
+                    assert!(
+                        now.centre().distance(start.centre()) < 1e-9,
+                        "about its centre"
+                    );
+                }
+            }
+            assert!(c.undo_label().is_some_and(|l| l.ends_with("reference")));
+            c.undo();
+            assert_eq!(
+                c.document().image(layer),
+                Some(&start),
+                "{mode:?}: undo restores"
+            );
+        }
+    }
+
     /// A blank editor with one rectangle drawn by the Rectangle tool, all of
     /// it selected.
     fn rectangle() -> AppState {
