@@ -144,7 +144,11 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
         let failures = app.doc.sketcher.editor().recipe_failures();
         let mut seen = std::collections::BTreeMap::<&str, usize>::new();
         ui.horizontal_wrapped(|ui| {
-            for (rid, r) in doc.recipes() {
+            // Timeline order (#446): reorderable where nothing depends on it.
+            let order = doc.recipe_order();
+            let count = order.len();
+            for (pos, rid) in order.iter().enumerate() {
+                let Some(r) = doc.recipe(*rid) else { continue };
                 let n = seen.entry(r.kind.name()).or_default();
                 *n += 1;
                 let name = format!("{} {n}", r.kind.name());
@@ -208,7 +212,26 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                 }
                 let off = r.feature_suppressed;
                 let mirror = matches!(r.kind, locus_doc::RecipeKind::Mirror { .. });
-                resp.context_menu(|ui| menu(ui, *rid, off, mirror, &mut cmds, &mut edit));
+                resp.context_menu(|ui| {
+                    menu(ui, *rid, off, mirror, &mut cmds, &mut edit);
+                    ui.separator();
+                    for (label, to, ok) in [
+                        ("Move earlier", pos.saturating_sub(1), pos > 0),
+                        ("Move later", pos + 1, pos + 1 < count),
+                    ] {
+                        if ui
+                            .add_enabled(ok, egui::Button::new(label))
+                            .on_hover_text("Change its place in the timeline; refused if it would come before a feature it uses")
+                            .clicked()
+                        {
+                            cmds.push(Command::ReorderRecipe {
+                                id: *rid,
+                                to: u32::try_from(to).unwrap_or(u32::MAX),
+                            });
+                            ui.close();
+                        }
+                    }
+                });
             }
         });
     }

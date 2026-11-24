@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 25;
+pub const CURRENT_VERSION: u32 = 26;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -1201,8 +1201,61 @@ impl From<FileV24> for FileV25 {
     }
 }
 
-/// The newest on-disk shape. When adding v26, point this at `FileV26`.
-type Latest = FileV25;
+/// Version 26: the timeline's feature order (#446, ADR 0019 decision 5):
+/// `recipe_order`, omitted while features are in creation order, so older
+/// files read unchanged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV26 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+    /// The timeline's feature order (#446), omitted in creation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recipe_order: Vec<RecipeId>,
+}
+
+impl From<FileV25> for FileV26 {
+    fn from(f: FileV25) -> Self {
+        FileV26 {
+            format_version: 26,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+            recipe_order: Vec::new(),
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v27, point this at `FileV27`.
+type Latest = FileV26;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -1228,9 +1281,9 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-        FileV20::from(FileV19::from(FileV18::from(FileV17::from(FileV16::from(
-            f,
+    FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+        FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+            FileV16::from(f),
         ))))),
     )))))
 }
@@ -1262,6 +1315,7 @@ pub fn save(doc: &Document) -> Result<String, FileError> {
             .iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect(),
+        recipe_order: doc.recipe_order.clone(),
     };
     let mut text = ron::ser::to_string_pretty(&file, pretty())
         .map_err(|e| FileError::Unsaveable(e.to_string()))?;
@@ -1315,30 +1369,35 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-            FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+        16 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+            FileV21::from(FileV20::from(FileV19::from(FileV18::from(FileV17::from(
                 parse::<FileV16>(text)?,
+            ))))),
+        ))))),
+        17 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+            FileV21::from(FileV20::from(FileV19::from(FileV18::from(
+                parse::<FileV17>(text)?,
             )))),
         ))))),
-        17 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-            FileV20::from(FileV19::from(FileV18::from(parse::<FileV17>(text)?))),
+        18 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+            FileV21::from(FileV20::from(FileV19::from(parse::<FileV18>(text)?))),
         ))))),
-        18 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-            FileV20::from(FileV19::from(parse::<FileV18>(text)?)),
+        19 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+            FileV21::from(FileV20::from(parse::<FileV19>(text)?)),
         ))))),
-        19 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-            FileV20::from(parse::<FileV19>(text)?),
+        20 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+            FileV21::from(parse::<FileV20>(text)?),
         ))))),
-        20 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-            parse::<FileV20>(text)?,
-        ))))),
-        21 => FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+        21 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(FileV22::from(
             parse::<FileV21>(text)?,
+        ))))),
+        22 => FileV26::from(FileV25::from(FileV24::from(FileV23::from(
+            parse::<FileV22>(text)?,
         )))),
-        22 => FileV25::from(FileV24::from(FileV23::from(parse::<FileV22>(text)?))),
-        23 => FileV25::from(FileV24::from(parse::<FileV23>(text)?)),
-        24 => FileV25::from(parse::<FileV24>(text)?),
-        25 => parse::<FileV25>(text)?,
+        23 => FileV26::from(FileV25::from(FileV24::from(parse::<FileV23>(text)?))),
+        24 => FileV26::from(FileV25::from(parse::<FileV24>(text)?)),
+        25 => FileV26::from(parse::<FileV25>(text)?),
+        26 => parse::<FileV26>(text)?,
         v if v > CURRENT_VERSION => {
             return Err(FileError::FutureVersion {
                 found: v,
@@ -1389,6 +1448,7 @@ fn into_document(
         images: f.images,
         placement: f.placement,
         region_fills: f.region_fills.into_iter().collect(),
+        recipe_order: f.recipe_order,
     };
     if migrate_fills {
         crate::region_fill::migrate_object_fills(&mut doc);
@@ -1436,6 +1496,13 @@ pub(crate) fn validate(doc: &Document) -> Result<(), FileError> {
     }
     if let Some(p) = doc.placement {
         crate::document::check_placement(p)?;
+    }
+    // The timeline order (#446) names existing features, each once.
+    let mut seen = std::collections::BTreeSet::new();
+    for id in &doc.recipe_order {
+        if !doc.recipes.contains_key(id) || !seen.insert(*id) {
+            return Err(FileError::Invalid("bad feature order".to_owned()));
+        }
     }
     for (k, fill) in &doc.region_fills {
         crate::region_fill::check_key(k)?;
@@ -2673,26 +2740,61 @@ mod tests {
         ed.into_document()
     }
 
+    /// The v25 fixture is frozen; it loads unchanged (creation order,
+    /// which is all v26 adds) and saves as the current version.
     #[test]
-    fn v25_fixture_is_current_and_loads() {
+    fn v25_fixture_migrates_to_current() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v25/plate.locus"
         );
-        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
-            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v25()).unwrap()).unwrap();
-        }
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("format_version: 25"));
-        assert!(text.contains("cap: Square"));
-        assert!(text.contains("stroke_styles: Styled"));
-        assert_eq!(load(&text).unwrap(), sample_v25());
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v25());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    /// The v26 sample: `sample_v25()` with its newest feature moved first
+    /// in the timeline (#446).
+    pub(crate) fn sample_v26() -> Document {
+        let doc = sample_v25();
+        let last = *doc.recipe_order().last().expect("a feature");
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::ReorderRecipe { id: last, to: 0 })
+            .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v26_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v26/plate.locus"
+        );
+        if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v26()).unwrap()).unwrap();
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("format_version: 26"));
+        assert!(text.contains("recipe_order: "));
+        assert_eq!(load(&text).unwrap(), sample_v26());
         assert_eq!(
-            save(&sample_v25()).unwrap(),
+            save(&sample_v26()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );
+    }
+
+    #[test]
+    fn a_bad_feature_order_is_refused() {
+        let text = save(&sample_v26())
+            .unwrap()
+            .replace("recipe_order: [", "recipe_order: [999999, ");
+        assert!(load(&text).is_err());
     }
 
     #[test]

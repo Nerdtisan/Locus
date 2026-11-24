@@ -237,6 +237,13 @@ pub enum Command {
         id: RecipeId,
         suppressed: bool,
     },
+    /// Move feature `id` to position `to` (0 = first) in the timeline
+    /// (#446, ADR 0019 decision 5): display and regeneration order. Refused
+    /// when it would put a feature before one whose copies it is built on.
+    ReorderRecipe {
+        id: RecipeId,
+        to: u32,
+    },
     /// Suppress or restore one copy of a pattern (SPEC §6.2.1). `index` is
     /// the copy's position in generation order (row by row for a grid).
     SetInstanceSuppressed {
@@ -351,6 +358,7 @@ impl Command {
             Command::AddGenerated { .. } => "Add plugin object".to_owned(),
             Command::ExplodeRecipe { .. } => "Explode".to_owned(),
             Command::RemoveRecipe { .. } => "Remove recipe".to_owned(),
+            Command::ReorderRecipe { .. } => "Reorder features".to_owned(),
             Command::SetRecipeSuppressed {
                 suppressed: true, ..
             } => "Suppress feature".to_owned(),
@@ -440,6 +448,11 @@ pub(crate) enum Patch {
         before: Option<Parameter>,
         after: Option<Parameter>,
     },
+    /// The timeline's feature order (#446).
+    RecipeOrder {
+        before: Vec<RecipeId>,
+        after: Vec<RecipeId>,
+    },
     DimExpr {
         id: ConstraintId,
         before: Option<String>,
@@ -510,6 +523,9 @@ impl Patch {
             }
             Patch::Profile { before, after } => {
                 doc.profile = if forward { after } else { before }.clone();
+            }
+            Patch::RecipeOrder { before, after } => {
+                doc.recipe_order = if forward { after } else { before }.clone();
             }
             Patch::Placement { before, after } => {
                 doc.placement = if forward { *after } else { *before };
@@ -1481,6 +1497,43 @@ fn exec(
                 regenerate_one(doc, *id, patches, None)?;
             }
         }
+        Command::ReorderRecipe { id, to } => {
+            if doc.recipe(*id).is_none() {
+                return Err(DocError::UnknownRecipe(*id));
+            }
+            let mut order = doc.recipe_order();
+            order.retain(|r| r != id);
+            let at = usize::try_from(*to).map_or(order.len(), |t| t.min(order.len()));
+            order.insert(at, *id);
+            // Every feature after the ones it is built on.
+            for (i, later) in order.iter().enumerate() {
+                for earlier in &order[i + 1..] {
+                    if doc.recipe_depends_on(*later, *earlier) {
+                        let name = |r: &RecipeId| {
+                            doc.recipe(*r).map_or_else(String::new, |x| {
+                                format!("{} {}", x.kind.name(), r.get())
+                            })
+                        };
+                        return Err(DocError::Invalid(format!(
+                            "{} uses {}'s copies, so it must come after it",
+                            name(later),
+                            name(earlier)
+                        )));
+                    }
+                }
+            }
+            let before = doc.recipe_order.clone();
+            if order != doc.recipe_order() || before != order {
+                record(
+                    doc,
+                    patches,
+                    Patch::RecipeOrder {
+                        before,
+                        after: order,
+                    },
+                );
+            }
+        }
         Command::SetRecipeSuppressed { id, suppressed } => {
             let before = doc.recipe(*id).ok_or(DocError::UnknownRecipe(*id))?.clone();
             // Something built on this feature's copies would lose its input.
@@ -2362,11 +2415,11 @@ pub(crate) fn regenerate_all(
     patches: &mut Vec<Patch>,
     runner: Option<&dyn crate::generated::PluginRunner>,
 ) -> Result<BTreeMap<RecipeId, String>, DocError> {
+    // In timeline order (#446): a feature after the ones it is built on.
     let ids: Vec<RecipeId> = doc
-        .recipes()
-        .iter()
-        .filter(|(_, r)| !r.kind.solved())
-        .map(|(id, _)| *id)
+        .recipe_order()
+        .into_iter()
+        .filter(|id| doc.recipe(*id).is_some_and(|r| !r.kind.solved()))
         .collect();
     // A feature that fails (an offset that collapses, a limit hit) keeps
     // its last good copies and reports why; it never stops the command or
@@ -3120,5 +3173,70 @@ mod tests {
             typical,
             worst as f64 * 1000.0 / 1.0e6
         );
+    }
+
+    #[test]
+    fn features_reorder_but_never_before_what_they_use() {
+        // #446 part 3: two independent patterns swap; a pattern of a
+        // pattern's copies can't move before it.
+        let mut ed = Editor::new(Document::new());
+        let lin = |n: &str| RecipeKind::Linear {
+            dir1: crate::recipe::LinearDir {
+                axis: crate::recipe::Axis::X,
+                count: n.into(),
+                spacing: "10".into(),
+                symmetric: false,
+            },
+            dir2: None,
+        };
+        let seg = |ed: &mut Editor, y: f64| {
+            let (p, q) = (add_pt(ed, 0.0, y), add_pt(ed, 5.0, y));
+            ed.apply(&Command::AddEntity {
+                layer: L,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Line { start: p, end: q },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let (p, q) = (seg(&mut ed, 0.0), seg(&mut ed, 50.0));
+        let a = ed
+            .apply(&Command::AddRecipe {
+                kind: lin("2"),
+                sources: vec![p],
+            })
+            .unwrap()
+            .recipes[0];
+        let b = ed
+            .apply(&Command::AddRecipe {
+                kind: lin("3"),
+                sources: vec![q],
+            })
+            .unwrap()
+            .recipes[0];
+        ed.apply(&Command::ReorderRecipe { id: b, to: 0 }).unwrap();
+        assert_eq!(ed.document().recipe_order(), vec![b, a]);
+        assert_eq!(ed.undo_label(), Some("Reorder features"));
+        ed.undo().unwrap();
+        assert_eq!(ed.document().recipe_order(), vec![a, b]);
+        // A pattern of a's copied line depends on a.
+        let copy = ed
+            .document()
+            .recipe(a)
+            .unwrap()
+            .instances()
+            .find(|e| ed.document().line(*e).is_some())
+            .unwrap();
+        let c = ed
+            .apply(&Command::AddRecipe {
+                kind: lin("2"),
+                sources: vec![copy],
+            })
+            .unwrap()
+            .recipes[0];
+        assert!(ed.document().recipe_depends_on(c, a));
+        assert!(ed.apply(&Command::ReorderRecipe { id: c, to: 0 }).is_err());
+        assert!(ed.apply(&Command::ReorderRecipe { id: c, to: 1 }).is_ok());
     }
 }
