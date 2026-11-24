@@ -12,6 +12,7 @@
 
 use crate::state::AppState;
 use egui::{DragValue, Ui};
+use locus_doc::gradient::Gradient;
 use locus_doc::region_fill::RegionFill;
 use locus_doc::{Align, Cap, Dash, DashAlign, Join, StrokeLayer, StrokeStyles};
 use locus_doc::{
@@ -203,7 +204,7 @@ impl AppState {
         // What each region shows (#457): stored, or kept from a split.
         let fills: Vec<Option<RegionFill>> = keys.iter().map(|k| self.resolved_fill(k)).collect();
         let stored: Vec<Option<RegionFill>> =
-            keys.iter().map(|k| doc.region_fill(k).copied()).collect();
+            keys.iter().map(|k| doc.region_fill(k).cloned()).collect();
         let fallback = self.region_layer_colour(&keys[0]);
         let key = egui::Id::new(REGION_PENDING);
         let mut pending: FillPatch = ui
@@ -211,9 +212,19 @@ impl AppState {
             .filter(|(sel, _)| *sel == keys)
             .map(|(_, p)| p)
             .unwrap_or_default();
-        let shown: Vec<Option<RegionFill>> =
-            fills.iter().map(|f| pending.apply(*f, fallback)).collect();
-        let edit = region_fields(ui, &shown, fallback);
+        let shown: Vec<Option<RegionFill>> = fills
+            .iter()
+            .map(|f| pending.apply(f.clone(), fallback))
+            .collect();
+        let mut edit = region_fields(ui, &shown, fallback);
+        // The gradient (#436): one edit applies to every selected region,
+        // each keeping its own frame.
+        if let Some(g) = gradient_fields(ui, &shown, fallback) {
+            if g.is_some() {
+                edit.on = edit.on.or(Some(true));
+            }
+            edit.gradient = Some(g);
+        }
         pending.merge(edit);
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
         if pending != FillPatch::default() && settled {
@@ -222,13 +233,14 @@ impl AppState {
                 .iter()
                 .zip(fills.iter().zip(&stored))
                 .filter_map(|(k, (shown, stored))| {
-                    let mut next = pending.apply(*shown, fallback);
+                    let mut next = pending.apply(shown.clone(), fallback);
                     // Removing an inherited fill stores "no fill", or the
                     // split region's fill would show through again (#457).
                     if next.is_none() && shown.is_some() && stored.is_none() {
                         next = Some(RegionFill {
                             fill: Fill::None,
                             opacity: 1.0,
+                            gradient: None,
                         });
                     }
                     (next != *stored).then(|| Command::SetRegionFill {
@@ -286,22 +298,29 @@ const REGION_PENDING: &str = "locus.region_fill.pending";
 
 /// A held edit of selected regions' fills (#451): fill on or off, a colour,
 /// an opacity. `None` leaves that part as each region has it.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct FillPatch {
     on: Option<bool>,
     colour: Option<[u8; 3]>,
     opacity: Option<f64>,
+    /// A gradient set (`Some(Some)`) or turned back to solid (`Some(None)`),
+    /// #436.
+    gradient: Option<Option<Box<Gradient>>>,
 }
 
 impl FillPatch {
     /// The region's fill with this edit. Turning a fill on keeps its own
     /// colour (#388); one that never had a colour gets `fallback`. A fill
     /// that is off and opaque is no fill at all.
-    fn apply(self, f: Option<RegionFill>, fallback: [u8; 3]) -> Option<RegionFill> {
+    fn apply(&self, f: Option<RegionFill>, fallback: [u8; 3]) -> Option<RegionFill> {
         let mut r = f.unwrap_or(RegionFill {
             fill: Fill::None,
             opacity: 1.0,
+            gradient: None,
         });
+        if let Some(g) = &self.gradient {
+            r.gradient.clone_from(g);
+        }
         if let Some(on) = self.on {
             r.fill = r.fill.switched(on, Some(fallback));
         }
@@ -323,6 +342,9 @@ impl FillPatch {
         }
         self.colour = edit.colour.or(self.colour);
         self.opacity = edit.opacity.or(self.opacity);
+        if edit.gradient.is_some() {
+            self.gradient = edit.gradient;
+        }
     }
 }
 
@@ -334,10 +356,14 @@ fn region_fields(ui: &mut Ui, shown: &[Option<RegionFill>], fallback: [u8; 3]) -
         let first = *v.peek()?;
         v.all(|x| x == first).then_some(first)
     }
-    let painted = |f: &Option<RegionFill>| f.and_then(|f| f.painted());
+    let painted = |f: &Option<RegionFill>| f.as_ref().and_then(RegionFill::painted);
     let on = same(shown.iter().map(|f| painted(f).is_some()));
-    let colour = same(shown.iter().map(|f| f.and_then(|f| f.fill.colour())));
-    let opacity = same(shown.iter().map(|f| f.map_or(1.0, |f| f.opacity)));
+    let colour = same(
+        shown
+            .iter()
+            .map(|f| f.as_ref().and_then(|f| f.fill.colour())),
+    );
+    let opacity = same(shown.iter().map(|f| f.as_ref().map_or(1.0, |f| f.opacity)));
     let mut out = FillPatch::default();
     egui::Grid::new("region-fill-fields")
         .num_columns(2)
@@ -377,6 +403,178 @@ fn region_fields(ui: &mut Ui, shown: &[Option<RegionFill>], fallback: [u8; 3]) -
             ui.end_row();
         });
     out
+}
+
+/// The gradient editor under the region Fill fields (#436, M6 design §6):
+/// Type, Rotate with shape, Reverse, Angle, Ratio and the stops. The
+/// selected regions' first gradient is the one shown; an edit makes the
+/// whole gradient, applied to every selected region. `Some(None)` turns the
+/// fill back to solid.
+fn gradient_fields(
+    ui: &mut Ui,
+    shown: &[Option<RegionFill>],
+    fallback: [u8; 3],
+) -> Option<Option<Box<Gradient>>> {
+    use locus_doc::gradient::{GradientKind, MAX_STOPS, Stop};
+    let first = shown.iter().flatten().next()?;
+    first.painted()?;
+    let current: Option<Gradient> = first.gradient.as_deref().cloned();
+    let base = first.fill.colour().unwrap_or(fallback);
+    let mut g = current.clone();
+    #[derive(Clone, Copy, PartialEq)]
+    enum T {
+        Solid,
+        Linear,
+        Radial,
+        Elliptical,
+        Conic,
+    }
+    let kind = match g.as_ref().map(|g| g.kind) {
+        None => T::Solid,
+        Some(GradientKind::Linear) => T::Linear,
+        Some(GradientKind::Radial) => T::Radial,
+        Some(GradientKind::Elliptical { .. }) => T::Elliptical,
+        Some(GradientKind::Conic) => T::Conic,
+    };
+    ui.horizontal(|ui| {
+        ui.label("Type");
+        if let Some(t) = crate::theme::segmented(
+            ui,
+            kind,
+            &[
+                (T::Solid, "Solid"),
+                (T::Linear, "Linear"),
+                (T::Radial, "Radial"),
+                (T::Elliptical, "Elliptical"),
+                (T::Conic, "Conic"),
+            ],
+        ) {
+            g = match t {
+                T::Solid => None,
+                t => {
+                    let mut next = g.clone().unwrap_or_else(|| Gradient::linear_from(base));
+                    next.kind = match t {
+                        T::Radial => GradientKind::Radial,
+                        T::Elliptical => GradientKind::Elliptical { ratio: 0.6 },
+                        T::Conic => GradientKind::Conic,
+                        _ => GradientKind::Linear,
+                    };
+                    // Round kinds start from the middle.
+                    if t != T::Linear && kind == T::Linear || kind == T::Solid && t != T::Linear {
+                        next.from = locus_geom::Vec2::new(0.5, 0.5);
+                        next.to = locus_geom::Vec2::new(1.0, 0.5);
+                    }
+                    Some(next)
+                }
+            };
+        }
+    });
+    if let Some(gr) = g.as_mut() {
+        ui.horizontal(|ui| {
+            crate::theme::checkbox(ui, &mut gr.rotate_with_shape, "Rotate with shape").on_hover_text(
+                "Follows Rotate and Mirror. Reshaping by dragging points refits the gradient to the new outline.",
+            );
+            if ui.button("Reverse").on_hover_text("Swap the gradient's ends").clicked() {
+                for s in &mut gr.stops {
+                    s.pos = 1.0 - s.pos;
+                }
+                gr.stops.reverse();
+            }
+        });
+        // The angle turns from → to about their middle.
+        let d = gr.to - gr.from;
+        let mut deg = d.y.atan2(d.x).to_degrees();
+        ui.horizontal(|ui| {
+            ui.label("Angle");
+            if ui
+                .add(DragValue::new(&mut deg).speed(1.0).suffix("°"))
+                .on_hover_text("The gradient's direction in its frame")
+                .changed()
+            {
+                let mid = gr.from.lerp(gr.to, 0.5);
+                let half = d.length() / 2.0;
+                let u = locus_geom::Vec2::from_angle(deg.to_radians());
+                if matches!(gr.kind, GradientKind::Linear) {
+                    gr.from = mid - u * half;
+                    gr.to = mid + u * half;
+                } else {
+                    gr.to = gr.from + u * d.length();
+                }
+            }
+            if let GradientKind::Elliptical { ratio } = &mut gr.kind {
+                ui.label("Ratio");
+                let mut pct = *ratio * 100.0;
+                if ui
+                    .add(DragValue::new(&mut pct).range(1.0..=100.0).suffix(" %"))
+                    .changed()
+                {
+                    *ratio = (pct / 100.0).clamp(0.01, 1.0);
+                }
+            }
+        });
+        let mut remove = None;
+        for (i, s) in gr.stops.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                crate::theme::swatch(ui, &mut s.colour);
+                let mut pos = s.pos * 100.0;
+                if ui
+                    .add(DragValue::new(&mut pos).range(0.0..=100.0).suffix(" %"))
+                    .on_hover_text("Where the stop sits along the gradient")
+                    .changed()
+                {
+                    s.pos = (pos / 100.0).clamp(0.0, 1.0);
+                }
+                let mut op = s.opacity * 100.0;
+                if ui
+                    .add(
+                        DragValue::new(&mut op)
+                            .range(0.0..=100.0)
+                            .prefix("α ")
+                            .suffix(" %"),
+                    )
+                    .on_hover_text("The stop's opacity")
+                    .changed()
+                {
+                    s.opacity = (op / 100.0).clamp(0.0, 1.0);
+                }
+                if ui
+                    .small_button("✕")
+                    .on_hover_text("Delete this stop")
+                    .clicked()
+                {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove.filter(|_| gr.stops.len() > 2) {
+            gr.stops.remove(i);
+        }
+        gr.stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+        if gr.stops.len() < MAX_STOPS
+            && ui
+                .button("+ Add stop")
+                .on_hover_text("A stop halfway along the widest gap")
+                .clicked()
+        {
+            let (i, _) = gr
+                .stops
+                .windows(2)
+                .enumerate()
+                .map(|(i, w)| (i, w[1].pos - w[0].pos))
+                .fold((0, -1.0), |acc, x| if x.1 > acc.1 { x } else { acc });
+            let pos = (gr.stops[i].pos + gr.stops[i + 1].pos) / 2.0;
+            let (c, a) = gr.colour(pos);
+            gr.stops.insert(
+                i + 1,
+                Stop {
+                    pos,
+                    colour: c.map(|v| v.round().clamp(0.0, 255.0) as u8),
+                    opacity: a,
+                },
+            );
+        }
+    }
+    (g != current).then(|| g.map(Box::new))
 }
 
 /// Keep what was edited before and add this frame's edits.
@@ -862,6 +1060,7 @@ mod tests {
         let red = Some(RegionFill {
             fill: Fill::Colour([200, 0, 0]),
             opacity: 0.5,
+            gradient: None,
         });
         let off = FillPatch {
             on: Some(false),
@@ -871,8 +1070,8 @@ mod tests {
             on: Some(true),
             ..FillPatch::default()
         };
-        let hidden = off.apply(red, [9, 9, 9]);
-        assert_eq!(hidden.unwrap().fill, Fill::Off([200, 0, 0]));
+        let hidden = off.apply(red.clone(), [9, 9, 9]);
+        assert_eq!(hidden.clone().unwrap().fill, Fill::Off([200, 0, 0]));
         assert_eq!(on.apply(hidden, [9, 9, 9]), red);
         assert_eq!(
             on.apply(None, [9, 9, 9]).unwrap().fill,
@@ -895,7 +1094,8 @@ mod tests {
             faint.apply(None, [9, 9, 9]),
             Some(RegionFill {
                 fill: Fill::None,
-                opacity: 0.3
+                opacity: 0.3,
+                gradient: None,
             })
         );
         assert_eq!(off.apply(None, [9, 9, 9]), None);

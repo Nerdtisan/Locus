@@ -157,24 +157,6 @@
             phase: 0.5,
             align: Corners,
           )),
-          extra: [
-            (
-              offset: 1.5,
-              width: 0.3,
-              colour: Some((200, 0, 0)),
-            ),
-            (
-              offset: -1.5,
-              width: 0.2,
-              pen: Some(2),
-              dash: Some((
-                pattern: [
-                  1.0,
-                  1.0,
-                ],
-              )),
-            ),
-          ],
         ),
       ),
     ),
@@ -1746,6 +1728,33 @@
     ), (
       fill: Colour((255, 0, 0)),
       opacity: 0.4,
+      gradient: Some((
+        kind: Elliptical(
+          ratio: 0.5,
+        ),
+        from: (
+          x: 0.5,
+          y: 0.5,
+        ),
+        to: (
+          x: 1.0,
+          y: 0.5,
+        ),
+        stops: [
+          (
+            pos: 0.0,
+            colour: (30, 90, 200),
+            opacity: 1.0,
+          ),
+          (
+            pos: 1.0,
+            colour: (255, 255, 255),
+            opacity: 1.0,
+          ),
+        ],
+        rotate_with_shape: false,
+        frame_angle: 0.25,
+      )),
     )),
   ],
   recipe_order: [

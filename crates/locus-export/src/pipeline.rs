@@ -424,6 +424,8 @@ pub struct ExportFill {
     pub colour: [u8; 3],
     /// `0..=1`.
     pub opacity: f64,
+    /// A gradient instead of `colour` (#436), with its frame on the page.
+    pub gradient: Option<(locus_doc::gradient::Gradient, locus_doc::gradient::Frame)>,
 }
 
 /// Everything the exporters need, layers in export order.
@@ -601,6 +603,12 @@ impl ExportModel {
             .flat_map(|p| p.segs.iter_mut())
         {
             seg.shape = translated(seg.shape, d);
+        }
+        // A gradient's frame moves with its region (#436).
+        for f in &mut self.fills {
+            if let Some((_, frame)) = &mut f.gradient {
+                frame.origin += d;
+            }
         }
         if let Some(f) = &mut self.frame {
             *f = Aabb::from_points(f.min + d, f.max + d);
@@ -1012,11 +1020,16 @@ fn collect_fills(doc: &Document, layers: &[ExportLayer]) -> Vec<ExportFill> {
                 .find(|l| l.id == layer && l.uses_object_style())?;
             let mut paths: Vec<ExportPath> = loop_path(&r.outer).into_iter().collect();
             paths.extend(r.holes.iter().filter_map(loop_path));
+            let gradient = fill
+                .gradient
+                .as_deref()
+                .and_then(|g| locus_doc::gradient::region_frame(&r, g).map(|f| (g.clone(), f)));
             Some(ExportFill {
                 layer,
                 paths,
                 colour,
                 opacity: fill.opacity.clamp(0.0, 1.0),
+                gradient,
             })
         })
         .collect()

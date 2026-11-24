@@ -21,6 +21,7 @@ pub mod explode;
 pub mod expr;
 pub mod file;
 pub mod generated;
+pub mod gradient;
 pub mod ids;
 pub mod image;
 pub mod modify;

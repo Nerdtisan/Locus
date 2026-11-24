@@ -13,6 +13,7 @@
 pub mod dxf;
 pub mod exporter;
 pub mod fix;
+pub mod gradient;
 pub mod layers;
 pub mod ops;
 pub mod order;

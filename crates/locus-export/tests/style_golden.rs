@@ -67,6 +67,7 @@ fn fill_at(ed: &mut Editor, at: Vec2, colour: [u8; 3], opacity: f64) {
         fill: Some(locus_doc::region_fill::RegionFill {
             fill: Fill::Colour(colour),
             opacity,
+            gradient: None,
         }),
     })
     .unwrap();

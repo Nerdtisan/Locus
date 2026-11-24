@@ -22,10 +22,15 @@ pub const MAX_REGION_FILLS: usize = 100_000;
 
 /// A region's fill: a colour (or none, remembering the colour last used, as
 /// object fills did, #388) and its opacity, `0..=1`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegionFill {
     pub fill: Fill,
     pub opacity: f64,
+    /// A gradient instead of the solid colour (#436, format v27). `fill`
+    /// stays the solid colour, used when the gradient is turned off, the
+    /// same "remember the last choice" as #388. Omitted while `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<Box<crate::gradient::Gradient>>,
 }
 
 impl RegionFill {
@@ -35,6 +40,7 @@ impl RegionFill {
         Self {
             fill: Fill::Colour(c),
             opacity: 1.0,
+            gradient: None,
         }
     }
 
@@ -52,6 +58,9 @@ impl RegionFill {
                 what: "fill opacity",
                 value: self.opacity,
             });
+        }
+        if let Some(g) = &self.gradient {
+            g.validate()?;
         }
         Ok(())
     }
@@ -118,14 +127,14 @@ pub fn resolve(doc: &Document, regions: &[locus_region::Region]) -> Vec<Option<R
             let r = crate::regions::rebuild(doc, k)?;
             let layer = crate::regions::layer_of(doc, &r);
             let area = r.area().abs();
-            Some((r, layer, *f, area))
+            Some((r, layer, f.clone(), area))
         })
         .collect();
     regions
         .iter()
         .map(|r| {
             if let Some(f) = doc.region_fills.get(&r.key) {
-                return Some(*f);
+                return Some(f.clone());
             }
             if split.is_empty() {
                 return None;
@@ -136,7 +145,7 @@ pub fn resolve(doc: &Document, regions: &[locus_region::Region]) -> Vec<Option<R
                 .iter()
                 .filter(|(old, l, ..)| *l == layer && old.contains(p))
                 .min_by(|a, b| a.3.total_cmp(&b.3))
-                .map(|(_, _, f, _)| *f)
+                .map(|(_, _, f, _)| f.clone())
         })
         .collect()
 }
@@ -166,7 +175,7 @@ pub(crate) fn migrate_region_keys(doc: &mut Document) {
     };
     let mut fills = std::collections::BTreeMap::new();
     for (k, f) in &doc.region_fills {
-        fills.entry(rekey(k)).or_insert(*f);
+        fills.entry(rekey(k)).or_insert(f.clone());
     }
     let booleans: Vec<_> = doc
         .booleans
@@ -195,6 +204,7 @@ pub(crate) fn migrate_object_fills(doc: &mut Document) {
             s.fill.painted().map(|c| RegionFill {
                 fill: Fill::Colour(c),
                 opacity: s.opacity.clamp(0.0, 1.0),
+                gradient: None,
             })
         });
         if let Some(f) = fill {
