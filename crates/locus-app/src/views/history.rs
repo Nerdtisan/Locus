@@ -135,6 +135,7 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
     let mut cmds = Vec::new();
     let mut select: Option<Vec<EntityId>> = None;
     let mut hover: Option<Vec<EntityId>> = None;
+    let mut edit: Option<RecipeId> = None;
     {
         let doc = app.doc.sketcher.document();
         if doc.recipes().is_empty() {
@@ -159,7 +160,13 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                                 ui.visuals().widgets.hovered.weak_bg_fill,
                             );
                         }
-                        let c = ui.visuals().text_color();
+                        // Suppressed features are dim and struck through.
+                        let off = r.feature_suppressed;
+                        let c = if off {
+                            ui.visuals().weak_text_color()
+                        } else {
+                            ui.visuals().text_color()
+                        };
                         icons::paint(
                             ui.painter(),
                             slot.shrink(4.0),
@@ -167,12 +174,13 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                             "",
                             c,
                         );
-                        ui.small(&name);
+                        let label = egui::RichText::new(&name).small();
+                        ui.label(if off { label.strikethrough().weak() } else { label });
                         resp
                     })
                     .inner
                     .on_hover_text(format!(
-                        "{name}: click to select its geometry; right-click for more"
+                        "{name}: click to select its geometry, double-click to edit it; right-click for more"
                     ));
                 if resp.hovered() {
                     hover = Some(geometry.clone());
@@ -180,12 +188,29 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                 if resp.clicked() {
                     select = Some(geometry.clone());
                 }
-                resp.context_menu(|ui| menu(ui, *rid, &mut cmds));
+                if resp.double_clicked() {
+                    edit = Some(*rid);
+                }
+                let off = r.feature_suppressed;
+                let mirror = matches!(r.kind, locus_doc::RecipeKind::Mirror { .. });
+                resp.context_menu(|ui| menu(ui, *rid, off, mirror, &mut cmds, &mut edit));
             }
         });
     }
     if let Some(ids) = select {
         app.selection.items.set_all(ids);
+    }
+    // Edit: the feature's own settings, in its Browser row, opened.
+    if let Some(rid) = edit {
+        let id = egui::Id::new(("browser-recipe", rid));
+        let ctx = ui.ctx().clone();
+        let mut state =
+            egui::collapsing_header::CollapsingState::load_with_default_open(&ctx, id, false);
+        state.set_open(true);
+        state.store(&ctx);
+        app.view
+            .shell
+            .push(crate::actions::Shell::ShowPane(crate::layout::Tab::Browser));
     }
     // Hovering a feature highlights its geometry, as hovering a curve does.
     app.selection.highlight = hover.unwrap_or_default().into_iter().collect();
@@ -194,7 +219,47 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
     }
 }
 
-fn menu(ui: &mut Ui, id: RecipeId, cmds: &mut Vec<Command>) {
+fn menu(
+    ui: &mut Ui,
+    id: RecipeId,
+    off: bool,
+    mirror: bool,
+    cmds: &mut Vec<Command>,
+    edit: &mut Option<RecipeId>,
+) {
+    if ui
+        .button("Edit")
+        .on_hover_text("Open its settings in the Browser")
+        .clicked()
+    {
+        *edit = Some(id);
+        ui.close();
+    }
+    let (label, tip) = if off {
+        ("Unsuppress", "Bring its copies back")
+    } else if mirror {
+        (
+            "Suppress",
+            "A mirror can't be suppressed yet: its copies are tied by constraints",
+        )
+    } else {
+        (
+            "Suppress",
+            "Hide its copies but keep the feature (one undo step)",
+        )
+    };
+    if ui
+        .add_enabled(off || !mirror, egui::Button::new(label))
+        .on_hover_text(tip)
+        .on_disabled_hover_text(tip)
+        .clicked()
+    {
+        cmds.push(Command::SetRecipeSuppressed {
+            id,
+            suppressed: !off,
+        });
+        ui.close();
+    }
     if ui
         .button("Explode")
         .on_hover_text("Keep the copies as plain geometry and drop the feature")

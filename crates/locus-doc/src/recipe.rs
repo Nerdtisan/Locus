@@ -250,6 +250,17 @@ pub struct Recipe {
     /// Constraints the recipe created and owns (mirror's `Symmetric` ties).
     #[serde(default)]
     pub constraints: Vec<ConstraintId>,
+    /// The whole feature is suppressed from the timeline (#446, ADR 0019
+    /// decision 5, format v24): it makes no copies, but keeps every ID in
+    /// its pool, so unsuppressing brings back the same entities. Omitted
+    /// while false. (`suppressed` above is single pattern copies.)
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub feature_suppressed: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's signature
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 impl Recipe {
@@ -267,7 +278,9 @@ impl Recipe {
             .iter()
             .enumerate()
             .take(copies)
-            .filter(move |(k, _)| flat || !self.suppressed.contains(k))
+            .filter(move |(k, _)| {
+                flat || (!self.suppressed.contains(k) && !self.feature_suppressed)
+            })
             .flat_map(move |(_, set)| set.iter().take(per))
             .copied()
     }
@@ -275,7 +288,7 @@ impl Recipe {
     /// Whether copy `k` of a mirror or pattern currently exists as entities.
     #[must_use]
     pub fn is_live(&self, k: usize) -> bool {
-        k < self.active && !self.suppressed.contains(&k)
+        k < self.active && !self.suppressed.contains(&k) && !self.feature_suppressed
     }
 
     /// Whether `pool[0]` is a flat ID list (offsets) rather than one set of

@@ -116,7 +116,8 @@ impl RecipesView {
             for (rid, r) in doc.recipes() {
                 let n = seen.entry(r.kind.name()).or_default();
                 *n += 1;
-                let id = ui.make_persistent_id(("browser-recipe", *rid));
+                // A global id, so the Timeline's Edit can open the row (#446).
+                let id = egui::Id::new(("browser-recipe", *rid));
                 egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
                     id,
@@ -273,6 +274,7 @@ mod tests {
             active: 0,
             suppressed: Default::default(),
             constraints: Vec::new(),
+            feature_suppressed: false,
         }
     }
 

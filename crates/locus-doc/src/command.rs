@@ -228,6 +228,14 @@ pub enum Command {
     },
     /// Change a recipe's parameters (e.g. an offset's distance); the kind
     /// must stay the same and the sources are kept. The instances follow.
+    /// Suppress or restore a whole feature from the timeline (#446, ADR
+    /// 0019 decision 5): its copies go but its IDs stay, so restoring brings
+    /// the same entities back. Patterns, offsets and plugin objects; a
+    /// mirror, or a feature another feature copies from, is refused.
+    SetRecipeSuppressed {
+        id: RecipeId,
+        suppressed: bool,
+    },
     /// Suppress or restore one copy of a pattern (SPEC §6.2.1). `index` is
     /// the copy's position in generation order (row by row for a grid).
     SetInstanceSuppressed {
@@ -332,6 +340,12 @@ impl Command {
             Command::AddGenerated { .. } => "Add plugin object".to_owned(),
             Command::ExplodeRecipe { .. } => "Explode".to_owned(),
             Command::RemoveRecipe { .. } => "Remove recipe".to_owned(),
+            Command::SetRecipeSuppressed {
+                suppressed: true, ..
+            } => "Suppress feature".to_owned(),
+            Command::SetRecipeSuppressed {
+                suppressed: false, ..
+            } => "Unsuppress feature".to_owned(),
             Command::SetInstanceSuppressed { suppressed, .. } => if *suppressed {
                 "Suppress instance"
             } else {
@@ -1400,6 +1414,46 @@ fn exec(
                 regenerate_one(doc, *id, patches, None)?;
             }
         }
+        Command::SetRecipeSuppressed { id, suppressed } => {
+            let before = doc.recipe(*id).ok_or(DocError::UnknownRecipe(*id))?.clone();
+            if *suppressed && matches!(before.kind, RecipeKind::Mirror { .. }) {
+                return Err(DocError::Invalid(
+                    "a mirror can't be suppressed yet: its copies are tied by constraints"
+                        .to_owned(),
+                ));
+            }
+            // Something built on this feature's copies would lose its input.
+            if *suppressed {
+                let made: std::collections::BTreeSet<EntityId> = before.instances().collect();
+                if let Some((other, r)) = doc
+                    .recipes()
+                    .iter()
+                    .find(|(rid, r)| *rid != id && r.sources.iter().any(|s| made.contains(s)))
+                {
+                    return Err(DocError::Invalid(format!(
+                        "{} {} uses this feature's copies; suppress or delete it first",
+                        r.kind.name(),
+                        other.get()
+                    )));
+                }
+            }
+            let after = crate::recipe::Recipe {
+                feature_suppressed: *suppressed,
+                ..before.clone()
+            };
+            if after != before {
+                record(
+                    doc,
+                    patches,
+                    Patch::Recipe {
+                        id: *id,
+                        before: Some(before),
+                        after: Some(after),
+                    },
+                );
+                regenerate_one(doc, *id, patches, None)?;
+            }
+        }
         Command::ApplySolution { points, radii } => apply_solution(doc, points, radii)?,
     }
     Ok(())
@@ -1454,6 +1508,7 @@ fn add_recipe(
             pool: vec![Vec::new()],
             active: 0,
             suppressed: std::collections::BTreeSet::new(),
+            feature_suppressed: false,
             constraints: Vec::new(),
         };
         record(
@@ -1553,6 +1608,7 @@ fn add_recipe(
         pool: vec![set],
         active: 1,
         suppressed: std::collections::BTreeSet::new(),
+        feature_suppressed: false,
         constraints: owned,
     };
     record(
@@ -2660,5 +2716,46 @@ mod tests {
         ed.go_to(0).unwrap();
         // The five oldest points can no longer be undone.
         assert_eq!(ed.document().entities().len(), 5);
+    }
+
+    #[test]
+    fn a_suppressed_feature_drops_its_copies_and_keeps_their_ids() {
+        // #446: Suppress from the timeline; restoring brings the same IDs.
+        let mut ed = Editor::new(Document::new());
+        let p = add_pt(&mut ed, 0.0, 0.0);
+        let kind = RecipeKind::Linear {
+            dir1: crate::recipe::LinearDir {
+                axis: crate::recipe::Axis::X,
+                count: "3".into(),
+                spacing: "10".into(),
+                symmetric: false,
+            },
+            dir2: None,
+        };
+        let r = ed
+            .apply(&Command::AddRecipe {
+                kind,
+                sources: vec![p],
+            })
+            .unwrap()
+            .recipes[0];
+        let copies: Vec<EntityId> = ed.document().recipe(r).unwrap().instances().collect();
+        assert_eq!(copies.len(), 2);
+        ed.apply(&Command::SetRecipeSuppressed {
+            id: r,
+            suppressed: true,
+        })
+        .unwrap();
+        assert_eq!(ed.undo_label(), Some("Suppress feature"));
+        assert!(copies.iter().all(|c| ed.document().entity(*c).is_none()));
+        assert_eq!(ed.document().recipe(r).unwrap().instances().count(), 0);
+        ed.apply(&Command::SetRecipeSuppressed {
+            id: r,
+            suppressed: false,
+        })
+        .unwrap();
+        let back: Vec<EntityId> = ed.document().recipe(r).unwrap().instances().collect();
+        assert_eq!(back, copies, "the same IDs come back");
+        assert!(copies.iter().all(|c| ed.document().entity(*c).is_some()));
     }
 }

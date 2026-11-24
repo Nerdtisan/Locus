@@ -309,6 +309,12 @@ pub(crate) fn regenerate(
         .first()
         .and_then(|s| doc.entity(*s).map(|e| e.layer))
         .unwrap_or_else(Document::default_layer);
+    // A suppressed plugin object (#446) writes nothing and keeps its IDs.
+    let out = if r.feature_suppressed {
+        Vec::new()
+    } else {
+        out
+    };
     crate::offset::write_flat(doc, rid, r, layer, crate::Style::default(), &out, patches)
 }
 
