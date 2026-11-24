@@ -19,11 +19,17 @@ pub struct CurveParams {
     /// Potrace's `alphamax`: vertices with α at or above it are corners.
     /// 0 makes every vertex a corner (a polygon); 4/3 none.
     pub alpha_max: f64,
+    /// Potrace's `opttolerance`, in pixels: runs of smooth curves become one
+    /// curve when it stays this close to them (#505). 0 keeps every curve.
+    pub simplify: f64,
 }
 
 impl Default for CurveParams {
     fn default() -> Self {
-        Self { alpha_max: 1.0 }
+        Self {
+            alpha_max: 1.0,
+            simplify: 0.2,
+        }
     }
 }
 
@@ -323,7 +329,133 @@ pub fn outline(
             ));
         }
     }
+    let segs = simplify(segs, params.simplify * factor, budget)?;
     Ok(merge_lines(segs))
+}
+
+/// Most turn a run of curves may make to become one curve: just under a
+/// half turn, as in the paper, so the joined curve stays convex.
+const MAX_RUN_TURN: f64 = 179.0 * std::f64::consts::PI / 180.0;
+
+/// The paper's curve optimisation (§2.4), greedily: from each curve, the
+/// longest run of curves that turn one way through under 179° and can be
+/// replaced by one cubic within `tol` of every piece. Corners (lines) stay.
+fn simplify(segs: Vec<Seg>, tol: f64, budget: &mut Budget) -> Result<Vec<Seg>, TraceError> {
+    if tol <= 0.0 {
+        return Ok(segs);
+    }
+    let mut out = Vec::with_capacity(segs.len());
+    let mut i = 0;
+    while i < segs.len() {
+        let mut best = (i + 1, segs[i]);
+        if matches!(segs[i], Seg::Cubic(..)) {
+            let mut j = i + 1;
+            while j < segs.len() && matches!(segs[j], Seg::Cubic(..)) && turns_one_way(&segs[i..=j])
+            {
+                budget.spend(1)?;
+                let Some(c) = fit_run(&segs[i..=j], tol) else {
+                    break;
+                };
+                best = (j + 1, c);
+                j += 1;
+            }
+        }
+        out.push(best.1);
+        i = best.0;
+    }
+    Ok(out)
+}
+
+/// The directions a cubic leaves its start and arrives at its end.
+fn tangents(s: &Seg) -> Option<(Vec2, Vec2)> {
+    let Seg::Cubic(a, b, c, d) = *s else {
+        return None;
+    };
+    let t0 = if b.distance(a) > 0.0 { b - a } else { c - a };
+    let t1 = if d.distance(c) > 0.0 { d - c } else { d - b };
+    let (n0, n1) = (t0.length(), t1.length());
+    (n0 > 0.0 && n1 > 0.0).then(|| (t0 * (1.0 / n0), t1 * (1.0 / n1)))
+}
+
+/// Every curve turns the same way and the run turns through less than
+/// [`MAX_RUN_TURN`] in all.
+fn turns_one_way(run: &[Seg]) -> bool {
+    let mut sign = 0.0f64;
+    let mut total = 0.0;
+    for s in run {
+        let Some((t0, t1)) = tangents(s) else {
+            return false;
+        };
+        let turn = t0.cross(t1).atan2(t0.dot(t1));
+        if turn != 0.0 {
+            if sign != 0.0 && turn.signum() != sign {
+                return false;
+            }
+            sign = turn.signum();
+        }
+        total += turn.abs();
+    }
+    total < MAX_RUN_TURN
+}
+
+/// One cubic for a run of joined curves: the run's ends and end tangents,
+/// with handle lengths fitted by least squares to points along the run
+/// (chord-length parameters). `None` unless it stays within `tol`.
+fn fit_run(run: &[Seg], tol: f64) -> Option<Seg> {
+    let (Seg::Cubic(p0, ..), Seg::Cubic(.., p3)) = (run.first()?, run.last()?) else {
+        return None;
+    };
+    let (p0, p3) = (*p0, *p3);
+    let t0 = tangents(run.first()?)?.0;
+    let t1 = tangents(run.last()?)?.1;
+    // Points along the run, ends included.
+    let mut q = vec![p0];
+    for s in run {
+        for t in [0.25, 0.5, 0.75, 1.0] {
+            q.push(s.at(t));
+        }
+    }
+    let mut u = vec![0.0; q.len()];
+    for k in 1..q.len() {
+        u[k] = u[k - 1] + q[k].distance(q[k - 1]);
+    }
+    let len = *u.last()?;
+    if len <= 0.0 {
+        return None;
+    }
+    let (mut c11, mut c12, mut c22, mut x1, mut x2) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (p, ui) in q.iter().zip(&u) {
+        let s = ui / len;
+        let w = 1.0 - s;
+        let (b0, b1, b2, b3) = (w * w * w, 3.0 * w * w * s, 3.0 * w * s * s, s * s * s);
+        let a1 = t0 * b1;
+        let a2 = t1 * -b2;
+        let rest = *p - (p0 * (b0 + b1) + p3 * (b2 + b3));
+        c11 += a1.dot(a1);
+        c12 += a1.dot(a2);
+        c22 += a2.dot(a2);
+        x1 += a1.dot(rest);
+        x2 += a2.dot(rest);
+    }
+    let det = c11 * c22 - c12 * c12;
+    if det.abs() <= f64::EPSILON * c11 * c22 {
+        return None;
+    }
+    let alpha = (x1 * c22 - x2 * c12) / det;
+    let beta = (c11 * x2 - c12 * x1) / det;
+    if !(alpha.is_finite() && beta.is_finite() && alpha > 0.0 && beta > 0.0) {
+        return None;
+    }
+    let c = Seg::Cubic(p0, p0 + t0 * alpha, p3 - t1 * beta, p3);
+    // Every point of the run within `tol` of the new curve (its nearest of a
+    // fine sampling, which errs by a sliver of the curve's length at most).
+    const SAMPLES: usize = 128;
+    let on: Vec<Vec2> = (0..=SAMPLES)
+        .map(|k| c.at(k as f64 / SAMPLES as f64))
+        .collect();
+    q.iter()
+        .all(|p| on.iter().any(|o| o.distance(*p) <= tol))
+        .then_some(c)
 }
 
 /// Consecutive collinear lines joined: a corner's half-edges meet at the
@@ -387,6 +519,19 @@ mod tests {
             .collect()
     }
 
+    fn trace_with(b: &Bitmap, simplify: f64) -> Vec<Vec<Seg>> {
+        let mut budget = Budget::new(u64::MAX);
+        let params = CurveParams {
+            simplify,
+            ..CurveParams::default()
+        };
+        decompose(b, 0, &mut budget)
+            .unwrap()
+            .iter()
+            .map(|p| outline(p, &params, 1.0, &mut budget).unwrap())
+            .collect()
+    }
+
     #[test]
     fn a_big_square_is_four_lines() {
         let mut b = Bitmap::new(40, 40);
@@ -427,5 +572,33 @@ mod tests {
                 assert!((r - 30.0).abs() < 1.0, "r = {r}");
             }
         }
+    }
+
+    #[test]
+    fn simplify_joins_smooth_curves_and_keeps_them_close() {
+        let b = disc(30.0, 80);
+        let off = trace_with(&b, 0.0);
+        let on = trace_with(&b, 0.5);
+        assert!(
+            on[0].len() < off[0].len(),
+            "{} curves with simplify, {} without",
+            on[0].len(),
+            off[0].len()
+        );
+        // Still within a pixel of the circle.
+        for s in &on[0] {
+            for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let r = s.at(t).distance(Vec2::new(40.0, 40.0));
+                assert!((r - 30.0).abs() < 1.0, "r = {r}");
+            }
+        }
+        // A square's corners stay corners.
+        let mut sq = Bitmap::new(40, 40);
+        for y in 5..35 {
+            for x in 5..35 {
+                sq.set(x, y, true);
+            }
+        }
+        assert_eq!(trace_with(&sq, 2.0)[0].len(), 4);
     }
 }

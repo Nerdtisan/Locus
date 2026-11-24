@@ -11,52 +11,82 @@
 
 use crate::document::Document;
 use crate::entity::Geom;
-use locus_geom::{EXPORT_TOL, Piece};
+use locus_geom::{Cubic, EXPORT_TOL, Piece};
 use locus_region::{Curve, Region, Shape};
+
+/// Each Bézier's arc chain as last built, by entity, with the curve it was
+/// built from (#505). Fitting arcs within `EXPORT_TOL` is the costly part of
+/// finding regions, so a [`crate::Sketcher`] keeps this between edits and
+/// refits only the Béziers that changed.
+#[derive(Debug, Default, Clone)]
+pub struct BezierPieces(std::collections::HashMap<u64, (Cubic, Vec<Shape>)>);
 
 /// The curves regions are built from: lines, circles, arcs and Béziers (as arcs) that are not
 /// construction geometry and sit on a visible layer (hiding a layer hides
 /// its regions too).
 #[must_use]
 pub fn region_curves(doc: &Document) -> Vec<Curve> {
-    doc.entities()
-        .iter()
-        .filter(|(_, e)| !e.construction && doc.layer(e.layer).is_some_and(|l| l.visible))
-        .flat_map(|(id, e)| {
-            let key = id.get();
-            let shapes: Vec<Shape> = match e.geom {
-                // Text outlines are not regions (SPEC §9); they export as paths.
-                Geom::Point { .. } | Geom::Text { .. } => Vec::new(),
-                Geom::Line { .. } => doc.line(id).map(Shape::Line).into_iter().collect(),
-                Geom::Circle { .. } => doc.circle(id).map(Shape::Circle).into_iter().collect(),
-                Geom::Arc { .. } => doc.arc(id).map(Shape::Arc).into_iter().collect(),
-                // Region detection is exact for lines and arcs only (ADR 0008),
-                // so a Bézier enters as its arc chain within the export
-                // tolerance; every piece carries the Bézier's key.
-                Geom::Bezier { .. } => doc
-                    .cubic(id)
-                    .map(|c| {
-                        c.to_pieces(EXPORT_TOL)
+    region_curves_with(doc, &mut BezierPieces::default())
+}
+
+/// [`region_curves`], reusing (and refreshing) `cache` for Béziers.
+pub fn region_curves_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Curve> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (id, e) in doc.entities().iter() {
+        if e.construction || !doc.layer(e.layer).is_some_and(|l| l.visible) {
+            continue;
+        }
+        let key = id.get();
+        let shapes: Vec<Shape> = match e.geom {
+            // Text outlines are not regions (SPEC §9); they export as paths.
+            Geom::Point { .. } | Geom::Text { .. } => Vec::new(),
+            Geom::Line { .. } => doc.line(id).map(Shape::Line).into_iter().collect(),
+            Geom::Circle { .. } => doc.circle(id).map(Shape::Circle).into_iter().collect(),
+            Geom::Arc { .. } => doc.arc(id).map(Shape::Arc).into_iter().collect(),
+            // Region detection is exact for lines and arcs only (ADR 0008),
+            // so a Bézier enters as its arc chain within the export
+            // tolerance; every piece carries the Bézier's key.
+            Geom::Bezier { .. } => {
+                let Some(c) = doc.cubic(id) else {
+                    continue;
+                };
+                seen.insert(key);
+                match cache.0.get(&key) {
+                    Some((was, shapes)) if *was == c => shapes.clone(),
+                    _ => {
+                        let shapes: Vec<Shape> = c
+                            .to_pieces(EXPORT_TOL)
                             .into_iter()
                             .map(|p| match p {
                                 Piece::Line(l) => Shape::Line(l),
                                 Piece::Arc(a) => Shape::Arc(a),
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            };
-            shapes.into_iter().map(move |shape| Curve { key, shape })
-        })
-        .collect()
+                            .collect();
+                        cache.0.insert(key, (c, shapes.clone()));
+                        shapes
+                    }
+                }
+            }
+        };
+        out.extend(shapes.into_iter().map(|shape| Curve { key, shape }));
+    }
+    // Forget Béziers that are gone, hidden or construction now.
+    cache.0.retain(|k, _| seen.contains(k));
+    out
 }
 
 /// Every closed region of the document, layer by layer, sorted by key.
 #[must_use]
 pub fn regions(doc: &Document) -> Vec<Region> {
+    regions_with(doc, &mut BezierPieces::default())
+}
+
+/// [`regions`], reusing `cache` for Béziers' arc chains (#505).
+pub fn regions_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Region> {
     let mut by_layer: std::collections::BTreeMap<crate::LayerId, Vec<Curve>> =
         std::collections::BTreeMap::new();
-    for c in region_curves(doc) {
+    for c in region_curves_with(doc, cache) {
         if let Some(e) = doc.entity(crate::EntityId::new(c.key)) {
             by_layer.entry(e.layer).or_default().push(c);
         }
@@ -171,5 +201,48 @@ mod tests {
         assert_eq!(rs.len(), 1);
         assert!((rs[0].area() - 3300.0).abs() < 0.5, "{}", rs[0].area());
         assert_eq!(rs[0].key.bounds, vec![bez.get(), base.get()]);
+    }
+
+    /// The Bézier cache a `Sketcher` keeps (#505) gives the same regions as
+    /// building afresh, after an edit moves a control point and after the
+    /// Bézier is deleted, and forgets curves that are gone.
+    #[test]
+    fn cached_bezier_pieces_follow_edits() {
+        use crate::testutil::{add, pt};
+        use crate::{Command, Editor};
+        let mut doc = Document::new();
+        let p = [
+            pt(&mut doc, 0.0, 0.0),
+            pt(&mut doc, 0.0, 55.0),
+            pt(&mut doc, 100.0, 55.0),
+            pt(&mut doc, 100.0, 0.0),
+        ];
+        let bez = add(
+            &mut doc,
+            Geom::Bezier {
+                start: p[0],
+                start_ctrl: p[1],
+                end_ctrl: p[2],
+                end: p[3],
+            },
+        );
+        line(&mut doc, p[3], p[0]);
+        let mut cache = BezierPieces::default();
+        assert_eq!(regions_with(&doc, &mut cache), regions(&doc));
+        assert_eq!(cache.0.len(), 1);
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::ModifyEntity {
+            id: p[1],
+            geom: Geom::Point {
+                pos: locus_geom::Vec2::new(0.0, 90.0),
+            },
+        })
+        .unwrap();
+        let moved = regions_with(ed.document(), &mut cache);
+        assert_eq!(moved, regions(ed.document()));
+        assert!(moved[0].area() > 3300.0 + 100.0, "{}", moved[0].area());
+        ed.apply(&Command::DeleteEntity { id: bez }).unwrap();
+        assert!(regions_with(ed.document(), &mut cache).is_empty());
+        assert!(cache.0.is_empty());
     }
 }

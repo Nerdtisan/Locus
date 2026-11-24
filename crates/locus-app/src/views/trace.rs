@@ -4,7 +4,7 @@
 //! (`locus-trace`).
 //!
 //! Insert ▸ Auto trace… (or the reference's Inspector) opens a dialog with
-//! the mode, threshold, colours, speckles, corners and tolerance. Every
+//! the mode, threshold, colours, speckles, corners, simplify and tolerance. Every
 //! change starts a new trace in the background (a worker thread on the
 //! desktop, cancelling the one still running; inline on the web, where
 //! there are no threads), and the result is drawn over the reference as a
@@ -42,6 +42,8 @@ pub(crate) struct Settings {
     pub corners: f64,
     /// Centreline simplification, px.
     pub tolerance: f64,
+    /// Joining smooth curves, as Potrace's `opttolerance`, px (#505).
+    pub simplify: f64,
 }
 
 impl Default for Settings {
@@ -53,6 +55,7 @@ impl Default for Settings {
             speckle: 4,
             corners: 1.0,
             tolerance: 0.5,
+            simplify: 0.2,
         }
     }
 }
@@ -71,6 +74,7 @@ impl Settings {
             speckle: self.speckle,
             curve: CurveParams {
                 alpha_max: self.corners.clamp(0.0, 4.0 / 3.0),
+                simplify: self.simplify.clamp(0.0, 5.0),
             },
             tolerance: self.tolerance.clamp(0.1, 10.0),
         }
@@ -392,6 +396,17 @@ impl AppState {
                         ui.add(egui::Slider::new(&mut s.corners, 0.0..=1.33).fixed_decimals(2))
                             .on_hover_text("Lower makes more corners; 0 gives straight lines only")
                     });
+                    row(ui, "Simplify", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut s.simplify)
+                                .range(0.0..=5.0)
+                                .speed(0.05)
+                                .suffix(" px"),
+                        )
+                        .on_hover_text(
+                            "Joins smooth curves that stay within this distance: higher gives fewer, smoother curves; 0 keeps every curve",
+                        )
+                    });
                 }
                 if s.kind != Kind::Colours {
                     row(ui, "Output layer", |ui| {
@@ -531,6 +546,39 @@ mod tests {
     use super::*;
 
     /// A 40 × 40 PNG with a black square in the middle.
+    /// The trace of a document's first reference with and without
+    /// Simplify (#505): `LOCUS_PROFILE_FILE`, `--ignored --nocapture`.
+    #[test]
+    #[ignore = "profiling; needs LOCUS_PROFILE_FILE"]
+    fn simplify_on_a_real_reference() {
+        let Some(p) = std::env::var_os("LOCUS_PROFILE_FILE") else {
+            return;
+        };
+        let doc = locus_doc::file::load(&std::fs::read_to_string(p).unwrap()).unwrap();
+        let img = doc.images().values().next().unwrap().clone();
+        for simplify in [0.0, 0.2, 0.5, 1.0] {
+            let s = Settings {
+                simplify,
+                ..Settings::default()
+            };
+            let t = std::time::Instant::now();
+            let traced = run(&img.data, &s.params(), &mut || false).unwrap();
+            let (mut lines, mut curves) = (0, 0);
+            for p in traced.groups.iter().flat_map(|g| &g.paths) {
+                for seg in &p.segments {
+                    match seg {
+                        Seg::Line(..) => lines += 1,
+                        Seg::Cubic(..) => curves += 1,
+                    }
+                }
+            }
+            println!(
+                "simplify {simplify} px: {lines} lines, {curves} curves, {:.0} ms",
+                t.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+    }
+
     fn square_png() -> Vec<u8> {
         let mut img = image::RgbaImage::new(40, 40);
         for (x, y, p) in img.enumerate_pixels_mut() {

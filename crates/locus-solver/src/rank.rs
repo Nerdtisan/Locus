@@ -133,25 +133,39 @@ impl Echelon {
     /// A basis of the null space: one vector per free unknown (an unknown with
     /// no pivot), set to 1, with the pivot unknowns solved by back
     /// substitution. Sparse: (unknown, value) sorted by unknown.
+    ///
+    /// Back substitution visits only the pivot rows, in one reused buffer, so
+    /// a sketch of many free points costs O(free × rank), not O(n²) (#505: a
+    /// 12 500-entity trace with no constraints took 1.6 s per edit here).
     pub fn null_space(&self) -> Vec<Sparse> {
         let n = self.pivot.len();
+        let pivots: Vec<usize> = (0..n).filter(|&c| self.pivot[c].is_some()).collect();
+        let mut x = vec![0.0; n];
+        let mut touched = Vec::new();
         let mut out = Vec::new();
         for f in (0..n).filter(|&c| self.pivot[c].is_none()) {
-            let mut x = vec![0.0; n];
             x[f] = 1.0;
-            for c in (0..f).rev() {
+            touched.push(f);
+            let below = pivots.partition_point(|&c| c < f);
+            for &c in pivots[..below].iter().rev() {
                 if let Some(r) = &self.pivot[c] {
                     let s: f64 = r.vals.iter().skip(1).map(|&(j, a)| a * x[j]).sum();
                     x[c] = -s / r.vals[0].1;
+                    touched.push(c);
                 }
             }
+            touched.sort_unstable();
             out.push(
-                x.iter()
-                    .enumerate()
-                    .filter(|(_, v)| v.abs() >= MOVE_TOL)
-                    .map(|(i, v)| (i, *v))
+                touched
+                    .iter()
+                    .filter(|&&i| x[i].abs() >= MOVE_TOL)
+                    .map(|&i| (i, x[i]))
                     .collect(),
             );
+            for &i in &touched {
+                x[i] = 0.0;
+            }
+            touched.clear();
         }
         out
     }
@@ -220,5 +234,38 @@ mod tests {
         assert_eq!(ns[0].len(), 2, "{ns:?}");
         assert!((ns[0][0].1 - 1.0).abs() < 1e-12 && ns[0][1] == (2, 1.0));
         assert_eq!(small_rank(vec![vec![1.0, 2.0], vec![2.0, 4.0]]), 1);
+    }
+
+    /// The sparse back substitution (#505) gives exactly the null space of
+    /// the dense one it replaced, on a system with chained pivots.
+    #[test]
+    fn null_space_matches_dense_back_substitution() {
+        let n = 12;
+        let mut e = Echelon::new(n);
+        e.insert(0, &[(0, 1.0), (3, 2.0), (7, -1.0)]);
+        e.insert(1, &[(2, 1.0), (3, -1.0)]);
+        e.insert(2, &[(3, 1.0), (5, 0.5), (9, 1.0)]);
+        e.insert(3, &[(6, 2.0), (7, 1.0), (11, -3.0)]);
+        e.insert(4, &[(8, 1.0), (9, 1.0)]);
+        let dense: Vec<Sparse> = (0..n)
+            .filter(|&c| e.pivot[c].is_none())
+            .map(|f| {
+                let mut x = vec![0.0; n];
+                x[f] = 1.0;
+                for c in (0..f).rev() {
+                    if let Some(r) = &e.pivot[c] {
+                        let s: f64 = r.vals.iter().skip(1).map(|&(j, a)| a * x[j]).sum();
+                        x[c] = -s / r.vals[0].1;
+                    }
+                }
+                x.iter()
+                    .enumerate()
+                    .filter(|(_, v)| v.abs() >= MOVE_TOL)
+                    .map(|(i, v)| (i, *v))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(e.null_space(), dense);
+        assert_eq!(dense.len(), n - e.rank());
     }
 }
