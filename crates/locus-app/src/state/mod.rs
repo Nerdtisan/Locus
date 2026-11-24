@@ -806,6 +806,16 @@ impl AppState {
         Some(label)
     }
 
+    /// Jump to step `step` of the history (#446): one batch, one re-solve.
+    pub fn history_go(&mut self, step: usize) {
+        self.tools.host.tool_mut().reset();
+        match self.doc.sketcher.go_to(step) {
+            Ok(0) => {}
+            Ok(_) => self.rebuild(),
+            Err(e) => self.doc.notice = Some(e.to_string()),
+        }
+    }
+
     pub fn undo_label(&self) -> Option<&str> {
         self.doc.sketcher.editor().undo_label()
     }

@@ -56,11 +56,14 @@ pub enum Tab {
     /// The machine bed at scale with the job on it (#443). Not in the
     /// default layout; Machine preview opens it.
     MachinePreview,
+    /// Undo history and the features' timeline (#446). Not in the default
+    /// layout; View ▸ Panes opens it.
+    History,
 }
 
 impl Tab {
     /// Every pane but the canvas, in View ▸ Panes order.
-    pub const PANES: [Tab; 7] = [
+    pub const PANES: [Tab; 8] = [
         Tab::Browser,
         Tab::Palette,
         Tab::Inspector,
@@ -68,6 +71,7 @@ impl Tab {
         Tab::Constraints,
         Tab::Shortcuts,
         Tab::MachinePreview,
+        Tab::History,
     ];
 
     pub fn title(self) -> &'static str {
@@ -80,6 +84,7 @@ impl Tab {
             Tab::Constraints => "Constraints",
             Tab::Shortcuts => "Shortcuts",
             Tab::MachinePreview => "Machine preview",
+            Tab::History => "History",
         }
     }
 
@@ -102,6 +107,12 @@ impl Tab {
             ],
             // Beside the sketch, so the bed gets room at a useful size.
             Tab::MachinePreview => &[Place::RightOfCanvas],
+            // Under the Browser, as Fusion keeps its timeline near the tree.
+            Tab::History => &[
+                Place::Below(Tab::Parameters),
+                Place::Below(Tab::Browser),
+                Place::LeftOfCanvas,
+            ],
         }
     }
 }

@@ -8,6 +8,7 @@
 pub mod browser;
 pub mod canvas;
 pub mod constraints;
+pub mod history;
 pub mod icons;
 pub mod layers;
 pub mod machine_panel;

@@ -41,7 +41,7 @@ pub mod transform;
 mod testutil;
 
 pub use boolean::{Boolean, BooleanError};
-pub use command::{Applied, Command, Editor, LayerProps};
+pub use command::{Applied, Command, Editor, History, LayerProps, MAX_HISTORY};
 pub use constraint::{Constraint, Dimension, Edge};
 pub use document::{
     Document, EntityStore, Layer, LayerDeletion, MAX_PLACEMENT_MM, Parameter, View,
