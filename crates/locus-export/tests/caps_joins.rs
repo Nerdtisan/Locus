@@ -296,3 +296,49 @@ fn a_styled_cut_layer_cuts_every_stroke_in_parallel() {
     assert_eq!(p.model.layers[0].paths.len(), 3);
     assert!(p.model.layers[0].paths.iter().all(|x| x.closed));
 }
+
+fn taper() -> StylePatch {
+    StylePatch {
+        profile: Some(Some(locus_doc::ProfilePreset::TaperBoth.profile(0))),
+        ..StylePatch::default()
+    }
+}
+
+#[test]
+fn a_width_profile_exports_as_a_filled_outline_of_curves() {
+    // #426: no format strokes a variable width, so SVG, PDF and PNG fill the
+    // outline; its tapered sides are fitted cubics (ADR 0019 option (b)).
+    let (mut ed, _, ids) = rect(Operation::Draw);
+    set(&mut ed, &ids, taper());
+    let model = prepare(ed.document(), false).model;
+    let svg = String::from_utf8(to_svg_model(&model)).unwrap();
+    assert!(svg.contains("fill=\"#ff0000\" stroke=\"none\""), "{svg}");
+    assert!(svg.contains(" C "), "{svg}");
+    assert!(!svg.contains("stroke-width=\"2\""), "{svg}");
+    let pdf = locus_export::to_pdf_model(&model);
+    assert!(!pdf.is_empty());
+    // The bulge of a 2 mm stroke stays inside the page bounds.
+    let b = model.visual_bounds().unwrap();
+    assert!(b.min.x <= -0.999 && b.max.y >= 10.999, "{b:?}");
+}
+
+#[test]
+fn a_styled_cut_layer_cuts_a_profiles_outline() {
+    let (mut ed, layer, ids) = rect(Operation::Cut(Default::default()));
+    set(&mut ed, &ids, taper());
+    ed.apply(&Command::SetLayerProps {
+        id: layer,
+        props: LayerProps {
+            stroke_styles: Some(StrokeStyles::Styled),
+            ..LayerProps::default()
+        },
+    })
+    .unwrap();
+    let lb = locus_export::profile::find("lightburn", &[]).unwrap();
+    let styled = prepare_for(ed.document(), false, Some(&lb));
+    let paths = &styled.model.layers[0].paths;
+    // The ring's outline, not the centreline: closed, and past the path.
+    assert!(paths.iter().all(|p| p.closed));
+    let bb = paths.iter().filter_map(|p| p.bbox()).reduce(locus_geom::Aabb::union).unwrap();
+    assert!(bb.min.x < -0.5 && bb.max.y > 10.5, "{bb:?}");
+}
