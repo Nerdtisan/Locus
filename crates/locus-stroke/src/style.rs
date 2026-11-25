@@ -100,6 +100,15 @@ impl LineStyle {
         self.profile.as_ref().filter(|p| !p.is_uniform())
     }
 
+    /// Does a curve with this style stroke on its own, never joined into a
+    /// chain with its neighbours (#527, **This curve**)? Every place that
+    /// joins curves into strokes (canvas, export, Expand, the Width tool)
+    /// asks this, so they all agree.
+    #[must_use]
+    pub fn strokes_alone(&self) -> bool {
+        self.varying().is_some_and(|p| p.alone)
+    }
+
     /// # Errors
     /// [`StrokeError::BadValue`] for a miter limit out of range or not finite.
     pub fn validate(&self) -> Result<(), StrokeError> {

@@ -80,9 +80,11 @@ pub(crate) fn triangles(doc: &Document, scene: &Scene) -> Vec<[Vec2; 3]> {
         if s.is_empty() {
             continue;
         }
+        // A curve whose profile strokes alone (#527) is a group of its own.
+        let alone = line.strokes_alone();
         match groups
             .iter_mut()
-            .find(|(l, gw, gs, _)| *l == e.layer && *gw == w && *gs == line)
+            .find(|(l, gw, gs, _)| !alone && *l == e.layer && *gw == w && *gs == line)
         {
             Some((_, _, _, v)) => v.push(s),
             None => groups.push((e.layer, w, line, vec![s])),
@@ -185,6 +187,7 @@ impl crate::state::AppState {
 mod tests {
     use super::*;
     use locus_doc::{Cap, Command, Editor, Geom, Style};
+    use locus_stroke::{ProfilePreset, WidthProfile};
     use std::collections::BTreeSet;
 
     /// A 10 mm line, 2 mm wide, with square caps: the preview reaches 1 mm
@@ -274,5 +277,66 @@ mod tests {
             (lo + 1.0).abs() < 1e-9 && (hi - 11.0).abs() < 1e-9,
             "{lo} {hi}"
         );
+    }
+
+    /// A closed rectangle of four connected lines, 1 mm wide, each with a
+    /// tapering profile that strokes alone or not.
+    fn rect_tris(alone: bool) -> Vec<[Vec2; 3]> {
+        let mut ed = Editor::new(Document::new());
+        let layer = Document::default_layer();
+        let mut pt = |x: f64, y: f64| {
+            ed.apply(&Command::AddEntity {
+                layer,
+                construction: false,
+                style: Style::default(),
+                geom: Geom::Point {
+                    pos: Vec2::new(x, y),
+                },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let p = [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0), pt(0.0, 10.0)];
+        let mut style = Style {
+            width: 1.0,
+            ..Style::default()
+        };
+        style.line.profile = Some(WidthProfile {
+            alone,
+            ..ProfilePreset::TaperBoth.profile(1)
+        });
+        for i in 0..4 {
+            ed.apply(&Command::AddEntity {
+                layer,
+                construction: false,
+                style: style.clone(),
+                geom: Geom::Line {
+                    start: p[i],
+                    end: p[(i + 1) % 4],
+                },
+            })
+            .unwrap();
+        }
+        let doc = ed.document();
+        let scene = Scene::build(doc, &BTreeSet::new(), &BTreeSet::new());
+        triangles(doc, &scene)
+    }
+
+    /// #527: sides with a "This curve" profile each taper on their own;
+    /// without it the rectangle is one stroke whose profile runs round it.
+    #[test]
+    fn alone_profiles_stroke_each_side_separately() {
+        let chained = rect_tris(false);
+        let alone = rect_tris(true);
+        assert!(!chained.is_empty() && !alone.is_empty());
+        assert_ne!(chained, alone);
+        // Four sides each taper to nothing at both ends; one closed chain
+        // tapers once over its whole length, so it covers more area.
+        let area = |tris: &[[Vec2; 3]]| {
+            tris.iter()
+                .map(|t| ((t[1] - t[0]).cross(t[2] - t[0]) / 2.0).abs())
+                .sum::<f64>()
+        };
+        assert!(area(&alone) < area(&chained));
     }
 }

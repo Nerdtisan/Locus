@@ -101,6 +101,39 @@ pub(crate) fn styled(doc: &Document, ids: &[EntityId]) -> Vec<EntityId> {
         .collect()
 }
 
+/// The entities a style edit lands on: `ids`, plus, when the patch sets a
+/// profile that strokes along the chain (Uniform, or not **This curve**,
+/// #527), every curve of each selected curve's chain on the same layer.
+/// Deduplicated, in selection then walk order, so it is deterministic.
+fn profile_targets(doc: &Document, ids: &[EntityId], patch: &StylePatch) -> Vec<EntityId> {
+    let mut out: Vec<EntityId> = Vec::new();
+    let push = |id: EntityId, out: &mut Vec<EntityId>| {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    };
+    for id in ids {
+        push(*id, &mut out);
+    }
+    let chained = patch
+        .profile
+        .as_ref()
+        .is_some_and(|p| !p.as_ref().is_some_and(|p| p.alone));
+    if chained {
+        for id in ids {
+            let Some(layer) = doc.entity(*id).map(|e| e.layer) else {
+                continue;
+            };
+            for m in crate::chain::chain(doc, *id) {
+                if doc.entity(m).is_some_and(|e| e.layer == layer) {
+                    push(m, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Is any of `ids` on a layer whose export ignores object style (SPEC §7:
 /// machine layers export in the profile's colour and hairline)?
 fn on_machine_layer(doc: &Document, ids: &[EntityId]) -> bool {
@@ -207,10 +240,7 @@ impl AppState {
         let settled = !ui.input(|i| i.pointer.any_down()) && ui.memory(|m| m.focused().is_none());
         if !pending.is_empty() && settled {
             ui.data_mut(|d| d.remove::<(Vec<EntityId>, StylePatch)>(key));
-            self.apply_reporting(&Command::SetStyle {
-                entities: ids,
-                patch: pending,
-            });
+            self.apply_style_patch(&ids, pending);
         } else if pending.is_empty() {
             ui.data_mut(|d| d.remove::<(Vec<EntityId>, StylePatch)>(key));
         } else {
@@ -225,6 +255,14 @@ impl AppState {
                 },
             });
         }
+    }
+
+    /// Apply an Inspector style edit to `ids` as one `SetStyle` (one undo
+    /// step). A profile that isn't **This curve** reaches the whole chain of
+    /// every selected curve (#527), so a connected outline is one stroke.
+    pub(crate) fn apply_style_patch(&mut self, ids: &[EntityId], patch: StylePatch) {
+        let entities = profile_targets(self.doc.sketcher.document(), ids, &patch);
+        self.apply_reporting(&Command::SetStyle { entities, patch });
     }
 
     /// Selected regions (#370, #451, design §2.1): their own Fill and
@@ -814,8 +852,12 @@ fn profile_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mu
                         if ui.selectable_label(name == p.label(), p.label()).clicked() {
                             out.profile = Some(match p {
                                 ProfilePreset::Uniform => None,
-                                // A new seed each time it's picked.
-                                _ => Some(p.profile(next_seed(current.as_ref()))),
+                                // A new seed each time it's picked; the
+                                // chain / This curve choice is kept.
+                                _ => Some(WidthProfile {
+                                    alone: current.as_ref().is_some_and(|c| c.alone),
+                                    ..p.profile(next_seed(current.as_ref()))
+                                }),
                             });
                         }
                     }
@@ -827,6 +869,32 @@ fn profile_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mu
             return;
         };
         profile_graph(ui, &p);
+        // Whole chain or This curve (#527): whether the connected curves are
+        // one stroke the profile runs along, or this curve strokes alone.
+        ui.horizontal(|ui| {
+            ui.label("Apply to:");
+            for (alone, label, hint) in [
+                (
+                    false,
+                    "Whole chain",
+                    "The connected curves are one stroke: the profile runs along the whole chain",
+                ),
+                (
+                    true,
+                    "This curve",
+                    "Only this curve: it strokes alone along its own length",
+                ),
+            ] {
+                if ui
+                    .selectable_label(p.alone == alone, label)
+                    .on_hover_text(hint)
+                    .clicked()
+                    && p.alone != alone
+                {
+                    out.profile = Some(Some(WidthProfile { alone, ..p.clone() }));
+                }
+            }
+        });
         ui.horizontal_wrapped(|ui| {
             if ui
                 .small_button("Flip")
@@ -848,7 +916,10 @@ fn profile_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mu
                     .on_hover_text("Another random pressure profile")
                     .clicked()
             {
-                out.profile = Some(Some(ProfilePreset::Pressure.profile(next_seed(Some(&p)))));
+                out.profile = Some(Some(WidthProfile {
+                    alone: p.alone,
+                    ..ProfilePreset::Pressure.profile(next_seed(Some(&p)))
+                }));
             }
         });
         ui.weak("Shift+W (Width tool) edits the points on the canvas");
@@ -1441,5 +1512,120 @@ mod tests {
         c.selection.items.clear();
         c.eyedrop(src);
         assert_eq!(c.doc.current_style, red);
+    }
+
+    /// A closed rectangle of four lines sharing corner points.
+    fn rect(c: &mut AppState, style: &Style) -> [EntityId; 4] {
+        let layer = c.active_layer();
+        let pt = |c: &mut AppState, x: f64, y: f64| {
+            c.apply_reporting(&Command::AddEntity {
+                layer,
+                construction: false,
+                geom: Geom::Point {
+                    pos: Vec2::new(x, y),
+                },
+                style: Style::default(),
+            });
+            last(c)
+        };
+        let p = [
+            pt(c, 0.0, 100.0),
+            pt(c, 20.0, 100.0),
+            pt(c, 20.0, 120.0),
+            pt(c, 0.0, 120.0),
+        ];
+        let side = |c: &mut AppState, i: usize| {
+            c.apply_reporting(&Command::AddEntity {
+                layer,
+                construction: false,
+                geom: Geom::Line {
+                    start: p[i],
+                    end: p[(i + 1) % 4],
+                },
+                style: style.clone(),
+            });
+            last(c)
+        };
+        [side(c, 0), side(c, 1), side(c, 2), side(c, 3)]
+    }
+
+    fn bulge(alone: bool) -> WidthProfile {
+        WidthProfile {
+            alone,
+            ..ProfilePreset::TaperBoth.profile(1)
+        }
+    }
+
+    fn profile_patch(p: WidthProfile) -> StylePatch {
+        StylePatch {
+            profile: Some(Some(p)),
+            ..StylePatch::default()
+        }
+    }
+
+    fn profile_of(c: &AppState, id: EntityId) -> Option<WidthProfile> {
+        c.document()
+            .entity(id)
+            .and_then(|e| e.style.line.profile.clone())
+    }
+
+    /// #527: a profile set on one side of a connected outline reaches the
+    /// whole chain, in one undo step.
+    #[test]
+    fn a_profile_on_one_side_reaches_the_whole_chain() {
+        let mut c = AppState::default();
+        let sides = rect(&mut c, &Style::default());
+        c.apply_style_patch(&[sides[0]], profile_patch(bulge(false)));
+        for id in sides {
+            assert_eq!(profile_of(&c, id), Some(bulge(false)));
+        }
+        c.undo();
+        for id in sides {
+            assert_eq!(profile_of(&c, id), None, "one undo step");
+        }
+    }
+
+    /// #527: This curve (alone) changes only the selected side.
+    #[test]
+    fn this_curve_changes_only_the_selected_side() {
+        let mut c = AppState::default();
+        let sides = rect(&mut c, &Style::default());
+        c.apply_style_patch(&[sides[1]], profile_patch(bulge(true)));
+        assert_eq!(profile_of(&c, sides[1]), Some(bulge(true)));
+        for id in [sides[0], sides[2], sides[3]] {
+            assert_eq!(profile_of(&c, id), None);
+        }
+    }
+
+    /// Unconnected curves: every selected curve gets the profile, and
+    /// nothing else does.
+    #[test]
+    fn a_profile_applies_to_every_selected_curve() {
+        let mut c = AppState::default();
+        let a = line(&mut c, 0.0, Style::default());
+        let b = line(&mut c, 5.0, Style::default());
+        let other = line(&mut c, 10.0, Style::default());
+        c.apply_style_patch(&[a, b], profile_patch(bulge(false)));
+        assert_eq!(profile_of(&c, a), Some(bulge(false)));
+        assert_eq!(profile_of(&c, b), Some(bulge(false)));
+        assert_eq!(profile_of(&c, other), None);
+    }
+
+    /// Setting Uniform on one side clears the chain's profile too.
+    #[test]
+    fn uniform_reaches_the_whole_chain() {
+        let mut c = AppState::default();
+        let sides = rect(&mut c, &Style::default());
+        c.apply_style_patch(&sides, profile_patch(bulge(false)));
+        c.apply_style_patch(
+            &[sides[2]],
+            StylePatch {
+                profile: Some(None),
+                ..StylePatch::default()
+            },
+        );
+        for id in sides {
+            assert_eq!(profile_of(&c, id), None);
+        }
     }
 }

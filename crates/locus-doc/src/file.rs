@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// The version this build writes.
-pub const CURRENT_VERSION: u32 = 30;
+pub const CURRENT_VERSION: u32 = 31;
 
 /// Upper bound on accepted input, to bound memory on hostile files.
 pub const MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
@@ -1471,8 +1471,62 @@ impl From<FileV29> for FileV30 {
     }
 }
 
-/// The newest on-disk shape. When adding v31, point this at `FileV31`.
-type Latest = FileV30;
+/// Version 31: a width profile can stroke one curve alone (#527, **This
+/// curve**): `WidthProfile` gains `alone`, omitted while off, so an older
+/// file reads with its chains stroked as before. The shape is v30's; the
+/// version stops an older build from joining a lone curve into its chain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct FileV31 {
+    format_version: u32,
+    units: Unit,
+    next_id: u64,
+    parameters: BTreeMap<String, Parameter>,
+    layers: BTreeMap<LayerId, Layer>,
+    entities: BTreeMap<EntityId, Entity>,
+    constraints: BTreeMap<ConstraintId, Constraint>,
+    booleans: BTreeMap<BooleanId, Boolean>,
+    recipes: BTreeMap<RecipeId, Recipe>,
+    dim_exprs: BTreeMap<ConstraintId, String>,
+    #[serde(default)]
+    view: Option<View>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    images: BTreeMap<LayerId, crate::image::RefImage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    placement: Option<locus_geom::Vec2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    region_fills: Vec<(locus_region::RegionKey, crate::region_fill::RegionFill)>,
+    /// The timeline's feature order (#446), omitted in creation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recipe_order: Vec<RecipeId>,
+}
+
+impl From<FileV30> for FileV31 {
+    fn from(f: FileV30) -> Self {
+        FileV31 {
+            format_version: 31,
+            units: f.units,
+            next_id: f.next_id,
+            parameters: f.parameters,
+            layers: f.layers,
+            entities: f.entities,
+            constraints: f.constraints,
+            booleans: f.booleans,
+            recipes: f.recipes,
+            dim_exprs: f.dim_exprs,
+            view: f.view,
+            profile: f.profile,
+            images: f.images,
+            placement: f.placement,
+            region_fills: f.region_fills,
+            recipe_order: f.recipe_order,
+        }
+    }
+}
+
+/// The newest on-disk shape. When adding v32, point this at `FileV32`.
+type Latest = FileV31;
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::new()
@@ -1490,14 +1544,14 @@ fn finite(v: f64, what: &str) -> Result<(), FileError> {
 }
 
 /// v9 → latest (and on to newer versions as they are added).
-fn v9_to_latest(f: FileV9) -> Latest {
+fn v9_to_latest(f: FileV9) -> FileV30 {
     v15_to_latest(FileV15::from(FileV14::from(FileV13::from(FileV12::from(
         FileV11::from(FileV10::from(f)),
     )))))
 }
 
 /// v15 → latest.
-fn v15_to_latest(f: FileV15) -> Latest {
+fn v15_to_latest(f: FileV15) -> FileV30 {
     FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
         FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
             FileV20::from(FileV19::from(FileV18::from(FileV17::from(FileV16::from(
@@ -1557,101 +1611,105 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         return Err(FileError::TooLarge(text.len()));
     }
     let header: Header = ron::from_str(text).map_err(|e| FileError::Parse(e.to_string()))?;
-    let latest = match header.format_version {
-        0 => return Err(FileError::UnknownVersion(0)),
-        1 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
-            FileV5::from(FileV4::from(FileV3::from(FileV2::from(parse::<FileV1>(
+    let latest: Latest = if header.format_version == CURRENT_VERSION {
+        parse::<FileV31>(text)?
+    } else {
+        FileV31::from(match header.format_version {
+            0 => return Err(FileError::UnknownVersion(0)),
+            1 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+                FileV5::from(FileV4::from(FileV3::from(FileV2::from(parse::<FileV1>(
+                    text,
+                )?)))),
+            ))))),
+            2 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+                FileV5::from(FileV4::from(FileV3::from(parse::<FileV2>(text)?))),
+            ))))),
+            3 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+                FileV5::from(FileV4::from(parse::<FileV3>(text)?)),
+            ))))),
+            4 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+                FileV5::from(parse::<FileV4>(text)?),
+            ))))),
+            5 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
+                parse::<FileV5>(text)?,
+            ))))),
+            6 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(parse::<FileV6>(
                 text,
             )?)))),
-        ))))),
-        2 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
-            FileV5::from(FileV4::from(FileV3::from(parse::<FileV2>(text)?))),
-        ))))),
-        3 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
-            FileV5::from(FileV4::from(parse::<FileV3>(text)?)),
-        ))))),
-        4 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
-            FileV5::from(parse::<FileV4>(text)?),
-        ))))),
-        5 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(FileV6::from(
-            parse::<FileV5>(text)?,
-        ))))),
-        6 => v9_to_latest(FileV9::from(FileV8::from(FileV7::from(parse::<FileV6>(
-            text,
-        )?)))),
-        7 => v9_to_latest(FileV9::from(FileV8::from(parse::<FileV7>(text)?))),
-        8 => v9_to_latest(FileV9::from(parse::<FileV8>(text)?)),
-        9 => v9_to_latest(parse::<FileV9>(text)?),
-        10 => v15_to_latest(FileV15::from(FileV14::from(FileV13::from(FileV12::from(
-            FileV11::from(parse::<FileV10>(text)?),
-        ))))),
-        11 => v15_to_latest(FileV15::from(FileV14::from(FileV13::from(FileV12::from(
-            parse::<FileV11>(text)?,
-        ))))),
-        12 => v15_to_latest(FileV15::from(FileV14::from(FileV13::from(
-            parse::<FileV12>(text)?,
-        )))),
-        13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
-        14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
-        15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-                FileV20::from(FileV19::from(FileV18::from(FileV17::from(
-                    parse::<FileV16>(text)?,
+            7 => v9_to_latest(FileV9::from(FileV8::from(parse::<FileV7>(text)?))),
+            8 => v9_to_latest(FileV9::from(parse::<FileV8>(text)?)),
+            9 => v9_to_latest(parse::<FileV9>(text)?),
+            10 => v15_to_latest(FileV15::from(FileV14::from(FileV13::from(FileV12::from(
+                FileV11::from(parse::<FileV10>(text)?),
+            ))))),
+            11 => v15_to_latest(FileV15::from(FileV14::from(FileV13::from(FileV12::from(
+                parse::<FileV11>(text)?,
+            ))))),
+            12 => v15_to_latest(FileV15::from(FileV14::from(FileV13::from(
+                parse::<FileV12>(text)?,
+            )))),
+            13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
+            14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
+            15 => v15_to_latest(parse::<FileV15>(text)?),
+            16 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                    FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+                        parse::<FileV16>(text)?,
+                    )))),
+                ))))),
+            ))))),
+            17 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                    FileV20::from(FileV19::from(FileV18::from(parse::<FileV17>(text)?))),
+                ))))),
+            ))))),
+            18 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                    FileV20::from(FileV19::from(parse::<FileV18>(text)?)),
+                ))))),
+            ))))),
+            19 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                    FileV20::from(parse::<FileV19>(text)?),
+                ))))),
+            ))))),
+            20 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                    parse::<FileV20>(text)?,
+                ))))),
+            ))))),
+            21 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+                    parse::<FileV21>(text)?,
                 )))),
             ))))),
-        ))))),
-        17 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-                FileV20::from(FileV19::from(FileV18::from(parse::<FileV17>(text)?))),
+            22 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(FileV23::from(parse::<FileV22>(text)?))),
             ))))),
-        ))))),
-        18 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-                FileV20::from(FileV19::from(parse::<FileV18>(text)?)),
+            23 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(FileV24::from(parse::<FileV23>(text)?)),
             ))))),
-        ))))),
-        19 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-                FileV20::from(parse::<FileV19>(text)?),
+            24 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                FileV25::from(parse::<FileV24>(text)?),
             ))))),
-        ))))),
-        20 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
-                parse::<FileV20>(text)?,
+            25 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+                parse::<FileV25>(text)?,
             ))))),
-        ))))),
-        21 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(FileV23::from(FileV22::from(
-                parse::<FileV21>(text)?,
+            26 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(
+                parse::<FileV26>(text)?,
             )))),
-        ))))),
-        22 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(FileV23::from(parse::<FileV22>(text)?))),
-        ))))),
-        23 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(FileV24::from(parse::<FileV23>(text)?)),
-        ))))),
-        24 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            FileV25::from(parse::<FileV24>(text)?),
-        ))))),
-        25 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
-            parse::<FileV25>(text)?,
-        ))))),
-        26 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(
-            parse::<FileV26>(text)?,
-        )))),
-        27 => FileV30::from(FileV29::from(FileV28::from(parse::<FileV27>(text)?))),
-        28 => FileV30::from(FileV29::from(parse::<FileV28>(text)?)),
-        29 => FileV30::from(parse::<FileV29>(text)?),
-        30 => parse::<FileV30>(text)?,
-        v if v > CURRENT_VERSION => {
-            return Err(FileError::FutureVersion {
-                found: v,
-                supported: CURRENT_VERSION,
-            });
-        }
-        v => return Err(FileError::UnknownVersion(v)),
+            27 => FileV30::from(FileV29::from(FileV28::from(parse::<FileV27>(text)?))),
+            28 => FileV30::from(FileV29::from(parse::<FileV28>(text)?)),
+            29 => FileV30::from(parse::<FileV29>(text)?),
+            30 => parse::<FileV30>(text)?,
+            v if v > CURRENT_VERSION => {
+                return Err(FileError::FutureVersion {
+                    found: v,
+                    supported: CURRENT_VERSION,
+                });
+            }
+            v => return Err(FileError::UnknownVersion(v)),
+        })
     };
     // Before v19 fills were on objects: move them onto their regions (#451).
     // Before v21 region keys were built across layers: move them (#457).
@@ -3201,6 +3259,7 @@ mod tests {
                 locus_stroke::WidthPoint::new(1.0, 0.5, 0.5),
             ],
             seed: None,
+            alone: false,
         };
         ed.apply(&Command::SetStyle {
             entities: vec![id],
@@ -3214,21 +3273,58 @@ mod tests {
     }
 
     #[test]
-    fn v30_fixture_is_current_and_loads() {
-        let path = concat!(
+    fn v30_fixture_migrates() {
+        let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/v30/plate.locus"
+        ))
+        .unwrap();
+        assert!(text.contains("format_version: 30"));
+        let doc = load(&text).unwrap();
+        assert_eq!(doc, sample_v30());
+        let out = save(&doc).unwrap();
+        assert!(out.contains(&current()));
+        assert!(!out.contains("alone:"), "chains stroke as before");
+        assert_eq!(load(&out).unwrap(), doc);
+    }
+
+    pub(crate) fn sample_v31() -> Document {
+        // `sample_v30()` with its profile set to stroke the curve alone.
+        let doc = sample_v30();
+        let (id, mut p) = doc
+            .entities()
+            .iter()
+            .find_map(|(i, e)| e.style.line.profile.clone().map(|p| (i, p)))
+            .expect("the profiled line");
+        p.alone = true;
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetStyle {
+            entities: vec![id],
+            patch: crate::style::StylePatch {
+                profile: Some(Some(p)),
+                ..crate::style::StylePatch::default()
+            },
+        })
+        .unwrap();
+        ed.into_document()
+    }
+
+    #[test]
+    fn v31_fixture_is_current_and_loads() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/v31/plate.locus"
         );
         if std::env::var_os("LOCUS_UPDATE_FIXTURES").is_some() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
-            std::fs::write(path, save(&sample_v30()).unwrap()).unwrap();
+            std::fs::write(path, save(&sample_v31()).unwrap()).unwrap();
         }
         let text = std::fs::read_to_string(path).unwrap();
-        assert!(text.contains("format_version: 30"));
-        assert!(text.contains("profile: Some(("));
-        assert_eq!(load(&text).unwrap(), sample_v30());
+        assert!(text.contains("format_version: 31"));
+        assert!(text.contains("alone: true"));
+        assert_eq!(load(&text).unwrap(), sample_v31());
         assert_eq!(
-            save(&sample_v30()).unwrap(),
+            save(&sample_v31()).unwrap(),
             text,
             "fixture differs: output format changed (ADR-0004 rule 3)"
         );

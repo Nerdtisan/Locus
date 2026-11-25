@@ -50,6 +50,12 @@ pub struct WidthProfile {
     /// offer Reseed; cleared when the points are edited.
     #[serde(default, skip_serializing_if = "is_none_u64")]
     pub seed: Option<u64>,
+    /// **This curve** (#527): the curve strokes alone along its own length,
+    /// never as part of the chain it is joined into. Off (the default), a
+    /// chain of curves with the same style is one stroke and the profile
+    /// runs along the whole chain.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub alone: bool,
 }
 
 /// The built-in profiles (design §3). Each is a set of width points, so
@@ -123,6 +129,7 @@ impl ProfilePreset {
         WidthProfile {
             points,
             seed: (self == Self::Pressure).then_some(seed),
+            alone: false,
         }
     }
 }
@@ -150,9 +157,10 @@ impl WidthProfile {
     /// The preset this profile is, if it is one unedited.
     #[must_use]
     pub fn preset(&self) -> Option<ProfilePreset> {
-        ProfilePreset::ALL
-            .into_iter()
-            .find(|p| *p == ProfilePreset::Pressure && self.seed.is_some() || *self == p.profile(0))
+        ProfilePreset::ALL.into_iter().find(|p| {
+            *p == ProfilePreset::Pressure && self.seed.is_some()
+                || self.points == p.profile(0).points
+        })
     }
 
     /// Is every point 1 / 1: the plain width?
@@ -211,6 +219,7 @@ impl WidthProfile {
                 .map(|p| WidthPoint::new(1.0 - p.t, p.right, p.left))
                 .collect(),
             seed: None,
+            alone: self.alone,
         }
     }
 
@@ -224,6 +233,7 @@ impl WidthProfile {
                 .map(|p| WidthPoint::new(p.t, p.left, p.left))
                 .collect(),
             seed: None,
+            alone: self.alone,
         }
     }
 
@@ -309,6 +319,7 @@ mod tests {
                 WidthPoint::new(1.0, 3.0, 4.0),
             ],
             seed: None,
+            alone: false,
         };
         let f = p.flipped();
         assert_eq!(f.points[0], WidthPoint::new(0.0, 4.0, 3.0));
