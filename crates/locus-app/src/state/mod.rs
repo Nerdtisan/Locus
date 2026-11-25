@@ -35,6 +35,9 @@ pub(crate) const HIT_TOL_PT: f64 = 6.0;
 
 /// Everything the editor knows (design §7.3), split by concern so views
 /// and tools borrow only what they need.
+/// Most Béziers whose handles show at once (#512).
+pub(crate) const MAX_HANDLE_BEZIERS: usize = 200;
+
 pub struct AppState {
     /// The document behind the command API, its scene and solve report.
     pub(crate) doc: DocState,
@@ -824,10 +827,14 @@ impl AppState {
         self.doc.sketcher.editor().redo_label()
     }
 
-    /// The Béziers whose handles should show for the current selection.
+    /// The Béziers whose handles should show for the current selection:
+    /// none once more than [`MAX_HANDLE_BEZIERS`] qualify, as when a whole
+    /// trace is selected, where thousands of handles can't be used and cost
+    /// a frame each (#512).
     pub(crate) fn wanted_handles(&self) -> BTreeSet<EntityId> {
         let doc = self.doc.sketcher.document();
-        doc.entities()
+        let set: BTreeSet<EntityId> = doc
+            .entities()
             .iter()
             .filter(|(id, e)| {
                 matches!(e.geom, Geom::Bezier { .. })
@@ -838,7 +845,12 @@ impl AppState {
                             .any(|p| self.selection.items.contains(*p)))
             })
             .map(|(id, _)| id)
-            .collect()
+            .collect();
+        if set.len() > MAX_HANDLE_BEZIERS {
+            BTreeSet::new()
+        } else {
+            set
+        }
     }
 
     pub(crate) fn rebuild(&mut self) {

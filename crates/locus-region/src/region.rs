@@ -127,13 +127,27 @@ pub fn detect(curves: &[Curve]) -> Vec<Region> {
             outsides.push((lp, cid));
         }
     }
+    // Each face's box and area once: a point outside a face's box has
+    // winding 0, so most faces are ruled out without walking their outline
+    // (#512: 34 ms of a 12 500-entity trace's 83 ms went here).
+    let boxes: Vec<Option<locus_geom::Aabb>> = regions.iter().map(|(r, ..)| r.bbox()).collect();
+    let areas: Vec<f64> = regions.iter().map(|(r, ..)| r.area()).collect();
     for (lp, cid) in outsides {
         let probe = lp.edges[0].seg.start();
         let host = regions
             .iter()
             .enumerate()
-            .filter(|(_, (r, rc, _))| *rc != cid && r.winding(probe) != 0)
-            .min_by(|(_, (a, ..)), (_, (b, ..))| a.area().total_cmp(&b.area()))
+            .filter(|(i, (r, rc, _))| {
+                *rc != cid
+                    && boxes[*i].is_some_and(|b| {
+                        b.min.x <= probe.x
+                            && probe.x <= b.max.x
+                            && b.min.y <= probe.y
+                            && probe.y <= b.max.y
+                    })
+                    && r.winding(probe) != 0
+            })
+            .min_by(|(i, _), (j, _)| areas[*i].total_cmp(&areas[*j]))
             .map(|(i, _)| i);
         if let Some(i) = host {
             regions[i].2.push(lp);
