@@ -324,7 +324,10 @@ fn engrave(layer: &mut ExportLayer, p: &EngraveParams) {
         .map(|l| if l.area() >= 0.0 { l } else { l.reversed() })
         .collect();
     if !p.mode.line() {
-        layer.paths.retain(|q| !q.closed);
+        // Not marked, but kept for the preview (#531).
+        let (closed, open): (Vec<_>, Vec<_>) = layer.paths.drain(..).partition(|q| q.closed);
+        layer.paths = open;
+        layer.edges = closed;
     }
     if loops.is_empty() {
         return;
