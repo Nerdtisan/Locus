@@ -25,6 +25,7 @@
 
 mod chain;
 mod dash;
+mod measure;
 mod multi;
 mod profile;
 mod style;
@@ -32,6 +33,7 @@ mod vary;
 
 pub use chain::{Chain, chains};
 pub use dash::{CORNER_TURN, Dash, DashAlign, MAX_DASH_LEN, MAX_DASH_PAIRS, dashes};
+pub use measure::PathMap;
 pub use multi::{LayerStroke, MAX_STROKE_LAYERS, StrokeLayer, layer_strokes, offset_chain};
 pub use profile::{
     MAX_SIDE_FACTOR, MAX_WIDTH_POINTS, MIN_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile,
