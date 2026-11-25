@@ -22,7 +22,7 @@ pub(crate) struct StrokeMesh {
     pub tris: Vec<[Vec2; 3]>,
 }
 
-fn segs(shape: &Shape) -> Vec<Seg> {
+pub(crate) fn segs(shape: &Shape) -> Vec<Seg> {
     let arc = |a: &locus_geom::Arc| Seg::Arc {
         center: a.center,
         radius: a.radius(),

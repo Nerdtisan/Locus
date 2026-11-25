@@ -9,7 +9,7 @@ use crate::tool::ToolHost;
 use crate::tools::Pick;
 use crate::views::canvas::{
     CalibrateDraft, CornerHandle, MirrorDraft, OffsetArrow, OffsetAxis, OffsetDraft, OffsetEdit,
-    PathTextDraft, PatternDraft, ResizePreview, Slide,
+    PathTextDraft, PatternDraft, ResizePreview, Slide, WidthDraft,
 };
 use crate::views::text_ui::{FontCatalog, TextSettings};
 use locus_doc::{ConstraintId, EntityId, RecipeId};
@@ -80,6 +80,8 @@ pub struct ToolState {
     pub(crate) path_text: PathTextDraft,
     /// Bound text being slid along its path by a drag (#392).
     pub(crate) slide: Option<Slide>,
+    /// The Width tool's target, focused point and drag (#426).
+    pub(crate) width: WidthDraft,
     /// Fillet radius and chamfer sizes, edited in the command dialog.
     pub(crate) corner: CornerSettings,
     /// The corner picked for a fillet or chamfer, waiting for OK / Enter
@@ -133,6 +135,7 @@ impl Default for ToolState {
             trace: Default::default(),
             path_text: PathTextDraft::default(),
             slide: None,
+            width: WidthDraft::default(),
             corner: CornerSettings::default(),
             corner_pick: None,
             corner_focus: false,

@@ -1498,11 +1498,13 @@ fn v9_to_latest(f: FileV9) -> Latest {
 
 /// v15 → latest.
 fn v15_to_latest(f: FileV15) -> Latest {
-    FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-        FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-            FileV19::from(FileV18::from(FileV17::from(FileV16::from(f)))),
+    FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+        FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+            FileV20::from(FileV19::from(FileV18::from(FileV17::from(FileV16::from(
+                f,
+            ))))),
         ))))),
-    ))))))
+    )))))
 }
 
 /// Serialise to `.locus` text.
@@ -1586,47 +1588,53 @@ pub fn load(text: &str) -> Result<Document, FileError> {
         13 => v15_to_latest(FileV15::from(FileV14::from(parse::<FileV13>(text)?))),
         14 => v15_to_latest(FileV15::from(parse::<FileV14>(text)?)),
         15 => v15_to_latest(parse::<FileV15>(text)?),
-        16 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-                FileV19::from(FileV18::from(FileV17::from(parse::<FileV16>(text)?))),
+        16 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                FileV20::from(FileV19::from(FileV18::from(FileV17::from(
+                    parse::<FileV16>(text)?,
+                )))),
             ))))),
-        )))))),
-        17 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-                FileV19::from(FileV18::from(parse::<FileV17>(text)?)),
+        ))))),
+        17 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                FileV20::from(FileV19::from(FileV18::from(parse::<FileV17>(text)?))),
             ))))),
-        )))))),
-        18 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-                FileV19::from(parse::<FileV18>(text)?),
+        ))))),
+        18 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                FileV20::from(FileV19::from(parse::<FileV18>(text)?)),
             ))))),
-        )))))),
-        19 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(FileV23::from(FileV22::from(FileV21::from(FileV20::from(
-                parse::<FileV19>(text)?,
+        ))))),
+        19 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+                FileV20::from(parse::<FileV19>(text)?),
             ))))),
-        )))))),
-        20 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(FileV23::from(FileV22::from(FileV21::from(
+        ))))),
+        20 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(FileV23::from(FileV22::from(FileV21::from(
                 parse::<FileV20>(text)?,
+            ))))),
+        ))))),
+        21 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(FileV23::from(FileV22::from(
+                parse::<FileV21>(text)?,
             )))),
-        )))))),
-        21 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(FileV23::from(FileV22::from(parse::<FileV21>(text)?))),
-        )))))),
-        22 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(FileV23::from(parse::<FileV22>(text)?)),
-        )))))),
-        23 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            FileV24::from(parse::<FileV23>(text)?),
-        )))))),
-        24 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(FileV25::from(
-            parse::<FileV24>(text)?,
-        )))))),
+        ))))),
+        22 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(FileV23::from(parse::<FileV22>(text)?))),
+        ))))),
+        23 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(FileV24::from(parse::<FileV23>(text)?)),
+        ))))),
+        24 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
+            FileV25::from(parse::<FileV24>(text)?),
+        ))))),
         25 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(FileV26::from(
             parse::<FileV25>(text)?,
         ))))),
-        26 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(parse::<FileV26>(text)?)))),
+        26 => FileV30::from(FileV29::from(FileV28::from(FileV27::from(
+            parse::<FileV26>(text)?,
+        )))),
         27 => FileV30::from(FileV29::from(FileV28::from(parse::<FileV27>(text)?))),
         28 => FileV30::from(FileV29::from(parse::<FileV28>(text)?)),
         29 => FileV30::from(parse::<FileV29>(text)?),

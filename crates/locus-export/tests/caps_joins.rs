@@ -339,6 +339,10 @@ fn a_styled_cut_layer_cuts_a_profiles_outline() {
     let paths = &styled.model.layers[0].paths;
     // The ring's outline, not the centreline: closed, and past the path.
     assert!(paths.iter().all(|p| p.closed));
-    let bb = paths.iter().filter_map(|p| p.bbox()).reduce(locus_geom::Aabb::union).unwrap();
+    let bb = paths
+        .iter()
+        .filter_map(|p| p.bbox())
+        .reduce(locus_geom::Aabb::union)
+        .unwrap();
     assert!(bb.min.x < -0.5 && bb.max.y > 10.5, "{bb:?}");
 }

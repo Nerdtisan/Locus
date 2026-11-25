@@ -158,9 +158,7 @@ impl WidthProfile {
     /// Is every point 1 / 1: the plain width?
     #[must_use]
     pub fn is_uniform(&self) -> bool {
-        self.points
-            .iter()
-            .all(|p| p.left == 1.0 && p.right == 1.0)
+        self.points.iter().all(|p| p.left == 1.0 && p.right == 1.0)
     }
 
     /// The side factors (left, right) at `u` (0..=1 of the length).
@@ -177,7 +175,11 @@ impl WidthProfile {
             if let [a, b] = w
                 && u <= b.t
             {
-                let x = if b.t > a.t { (u - a.t) / (b.t - a.t) } else { 1.0 };
+                let x = if b.t > a.t {
+                    (u - a.t) / (b.t - a.t)
+                } else {
+                    1.0
+                };
                 let s = x * x * (3.0 - 2.0 * x);
                 return (
                     a.left + (b.left - a.left) * s,
@@ -254,7 +256,10 @@ impl WidthProfile {
                 }
             }
         }
-        let ends = (self.points.first().map(|p| p.t), self.points.last().map(|p| p.t));
+        let ends = (
+            self.points.first().map(|p| p.t),
+            self.points.last().map(|p| p.t),
+        );
         if ends != (Some(0.0), Some(1.0)) {
             return Err(StrokeError::BadValue {
                 what: "width profile ends",
@@ -299,7 +304,10 @@ mod tests {
     #[test]
     fn flip_and_mirror() {
         let p = WidthProfile {
-            points: vec![WidthPoint::new(0.0, 1.0, 2.0), WidthPoint::new(1.0, 3.0, 4.0)],
+            points: vec![
+                WidthPoint::new(0.0, 1.0, 2.0),
+                WidthPoint::new(1.0, 3.0, 4.0),
+            ],
             seed: None,
         };
         let f = p.flipped();

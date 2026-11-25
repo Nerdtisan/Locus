@@ -337,6 +337,10 @@ const fn cmd(k: Key) -> KeyboardShortcut {
     KeyboardShortcut::new(Modifiers::COMMAND, k)
 }
 
+const fn shift(k: Key) -> KeyboardShortcut {
+    KeyboardShortcut::new(Modifiers::SHIFT, k)
+}
+
 const fn cmd_shift(k: Key) -> KeyboardShortcut {
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), k)
 }
@@ -624,6 +628,25 @@ pub static BUILTIN: &[Action] = &[
         Group::Modify,
         &[],
         Modify::Transform(TransformMode::Scale),
+    ),
+    // Shape the selected stroke's width along its path (#426, design §4).
+    a(
+        "modify.width",
+        "Width tool",
+        Group::Modify,
+        &[
+            "width",
+            "profile",
+            "taper",
+            "pressure",
+            "stroke",
+            "variable width",
+            "edit width profile",
+        ],
+        "Select a stroked curve, then drag the handles on its edges to shape its width",
+        &[shift(Key::W)],
+        KeyScope::Canvas,
+        Op::Modify(Modify::Width),
     ),
     a(
         "modify.construction",
@@ -1210,6 +1233,7 @@ pub fn marking_list(selected: bool) -> &'static [Item] {
         &[
             A("select.chain"),
             A("modify.construction"),
+            A("modify.width"),
             A("edit.delete"),
             Sep,
             A("edit.deselect"),
@@ -1531,6 +1555,11 @@ impl Registry {
                 canvas.expand_selection(cx.settings.expand_tol, *centrelines);
             }
             Op::Deselect => canvas.clear_selection(),
+            // In the Width tool Delete removes the focused width point and
+            // never the curves under it (#426).
+            Op::Delete if canvas.modify() == Some(Modify::Width) => {
+                canvas.width_delete_focus();
+            }
             Op::Delete => {
                 if self.enabled(a, canvas).yes() {
                     canvas.delete_selection();

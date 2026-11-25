@@ -425,7 +425,11 @@ pub fn outline(
     limits: &Limits,
 ) -> Result<Outline, StrokeError> {
     check(chain, width, style, limits)?;
-    let tol = if tol.is_finite() { tol.clamp(1e-6, 1.0) } else { EXPORT_TOL };
+    let tol = if tol.is_finite() {
+        tol.clamp(1e-6, 1.0)
+    } else {
+        EXPORT_TOL
+    };
     if !style.extra.is_empty() {
         let mut out = Outline::default();
         for ls in layer_strokes(chain, width, style, limits)? {
@@ -864,10 +868,7 @@ mod tests {
                     }
                 }
                 let n = pts.len();
-                (0..n)
-                    .map(|i| pts[i].cross(pts[(i + 1) % n]))
-                    .sum::<f64>()
-                    * 0.5
+                (0..n).map(|i| pts[i].cross(pts[(i + 1) % n])).sum::<f64>() * 0.5
             })
             .sum()
     }
@@ -879,7 +880,10 @@ mod tests {
         let s = profiled(&[(0.0, 2.0, 2.0), (1.0, 2.0, 2.0)], Cap::Butt, Join::Round);
         assert!((area(&c, 1.0, s) - 20.0).abs() < 1e-3);
         // A closed square with round joins, against the exact stroke.
-        let sq = polyline(&[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)], true);
+        let sq = polyline(
+            &[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)],
+            true,
+        );
         let s = profiled(&[(0.0, 1.5, 1.5), (1.0, 1.5, 1.5)], Cap::Round, Join::Round);
         let exact = area(&sq, 3.0, style(Cap::Round, Join::Round, Align::Centre));
         assert!((area(&sq, 2.0, s) - exact).abs() < 0.01);
@@ -894,7 +898,12 @@ mod tests {
         assert!(s.machine_styled() && s.varying().is_some());
         assert!((area(&c, 2.0, s.clone()) - 20.0).abs() < 0.01);
         let o = outline(&c, 2.0, &s, 0.01, &Limits::default()).unwrap();
-        assert!(o.loops.iter().flatten().any(|p| matches!(p, OutPiece::Cubic(_))));
+        assert!(
+            o.loops
+                .iter()
+                .flatten()
+                .any(|p| matches!(p, OutPiece::Cubic(_)))
+        );
         assert!((outline_area(&o) - 20.0).abs() < 0.05);
         let mut tris = Vec::new();
         mesh(&c, 2.0, &s, 0.001, &Limits::default(), &mut tris).unwrap();
@@ -906,7 +915,12 @@ mod tests {
         // Asymmetric: only the left side.
         let left = profiled(&[(0.0, 2.0, 0.0), (1.0, 2.0, 0.0)], Cap::Butt, Join::Round);
         let out = expand(&c, 2.0, &left, &Limits::default()).unwrap();
-        let bb = out.loops.iter().filter_map(Loop::bbox).reduce(Aabb::union).unwrap();
+        let bb = out
+            .loops
+            .iter()
+            .filter_map(Loop::bbox)
+            .reduce(Aabb::union)
+            .unwrap();
         assert!(bb.min.y > -1e-6 && (bb.max.y - 2.0).abs() < 1e-6);
     }
 
@@ -943,14 +957,29 @@ mod tests {
     fn profile_bounds_cover_the_outline() {
         let c = polyline(&[v(0.0, 0.0), v(10.0, 0.0), v(0.0, 3.0)], false);
         for s in [
-            profiled(&[(0.0, 0.2, 3.0), (0.5, 4.0, 1.0), (1.0, 1.0, 0.0)], Cap::Square, Join::Miter { limit: 10.0 }),
+            profiled(
+                &[(0.0, 0.2, 3.0), (0.5, 4.0, 1.0), (1.0, 1.0, 0.0)],
+                Cap::Square,
+                Join::Miter { limit: 10.0 },
+            ),
             profiled(&[(0.0, 0.2, 3.0), (1.0, 1.0, 0.0)], Cap::Round, Join::Bevel),
         ] {
             let out = expand(&c, 1.0, &s, &Limits::default()).unwrap();
-            let ob = out.loops.iter().filter_map(Loop::bbox).reduce(Aabb::union).unwrap();
+            let ob = out
+                .loops
+                .iter()
+                .filter_map(Loop::bbox)
+                .reduce(Aabb::union)
+                .unwrap();
             let b = bounds(&c, 1.0, &s).unwrap();
-            assert!(b.min.x <= ob.min.x + EPS && b.min.y <= ob.min.y + EPS, "{s:?}");
-            assert!(b.max.x >= ob.max.x - EPS && b.max.y >= ob.max.y - EPS, "{s:?}");
+            assert!(
+                b.min.x <= ob.min.x + EPS && b.min.y <= ob.min.y + EPS,
+                "{s:?}"
+            );
+            assert!(
+                b.max.x >= ob.max.x - EPS && b.max.y >= ob.max.y - EPS,
+                "{s:?}"
+            );
         }
     }
 

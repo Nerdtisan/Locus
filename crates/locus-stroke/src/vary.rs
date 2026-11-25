@@ -388,8 +388,7 @@ pub(crate) fn clean(
             let (mut lc, mut rc) = (Vec::new(), Vec::new());
             fit(&fl, ta, tb, fit_tol, limits.pieces, &mut lc)?;
             fit(&fr, ta, tb, fit_tol, limits.pieces, &mut rc)?;
-            let (Some(l0), Some(r0)) = (lc.first().map(|c| c.p0), rc.first().map(|c| c.p0))
-            else {
+            let (Some(l0), Some(r0)) = (lc.first().map(|c| c.p0), rc.first().map(|c| c.p0)) else {
                 continue;
             };
             // Right side forward, across the end, left side back, across the
@@ -422,7 +421,11 @@ pub(crate) fn clean(
         }
     }
     let mut extra: Vec<Loop> = Vec::new();
-    let joins = if p.chain.closed { n } else { n.saturating_sub(1) };
+    let joins = if p.chain.closed {
+        n
+    } else {
+        n.saturating_sub(1)
+    };
     for k in 0..joins {
         let (Some(a), Some(b)) = (p.seg(k), p.seg((k + 1) % n)) else {
             continue;
@@ -680,7 +683,11 @@ pub(crate) fn mesh(
             q0 = q;
         }
     };
-    let joins = if p.chain.closed { n } else { n.saturating_sub(1) };
+    let joins = if p.chain.closed {
+        n
+    } else {
+        n.saturating_sub(1)
+    };
     for k in 0..joins {
         let (Some(a), Some(b)) = (p.seg(k), p.seg((k + 1) % n)) else {
             continue;

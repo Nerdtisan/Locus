@@ -74,7 +74,11 @@ impl PathMap {
             if best.is_none_or(|b| d < b.0) {
                 let side = seg.tangent(t).cross(p - q);
                 let s = self.cum.get(k).copied().unwrap_or(0.0) + t * seg.length();
-                let u = if self.total > 0.0 { s / self.total } else { 0.0 };
+                let u = if self.total > 0.0 {
+                    s / self.total
+                } else {
+                    0.0
+                };
                 best = Some((d, u, d.copysign(side)));
             }
         }

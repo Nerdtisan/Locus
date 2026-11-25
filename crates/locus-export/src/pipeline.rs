@@ -556,9 +556,10 @@ impl ExportModel {
                 let line = l.paint(&p).line;
                 // A visual writer draws a profiled stroke's dashes in its
                 // outline (#426): each dash takes its part of the profile.
-                let split = line.dash.is_some_and(|d| {
-                    !corners_only || d.align == locus_stroke::DashAlign::Corners
-                }) && !(corners_only && line.varying().is_some());
+                let split = line
+                    .dash
+                    .is_some_and(|d| !corners_only || d.align == locus_stroke::DashAlign::Corners)
+                    && !(corners_only && line.varying().is_some());
                 match split.then(|| l.dash_paths(&p)).flatten() {
                     Some(ds) => out.extend(ds),
                     None => out.push(p),
