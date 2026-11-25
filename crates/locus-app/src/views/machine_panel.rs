@@ -559,6 +559,11 @@ fn legend_ui(ui: &mut Ui, app: &mut AppState) {
     for n in &app.view.machine_notes {
         ui.weak(n);
     }
+    if !app.stroke_preview() && app.view.machine.iter().any(|p| p.band > 0.0) {
+        ui.weak(
+            "Stroke width is off, so pen and kerf widths aren't drawn: turn it on to see them.",
+        );
+    }
 }
 
 #[cfg(test)]
