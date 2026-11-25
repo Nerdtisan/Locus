@@ -2,11 +2,12 @@
 
 //! Gradient fills in export (#436, ADR 0019 decision 4): SVG writes a
 //! native linear or radial gradient in the region's frame (conic as clipped
-//! bands), PDF clips stepped bands to the region, and PNG paints each pixel
+//! bands), PDF writes native axial/radial shading clipped to the region
+//! (#513; conic as bands), and PNG paints each pixel
 //! from the same sampler as the canvas.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use locus_doc::gradient::{Gradient, GradientKind};
+use locus_doc::gradient::{Gradient, GradientKind, Stop};
 use locus_doc::region_fill::RegionFill;
 use locus_doc::{Command, Document, Editor, Fill, Geom, Style};
 use locus_export::{PngOptions, prepare, to_pdf_model, to_png_model, to_svg_model};
@@ -87,16 +88,92 @@ fn svg_writes_a_native_gradient_in_the_regions_frame() {
     );
 }
 
+/// The PDF's text (its content stream is not compressed).
+fn pdf_text(g: Gradient) -> String {
+    String::from_utf8_lossy(&to_pdf_model(&prepare(&doc(g), false).model)).into_owned()
+}
+
+/// #513: linear and radial gradients are native smooth shadings clipped to
+/// the region, not bands; more than two stops stitch; stop opacity is a
+/// soft mask; conic stays bands (PDF has no conic shading).
 #[test]
-fn pdf_clips_bands_to_the_region() {
-    let pdf = to_pdf_model(&prepare(&doc(blue_to_white()), false).model);
-    let text = String::from_utf8_lossy(&pdf);
-    // The content stream may be compressed; the clip operator and a band
-    // colour are there when it isn't.
-    if text.contains(" rg") {
-        assert!(text.contains("W* n"), "the region clips the bands");
-        assert!(text.matches(" rg").count() >= locus_export::gradient::BANDS);
-    }
+fn pdf_writes_native_smooth_shading() {
+    // Two stops: one axial shading with an exponential function.
+    let t = pdf_text(blue_to_white());
+    assert!(t.contains("W* n"), "the region clips it");
+    assert!(t.contains("/ShadingType 2"), "{t}");
+    assert!(t.contains("/Sh0 sh"));
+    assert!(t.contains("/Shading << /Sh0 "));
+    assert!(t.contains("/FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [1 1 1] /N 1"));
+    assert!(!t.contains("/FunctionType 3"));
+    assert!(!t.contains("/SMask"), "opaque stops need no mask");
+    assert!(
+        t.matches(" rg").count() < 4,
+        "no bands: {} fills",
+        t.matches(" rg").count()
+    );
+    // Four stops: a stitching function over three pieces.
+    let mut four = blue_to_white();
+    four.stops = vec![
+        Stop {
+            pos: 0.0,
+            colour: [255, 0, 0],
+            opacity: 1.0,
+        },
+        Stop {
+            pos: 0.25,
+            colour: [0, 255, 0],
+            opacity: 1.0,
+        },
+        Stop {
+            pos: 0.75,
+            colour: [0, 0, 255],
+            opacity: 1.0,
+        },
+        Stop {
+            pos: 1.0,
+            colour: [255, 255, 255],
+            opacity: 1.0,
+        },
+    ];
+    let t = pdf_text(four.clone());
+    assert!(t.contains("/FunctionType 3 /Domain [0 1]"), "{t}");
+    assert!(t.contains("/Bounds [0.25 0.75]"));
+    assert!(t.contains("/Encode [0 1 0 1 0 1]"));
+    // Elliptical: a radial shading, squashed by its cm.
+    let mut ell = blue_to_white();
+    ell.kind = GradientKind::Elliptical { ratio: 0.5 };
+    let t = pdf_text(ell);
+    assert!(t.contains("/ShadingType 3 /Coords [0 0 0 0 0 "), "{t}");
+    // Stop opacity: a luminosity soft mask from a grey copy.
+    let mut fade = four;
+    fade.stops[3].opacity = 0.0;
+    let t = pdf_text(fade);
+    assert!(t.contains("/SMask << /Type /Mask /S /Luminosity"), "{t}");
+    assert!(t.contains("/ColorSpace /DeviceGray"));
+    assert!(t.contains("/SM0 gs"));
+    // Conic: clipped bands still.
+    let mut conic = blue_to_white();
+    conic.kind = GradientKind::Conic;
+    let t = pdf_text(conic);
+    assert!(!t.contains("/ShadingType"));
+    assert!(t.matches(" rg").count() >= locus_export::gradient::BANDS);
+}
+
+/// Rotate with shape (#513): the shading follows the region's frame, so a
+/// turned frame changes the matrix the shading is drawn with.
+#[test]
+fn pdf_shading_follows_the_frame() {
+    let cm = |t: &str| {
+        t.lines()
+            .find(|l| l.ends_with(" cm /Sh0 sh"))
+            .map(str::to_owned)
+            .expect("a shading")
+    };
+    let level = cm(&pdf_text(blue_to_white()));
+    let mut turned = blue_to_white();
+    turned.frame_angle = std::f64::consts::FRAC_PI_2;
+    assert_ne!(level, cm(&pdf_text(turned)));
 }
 
 #[test]
