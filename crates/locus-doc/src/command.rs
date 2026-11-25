@@ -3070,6 +3070,7 @@ mod tests {
 
     #[test]
     fn a_suppressed_mirror_comes_back_with_its_ids() {
+        // #516: and it stays suppressed through a save and load.
         // #446 part 3: mirrors suppress too; the copies and their owned
         // constraints return under the same IDs.
         let mut ed = Editor::new(Document::new());
@@ -3106,6 +3107,11 @@ mod tests {
         let doc = ed.document();
         assert!(copies.iter().all(|c| doc.entity(*c).is_none()));
         assert!(owned.iter().all(|c| doc.constraint(*c).is_none()));
+        let text = crate::file::save(doc).unwrap();
+        let loaded = crate::file::load(&text).unwrap();
+        assert!(loaded.recipe(r).unwrap().feature_suppressed);
+        assert_eq!(&loaded, doc);
+        let mut ed = Editor::new(loaded);
         ed.apply(&Command::SetRecipeSuppressed {
             id: r,
             suppressed: false,
@@ -3246,5 +3252,36 @@ mod tests {
         assert!(ed.document().recipe_depends_on(c, a));
         assert!(ed.apply(&Command::ReorderRecipe { id: c, to: 0 }).is_err());
         assert!(ed.apply(&Command::ReorderRecipe { id: c, to: 1 }).is_ok());
+        // #514: a feature made after a reorder is saved in the order too,
+        // and the order round-trips; moves keep working after a load.
+        ed.apply(&Command::ReorderRecipe { id: b, to: 0 }).unwrap();
+        let d = ed
+            .apply(&Command::AddRecipe {
+                kind: lin("2"),
+                sources: vec![q],
+            })
+            .unwrap()
+            .recipes[0];
+        let order = ed.document().recipe_order();
+        assert_eq!(order.last(), Some(&d));
+        let text = crate::file::save(ed.document()).unwrap();
+        let loaded = crate::file::load(&text).unwrap();
+        assert_eq!(loaded.recipe_order, order, "the file lists every feature");
+        assert_eq!(crate::file::save(&loaded).unwrap(), text);
+        let mut ed = Editor::new(loaded);
+        for id in &order {
+            let before = ed.document().recipe_order();
+            let pos = before.iter().position(|r| r == id).unwrap();
+            let to = if pos == 0 { 1 } else { pos - 1 };
+            if ed
+                .apply(&Command::ReorderRecipe {
+                    id: *id,
+                    to: u32::try_from(to).unwrap(),
+                })
+                .is_ok()
+            {
+                assert_ne!(ed.document().recipe_order(), before, "{id:?} moved");
+            }
+        }
     }
 }
