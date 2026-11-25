@@ -26,16 +26,22 @@
 mod chain;
 mod dash;
 mod multi;
+mod profile;
 mod style;
+mod vary;
 
 pub use chain::{Chain, chains};
 pub use dash::{CORNER_TURN, Dash, DashAlign, MAX_DASH_LEN, MAX_DASH_PAIRS, dashes};
 pub use multi::{LayerStroke, MAX_STROKE_LAYERS, StrokeLayer, layer_strokes, offset_chain};
+pub use profile::{
+    MAX_SIDE_FACTOR, MAX_WIDTH_POINTS, MIN_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile,
+};
 pub use style::{Align, Cap, DEFAULT_MITER, Join, LineStyle, MAX_MITER, MIN_MITER};
+pub use vary::{OutPiece, Outline};
 
 use core::f64::consts::{PI, TAU};
-use locus_geom::{Aabb, Vec2};
-use locus_region::{Area, BoolOp, Edge, Loop, SNAP, Seg, boolean};
+use locus_geom::{Aabb, EXPORT_TOL, Vec2};
+use locus_region::{Area, BoolOp, Edge, Loop, SNAP, Seg, boolean, union_all};
 
 /// Why a stroke couldn't be expanded.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -95,7 +101,7 @@ fn disc(c: Vec2, r: f64) -> Loop {
 }
 
 /// A closed polygon as a CCW loop.
-fn polygon(pts: &[Vec2]) -> Loop {
+pub(crate) fn polygon(pts: &[Vec2]) -> Loop {
     let n = pts.len();
     let l = Loop {
         edges: (0..n)
@@ -164,12 +170,12 @@ fn band(seg: &Seg, h: f64, out: &mut Vec<Loop>) {
 
 /// A corner at `v` from tangent `t1` into tangent `t2`, as the polygon (or
 /// disc) that fills the gap on the outer side, or `None` when smooth.
-enum Corner {
+pub(crate) enum Corner {
     Disc,
     Poly(Vec<Vec2>),
 }
 
-fn corner(v: Vec2, t1: Vec2, t2: Vec2, h: f64, join: Join) -> Option<Corner> {
+pub(crate) fn corner(v: Vec2, t1: Vec2, t2: Vec2, h: f64, join: Join) -> Option<Corner> {
     let turn = t1.cross(t2).atan2(t1.dot(t2));
     if turn.abs() <= SMOOTH {
         return None;
@@ -331,6 +337,17 @@ pub fn expand(
         }
         return Ok(boolean(&Area { loops }, &Area::default(), BoolOp::Union));
     }
+    // A width profile (#426): the cleaned variable-width outline, centred.
+    if let Some(prof) = style.varying() {
+        let mut areas = Vec::new();
+        for (c, u0, u1) in profiled_runs(chain, style, limits)? {
+            let p = vary::Profiled::new(&c, width, prof, u0, u1);
+            areas.push(vary::clean(&p, style.cap, style.join, EXPORT_TOL, limits)?.area);
+        }
+        let mut out = union_all(&areas);
+        locus_region::offset::drop_specks(&mut out);
+        return Ok(out);
+    }
     // A dashed stroke is the union of its dashes, each capped and joined
     // like a stroke of its own, always centred.
     if let Some(d) = style.dash {
@@ -369,6 +386,66 @@ pub fn expand(
     Ok(out)
 }
 
+/// The runs a profiled stroke draws, each with its part of the profile
+/// (`u0..u1` of the whole path's length): every dash, or the whole chain.
+fn profiled_runs(
+    chain: &Chain,
+    style: &LineStyle,
+    limits: &Limits,
+) -> Result<Vec<(Chain, f64, f64)>, StrokeError> {
+    let Some(d) = &style.dash else {
+        return Ok(vec![(chain.clone(), 0.0, 1.0)]);
+    };
+    let lens: Vec<f64> = chain.segs.iter().map(Seg::length).collect();
+    let total: f64 = lens.iter().sum();
+    if !(total > 0.0) {
+        return Ok(Vec::new());
+    }
+    Ok(dash::dash_spans(chain, d, limits)?
+        .into_iter()
+        .map(|(a, b)| (dash::slice(chain, &lens, a, b), a / total, b / total))
+        .collect())
+}
+
+/// The stroke's outline for drawing and editing (SVG/PDF, Expand to
+/// geometry): as [`expand`], except that variable-width spans (#426) keep
+/// the fitted cubics within `tol` mm (ADR 0019 option (b), owner-approved).
+/// Constant-width strokes are exact lines and arcs. Outlines of separate
+/// strokes (extra strokes, dashes) are listed apart: fill them non-zero.
+///
+/// # Errors
+/// As [`expand`].
+pub fn outline(
+    chain: &Chain,
+    width: f64,
+    style: &LineStyle,
+    tol: f64,
+    limits: &Limits,
+) -> Result<Outline, StrokeError> {
+    check(chain, width, style, limits)?;
+    let tol = if tol.is_finite() { tol.clamp(1e-6, 1.0) } else { EXPORT_TOL };
+    if !style.extra.is_empty() {
+        let mut out = Outline::default();
+        for ls in layer_strokes(chain, width, style, limits)? {
+            for c in &ls.chains {
+                out.loops
+                    .extend(outline(c, ls.width, &ls.line, tol, limits)?.loops);
+            }
+        }
+        return Ok(out);
+    }
+    let Some(prof) = style.varying() else {
+        return Ok(Outline::from_area(&expand(chain, width, style, limits)?));
+    };
+    let mut out = Outline::default();
+    for (c, u0, u1) in profiled_runs(chain, style, limits)? {
+        let p = vary::Profiled::new(&c, width, prof, u0, u1);
+        let cleaned = vary::clean(&p, style.cap, style.join, tol, limits)?;
+        out.loops.extend(vary::map_back(&cleaned, tol).loops);
+    }
+    Ok(out)
+}
+
 /// The visual bounds of the stroke, without expanding it: the pieces grown
 /// by the stroke's reach, plus miter tips and square-cap corners. Never
 /// smaller than the outline, so a page never clips it (§8, #450).
@@ -391,6 +468,26 @@ pub fn bounds(chain: &Chain, width: f64, style: &LineStyle) -> Option<Aabb> {
     } else {
         0.0
     };
+    // A width profile (#426) reaches at most its largest side factor; a
+    // square cap's corner √2 of that; a miter's tip as for that width.
+    if let Some(prof) = style.varying() {
+        let h = w * 0.5 * prof.max_factor();
+        let r = if style.cap == Cap::Square {
+            h * core::f64::consts::SQRT_2
+        } else {
+            h
+        };
+        let bb = chain.segs.iter().map(Seg::bbox).reduce(Aabb::union)?;
+        let mut bb = Aabb::from_points(bb.min - Vec2::new(r, r), bb.max + Vec2::new(r, r));
+        for (v, t1, t2) in corners(chain) {
+            if let Some(Corner::Poly(p)) = corner(v, t1, t2, h, style.join) {
+                for q in p {
+                    bb = bb.include(q);
+                }
+            }
+        }
+        return Some(bb);
+    }
     // Dashed strokes are always centred (see `expand`).
     let align = if chain.closed && style.dash.is_none() {
         style.align
@@ -450,6 +547,14 @@ pub fn mesh(
             for c in &ls.chains {
                 mesh(c, ls.width, &ls.line, tol, limits, out)?;
             }
+        }
+        return Ok(());
+    }
+    if let Some(prof) = style.varying() {
+        let tol = if tol.is_finite() { tol.max(1e-6) } else { 1e-3 };
+        for (c, u0, u1) in profiled_runs(chain, style, limits)? {
+            let p = vary::Profiled::new(&c, width, prof, u0, u1);
+            vary::mesh(&p, style.cap, style.join, tol, limits, out)?;
         }
         return Ok(());
     }
@@ -607,8 +712,7 @@ mod tests {
             cap,
             join,
             align,
-            dash: None,
-            extra: Default::default(),
+            ..LineStyle::default()
         }
     }
 
@@ -725,6 +829,133 @@ mod tests {
             .map(|t| ((t[1] - t[0]).cross(t[2] - t[0]) * 0.5).abs())
             .sum();
         assert!((a - 24.0).abs() < EPS);
+    }
+
+    fn profiled(pts: &[(f64, f64, f64)], cap: Cap, join: Join) -> LineStyle {
+        LineStyle {
+            cap,
+            join,
+            profile: Some(WidthProfile {
+                points: pts
+                    .iter()
+                    .map(|&(t, l, r)| WidthPoint::new(t, l, r))
+                    .collect(),
+                seed: None,
+            }),
+            ..LineStyle::default()
+        }
+    }
+
+    /// Area of an outline, flattened finely.
+    fn outline_area(o: &Outline) -> f64 {
+        o.loops
+            .iter()
+            .map(|l| {
+                let mut pts = Vec::new();
+                for p in l {
+                    match p {
+                        OutPiece::Seg(s) => s.flatten_into(1e-5, &mut pts),
+                        OutPiece::Cubic(c) => {
+                            let f = c.flatten(1e-5);
+                            pts.extend_from_slice(&f[..f.len() - 1]);
+                        }
+                    }
+                }
+                let n = pts.len();
+                (0..n)
+                    .map(|i| pts[i].cross(pts[(i + 1) % n]))
+                    .sum::<f64>()
+                    * 0.5
+            })
+            .sum()
+    }
+
+    #[test]
+    fn a_constant_profile_strokes_as_the_plain_width() {
+        // Factor 2 at width 1 is a 2 mm stroke.
+        let c = polyline(&[v(0.0, 0.0), v(10.0, 0.0)], false);
+        let s = profiled(&[(0.0, 2.0, 2.0), (1.0, 2.0, 2.0)], Cap::Butt, Join::Round);
+        assert!((area(&c, 1.0, s) - 20.0).abs() < 1e-3);
+        // A closed square with round joins, against the exact stroke.
+        let sq = polyline(&[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)], true);
+        let s = profiled(&[(0.0, 1.5, 1.5), (1.0, 1.5, 1.5)], Cap::Round, Join::Round);
+        let exact = area(&sq, 3.0, style(Cap::Round, Join::Round, Align::Centre));
+        assert!((area(&sq, 2.0, s) - exact).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_taper_has_the_eased_area() {
+        // Width 2 easing from 0 to factor 2 (4 mm): the smoothstep averages
+        // half, so 10 × 4 × ½ = 20.
+        let c = polyline(&[v(0.0, 0.0), v(10.0, 0.0)], false);
+        let s = profiled(&[(0.0, 0.0, 0.0), (1.0, 2.0, 2.0)], Cap::Butt, Join::Round);
+        assert!(s.machine_styled() && s.varying().is_some());
+        assert!((area(&c, 2.0, s.clone()) - 20.0).abs() < 0.01);
+        let o = outline(&c, 2.0, &s, 0.01, &Limits::default()).unwrap();
+        assert!(o.loops.iter().flatten().any(|p| matches!(p, OutPiece::Cubic(_))));
+        assert!((outline_area(&o) - 20.0).abs() < 0.05);
+        let mut tris = Vec::new();
+        mesh(&c, 2.0, &s, 0.001, &Limits::default(), &mut tris).unwrap();
+        let a: f64 = tris
+            .iter()
+            .map(|t| ((t[1] - t[0]).cross(t[2] - t[0]) * 0.5).abs())
+            .sum();
+        assert!((a - 20.0).abs() < 0.05, "{a}");
+        // Asymmetric: only the left side.
+        let left = profiled(&[(0.0, 2.0, 0.0), (1.0, 2.0, 0.0)], Cap::Butt, Join::Round);
+        let out = expand(&c, 2.0, &left, &Limits::default()).unwrap();
+        let bb = out.loops.iter().filter_map(Loop::bbox).reduce(Aabb::union).unwrap();
+        assert!(bb.min.y > -1e-6 && (bb.max.y - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_profile_on_an_arc_and_dashes_reads_the_whole_path() {
+        let arc = Chain {
+            segs: vec![Seg::Arc {
+                center: v(0.0, 0.0),
+                radius: 5.0,
+                start: 0.0,
+                sweep: PI,
+            }],
+            closed: false,
+        };
+        let s = profiled(&[(0.0, 2.0, 2.0), (1.0, 2.0, 2.0)], Cap::Butt, Join::Round);
+        // A half annulus between radii 3 and 7.
+        assert!((area(&arc, 2.0, s.clone()) - PI / 2.0 * (49.0 - 9.0)).abs() < 0.01);
+        // Dashed: a taper is read across the whole path, so the last dash
+        // is the thickest.
+        let c = polyline(&[v(0.0, 0.0), v(10.0, 0.0)], false);
+        let mut s = profiled(&[(0.0, 0.0, 0.0), (1.0, 2.0, 2.0)], Cap::Butt, Join::Round);
+        s.dash = Some(Dash::new(&[1.0, 1.0], 0.0, crate::DashAlign::Exact).unwrap());
+        let out = expand(&c, 2.0, &s, &Limits::default()).unwrap();
+        let tallest = out
+            .loops
+            .iter()
+            .filter_map(Loop::bbox)
+            .max_by(|a, b| a.height().total_cmp(&b.height()))
+            .unwrap();
+        assert!(tallest.min.x > 7.9, "{tallest:?}");
+    }
+
+    #[test]
+    fn profile_bounds_cover_the_outline() {
+        let c = polyline(&[v(0.0, 0.0), v(10.0, 0.0), v(0.0, 3.0)], false);
+        for s in [
+            profiled(&[(0.0, 0.2, 3.0), (0.5, 4.0, 1.0), (1.0, 1.0, 0.0)], Cap::Square, Join::Miter { limit: 10.0 }),
+            profiled(&[(0.0, 0.2, 3.0), (1.0, 1.0, 0.0)], Cap::Round, Join::Bevel),
+        ] {
+            let out = expand(&c, 1.0, &s, &Limits::default()).unwrap();
+            let ob = out.loops.iter().filter_map(Loop::bbox).reduce(Aabb::union).unwrap();
+            let b = bounds(&c, 1.0, &s).unwrap();
+            assert!(b.min.x <= ob.min.x + EPS && b.min.y <= ob.min.y + EPS, "{s:?}");
+            assert!(b.max.x >= ob.max.x - EPS && b.max.y >= ob.max.y - EPS, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn a_uniform_profile_is_the_plain_stroke() {
+        let s = profiled(&[(0.0, 1.0, 1.0), (1.0, 1.0, 1.0)], Cap::Round, Join::Round);
+        assert!(s.varying().is_none() && !s.machine_styled());
     }
 
     #[test]

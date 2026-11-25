@@ -10,7 +10,8 @@ use core::f64::consts::PI;
 use locus_geom::Vec2;
 use locus_region::Seg;
 use locus_stroke::{
-    Align, Cap, Chain, Dash, DashAlign, Join, Limits, LineStyle, StrokeLayer, bounds, expand, mesh,
+    Align, Cap, Chain, Dash, DashAlign, Join, Limits, LineStyle, OutPiece, StrokeLayer, WidthPoint,
+    WidthProfile, bounds, expand, mesh, outline,
 };
 use proptest::prelude::*;
 
@@ -61,8 +62,25 @@ fn style_strategy() -> impl Strategy<Value = LineStyle> {
         (0u8..3, 0u8..3, 1.0f64..10.0, 0u8..3),
         prop::option::of((0.0f64..4.0, 0.1f64..4.0, -5.0f64..5.0, any::<bool>())),
         prop::option::of((-3.0f64..3.0, 0.1f64..3.0)),
+        prop::option::of(prop::collection::vec(
+            (0.0f64..=1.0, 0.0f64..3.0, 0.0f64..3.0),
+            2..6,
+        )),
     )
-        .prop_map(|((c, j, limit, a), dash, extra)| LineStyle {
+        .prop_map(|((c, j, limit, a), dash, extra, profile)| LineStyle {
+            profile: profile.map(|mut pts| {
+                pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let n = pts.len();
+                pts[0].0 = 0.0;
+                pts[n - 1].0 = 1.0;
+                WidthProfile {
+                    points: pts
+                        .into_iter()
+                        .map(|(t, l, r)| WidthPoint::new(t, l, r))
+                        .collect(),
+                    seed: None,
+                }
+            }),
             extra: extra
                 .map(|(offset, width)| StrokeLayer {
                     offset,
@@ -112,6 +130,18 @@ proptest! {
                 for t in [0.0, 0.5, 1.0] {
                     let q = e.seg.at(t);
                     prop_assert!(bb.contains(q, 1e-6), "{q:?} outside {bb:?}");
+                }
+            }
+        }
+        // The drawing outline (cubics kept, #426) is closed and finite.
+        let o = outline(&chain, width, &style, 0.01, &Limits::default()).unwrap();
+        for l in &o.loops {
+            let k = l.len();
+            for i in 0..k {
+                let (e, f) = (&l[i], &l[(i + 1) % k]);
+                prop_assert!(e.end().distance(f.start()) <= 1e-5);
+                if let OutPiece::Cubic(c) = e {
+                    prop_assert!(c.c0.is_finite() && c.c1.is_finite());
                 }
             }
         }

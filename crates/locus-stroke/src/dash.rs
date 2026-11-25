@@ -181,7 +181,7 @@ fn merge(mut v: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 
 /// The part of `chain` between arc lengths `a` and `b`, exact for lines and
 /// arcs. A zero-length dash (a dot) is a zero-length line at that point.
-fn slice(chain: &Chain, lens: &[f64], a: f64, b: f64) -> Chain {
+pub(crate) fn slice(chain: &Chain, lens: &[f64], a: f64, b: f64) -> Chain {
     let mut segs = Vec::new();
     let mut s0 = 0.0;
     for (seg, &l) in chain.segs.iter().zip(lens) {
@@ -209,6 +209,20 @@ fn slice(chain: &Chain, lens: &[f64], a: f64, b: f64) -> Chain {
 /// [`StrokeError::BadValue`] for a bad pattern; [`StrokeError::Limit`]
 /// past `limits.dashes` (§6.2.1).
 pub fn dashes(chain: &Chain, dash: &Dash, limits: &Limits) -> Result<Vec<Chain>, StrokeError> {
+    let lens: Vec<f64> = chain.segs.iter().map(Seg::length).collect();
+    Ok(dash_spans(chain, dash, limits)?
+        .into_iter()
+        .map(|(a, b)| slice(chain, &lens, a, b))
+        .collect())
+}
+
+/// The dashes of `chain` under `dash` as arc-length intervals, in path order
+/// (a width profile reads each dash's place on the whole path, #426).
+pub(crate) fn dash_spans(
+    chain: &Chain,
+    dash: &Dash,
+    limits: &Limits,
+) -> Result<Vec<(f64, f64)>, StrokeError> {
     dash.validate()?;
     let lens: Vec<f64> = chain.segs.iter().map(Seg::length).collect();
     let total: f64 = lens.iter().sum();
@@ -265,10 +279,7 @@ pub fn dashes(chain: &Chain, dash: &Dash, limits: &Limits) -> Result<Vec<Chain>,
             iv = merge(iv);
         }
     }
-    Ok(iv
-        .into_iter()
-        .map(|(a, b)| slice(chain, &lens, a, b))
-        .collect())
+    Ok(iv)
 }
 
 #[cfg(test)]
