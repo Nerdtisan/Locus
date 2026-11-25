@@ -2018,6 +2018,60 @@ fn revalue(doc: &mut Document, patches: &mut Vec<Patch>) -> Result<(), DocError>
     Ok(())
 }
 
+/// Move the fills of regions whose curves `step` regenerated to the regions
+/// now in their place (#515, [`crate::region_fill::carry`]). `step` holds
+/// the patches already applied; the returned ones are applied too and
+/// belong to the same undo step.
+fn carry_fills(doc: &mut Document, step: &[Patch]) -> Vec<Patch> {
+    if doc.region_fills.is_empty() {
+        return Vec::new();
+    }
+    let changed: std::collections::BTreeSet<EntityId> = step
+        .iter()
+        .filter_map(|p| match p {
+            Patch::Entity { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    if changed.is_empty()
+        || !doc.region_fills.keys().any(|k| {
+            k.bounds
+                .iter()
+                .any(|b| changed.contains(&EntityId::new(*b)))
+        })
+    {
+        return Vec::new();
+    }
+    let mut before = doc.clone();
+    for p in step.iter().rev() {
+        p.set(&mut before, false);
+    }
+    let mut out = Vec::new();
+    for (from, to) in crate::region_fill::carry(doc, &before, &changed) {
+        if let Some(f) = doc.region_fills.get(&from).cloned() {
+            record(
+                doc,
+                &mut out,
+                Patch::RegionFill {
+                    key: from,
+                    before: Some(f.clone()),
+                    after: None,
+                },
+            );
+            record(
+                doc,
+                &mut out,
+                Patch::RegionFill {
+                    key: to,
+                    before: None,
+                    after: Some(f),
+                },
+            );
+        }
+    }
+    out
+}
+
 pub(crate) fn record(doc: &mut Document, patches: &mut Vec<Patch>, p: Patch) {
     p.set(doc, true);
     patches.push(p);
@@ -2182,6 +2236,8 @@ impl Editor {
         if let Some(f) = failures {
             self.failures = f;
         }
+        let carried = carry_fills(&mut self.doc, &patches);
+        patches.extend(carried);
         if !patches.is_empty() {
             self.undo.push(Transaction {
                 label: cmd.label(),
@@ -2327,6 +2383,8 @@ impl Editor {
         if let Some(f) = failures {
             self.failures = f;
         }
+        let carried = carry_fills(&mut self.doc, &patches);
+        patches.extend(carried);
         if !patches.is_empty() {
             self.undo.push(Transaction {
                 label: cmd.label(),
@@ -2397,6 +2455,15 @@ impl Editor {
         if patches.is_empty() {
             return Ok(());
         }
+        // Fills carried across the regeneration, judged against the state
+        // before the whole step (the drag and this regeneration).
+        let mut all: Vec<Patch> = self
+            .undo
+            .last()
+            .map(|t| t.patches.clone())
+            .unwrap_or_default();
+        all.extend(patches.iter().cloned());
+        patches.extend(carry_fills(&mut self.doc, &all));
         match self.undo.last_mut() {
             Some(t) => t.patches.extend(patches),
             None => self.undo.push(Transaction {

@@ -97,6 +97,64 @@ pub fn interior_point(r: &locus_region::Region) -> Option<locus_geom::Vec2> {
     None
 }
 
+/// Fills to move after an edit changed curves they are keyed by (#515):
+/// an offset, pattern or mirror that regenerates gives its region new
+/// bounding curves, so its stored key stops matching and, unlike a split
+/// (#457, see [`resolve`]), can't be rebuilt from its own curves either.
+/// Each such fill moves to the region now at the same place: the innermost
+/// region on its layer holding a point inside the region as it was in
+/// `before`, unless that region has a stored fill already.
+///
+/// `changed` are the entities the edit touched; only fills keyed by one of
+/// them are looked at, so most edits never build regions here.
+pub(crate) fn carry(
+    doc: &Document,
+    before: &Document,
+    changed: &std::collections::BTreeSet<EntityId>,
+) -> Vec<(RegionKey, RegionKey)> {
+    let touched: Vec<&RegionKey> = doc
+        .region_fills
+        .keys()
+        .filter(|k| {
+            k.bounds
+                .iter()
+                .any(|b| changed.contains(&EntityId::new(*b)))
+        })
+        .collect();
+    if touched.is_empty() {
+        return Vec::new();
+    }
+    let now = crate::regions::regions(doc);
+    let live: std::collections::BTreeSet<&RegionKey> = now.iter().map(|r| &r.key).collect();
+    let mut taken: std::collections::BTreeSet<RegionKey> =
+        doc.region_fills.keys().cloned().collect();
+    let mut out = Vec::new();
+    for k in touched {
+        // Still a region, or still rebuildable from its own curves (a split,
+        // whose pieces all keep the fill): nothing to move.
+        if live.contains(k) || crate::regions::rebuild(doc, k).is_some() {
+            continue;
+        }
+        let Some(old) = crate::regions::rebuild(before, k) else {
+            continue;
+        };
+        let (Some(p), layer) = (interior_point(&old), crate::regions::layer_of(before, &old))
+        else {
+            continue;
+        };
+        let target = now
+            .iter()
+            .filter(|r| crate::regions::layer_of(doc, r) == layer && r.contains(p))
+            .min_by(|a, b| a.area().abs().total_cmp(&b.area().abs()));
+        if let Some(t) = target
+            && taken.insert(t.key.clone())
+        {
+            out.push((k.clone(), t.key.clone()));
+        }
+    }
+    out
+}
+
 /// Each region's fill (#457): the one resolver the canvas, the Inspector
 /// and export all use, so they can't disagree. A region takes
 /// - the fill stored under its own key, if any (a stored "no fill" counts:
