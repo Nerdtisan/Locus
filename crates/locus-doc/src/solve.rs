@@ -115,8 +115,9 @@ pub struct Sketcher {
     /// Each region's fill, by [`crate::region_fill::resolve`] (#457).
     fills: Vec<Option<crate::region_fill::RegionFill>>,
     results: BTreeMap<BooleanId, Result<locus_region::Area, BooleanError>>,
-    /// Béziers' arc chains, kept between refreshes (#505).
-    pieces: crate::regions::BezierPieces,
+    /// Region work kept between refreshes: Béziers' arcs (#505) and
+    /// unchanged layers' regions (#512).
+    pieces: crate::regions::RegionCache,
 }
 
 impl Sketcher {
@@ -134,7 +135,7 @@ impl Sketcher {
             regions: Vec::new(),
             fills: Vec::new(),
             results: BTreeMap::new(),
-            pieces: crate::regions::BezierPieces::default(),
+            pieces: crate::regions::RegionCache::default(),
         };
         if let Ok(sol) = solve(&mut s.solver, s.editor.document()) {
             // Can only fail on a solver bug (non-finite output); the stored

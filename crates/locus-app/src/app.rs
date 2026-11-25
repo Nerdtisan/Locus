@@ -1119,20 +1119,78 @@ mod drop_tests {
     }
 }
 
-/// A frame-time harness (#505): the whole app, headless, on a document
-/// given by `LOCUS_PROFILE_FILE`, with the pointer moving over the canvas.
-/// Prints the median UI and tessellation times. Run with `--ignored
-/// --nocapture` in a release build.
+/// A frame-time harness (#505, #512): the whole app, headless, on a
+/// document given by `LOCUS_PROFILE_FILE`, at 2560 × 1440 and 2 pixels per
+/// point (a high-DPI monitor). Each scenario prints the median and worst
+/// UI and tessellation times per frame, and the edit costs. Run with
+/// `--ignored --nocapture` in a release build.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[allow(clippy::unwrap_used)]
 mod frame_profile {
     use super::App;
-    use egui::{Pos2, Rect, pos2, vec2};
+    use egui::{Event, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
     use std::time::{Duration, Instant};
 
-    fn median(mut v: Vec<Duration>) -> f64 {
-        v.sort();
-        v[v.len() / 2].as_secs_f64() * 1000.0
+    fn ms(d: Duration) -> f64 {
+        d.as_secs_f64() * 1000.0
+    }
+
+    struct Rig {
+        app: App,
+        ctx: egui::Context,
+        frame: eframe::Frame,
+        clock: f64,
+    }
+
+    impl Rig {
+        /// One frame: UI time, tessellation time, vertices.
+        fn frame(&mut self, events: Vec<Event>) -> (Duration, Duration, usize) {
+            self.clock += 1.0 / 60.0;
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 720.0))),
+                time: Some(self.clock),
+                events,
+                ..Default::default()
+            };
+            let (app, frame) = (&mut self.app, &mut self.frame);
+            let t0 = Instant::now();
+            let out = self.ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame));
+            let t1 = Instant::now();
+            let prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
+            let verts = prims
+                .iter()
+                .map(|p| match &p.primitive {
+                    egui::epaint::Primitive::Mesh(m) => m.vertices.len(),
+                    egui::epaint::Primitive::Callback(_) => 0,
+                })
+                .sum();
+            (t1 - t0, t1.elapsed(), verts)
+        }
+
+        fn scenario(
+            &mut self,
+            name: &str,
+            frames: usize,
+            mut events: impl FnMut(usize) -> Vec<Event>,
+        ) {
+            let (mut ui, mut tess, mut verts) = (Vec::new(), Vec::new(), 0);
+            for k in 0..frames {
+                let (u, t, v) = self.frame(events(k));
+                ui.push(u);
+                tess.push(t);
+                verts = v;
+            }
+            ui.sort();
+            tess.sort();
+            let total: Vec<Duration> = ui.iter().zip(&tess).map(|(a, b)| *a + *b).collect();
+            let worst = total.iter().max().copied().unwrap_or_default();
+            println!(
+                "{name:<28} ui {:6.2} ms  tess {:6.2} ms  (median)  worst frame {:6.2} ms  {verts} vertices",
+                ms(ui[ui.len() / 2]),
+                ms(tess[tess.len() / 2]),
+                ms(worst)
+            );
+        }
     }
 
     #[test]
@@ -1144,122 +1202,158 @@ mod frame_profile {
         let text = std::fs::read_to_string(path).unwrap();
         let t = Instant::now();
         let doc = locus_doc::file::load(&text).unwrap();
-        println!("load: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
-        let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+        println!("parse: {:.1} ms", ms(t.elapsed()));
+        let ctx = egui::Context::default();
+        ctx.set_pixels_per_point(2.0);
+        let app = App::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
+        let mut rig = Rig {
+            app,
+            ctx,
+            frame: eframe::Frame::_new_kittest(),
+            clock: 0.0,
+        };
         let t = Instant::now();
-        let sk = locus_doc::Sketcher::new(doc.clone());
-        println!("Sketcher::new: {:.1} ms", ms(t));
-        let t = Instant::now();
-        let rs = locus_doc::regions::regions(&doc);
-        println!("regions: {:.1} ms ({} regions)", ms(t), rs.len());
-        let t = Instant::now();
-        let _ = crate::scene::Scene::build_showing(
-            sk.document(),
-            &sk.state().fully_constrained,
-            &Default::default(),
-            true,
+        rig.app.state.load(doc);
+        println!("open (state.load): {:.1} ms", ms(t.elapsed()));
+        for _ in 0..5 {
+            rig.frame(Vec::new());
+        }
+        let mid = pos2(640.0, 380.0);
+        rig.scenario("idle", 20, |_| Vec::new());
+        rig.scenario("hover (pointer moving)", 40, |k| {
+            vec![Event::PointerMoved(pos2(300.0 + 15.0 * k as f32, 380.0))]
+        });
+        rig.scenario("pan (middle drag)", 40, |k| {
+            let p = pos2(500.0 + 8.0 * k as f32, 380.0);
+            let mut v = vec![Event::PointerMoved(p)];
+            if k == 0 {
+                v.push(Event::PointerButton {
+                    pos: p,
+                    button: PointerButton::Middle,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            if k == 39 {
+                v.push(Event::PointerButton {
+                    pos: p,
+                    button: PointerButton::Middle,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            v
+        });
+        rig.scenario("zoom (wheel)", 40, |k| {
+            vec![
+                Event::PointerMoved(mid),
+                Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: vec2(0.0, if k < 20 { 1.0 } else { -1.0 }),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: Modifiers::NONE,
+                },
+            ]
+        });
+        // Box select from the canvas's empty margin (the fit pads content).
+        let r = rig.app.state.view.rect;
+        let from = r.min + vec2(6.0, 6.0);
+        let to = r.center();
+        rig.scenario("box select (drag)", 30, |k| {
+            let p = from + (to - from) * (k as f32 / 29.0);
+            let mut v = vec![Event::PointerMoved(p)];
+            if k == 0 {
+                v.push(Event::PointerButton {
+                    pos: p,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            if k == 29 {
+                v.push(Event::PointerButton {
+                    pos: p,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                });
+            }
+            v
+        });
+        println!(
+            "  box selected {} items",
+            rig.app.state.selection.items.len()
         );
-        println!("Scene::build: {:.1} ms", ms(t));
-        // One small edit: restyle one curve, as the Inspector does.
-        let mut sk = sk;
-        let id = doc
+        rig.app.state.selection.items.clear();
+        rig.app.state.rebuild();
+        rig.app.state.select_all();
+        rig.app.state.rebuild();
+        rig.scenario("all selected, hover", 20, |k| {
+            vec![Event::PointerMoved(pos2(300.0 + 15.0 * k as f32, 380.0))]
+        });
+        rig.app.state.selection.items.clear();
+        rig.app.state.rebuild();
+
+        // Edits and a point drag, on the document's own solver.
+        let doc = rig.app.state.doc.sketcher.document().clone();
+        let mut sk = locus_doc::Sketcher::new(doc.clone());
+        let curve = doc
             .entities()
             .iter()
             .find(|(_, e)| !matches!(e.geom, locus_doc::Geom::Point { .. }))
             .map(|(i, _)| i)
             .unwrap();
+        let mut times = Vec::new();
+        for w in [0.5, 0.6, 0.7] {
+            let t = Instant::now();
+            sk.apply(&locus_doc::Command::SetStyle {
+                entities: vec![curve],
+                patch: locus_doc::style::StylePatch {
+                    width: Some(w),
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+            times.push(t.elapsed());
+        }
+        times.sort();
+        println!(
+            "edit (restyle one curve): {:.1} ms (median of 3)",
+            ms(times[1])
+        );
         let t = Instant::now();
-        sk.apply(&locus_doc::Command::SetStyle {
-            entities: vec![id],
-            patch: locus_doc::style::StylePatch {
-                width: Some(0.5),
-                ..Default::default()
-            },
-        })
-        .unwrap();
-        println!("one SetStyle via Sketcher::apply: {:.1} ms", ms(t));
-        let ctx = egui::Context::default();
-        let mut app = App::new(&eframe::CreationContext::_new_kittest(ctx.clone()));
+        sk.undo().unwrap();
+        println!("undo: {:.1} ms", ms(t.elapsed()));
+        let point = doc
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, locus_doc::Geom::Point { .. }))
+            .map(|(i, _)| i)
+            .unwrap();
+        let at = doc.point_pos(point).unwrap();
         let t = Instant::now();
-        app.state.load(doc);
-        println!("state.load: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
-        let mut frame = eframe::Frame::_new_kittest();
-        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0));
-        let mut clock = 0.0;
-        let mut run = |app: &mut App, events: Vec<egui::Event>| {
-            clock += 1.0 / 60.0;
-            let input = egui::RawInput {
-                screen_rect: Some(screen),
-                time: Some(clock),
-                events,
-                ..Default::default()
-            };
-            let t0 = Instant::now();
-            let out = ctx.run_ui(input, |ui| eframe::App::ui(app, ui, &mut frame));
-            let t1 = Instant::now();
-            let shapes = out.shapes.len();
-            let prims = ctx.tessellate(out.shapes, out.pixels_per_point);
-            let verts: usize = prims
-                .iter()
-                .map(|p| match &p.primitive {
-                    egui::epaint::Primitive::Mesh(m) => m.vertices.len(),
-                    egui::epaint::Primitive::Callback(_) => 0,
-                })
-                .sum();
-            (t1 - t0, t1.elapsed(), shapes, verts)
-        };
-        for _ in 0..5 {
-            run(&mut app, Vec::new());
+        sk.begin_drag(point).unwrap();
+        let begin = t.elapsed();
+        let mut frames = Vec::new();
+        for k in 0..20 {
+            let t = Instant::now();
+            sk.drag_to(at + locus_geom::Vec2::new(0.1 * k as f64, 0.0))
+                .unwrap();
+            frames.push(t.elapsed());
         }
-        let (mut ui, mut tess) = (Vec::new(), Vec::new());
-        let mut last = (0, 0);
-        for i in 0..40 {
-            let x = 500.0 + 15.0 * i as f32;
-            let (u, t, s, v) = run(&mut app, vec![egui::Event::PointerMoved(pos2(x, 520.0))]);
-            ui.push(u);
-            tess.push(t);
-            last = (s, v);
-        }
-        println!(
-            "pointer moving: ui {:.2} ms, tessellate {:.2} ms (median of 40), {} shapes, {} vertices",
-            median(ui),
-            median(tess),
-            last.0,
-            last.1
-        );
-        let (mut ui, mut tess) = (Vec::new(), Vec::new());
-        for _ in 0..20 {
-            let (u, t, _, _) = run(&mut app, Vec::new());
-            ui.push(u);
-            tess.push(t);
-        }
-        println!(
-            "idle: ui {:.2} ms, tessellate {:.2} ms (median of 20)",
-            median(ui),
-            median(tess)
-        );
-        // Everything selected: the Inspector and selection drawing see all
-        // 12 500 entities each frame.
-        app.state.select_all();
+        frames.sort();
         let t = Instant::now();
-        app.state.rebuild();
+        sk.end_drag().unwrap();
         println!(
-            "rebuild with all {} selected: {:.1} ms",
-            app.state.selection.items.len(),
-            t.elapsed().as_secs_f64() * 1000.0
+            "drag a point: begin {:.1} ms, per frame {:.2} ms (median), release {:.1} ms",
+            ms(begin),
+            ms(frames[10]),
+            ms(t.elapsed())
         );
-        let (mut ui, mut tess) = (Vec::new(), Vec::new());
-        for i in 0..20 {
-            let x = 500.0 + 15.0 * i as f32;
-            let (u, t, _, _) = run(&mut app, vec![egui::Event::PointerMoved(pos2(x, 520.0))]);
-            ui.push(u);
-            tess.push(t);
-        }
-        println!(
-            "all selected, pointer moving: ui {:.2} ms, tessellate {:.2} ms (median of 20)",
-            median(ui),
-            median(tess)
-        );
+        // The app's own rebuild after an edit (scene, selection, machine).
+        let t = Instant::now();
+        rig.app.state.rebuild();
+        println!("app rebuild after an edit: {:.1} ms", ms(t.elapsed()));
     }
 }
 

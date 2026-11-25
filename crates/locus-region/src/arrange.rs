@@ -9,6 +9,43 @@ use crate::seg::{Edge, Seg};
 use core::f64::consts::{PI, TAU};
 use locus_geom::{Aabb, SOLVER_TOL, Vec2};
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// A small multiplicative hasher for the arrangement's integer keys (grid
+/// cells and vertex pairs). std's SipHash made hashing most of the cost of
+/// splitting a 32 000-piece trace (#512). Keys come from geometry, which a
+/// crafted file controls, so collisions can only make a hostile file slow,
+/// never wrong; the work stays bounded by the entity limits (§6.2.1).
+#[derive(Default, Clone, Copy)]
+struct Fx(u64);
+
+impl Fx {
+    fn add(&mut self, w: u64) {
+        self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+impl Hasher for Fx {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.add(u64::from(*b));
+        }
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.add(n);
+    }
+    fn write_i64(&mut self, n: i64) {
+        self.add(n.cast_unsigned());
+    }
+    fn write_usize(&mut self, n: usize) {
+        self.add(n as u64);
+    }
+}
+
+type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<Fx>>;
 
 /// Vertex snapping and on-curve tolerance (SPEC §4 solver tolerance): points
 /// the solver made coincident are equal only to this.
@@ -31,7 +68,7 @@ pub(crate) struct Arrangement {
 /// Snapping vertex pool on a uniform grid.
 struct Pool {
     pts: Vec<Vec2>,
-    grid: HashMap<(i64, i64), Vec<usize>>,
+    grid: FxMap<(i64, i64), Vec<usize>>,
 }
 
 impl Pool {
@@ -158,17 +195,22 @@ pub(crate) fn arrange(input: &[Edge]) -> Arrangement {
         .collect();
     let bbs: Vec<Aabb> = pieces.iter().map(|e| e.seg.bbox()).collect();
     let mut cuts: Vec<Vec<Vec2>> = vec![Vec::new(); pieces.len()];
-    // Sweep over x so only pieces with overlapping boxes are paired.
+    // Sweep over x so only pieces with overlapping boxes are paired. The
+    // boxes are laid out in sweep order so the inner loop reads memory in
+    // sequence (#512).
     let mut order: Vec<usize> = (0..pieces.len()).collect();
     order.sort_by(|&i, &j| bbs[i].min.x.total_cmp(&bbs[j].min.x));
+    let sorted: Vec<Aabb> = order.iter().map(|&i| bbs[i]).collect();
     for (oi, &i) in order.iter().enumerate() {
-        for &j in &order[oi + 1..] {
-            if bbs[j].min.x > bbs[i].max.x + SNAP {
+        let bi = sorted[oi];
+        for (oj, bj) in sorted.iter().enumerate().skip(oi + 1) {
+            if bj.min.x > bi.max.x + SNAP {
                 break;
             }
-            if bbs[j].min.y > bbs[i].max.y + SNAP || bbs[i].min.y > bbs[j].max.y + SNAP {
+            if bj.min.y > bi.max.y + SNAP || bi.min.y > bj.max.y + SNAP {
                 continue;
             }
+            let j = order[oj];
             let (si, sj) = (&pieces[i].seg, &pieces[j].seg);
             for q in crossings(si, sj) {
                 cuts[i].push(q);
@@ -188,10 +230,10 @@ pub(crate) fn arrange(input: &[Edge]) -> Arrangement {
     }
     let mut pool = Pool {
         pts: Vec::new(),
-        grid: HashMap::new(),
+        grid: FxMap::default(),
     };
     let mut edges: Vec<GEdge> = Vec::new();
-    let mut by_ends: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut by_ends: FxMap<(usize, usize), Vec<usize>> = FxMap::default();
     for (e, cs) in pieces.iter().zip(&cuts) {
         let len = e.seg.length();
         let mut ts: Vec<(f64, usize)> =

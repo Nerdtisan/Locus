@@ -14,23 +14,29 @@ use crate::entity::Geom;
 use locus_geom::{Cubic, EXPORT_TOL, Piece};
 use locus_region::{Curve, Region, Shape};
 
-/// Each Bézier's arc chain as last built, by entity, with the curve it was
-/// built from (#505). Fitting arcs within `EXPORT_TOL` is the costly part of
-/// finding regions, so a [`crate::Sketcher`] keeps this between edits and
-/// refits only the Béziers that changed.
+/// What a [`crate::Sketcher`] keeps between edits so regions are rebuilt
+/// only where something changed:
+/// - each Bézier's arc chain, by entity, with the curve it was built from
+///   (#505): fitting arcs within `EXPORT_TOL` was the costly part;
+/// - each layer's regions with the curves they came from (#512): a layer
+///   whose curves are unchanged (a restyle, an edit on another layer)
+///   keeps its regions without running detection.
 #[derive(Debug, Default, Clone)]
-pub struct BezierPieces(std::collections::HashMap<u64, (Cubic, Vec<Shape>)>);
+pub struct RegionCache {
+    beziers: std::collections::HashMap<u64, (Cubic, Vec<Shape>)>,
+    layers: std::collections::HashMap<crate::LayerId, (Vec<Curve>, Vec<Region>)>,
+}
 
 /// The curves regions are built from: lines, circles, arcs and Béziers (as arcs) that are not
 /// construction geometry and sit on a visible layer (hiding a layer hides
 /// its regions too).
 #[must_use]
 pub fn region_curves(doc: &Document) -> Vec<Curve> {
-    region_curves_with(doc, &mut BezierPieces::default())
+    region_curves_with(doc, &mut RegionCache::default())
 }
 
 /// [`region_curves`], reusing (and refreshing) `cache` for Béziers.
-pub fn region_curves_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Curve> {
+pub fn region_curves_with(doc: &Document, cache: &mut RegionCache) -> Vec<Curve> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (id, e) in doc.entities().iter() {
@@ -52,7 +58,7 @@ pub fn region_curves_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Curve
                     continue;
                 };
                 seen.insert(key);
-                match cache.0.get(&key) {
+                match cache.beziers.get(&key) {
                     Some((was, shapes)) if *was == c => shapes.clone(),
                     _ => {
                         let shapes: Vec<Shape> = c
@@ -63,7 +69,7 @@ pub fn region_curves_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Curve
                                 Piece::Arc(a) => Shape::Arc(a),
                             })
                             .collect();
-                        cache.0.insert(key, (c, shapes.clone()));
+                        cache.beziers.insert(key, (c, shapes.clone()));
                         shapes
                     }
                 }
@@ -72,18 +78,19 @@ pub fn region_curves_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Curve
         out.extend(shapes.into_iter().map(|shape| Curve { key, shape }));
     }
     // Forget Béziers that are gone, hidden or construction now.
-    cache.0.retain(|k, _| seen.contains(k));
+    cache.beziers.retain(|k, _| seen.contains(k));
     out
 }
 
 /// Every closed region of the document, layer by layer, sorted by key.
 #[must_use]
 pub fn regions(doc: &Document) -> Vec<Region> {
-    regions_with(doc, &mut BezierPieces::default())
+    regions_with(doc, &mut RegionCache::default())
 }
 
-/// [`regions`], reusing `cache` for Béziers' arc chains (#505).
-pub fn regions_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Region> {
+/// [`regions`], reusing `cache`: Béziers' arc chains (#505) and the regions
+/// of layers whose curves are unchanged (#512).
+pub fn regions_with(doc: &Document, cache: &mut RegionCache) -> Vec<Region> {
     let mut by_layer: std::collections::BTreeMap<crate::LayerId, Vec<Curve>> =
         std::collections::BTreeMap::new();
     for c in region_curves_with(doc, cache) {
@@ -91,10 +98,18 @@ pub fn regions_with(doc: &Document, cache: &mut BezierPieces) -> Vec<Region> {
             by_layer.entry(e.layer).or_default().push(c);
         }
     }
-    let mut out: Vec<Region> = by_layer
-        .into_values()
-        .flat_map(|curves| locus_region::detect(&curves))
-        .collect();
+    let mut layers = std::collections::HashMap::with_capacity(by_layer.len());
+    let mut out: Vec<Region> = Vec::new();
+    for (layer, curves) in by_layer {
+        let rs = match cache.layers.remove(&layer) {
+            Some((was, rs)) if was == curves => rs,
+            _ => locus_region::detect(&curves),
+        };
+        out.extend(rs.iter().cloned());
+        layers.insert(layer, (curves, rs));
+    }
+    // Layers with no curves now are forgotten.
+    cache.layers = layers;
     out.sort_by(|a, b| a.key.cmp(&b.key));
     out
 }
@@ -227,9 +242,9 @@ mod tests {
             },
         );
         line(&mut doc, p[3], p[0]);
-        let mut cache = BezierPieces::default();
+        let mut cache = RegionCache::default();
         assert_eq!(regions_with(&doc, &mut cache), regions(&doc));
-        assert_eq!(cache.0.len(), 1);
+        assert_eq!(cache.beziers.len(), 1);
         let mut ed = Editor::new(doc);
         ed.apply(&Command::ModifyEntity {
             id: p[1],
@@ -243,6 +258,46 @@ mod tests {
         assert!(moved[0].area() > 3300.0 + 100.0, "{}", moved[0].area());
         ed.apply(&Command::DeleteEntity { id: bez }).unwrap();
         assert!(regions_with(ed.document(), &mut cache).is_empty());
-        assert!(cache.0.is_empty());
+        assert!(cache.beziers.is_empty());
+        // The layer keeps its line, so it stays cached, with no regions.
+        assert!(cache.layers.values().all(|(_, rs)| rs.is_empty()));
+    }
+
+    /// The per-layer cache (#512): a style change leaves the layer's
+    /// curves as they were, so its regions are reused, and equal a fresh
+    /// build; moving a corner rebuilds them.
+    #[test]
+    fn unchanged_layers_keep_their_regions() {
+        use crate::{Command, Editor};
+        let mut doc = Document::new();
+        let lines = rect(&mut doc);
+        let mut cache = RegionCache::default();
+        let first = regions_with(&doc, &mut cache);
+        let mut ed = Editor::new(doc);
+        ed.apply(&Command::SetStyle {
+            entities: vec![lines[0]],
+            patch: crate::style::StylePatch {
+                width: Some(0.7),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+        let (was, _) = cache.layers.values().next().cloned().unwrap();
+        assert_eq!(regions_with(ed.document(), &mut cache), first);
+        assert_eq!(cache.layers.values().next().unwrap().0, was);
+        let corner = match ed.document().entity(lines[0]).unwrap().geom {
+            Geom::Line { start, .. } => start,
+            _ => unreachable!(),
+        };
+        ed.apply(&Command::ModifyEntity {
+            id: corner,
+            geom: Geom::Point {
+                pos: locus_geom::Vec2::new(-1.0, -1.0),
+            },
+        })
+        .unwrap();
+        let moved = regions_with(ed.document(), &mut cache);
+        assert_eq!(moved, regions(ed.document()));
+        assert_ne!(moved, first);
     }
 }
