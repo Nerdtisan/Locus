@@ -78,6 +78,16 @@ impl LineStyle {
         *self == Self::default()
     }
 
+    /// Does a **Styled** machine layer follow this object's strokes rather
+    /// than its centreline (owner decision 2026-11-25)? Only line styles
+    /// count: dashes and extra strokes (later width profiles and brushes).
+    /// Width, caps, joins and alignment alone don't: a widened plain line
+    /// still cuts once along its centreline.
+    #[must_use]
+    pub fn machine_styled(&self) -> bool {
+        self.dash.is_some() || !self.extra.is_empty()
+    }
+
     /// # Errors
     /// [`StrokeError::BadValue`] for a miter limit out of range or not finite.
     pub fn validate(&self) -> Result<(), StrokeError> {

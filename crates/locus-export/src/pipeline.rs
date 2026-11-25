@@ -716,8 +716,9 @@ pub fn collect(doc: &Document) -> ExportModel {
 }
 
 /// Machine layers set to **Styled** (#428, ADR 0019 decision 4) cut, score
-/// or engrave each object's stroke outline instead of its centreline: the
-/// width, caps and joins become real geometry (Engrave then hatches it).
+/// or engrave the strokes of each object with a line style instead of its
+/// centreline: dashes perforate, extra strokes cut in parallel. Plain
+/// objects, however wide, keep their centreline (owner, 2026-11-25).
 /// Centreline layers, Draw and Reference layers are left alone. A path
 /// whose outline can't be built keeps its centreline.
 pub fn apply_stroke_styles(model: &mut ExportModel) {
@@ -735,10 +736,11 @@ pub fn apply_stroke_styles(model: &mut ExportModel) {
                 .segs
                 .first()
                 .map_or_else(Style::default, |s| layer.style_of(s.entity));
-            // An unstyled object (default width, no line style) is plain
-            // geometry: cut its centreline. This is what Expand to geometry
-            // leaves, so its result isn't outlined a second time (#504).
-            if st.width == locus_doc::style::DEFAULT_WIDTH && st.line.is_default() {
+            // Only line styles (dashes, extra strokes) make an object follow
+            // its strokes; a plain object, however wide, cuts its centreline
+            // once (owner decision 2026-11-25). Expand to geometry's result is
+            // plain, so it isn't outlined a second time (#504).
+            if !st.line.machine_styled() {
                 out.push(p);
                 continue;
             }

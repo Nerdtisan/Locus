@@ -34,6 +34,9 @@ pub(crate) struct MachinePath {
     /// global grid, rings counted inward) and the spacing, so the preview
     /// can thin out rows too close to see apart.
     pub row: Option<(u64, f64)>,
+    /// Follows its object's styled strokes on a Styled layer, not the
+    /// centreline: drawn with a halo (owner decision 2026-11-25).
+    pub styled: bool,
 }
 
 impl MachinePath {
@@ -129,12 +132,20 @@ pub(crate) fn paths(model: &ExportModel) -> Vec<MachinePath> {
                 }
                 _ => None,
             };
+            let styled = layer.stroke_styles == StrokeStyles::Styled
+                && p.segs.first().is_some_and(|s| {
+                    layer
+                        .styles
+                        .get(&s.entity)
+                        .is_some_and(|st| st.line.machine_styled())
+                });
             out.push(MachinePath {
                 points,
                 kind,
                 hatch: fill,
                 band,
                 row,
+                styled,
             });
         }
     }
@@ -157,7 +168,7 @@ pub(crate) fn preview_model(doc: &Document, profile: Option<&MachineProfile>) ->
 fn has_line_styles(doc: &Document, layer: locus_doc::LayerId) -> bool {
     doc.entities()
         .iter()
-        .any(|(_, e)| e.layer == layer && !e.construction && !e.style.line.is_default())
+        .any(|(_, e)| e.layer == layer && !e.construction && e.style.line.machine_styled())
 }
 
 /// Per-layer notes the export model can't give (#502, #503): hidden layers
@@ -181,7 +192,7 @@ pub(crate) fn layer_notes(doc: &Document) -> Vec<String> {
             && has_line_styles(doc, *id)
         {
             out.push(format!(
-                "{}: cuts centrelines, so its objects' dashes, caps and extra strokes are ignored. Switch it to Styled to cut them.",
+                "{}: cuts centrelines, so its objects' dashes and extra strokes are ignored. Switch it to Styled to cut them.",
                 l.name
             ));
         }
@@ -250,6 +261,12 @@ pub(crate) fn notes(profile: Option<&MachineProfile>, model: &ExportModel) -> Ve
     if draw {
         out.push(
             "Draw layers have no machine compensation: shown at each object's pen width."
+                .to_owned(),
+        );
+    }
+    if paths(model).iter().any(|p| p.styled) {
+        out.push(
+            "Paths with a soft halo follow their objects' line styles (dashes perforate, extra strokes cut in parallel); the rest follow the centreline."
                 .to_owned(),
         );
     }
@@ -331,6 +348,14 @@ impl AppState {
             } else {
                 (1.75, colour)
             };
+            if p.styled {
+                // The halo marks a path that follows its object's styled
+                // strokes (owner decision 2026-11-25).
+                painter.add(egui::Shape::line(
+                    pts.clone(),
+                    Stroke::new(w + 5.0, colour.gamma_multiply(0.25)),
+                ));
+            }
             painter.add(egui::Shape::line(pts, Stroke::new(w, c)));
         }
     }
@@ -538,6 +563,60 @@ mod tests {
         }
     }
 
+    /// Owner decision 2026-11-25: on a Styled layer a widened plain line
+    /// cuts once on its centreline; a dashed one perforates and is marked.
+    #[test]
+    fn styled_layers_follow_line_styles_not_width() {
+        let mut ed = Editor::new(Document::new());
+        let cut = ed
+            .apply(&Command::AddLayer {
+                name: "Cut".to_owned(),
+                colour: [255, 0, 0],
+                operation: Operation::Cut(CutParams::default()),
+            })
+            .unwrap()
+            .layers[0];
+        ed.apply(&Command::SetLayerProps {
+            id: cut,
+            props: LayerProps {
+                stroke_styles: Some(StrokeStyles::Styled),
+                ..LayerProps::default()
+            },
+        })
+        .unwrap();
+        let wide = locus_doc::Style {
+            width: 5.0,
+            ..locus_doc::Style::default()
+        };
+        wide_line(&mut ed, cut, wide.clone());
+        let lb = locus_export::profile::find("lightburn", &[]).unwrap();
+        let ps = paths(&preview_model(ed.document(), Some(&lb)));
+        assert_eq!(ps.len(), 1, "one centreline cut");
+        assert!(!ps[0].styled);
+        let mut dashed = wide;
+        dashed.line.dash = locus_doc::Dash::new(&[4.0, 2.0], 0.0, locus_doc::DashAlign::Exact).ok();
+        let mut ed2 = Editor::new(ed.document().clone());
+        let line = ed2
+            .document()
+            .entities()
+            .iter()
+            .find(|(_, e)| matches!(e.geom, Geom::Line { .. }))
+            .map(|(i, _)| i)
+            .unwrap();
+        ed2.apply(&Command::SetStyle {
+            entities: vec![line],
+            patch: locus_doc::StylePatch::all(dashed),
+        })
+        .unwrap();
+        let model = preview_model(ed2.document(), Some(&lb));
+        let ps = paths(&model);
+        assert!(
+            ps.len() > 1 && ps.iter().all(|p| p.styled),
+            "perforated and marked"
+        );
+        assert!(notes(Some(&lb), &model).iter().any(|n| n.contains("halo")));
+    }
+
     /// #420: the legend lists every layer's operation in export order and
     /// dims the ones that are not exported.
     #[test]
@@ -701,6 +780,7 @@ mod tests {
             hatch: true,
             band: 0.0,
             row: Some((r, 0.1)),
+            styled: Default::default(),
         };
         // 0.1 mm at 10 pt/mm is 1 pt apart: every 4th row.
         let shown: Vec<u64> = (0..12).filter(|r| row(*r).shown_at(10.0)).collect();

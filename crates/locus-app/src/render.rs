@@ -289,7 +289,7 @@ impl Frame<'_> {
 
     /// A polyline given in world mm: each segment is clipped to the padded
     /// view in f64 first, and the visible runs are drawn (#333).
-    fn world_polyline(&self, pts: &[Vec2], stroke: Stroke, dashed: bool) {
+    pub(crate) fn world_polyline(&self, pts: &[Vec2], stroke: Stroke, dashed: bool) {
         let (lo, hi) = self.visible(CLIP_PAD_PT);
         let mut run: Vec<Pos2> = Vec::new();
         let mut last: Option<Vec2> = None;
