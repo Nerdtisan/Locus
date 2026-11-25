@@ -847,6 +847,7 @@ mod tests {
                     .map(|&(t, l, r)| WidthPoint::new(t, l, r))
                     .collect(),
                 seed: None,
+                alone: false,
             }),
             ..LineStyle::default()
         }

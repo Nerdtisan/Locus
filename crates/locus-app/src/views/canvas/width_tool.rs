@@ -61,6 +61,7 @@ pub(crate) fn plain() -> WidthProfile {
     WidthProfile {
         points: vec![WidthPoint::even(0.0, 1.0), WidthPoint::even(1.0, 1.0)],
         seed: None,
+        alone: false,
     }
 }
 
@@ -294,67 +295,84 @@ impl AppState {
     pub(crate) fn width_build(&self) -> Result<WidthTarget, String> {
         let none = || "Width tool: select a stroked curve first".to_owned();
         let doc = self.doc.sketcher.document();
-        let mut construction = false;
-        // The first usable curve fixes the style; the others must share it.
-        let mut key: Option<(locus_doc::LayerId, f64, LineStyle)> = None;
-        let mut items: Vec<(EntityId, Vec<locus_region::Seg>)> = Vec::new();
-        for id in self.selection.items.iter() {
-            let Some(e) = doc.entity(id) else { continue };
-            if !matches!(
+        let is_curve = |e: &locus_doc::Entity| {
+            matches!(
                 e.geom,
                 Geom::Line { .. } | Geom::Arc { .. } | Geom::Circle { .. } | Geom::Bezier { .. }
-            ) {
-                continue;
-            }
-            if e.construction {
-                construction = true;
-                continue;
+            )
+        };
+        // A stroked curve's layer, width and line style: what joins it to
+        // its neighbours in one stroke.
+        let key_of = |id: EntityId| -> Option<(locus_doc::LayerId, f64, LineStyle)> {
+            let e = doc.entity(id)?;
+            if !is_curve(e) || e.construction {
+                return None;
             }
             let mut w = doc.stroke_width(id);
             if w <= 0.0 {
                 // A layer that draws no stroke still keeps the profile.
                 w = e.style.width;
             }
-            if w <= 0.0 {
-                continue;
-            }
-            let this = (e.layer, w, e.style.line.clone());
-            if key.as_ref().is_some_and(|k| *k != this) {
-                continue;
-            }
-            for it in self
-                .doc
+            (w > 0.0).then(|| (e.layer, w, e.style.line.clone()))
+        };
+        let pieces = |id: EntityId| -> Vec<Vec<locus_region::Seg>> {
+            self.doc
                 .scene
                 .items
                 .iter()
                 .filter(|i| i.id == id && !i.text)
-            {
-                let s = segs(&it.shape);
-                if !s.is_empty() {
-                    key.get_or_insert_with(|| this.clone());
-                    items.push((id, s));
-                }
-            }
-        }
-        let Some((_, width, line)) = key else {
+                .map(|i| segs(&i.shape))
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
+        let construction = self.selection.items.iter().any(|id| {
+            doc.entity(id)
+                .is_some_and(|e| is_curve(e) && e.construction)
+        });
+        // The first usable selected curve fixes the target (#527): it alone
+        // when its profile strokes alone, else its whole stroke chain.
+        let Some((first, (_, width, line))) = self.selection.items.iter().find_map(|id| {
+            key_of(id)
+                .filter(|_| !pieces(id).is_empty())
+                .map(|k| (id, k))
+        }) else {
             return Err(if construction {
                 "Construction lines aren't styled".to_owned()
             } else {
                 none()
             });
         };
+        let key = key_of(first);
+        let mut members = vec![first];
+        if !line.strokes_alone() {
+            members.extend(
+                crate::chain::chain(doc, first)
+                    .into_iter()
+                    .filter(|m| *m != first && key_of(*m) == key && !pieces(*m).is_empty()),
+            );
+        }
+        let items: Vec<(EntityId, Vec<locus_region::Seg>)> = members
+            .iter()
+            .flat_map(|id| pieces(*id).into_iter().map(move |s| (*id, s)))
+            .collect();
+        let first_segs: Vec<&Vec<locus_region::Seg>> = items
+            .iter()
+            .filter(|(id, _)| *id == first)
+            .map(|(_, s)| s)
+            .collect();
+        // The chain through the first curve (a branch splits a stroke).
         let Some(chain) = chains(items.iter().map(|(_, s)| s.clone()).collect())
             .into_iter()
-            .next()
+            .find(|c| first_segs.iter().all(|s| on_chain(c, s)))
         else {
             return Err(none());
         };
-        let mut ids: Vec<EntityId> = items
-            .iter()
-            .filter(|(_, s)| on_chain(&chain, s))
-            .map(|(id, _)| *id)
-            .collect();
-        ids.dedup();
+        let mut ids: Vec<EntityId> = Vec::new();
+        for (id, s) in &items {
+            if on_chain(&chain, s) && !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
         let map = PathMap::new(&chain);
         if map.length() <= 0.0 {
             return Err(none());
@@ -426,8 +444,27 @@ impl AppState {
         if p == t.profile {
             return false;
         }
+        // The target's curves, then every other selected stroked curve:
+        // everything selected gets the profile (#527).
+        let doc = self.doc.sketcher.document();
+        let mut entities = t.ids.clone();
+        for id in &t.selection {
+            let curve = doc.entity(*id).is_some_and(|e| {
+                !e.construction
+                    && matches!(
+                        e.geom,
+                        Geom::Line { .. }
+                            | Geom::Arc { .. }
+                            | Geom::Circle { .. }
+                            | Geom::Bezier { .. }
+                    )
+            });
+            if curve && !entities.contains(id) {
+                entities.push(*id);
+            }
+        }
         let cmd = Command::SetStyle {
-            entities: t.ids.clone(),
+            entities,
             patch: StylePatch {
                 profile: Some(Some(p.clone())),
                 ..StylePatch::default()
@@ -806,6 +843,7 @@ mod tests {
                 .map(|&(t, l, r)| WidthPoint::new(t, l, r))
                 .collect(),
             seed: Some(7),
+            alone: false,
         }
     }
 
@@ -1182,5 +1220,140 @@ mod tests {
         c.undo();
         assert_eq!(profile_of(&c, l1), None);
         assert_eq!(profile_of(&c, l2), None);
+    }
+
+    /// Four lines sharing corner points, 1 mm wide: a closed outline.
+    fn rect_tool(alone: bool) -> (AppState, [EntityId; 4]) {
+        let mut c = AppState::default();
+        let mut ed = Editor::new(Document::new());
+        let layer = Document::default_layer();
+        let mut pt = |x: f64, y: f64| {
+            ed.apply(&Command::AddEntity {
+                layer,
+                construction: false,
+                style: Style::default(),
+                geom: Geom::Point {
+                    pos: Vec2::new(x, y),
+                },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let p = [pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0), pt(0.0, 10.0)];
+        let mut style = Style {
+            width: 1.0,
+            ..Style::default()
+        };
+        if alone {
+            style.line.profile = Some(WidthProfile {
+                alone: true,
+                ..three()
+            });
+        }
+        let mut ids = Vec::new();
+        for i in 0..4 {
+            ids.push(
+                ed.apply(&Command::AddEntity {
+                    layer,
+                    construction: false,
+                    style: style.clone(),
+                    geom: Geom::Line {
+                        start: p[i],
+                        end: p[(i + 1) % 4],
+                    },
+                })
+                .unwrap()
+                .entities[0],
+            );
+        }
+        c.load(ed.document().clone());
+        c.view.camera.pt_per_mm = 50.0;
+        (c, [ids[0], ids[1], ids[2], ids[3]])
+    }
+
+    /// #527: one side of an outline selected edits the whole outline; the
+    /// commit styles all four sides in one undo step.
+    #[test]
+    fn one_side_of_a_rectangle_targets_and_styles_the_whole_outline() {
+        let (mut c, sides) = rect_tool(false);
+        c.selection.items.set_all([sides[0]]);
+        c.set_modify(crate::modify_tool::Modify::Width);
+        assert_eq!(c.modify(), Some(crate::modify_tool::Modify::Width));
+        let t = c.tools.width.target.as_ref().unwrap();
+        assert_eq!(t.ids.len(), 4, "the rectangle is one stroke");
+        // 40 mm round: a point on the bottom edge at x = 5 is t = 0.125.
+        assert!(c.width_click(Vec2::new(5.0, 0.5)));
+        c.width_sync();
+        c.width_begin_drag(1, Side::Left, Vec2::new(5.0, 0.5));
+        c.width_drag_to(Vec2::new(5.0, 1.5), false);
+        assert!(c.width_release());
+        let first = profile_of(&c, sides[0]).unwrap();
+        for id in sides {
+            assert_eq!(profile_of(&c, id), Some(first.clone()));
+        }
+        c.undo();
+        for id in sides {
+            assert_eq!(profile_of(&c, id), None, "one undo step");
+        }
+    }
+
+    /// #527: a profile that strokes alone targets just that curve; the
+    /// edit keeps the flag.
+    #[test]
+    fn an_alone_profile_targets_one_curve_and_keeps_the_flag() {
+        let (mut c, sides) = rect_tool(true);
+        c.selection.items.set_all([sides[2]]);
+        c.set_modify(crate::modify_tool::Modify::Width);
+        let t = c.tools.width.target.as_ref().unwrap();
+        assert_eq!(t.ids, vec![sides[2]]);
+        let mut q = t.profile.clone();
+        assert!(q.alone);
+        q.points[1].left = 3.0;
+        assert!(c.width_commit(q.clone()));
+        assert_eq!(profile_of(&c, sides[2]), Some(q));
+        for id in [sides[0], sides[1], sides[3]] {
+            assert_eq!(
+                profile_of(&c, id),
+                Some(WidthProfile {
+                    alone: true,
+                    ..three()
+                }),
+                "the others are untouched"
+            );
+        }
+    }
+
+    /// Every selected curve gets the profile, even one whose style differs
+    /// from the first (it used to be skipped silently).
+    #[test]
+    fn every_selected_curve_gets_the_profile() {
+        let (mut c, sides) = rect_tool(false);
+        let other = Style {
+            width: 2.0,
+            ..Style::default()
+        };
+        assert!(c.apply_reporting(&Command::SetStyle {
+            entities: vec![sides[2]],
+            patch: StylePatch {
+                width: Some(other.width),
+                ..StylePatch::default()
+            },
+        }));
+        c.selection.items.set_all([sides[0], sides[2]]);
+        c.set_modify(crate::modify_tool::Modify::Width);
+        let t = c.tools.width.target.as_ref().unwrap();
+        assert_eq!(t.ids.len(), 3, "the 2 mm side is not in the 1 mm chain");
+        let q = three();
+        assert!(c.width_commit(WidthProfile {
+            alone: false,
+            ..q.clone()
+        }));
+        for id in sides {
+            assert!(profile_of(&c, id).is_some(), "{id:?}");
+        }
+        c.undo();
+        for id in sides {
+            assert_eq!(profile_of(&c, id), None);
+        }
     }
 }

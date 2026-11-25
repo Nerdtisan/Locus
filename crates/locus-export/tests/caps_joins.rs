@@ -346,3 +346,26 @@ fn a_styled_cut_layer_cuts_a_profiles_outline() {
         .unwrap();
     assert!(bb.min.x < -0.5 && bb.max.y > 10.5, "{bb:?}");
 }
+
+#[test]
+fn a_this_curve_profile_exports_each_side_as_its_own_outline() {
+    // #527: connected lines with one profile are one stroke, one chained
+    // path; with "This curve" each side strokes alone, four outlines.
+    let paths = |alone: bool| {
+        let (mut ed, _, ids) = rect(Operation::Draw);
+        let mut p = locus_doc::ProfilePreset::TaperBoth.profile(0);
+        p.alone = alone;
+        set(
+            &mut ed,
+            &ids,
+            StylePatch {
+                profile: Some(Some(p)),
+                ..StylePatch::default()
+            },
+        );
+        prepare(ed.document(), false).model.layers[0].paths.len()
+    };
+    let (chained, alone) = (paths(false), paths(true));
+    assert_eq!(alone, 4, "one outline per side");
+    assert!(chained < alone, "{chained} chained vs {alone} alone");
+}

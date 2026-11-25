@@ -385,19 +385,32 @@ impl ExportLayer {
 
     /// Chain segments into paths, never joining two objects whose styles
     /// differ on a layer that writes object styles (they would be written
-    /// as one path, in one style). Elsewhere this is plain [`chain`].
+    /// as one path, in one style), nor, on a Styled machine layer, two
+    /// objects whose line styles differ (each follows its own strokes). A
+    /// curve whose profile strokes alone (#527, **This curve**) is a path
+    /// of its own. Elsewhere this is plain [`chain`].
     #[must_use]
     pub fn chain(&self, segs: Vec<PathSeg>) -> Vec<ExportPath> {
-        if !self.uses_object_style() {
+        let drawn = self.uses_object_style();
+        let styled = self.stroke_styles == StrokeStyles::Styled;
+        if !drawn && !styled {
             return chain(segs);
         }
-        // Group by style in first-seen order, so the output stays deterministic.
-        let mut groups: Vec<(Style, Vec<PathSeg>)> = Vec::new();
+        // Group in first-seen order, so the output stays deterministic.
+        type Key = (Option<Style>, Option<EntityId>);
+        let mut groups: Vec<(Key, Vec<PathSeg>)> = Vec::new();
         for s in segs {
             let st = self.style_of(s.entity);
-            match groups.iter_mut().find(|(g, _)| *g == st) {
+            let alone = st.line.strokes_alone().then_some(s.entity);
+            // On a machine layer only line styles change what it cuts.
+            let key: Key = if drawn || st.line.machine_styled() {
+                (Some(st), alone)
+            } else {
+                (None, None)
+            };
+            match groups.iter_mut().find(|(g, _)| *g == key) {
                 Some((_, v)) => v.push(s),
-                None => groups.push((st, vec![s])),
+                None => groups.push((key, vec![s])),
             }
         }
         groups.into_iter().flat_map(|(_, v)| chain(v)).collect()

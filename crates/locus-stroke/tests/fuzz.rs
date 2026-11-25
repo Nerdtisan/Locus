@@ -79,6 +79,7 @@ fn style_strategy() -> impl Strategy<Value = LineStyle> {
                         .map(|(t, l, r)| WidthPoint::new(t, l, r))
                         .collect(),
                     seed: None,
+                    alone: false,
                 }
             }),
             extra: extra

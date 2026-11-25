@@ -91,9 +91,11 @@ pub(crate) fn plan(
             continue;
         }
         sources.push(id);
+        // A curve whose profile strokes alone (#527) is a group of its own.
+        let alone = e.style.line.strokes_alone();
         match groups
             .iter_mut()
-            .find(|(l, s, _)| *l == e.layer && *s == e.style)
+            .find(|(l, s, _)| !alone && *l == e.layer && *s == e.style)
         {
             Some((_, _, v)) => v.push(segs),
             None => groups.push((e.layer, e.style.clone(), vec![segs])),
