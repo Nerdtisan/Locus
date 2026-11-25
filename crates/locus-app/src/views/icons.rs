@@ -344,6 +344,21 @@ fn draw(p: &egui::Painter, r: Rect, id: &str, c: Color32) -> bool {
             d.dashed((3.0, 8.0), (13.0, 8.0));
             d.poly(&[(3.0, 5.0), (13.0, 5.0), (13.0, 11.0), (3.0, 11.0)], true);
         }
+        // A stroke that swells and tapers, with a handle on its edge (#426).
+        "modify.width" => {
+            d.poly(
+                &[
+                    (1.5, 8.0),
+                    (5.0, 5.5),
+                    (9.0, 2.5),
+                    (14.5, 8.0),
+                    (9.0, 13.5),
+                    (5.0, 10.5),
+                ],
+                true,
+            );
+            d.line((9.0, 2.5), (9.0, 13.5));
+        }
         "modify.fillet" => {
             d.line((3.0, 2.0), (3.0, 8.0));
             d.arc((9.0, 8.0), 6.0, PI, FRAC_PI_2);

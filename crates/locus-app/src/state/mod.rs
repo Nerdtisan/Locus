@@ -125,6 +125,7 @@ impl AppState {
         self.tools.corner_drag = None;
         self.tools.offset_draft = None;
         self.tools.offset_edit = None;
+        self.tools.width.reset();
         self.doc.notice = None;
     }
 
@@ -144,6 +145,19 @@ impl AppState {
         // Switching between Move, Rotate and Scale keeps the values and the
         // pivot, as the dialog's mode switch does (design §6.7).
         let was_transform = matches!(self.modify(), Some(Modify::Transform(_)));
+        // The Width tool edits the selected stroke, so it needs one first
+        // (#426, design §4); the tool you were in stays when it can't start.
+        let width = if m == Modify::Width {
+            match self.width_build() {
+                Ok(t) => Some(t),
+                Err(why) => {
+                    self.doc.notice = Some(why);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         self.set_tool(Tool::Select);
         // Move/rotate/scale and patterns work on the selection; the others
         // pick curves.
@@ -174,6 +188,8 @@ impl AppState {
                 self.tools.calibrate.begin(layer);
                 self.selection.items.clear();
             }
+            // The selection is what it edits; keep it.
+            Modify::Width => self.tools.width.set_target(width),
             Modify::Mirror => {
                 // Selection first, then the line (design §6.9).
                 self.tools.mirror.picking =

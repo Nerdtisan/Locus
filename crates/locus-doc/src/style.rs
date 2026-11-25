@@ -203,6 +203,10 @@ impl Style {
         if let Some(x) = &patch.extra {
             self.line.extra.clone_from(x);
         }
+        if let Some(p) = &patch.profile {
+            // A uniform profile is no profile: nothing extra is saved.
+            self.line.profile = p.clone().filter(|p| !p.is_uniform());
+        }
         self
     }
 }
@@ -231,6 +235,8 @@ pub struct StylePatch {
     pub dash: Option<Option<Dash>>,
     /// Extra strokes (#429): the whole list, in paint order.
     pub extra: Option<Vec<locus_stroke::StrokeLayer>>,
+    /// Width profile (#426): `Some(None)` makes the width uniform.
+    pub profile: Option<Option<locus_stroke::WidthProfile>>,
 }
 
 impl StylePatch {
@@ -249,6 +255,7 @@ impl StylePatch {
             align: Some(style.line.align),
             dash: Some(style.line.dash),
             extra: Some(style.line.extra.clone()),
+            profile: Some(style.line.profile.clone()),
         }
     }
 

@@ -737,6 +737,7 @@ mod tests {
                 "modify.move",
                 "modify.rotate",
                 "modify.scale",
+                "modify.width",
                 "modify.construction",
                 "modify.explode",
                 "modify.expand_style",

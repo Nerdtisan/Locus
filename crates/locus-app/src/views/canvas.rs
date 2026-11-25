@@ -37,6 +37,7 @@ mod polygon_dialog;
 mod regions;
 mod strokes;
 mod text_dialog;
+mod width_tool;
 
 pub(crate) use calibrate_tool::CalibrateDraft;
 pub(crate) use corner_handle::{CornerHandle, ResizePreview};
@@ -48,6 +49,7 @@ pub(crate) use path_text_tool::{PathTextDraft, Slide};
 pub(crate) use pattern_tool::PatternDraft;
 pub(crate) use regions::RegionUi;
 pub(crate) use strokes::StrokeMesh;
+pub(crate) use width_tool::WidthDraft;
 
 /// Pick radius while a finger drives the pointer (#251): a fingertip covers
 /// far more than a mouse pixel. Mouse and pen keep `HIT_TOL_PT`.
@@ -297,6 +299,8 @@ impl AppState {
             self.calibrate_input(ui, &resp, rect, settings.units);
         } else if self.modify() == Some(Modify::TextOnPath) {
             self.path_text_input(ui, &resp, rect);
+        } else if self.modify() == Some(Modify::Width) {
+            self.width_input(ui, &resp, rect);
         } else if self.modify() == Some(Modify::Mirror) {
             self.mirror_input(ui, &resp, rect, settings.units);
             self.refresh_mirror_preview();
@@ -412,6 +416,9 @@ impl AppState {
         }
         self.draw_offset_draft(&frame);
         self.draw_offset_edit(&frame);
+        if self.modify() == Some(Modify::Width) {
+            self.draw_width(&frame, hover);
+        }
         if let Some(circular) = self.pattern_kind() {
             self.draw_pattern_draft(&frame, circular);
         }

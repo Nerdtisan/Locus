@@ -1324,6 +1324,12 @@ fn exec(
                             center: at(c)?,
                             radius,
                         },
+                        Out::Bezier(a, b, c, d) => Geom::Bezier {
+                            start: at(a)?,
+                            start_ctrl: at(b)?,
+                            end_ctrl: at(c)?,
+                            end: at(d)?,
+                        },
                     };
                     let mut added = Applied::default();
                     exec(

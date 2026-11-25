@@ -363,16 +363,21 @@ impl ExportLayer {
     }
 
     /// The stroke of `path` as filled outline loops, when a writer can't
-    /// draw it as a stroke: a closed path on a Draw layer aligned inside or
-    /// outside (SVG, PDF and PNG centre every stroke). `None` otherwise, or
-    /// when the outline can't be built (the stroke is then written centred).
+    /// draw it as a stroke: on a Draw layer, a closed path aligned inside or
+    /// outside (SVG, PDF and PNG centre every stroke), or any path with a
+    /// width profile (no format has variable-width strokes, #426), written
+    /// with its fitted cubics. `None` otherwise, or when the outline can't
+    /// be built (the stroke is then written centred, at its plain width).
     #[must_use]
     pub fn outline(&self, path: &ExportPath) -> Option<Vec<ExportPath>> {
-        if !self.uses_object_style() || !path.closed {
+        if !self.uses_object_style() {
             return None;
         }
         let p = self.paint(path);
-        if p.line.align == Align::Centre {
+        if p.line.varying().is_some() {
+            return outline_curves(path, p.width, &p.line);
+        }
+        if !path.closed || p.line.align == Align::Centre {
             return None;
         }
         outline_paths(path, p.width, &p.line)
@@ -548,10 +553,13 @@ impl ExportModel {
             }
             let mut out = Vec::new();
             for p in std::mem::take(&mut l.paths) {
-                let split =
-                    l.paint(&p).line.dash.is_some_and(|d| {
-                        !corners_only || d.align == locus_stroke::DashAlign::Corners
-                    });
+                let line = l.paint(&p).line;
+                // A visual writer draws a profiled stroke's dashes in its
+                // outline (#426): each dash takes its part of the profile.
+                let split = line
+                    .dash
+                    .is_some_and(|d| !corners_only || d.align == locus_stroke::DashAlign::Corners)
+                    && !(corners_only && line.varying().is_some());
                 match split.then(|| l.dash_paths(&p)).flatten() {
                     Some(ds) => out.extend(ds),
                     None => out.push(p),
@@ -884,6 +892,43 @@ pub fn outline_paths(path: &ExportPath, width: f64, line: &LineStyle) -> Option<
                     s.entity = entity;
                 }
                 p
+            })
+            .collect(),
+    )
+}
+
+/// The outline of `path` stroked at `width` with `line` for drawing (#426):
+/// variable-width spans keep their fitted cubics within `EXPORT_TOL` (ADR
+/// 0019 option (b)). `None` when it can't be built.
+#[must_use]
+pub fn outline_curves(path: &ExportPath, width: f64, line: &LineStyle) -> Option<Vec<ExportPath>> {
+    let entity = path.segs.first()?.entity;
+    let o = locus_stroke::outline(
+        &path_chain(path),
+        width,
+        line,
+        locus_geom::EXPORT_TOL,
+        &locus_stroke::Limits::default(),
+    )
+    .ok()?;
+    Some(
+        o.loops
+            .iter()
+            .filter(|l| !l.is_empty())
+            .map(|l| ExportPath {
+                segs: l
+                    .iter()
+                    .map(|piece| match *piece {
+                        locus_stroke::OutPiece::Seg(seg) => seg_path(seg, entity),
+                        locus_stroke::OutPiece::Cubic(c) => PathSeg {
+                            entity,
+                            shape: Shape::Cubic(c),
+                            reversed: false,
+                        },
+                    })
+                    .collect(),
+                closed: true,
+                paint: None,
             })
             .collect(),
     )

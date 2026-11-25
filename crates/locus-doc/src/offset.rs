@@ -323,6 +323,9 @@ pub(crate) enum Out {
     /// CCW: centre, start, end.
     Arc(usize, usize, usize),
     Circle(usize, f64),
+    /// Start, start control, end control, end (Expand of a width profile,
+    /// #426).
+    Bezier(usize, usize, usize, usize),
 }
 
 /// The offset of `sources` by `d` as output entities (points first per run).
@@ -514,6 +517,12 @@ pub(crate) fn write_flat(
             Out::Circle(c, radius) => Geom::Circle {
                 center: id(c),
                 radius,
+            },
+            Out::Bezier(a, b, c, d) => Geom::Bezier {
+                start: id(a),
+                start_ctrl: id(b),
+                end_ctrl: id(c),
+                end: id(d),
             },
         };
         // An instance keeps the style and construction it was given (#421);

@@ -597,6 +597,18 @@ Also:
 - **Export:** an `ExportPath` can carry its own `Paint`. Extra strokes and split dashes are then plain paths in every writer, with no per-layer bookkeeping.
 - The Inspector reorders rows with **Up** and **Down** buttons rather than the design's drag grip, which is left for a polish pass.
 
+### Built in #426 (2026-11-25)
+
+- **Model:** `LineStyle.profile: Option<WidthProfile>` (format v30): 2–64 `WidthPoint { t, left, right }`, the sides as factors of half the width (0–20), eased with a smoothstep between points. A uniform profile is stored as none. Presets: Uniform, Taper both ends, Taper start, Taper end, Bulge, Pinch, and Pressure, a smooth random profile from a seed (SplitMix64, kept in `WidthProfile.seed` so the Inspector can offer Reseed).
+- **Engine (`locus_stroke::vary`):** the S1 pipeline as measured. Each side is fitted with Hermite cubics within T/2 per band; bands are cut at 90° of arc turn and at side cusps (where an arc's inner reach crosses its radius). Each band is normalised alone, then one union takes the bands, join pieces (sector, bevel or miter at the outer side's reach) and caps (a quarter disc per side, so each side keeps its reach; Square extends by the mean reach). `expand` returns the cleaned lines and arcs (machine output, booleans). The new `outline` maps runs back to the fitted cubics (option (b)) for SVG/PDF/PNG and **Expand to geometry**, which now writes Bézier entities.
+- **The profile reads the whole path:** curves joined into one chain share one profile by arc length. A dashed profile gives each dash its own part of the profile, so a taper runs across the dashes. Extra strokes keep a uniform width.
+- **Alignment:** a profiled stroke is always centred. Inside/Outside apply to uniform strokes only.
+- **Styled machine layers:** a profile counts as a line style (`machine_styled`), so a Styled layer cuts its cleaned outline.
+- **Not built:**
+  - **Pen-plotter outline + hatch.** Draw layers write the filled outline (SVG/PDF/PNG). DXF and HPGL on Draw layers still write the centreline, as for #428. This joins the open owner question there.
+  - The Inspector graph is read-only. Points are edited on the canvas with the Width tool. The design's docked dialog (editable graph, Save as preset) is left for the Brushes library (#435).
+  - A closed path's t = 0 and t = 1 are not forced equal. Its presets taper at the seam.
+
 ## Consequences
 
 - **New core crate `locus-stroke`**, and `locus-trace` (#461). Both are UI-agnostic and added to the CI wasm32 check list; editing CI is out of this pass, so the first ticket that adds a crate asks for the check list change.

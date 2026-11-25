@@ -31,11 +31,14 @@ pub enum Modify {
     Calibrate,
     /// Bind a text to a path (#392).
     TextOnPath,
+    /// Shape the selected stroke's width profile on the canvas (#426,
+    /// design §4).
+    Width,
 }
 
 impl Modify {
     #[cfg(test)]
-    pub const ALL: [Modify; 14] = [
+    pub const ALL: [Modify; 15] = [
         Modify::Trim,
         Modify::Extend,
         Modify::Break,
@@ -50,6 +53,7 @@ impl Modify {
         Modify::Mirror,
         Modify::Calibrate,
         Modify::TextOnPath,
+        Modify::Width,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -66,6 +70,7 @@ impl Modify {
             Modify::Mirror => "Mirror",
             Modify::Calibrate => "Calibrate",
             Modify::TextOnPath => "Text on path",
+            Modify::Width => "Width tool",
         }
     }
 
@@ -118,6 +123,9 @@ impl Modify {
             (Modify::TextOnPath, _) => {
                 "Text on path: click a text, then a line, arc, circle, shape or Bézier; drag the text to slide it along"
             }
+            (Modify::Width, _) => {
+                "Width tool: drag an edge handle to change the width (Alt: one side), drag along to move, click the edge to add a point, Delete removes"
+            }
             (Modify::Calibrate, _) => {
                 "Calibrate: click two points on a reference, type the real distance between them, then Enter"
             }
@@ -152,7 +160,8 @@ impl Modify {
             | Modify::Pattern(_)
             | Modify::Mirror
             | Modify::Calibrate
-            | Modify::TextOnPath => Err(ModifyError::NoCorner),
+            | Modify::TextOnPath
+            | Modify::Width => Err(ModifyError::NoCorner),
         }
     }
 

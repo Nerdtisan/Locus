@@ -182,6 +182,7 @@ pub fn layer_strokes(
                 align: Align::Centre,
                 dash: l.dash,
                 extra: Vec::new(),
+                profile: None,
             },
             colour: l.colour,
             pen: l.pen,

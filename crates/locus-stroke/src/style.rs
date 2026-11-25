@@ -6,6 +6,7 @@
 
 use crate::StrokeError;
 use crate::dash::Dash;
+use crate::profile::WidthProfile;
 use serde::{Deserialize, Serialize};
 
 /// End cap of an open path.
@@ -70,6 +71,10 @@ pub struct LineStyle {
     /// [`crate::MAX_STROKE_LAYERS`].
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra: Vec<crate::multi::StrokeLayer>,
+    /// Width along the path (#426); `None` (or a uniform profile) is the
+    /// plain width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<WidthProfile>,
 }
 
 impl LineStyle {
@@ -80,12 +85,19 @@ impl LineStyle {
 
     /// Does a **Styled** machine layer follow this object's strokes rather
     /// than its centreline (owner decision 2026-11-25)? Only line styles
-    /// count: dashes and extra strokes (later width profiles and brushes).
+    /// count: dashes, extra strokes and width profiles (later brushes).
     /// Width, caps, joins and alignment alone don't: a widened plain line
     /// still cuts once along its centreline.
     #[must_use]
     pub fn machine_styled(&self) -> bool {
-        self.dash.is_some() || !self.extra.is_empty()
+        self.dash.is_some() || !self.extra.is_empty() || self.varying().is_some()
+    }
+
+    /// The width profile when it changes the width somewhere (#426): a
+    /// uniform one strokes exactly as no profile.
+    #[must_use]
+    pub fn varying(&self) -> Option<&WidthProfile> {
+        self.profile.as_ref().filter(|p| !p.is_uniform())
     }
 
     /// # Errors
@@ -110,6 +122,9 @@ impl LineStyle {
         }
         for l in &self.extra {
             l.validate()?;
+        }
+        if let Some(p) = &self.profile {
+            p.validate()?;
         }
         Ok(())
     }
