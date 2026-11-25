@@ -227,6 +227,10 @@ pub struct ExportLayer {
     pub styles: BTreeMap<EntityId, Style>,
     /// Machine layers: cut the centreline or the styled outline (#428).
     pub stroke_styles: StrokeStyles,
+    /// The outline of an engrave fill whose mode doesn't mark it (Fill,
+    /// #455): never written, kept so a preview can show where the fill is
+    /// (#531: a narrow fill's hatch thins to nothing when zoomed out).
+    pub edges: Vec<ExportPath>,
 }
 
 impl ExportLayer {
@@ -243,6 +247,7 @@ impl ExportLayer {
             hairline: DEFAULT_HAIRLINE_MM,
             styles: BTreeMap::new(),
             stroke_styles: StrokeStyles::default(),
+            edges: Vec::new(),
         }
     }
 
@@ -599,7 +604,7 @@ impl ExportModel {
         for seg in self
             .layers
             .iter_mut()
-            .flat_map(|l| l.paths.iter_mut())
+            .flat_map(|l| l.paths.iter_mut().chain(l.edges.iter_mut()))
             .flat_map(|p| p.segs.iter_mut())
         {
             seg.shape = translated(seg.shape, d);

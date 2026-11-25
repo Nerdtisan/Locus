@@ -148,6 +148,25 @@ pub(crate) fn paths(model: &ExportModel) -> Vec<MachinePath> {
                 styled,
             });
         }
+        // An engrave fill's outline, which Fill mode doesn't mark: drawn
+        // faint like the fill and never thinned, so the area always shows
+        // (#531).
+        for p in &layer.edges {
+            let mut points = Vec::new();
+            for s in &p.segs {
+                push_seg(s, &mut points);
+            }
+            if points.len() >= 2 {
+                out.push(MachinePath {
+                    points,
+                    kind,
+                    hatch: true,
+                    band: 0.0,
+                    row: None,
+                    styled: false,
+                });
+            }
+        }
     }
     out
 }
@@ -198,6 +217,24 @@ pub(crate) fn layer_notes(doc: &Document) -> Vec<String> {
         }
     }
     out
+}
+
+/// A shown, exported layer that gives the preview nothing says why (#530),
+/// so an empty preview never looks like a fault.
+pub(crate) fn empty_layer_notes(doc: &Document, model: &ExportModel) -> Vec<String> {
+    let mut layers: Vec<_> = doc.layers().iter().collect();
+    layers.sort_by_key(|(id, l)| (l.export_order, id.get()));
+    layers
+        .into_iter()
+        .filter(|(_, l)| l.visible && l.export_enabled && l.operation.is_exportable())
+        .filter(|(id, _)| {
+            !model
+                .layers
+                .iter()
+                .any(|m| m.id == **id && (!m.paths.is_empty() || !m.edges.is_empty()))
+        })
+        .map(|(_, l)| format!("{}: nothing to show: it has no curves to export.", l.name))
+        .collect()
 }
 
 fn is_machine(op: &Operation) -> bool {
@@ -305,6 +342,9 @@ impl AppState {
             self.view.machine = paths(&model);
             self.view.machine_notes = notes(profile, &model);
             self.view.machine_notes.extend(layer_notes(doc));
+            self.view
+                .machine_notes
+                .extend(empty_layer_notes(doc, &model));
         } else {
             self.view.machine = Vec::new();
             self.view.machine_notes = Vec::new();
@@ -881,6 +921,121 @@ mod tests {
                 "{mode:?}: {n:?}"
             );
         }
+    }
+
+    /// #531: an Engrave layer in Fill mode marks no outline, and its hatch
+    /// rows thin out when zoomed out, so a small or narrow fill drew
+    /// nothing. Its outline now shows, faint and never thinned, in every
+    /// mode that fills.
+    #[test]
+    fn an_engrave_fill_always_shows_where_it_is() {
+        use locus_doc::{EngraveMode, EngraveParams};
+        for mode in [
+            EngraveMode::Fill,
+            EngraveMode::LineFill,
+            EngraveMode::OffsetFill,
+        ] {
+            let mut ed = Editor::new(Document::new());
+            let l = Document::default_layer();
+            ed.apply(&Command::SetLayerProps {
+                id: l,
+                props: LayerProps {
+                    operation: Some(Operation::Engrave(EngraveParams {
+                        hatch_spacing: 1.0,
+                        mode,
+                        ..EngraveParams::default()
+                    })),
+                    ..LayerProps::default()
+                },
+            })
+            .unwrap();
+            // A circle whose hatch rows (95 … 105) all thin out at a far zoom.
+            let c = ed
+                .apply(&Command::AddEntity {
+                    layer: l,
+                    construction: false,
+                    style: Default::default(),
+                    geom: Geom::Point {
+                        pos: Vec2::new(0.0, 100.0),
+                    },
+                })
+                .unwrap()
+                .entities[0];
+            ed.apply(&Command::AddEntity {
+                layer: l,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Circle {
+                    center: c,
+                    radius: 5.0,
+                },
+            })
+            .unwrap();
+            let ps = paths(&locus_export::prepare(ed.document(), false).model);
+            let far = 0.05;
+            assert!(
+                ps.iter().any(|p| p.shown_at(far)),
+                "{mode:?}: something shows when zoomed out"
+            );
+            assert!(
+                ps.iter().any(|p| p.hatch && p.row.is_some()),
+                "{mode:?}: the fill"
+            );
+        }
+    }
+
+    /// #530: a Draw layer is previewed, plain and styled objects alike,
+    /// with or without a profile with a bed; an empty one says why.
+    #[test]
+    fn a_draw_layer_shows_plain_and_styled_objects() {
+        let mut ed = Editor::new(Document::new());
+        let l = Document::default_layer();
+        let pt = |ed: &mut Editor, x: f64, y: f64| {
+            ed.apply(&Command::AddEntity {
+                layer: l,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Point {
+                    pos: Vec2::new(x, y),
+                },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let (a, b) = (pt(&mut ed, 0.0, 0.0), pt(&mut ed, 40.0, 0.0));
+        let (c, d) = (pt(&mut ed, 0.0, 20.0), pt(&mut ed, 40.0, 20.0));
+        let mut dashed = locus_doc::Style::default();
+        dashed.line.dash = Some(
+            locus_stroke::Dash::new(&[3.0, 2.0], 0.0, locus_stroke::DashAlign::Exact).unwrap(),
+        );
+        for (s, e, style) in [(a, b, locus_doc::Style::default()), (c, d, dashed)] {
+            ed.apply(&Command::AddEntity {
+                layer: l,
+                construction: false,
+                style,
+                geom: Geom::Line { start: s, end: e },
+            })
+            .unwrap();
+        }
+        let bed = locus_export::profile::presets()
+            .into_iter()
+            .find(|p| p.bed.is_some());
+        for profile in [None, bed] {
+            let model = preview_model(ed.document(), profile.as_ref());
+            let ps = paths(&model);
+            assert!(
+                ps.iter().filter(|p| p.kind == OperationKind::Draw).count() >= 2,
+                "both objects are drawn: {}",
+                ps.len()
+            );
+            assert!(empty_layer_notes(ed.document(), &model).is_empty());
+        }
+        // An empty Draw layer says why instead of looking broken.
+        let empty = Document::new();
+        let model = preview_model(&empty, None);
+        let n = empty_layer_notes(&empty, &model);
+        assert_eq!(n.len(), 1, "{n:?}");
+        assert!(n[0].contains("nothing to show"));
     }
 
     #[test]
