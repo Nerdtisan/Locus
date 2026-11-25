@@ -142,16 +142,14 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
             ui.weak("Patterns, mirrors, offsets and plugin objects appear here, in the order they were made.");
         }
         let failures = app.doc.sketcher.editor().recipe_failures();
-        let mut seen = std::collections::BTreeMap::<&str, usize>::new();
+        let names = feature_names(doc);
         ui.horizontal_wrapped(|ui| {
             // Timeline order (#446): reorderable where nothing depends on it.
             let order = doc.recipe_order();
             let count = order.len();
             for (pos, rid) in order.iter().enumerate() {
                 let Some(r) = doc.recipe(*rid) else { continue };
-                let n = seen.entry(r.kind.name()).or_default();
-                *n += 1;
-                let name = format!("{} {n}", r.kind.name());
+                let name = names.get(rid).cloned().unwrap_or_default();
                 let failed = failures.get(rid);
                 let geometry: Vec<EntityId> =
                     r.sources.iter().copied().chain(r.instances()).collect();
@@ -211,9 +209,8 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
                     edit = Some(*rid);
                 }
                 let off = r.feature_suppressed;
-                let mirror = matches!(r.kind, locus_doc::RecipeKind::Mirror { .. });
                 resp.context_menu(|ui| {
-                    menu(ui, *rid, off, mirror, &mut cmds, &mut edit);
+                    menu(ui, *rid, off, &mut cmds, &mut edit);
                     ui.separator();
                     for (label, to, ok) in [
                         ("Move earlier", pos.saturating_sub(1), pos > 0),
@@ -257,11 +254,26 @@ fn timeline(ui: &mut Ui, app: &mut AppState) {
     }
 }
 
+/// Each feature's Timeline name: its kind, numbered within the kind in
+/// creation order, so a reordered feature keeps its name and the move shows
+/// (#514: numbering by position made a swap of two offsets look like
+/// nothing happened).
+fn feature_names(doc: &locus_doc::Document) -> std::collections::BTreeMap<RecipeId, String> {
+    let mut seen = std::collections::BTreeMap::<&str, usize>::new();
+    doc.recipes()
+        .iter()
+        .map(|(id, r)| {
+            let n = seen.entry(r.kind.name()).or_default();
+            *n += 1;
+            (*id, format!("{} {n}", r.kind.name()))
+        })
+        .collect()
+}
+
 fn menu(
     ui: &mut Ui,
     id: RecipeId,
     off: bool,
-    mirror: bool,
     cmds: &mut Vec<Command>,
     edit: &mut Option<RecipeId>,
 ) {
@@ -273,25 +285,17 @@ fn menu(
         *edit = Some(id);
         ui.close();
     }
+    // Mirrors too (#516): their copies and their Symmetric/Equal
+    // constraints go and come back under the same IDs (#499).
     let (label, tip) = if off {
         ("Unsuppress", "Bring its copies back")
-    } else if mirror {
-        (
-            "Suppress",
-            "A mirror can't be suppressed yet: its copies are tied by constraints",
-        )
     } else {
         (
             "Suppress",
-            "Hide its copies but keep the feature (one undo step)",
+            "Hide its copies but keep the feature (one undo step); refused, with the reason, while something else uses them",
         )
     };
-    if ui
-        .add_enabled(off || !mirror, egui::Button::new(label))
-        .on_hover_text(tip)
-        .on_disabled_hover_text(tip)
-        .clicked()
-    {
+    if ui.button(label).on_hover_text(tip).clicked() {
         cmds.push(Command::SetRecipeSuppressed {
             id,
             suppressed: !off,
@@ -320,6 +324,71 @@ fn menu(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// #514: names follow creation order, not the timeline position, so
+    /// moving a feature visibly moves its name.
+    #[test]
+    fn a_moved_feature_keeps_its_name() {
+        use locus_doc::{Document, Editor, Geom, RecipeKind};
+        let mut ed = Editor::new(Document::new());
+        let l = Document::default_layer();
+        let mut seg = |y: f64| {
+            let mut pt = |x: f64| {
+                ed.apply(&Command::AddEntity {
+                    layer: l,
+                    construction: false,
+                    style: Default::default(),
+                    geom: Geom::Point {
+                        pos: locus_geom::Vec2::new(x, y),
+                    },
+                })
+                .unwrap()
+                .entities[0]
+            };
+            let (p, q) = (pt(0.0), pt(5.0));
+            ed.apply(&Command::AddEntity {
+                layer: l,
+                construction: false,
+                style: Default::default(),
+                geom: Geom::Line { start: p, end: q },
+            })
+            .unwrap()
+            .entities[0]
+        };
+        let (s1, s2) = (seg(0.0), seg(50.0));
+        let lin = || RecipeKind::Linear {
+            dir1: locus_doc::recipe::LinearDir {
+                axis: locus_doc::recipe::Axis::X,
+                count: "2".into(),
+                spacing: "10".into(),
+                symmetric: false,
+            },
+            dir2: None,
+        };
+        let mut add = |s| {
+            ed.apply(&Command::AddRecipe {
+                kind: lin(),
+                sources: vec![s],
+            })
+            .unwrap()
+            .recipes[0]
+        };
+        let (a, b) = (add(s1), add(s2));
+        let names = |ed: &Editor| {
+            let n = feature_names(ed.document());
+            ed.document()
+                .recipe_order()
+                .iter()
+                .map(|r| n[r].clone())
+                .collect::<Vec<_>>()
+        };
+        let first = names(&ed);
+        ed.apply(&Command::ReorderRecipe { id: b, to: 0 }).unwrap();
+        let moved = names(&ed);
+        assert_ne!(first, moved);
+        assert_eq!(moved[0], feature_names(ed.document())[&b]);
+        assert_ne!(moved[0], feature_names(ed.document())[&a]);
+    }
 
     #[test]
     fn the_cap_reads_as_the_design_writes_it() {

@@ -785,7 +785,9 @@ pub(crate) fn validate_all(doc: &Document) -> Result<(), DocError> {
                 }
             }
         }
-        for c in &r.constraints {
+        // A suppressed mirror's owned constraints go with its copies and
+        // come back on unsuppress (#446), so a saved one has none (#516).
+        for c in r.constraints.iter().filter(|_| !r.feature_suppressed) {
             if doc.constraint(*c).is_none() {
                 return Err(bad("owned constraint is missing"));
             }
