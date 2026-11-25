@@ -18,7 +18,7 @@ use crate::offset::{Out, emit, pieces_within};
 use crate::recipe::MAX_INSTANCE_ENTITIES;
 use crate::style::{DEFAULT_WIDTH, Style};
 use locus_region::Seg;
-use locus_stroke::{Limits, LineStyle, chains, dashes, expand, layer_strokes};
+use locus_stroke::{Limits, LineStyle, OutPiece, chains, dashes, layer_strokes, outline};
 use serde::{Deserialize, Serialize};
 
 /// The Expand tolerance's default, mm (owner decision 2026-11-24).
@@ -117,9 +117,11 @@ pub(crate) fn plan(
                 for c in &ls.chains {
                     match mode {
                         ExpandMode::Outline => {
-                            let area = expand(c, ls.width, &ls.line, &limits).map_err(err)?;
-                            for l in &area.loops {
-                                emit(&l.edges, true, &mut out);
+                            // Width profiles keep their fitted cubics within
+                            // the Expand tolerance (ADR 0019 option (b)).
+                            let o = outline(c, ls.width, &ls.line, tol, &limits).map_err(err)?;
+                            for l in &o.loops {
+                                emit_outline(l, &mut out);
                             }
                         }
                         ExpandMode::Centrelines => {
@@ -174,6 +176,51 @@ pub(crate) fn plan(
         }
     }
     Ok((result, sources))
+}
+
+/// One closed outline loop as entities: lines and arcs as [`emit`] writes
+/// them, cubics as Béziers with their control points.
+fn emit_outline(l: &[OutPiece], out: &mut Vec<Out>) {
+    let segs: Option<Vec<locus_region::Edge>> = l
+        .iter()
+        .map(|p| match p {
+            OutPiece::Seg(seg) => Some(locus_region::Edge {
+                seg: *seg,
+                source: 0,
+            }),
+            OutPiece::Cubic(_) => None,
+        })
+        .collect();
+    if let Some(edges) = segs {
+        emit(&edges, true, out);
+        return;
+    }
+    let base = out.len();
+    for p in l {
+        out.push(Out::Point(p.start()));
+    }
+    let n = l.len();
+    for (i, p) in l.iter().enumerate() {
+        let (a, b) = (base + i, base + (i + 1) % n);
+        match p {
+            OutPiece::Seg(Seg::Line { .. }) => out.push(Out::Line(a, b)),
+            OutPiece::Seg(Seg::Arc { center, sweep, .. }) => {
+                out.push(Out::Point(*center));
+                let c = out.len() - 1;
+                out.push(if *sweep >= 0.0 {
+                    Out::Arc(c, a, b)
+                } else {
+                    Out::Arc(c, b, a)
+                });
+            }
+            OutPiece::Cubic(cu) => {
+                out.push(Out::Point(cu.c0));
+                out.push(Out::Point(cu.c1));
+                let c1 = out.len() - 1;
+                out.push(Out::Bezier(a, c1 - 1, c1, b));
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -279,6 +326,47 @@ mod tests {
         );
         ed.undo().unwrap();
         // IDs are never reused (ADR 0003), so compare the content.
+        assert_eq!(ed.document().entities(), before.entities());
+    }
+
+    #[test]
+    fn a_width_profile_expands_to_beziers() {
+        let (mut ed, ids) = l_doc(2.0);
+        ed.apply(&Command::SetStyle {
+            entities: ids.clone(),
+            patch: StylePatch {
+                profile: Some(Some(locus_stroke::ProfilePreset::TaperEnd.profile(0))),
+                ..StylePatch::default()
+            },
+        })
+        .unwrap();
+        let style = ed.document().entity(ids[0]).unwrap().style.clone();
+        assert!(style.line.varying().is_some());
+        // The exact cleaned outline's area, to compare with.
+        let doc = ed.document();
+        let segs: Vec<Vec<locus_region::Seg>> = ids
+            .iter()
+            .map(|id| crate::offset::pieces(doc, *id, false))
+            .collect();
+        let chain = &locus_stroke::chains(segs)[0];
+        let exact = locus_stroke::expand(chain, 2.0, &style.line, &locus_stroke::Limits::default())
+            .unwrap()
+            .area();
+        let before = ed.document().clone();
+        ed.apply(&Command::ExpandStyle {
+            entities: ids,
+            tol: super::DEFAULT_EXPAND_TOL,
+            mode: super::ExpandMode::Outline,
+        })
+        .unwrap();
+        let doc = ed.document();
+        assert!(
+            doc.entities()
+                .iter()
+                .any(|(_, e)| matches!(e.geom, Geom::Bezier { .. }))
+        );
+        assert!((outline_area(&ed) - exact).abs() < 0.05, "{exact}");
+        ed.undo().unwrap();
         assert_eq!(ed.document().entities(), before.entities());
     }
 

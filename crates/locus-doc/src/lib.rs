@@ -55,7 +55,10 @@ pub use explode::Exploded;
 pub use file::FileError;
 pub use ids::{BooleanId, ConstraintId, EntityId, LayerId, RecipeId};
 pub use image::{ImageFormat, ImagePlacement, RefImage};
-pub use locus_stroke::{Align, Cap, Dash, DashAlign, Join, LineStyle, StrokeLayer};
+pub use locus_stroke::{
+    Align, Cap, Dash, DashAlign, Join, LineStyle, ProfilePreset, StrokeLayer, WidthPoint,
+    WidthProfile,
+};
 pub use operation::{
     Compensation, CutParams, DragKnifeParams, EngraveMode, EngraveParams, Operation, OperationKind,
     Overlap,
