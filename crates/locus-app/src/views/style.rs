@@ -20,7 +20,7 @@ use locus_doc::{
     operation::MAX_PEN,
 };
 use locus_region::RegionKey;
-use locus_stroke::{DEFAULT_MITER, MAX_MITER, MIN_MITER};
+use locus_stroke::{DEFAULT_MITER, MAX_MITER, MIN_MITER, ProfilePreset, WidthProfile};
 
 /// One field across the selection: `None` when the objects differ.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -36,6 +36,9 @@ pub(crate) struct Shared {
     pub dash: Option<Option<Dash>>,
     /// Extra strokes (#429); `None` when the objects differ.
     pub extra: Option<Vec<StrokeLayer>>,
+    /// Width profile (#426); `None` when the objects differ, `Some(None)`
+    /// uniform.
+    pub profile: Option<Option<WidthProfile>>,
 }
 
 impl Shared {
@@ -59,6 +62,11 @@ impl Shared {
                 let first = it.next();
                 first.filter(|f| it.all(|x| x == *f)).cloned()
             },
+            profile: {
+                let mut it = styles.iter().map(|s| &s.line.profile);
+                let first = it.next();
+                first.filter(|f| it.all(|x| x == *f)).cloned()
+            },
         }
     }
 
@@ -73,6 +81,9 @@ impl Shared {
         self.dash = p.dash.or(self.dash);
         if let Some(x) = &p.extra {
             self.extra = Some(x.clone());
+        }
+        if let Some(x) = &p.profile {
+            self.profile = Some(x.clone());
         }
         self
     }
@@ -623,6 +634,7 @@ fn merge(into: &mut StylePatch, edit: &StylePatch) {
         join: edit.join.or(into.join),
         dash: edit.dash.or(into.dash),
         extra: edit.extra.clone().or_else(|| into.extra.clone()),
+        profile: edit.profile.clone().or_else(|| into.profile.clone()),
     };
 }
 
@@ -780,6 +792,113 @@ const DASH_PRESETS: [(&str, &[f64]); 5] = [
     ("Long dash", &[8.0, 3.0]),
     ("Fine 1/1", &[1.0, 1.0]),
 ];
+
+/// The Profile row (design §3, #426): Uniform or a preset, a small graph of
+/// the width along the path (left side up, right side down), and Flip,
+/// Mirror and Reseed. The points are edited on the canvas with the Width
+/// tool (Shift+W).
+fn profile_row(ui: &mut Ui, s: &Shared, out: &mut StylePatch, mixed: &dyn Fn(&mut Ui, bool)) {
+    ui.label("Profile");
+    ui.vertical(|ui| {
+        let current = s.profile.clone().flatten();
+        ui.horizontal(|ui| {
+            let name = match (&s.profile, &current) {
+                (None, _) => "—",
+                (_, Some(p)) => p.preset().map_or("Custom", ProfilePreset::label),
+                (Some(_), None) => "Uniform",
+            };
+            egui::ComboBox::from_id_salt("style-profile-preset")
+                .selected_text(name)
+                .show_ui(ui, |ui| {
+                    for p in ProfilePreset::ALL {
+                        if ui.selectable_label(name == p.label(), p.label()).clicked() {
+                            out.profile = Some(match p {
+                                ProfilePreset::Uniform => None,
+                                // A new seed each time it's picked.
+                                _ => Some(p.profile(next_seed(current.as_ref()))),
+                            });
+                        }
+                    }
+                });
+            mixed(ui, s.profile.is_none());
+        });
+        let Some(p) = current else {
+            ui.weak("Shift+W (Width tool): drag the stroke's edges to shape it");
+            return;
+        };
+        profile_graph(ui, &p);
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .small_button("Flip")
+                .on_hover_text("Reverse the profile along the path")
+                .clicked()
+            {
+                out.profile = Some(Some(p.flipped()));
+            }
+            if ui
+                .small_button("Mirror")
+                .on_hover_text("Copy the left side's widths to the right side")
+                .clicked()
+            {
+                out.profile = Some(Some(p.mirrored()));
+            }
+            if p.seed.is_some()
+                && ui
+                    .small_button("Reseed")
+                    .on_hover_text("Another random pressure profile")
+                    .clicked()
+            {
+                out.profile = Some(Some(ProfilePreset::Pressure.profile(next_seed(Some(&p)))));
+            }
+        });
+        ui.weak("Shift+W (Width tool) edits the points on the canvas");
+    });
+    ui.end_row();
+}
+
+/// A seed different from the current profile's, the same on every run.
+fn next_seed(current: Option<&WidthProfile>) -> u64 {
+    current
+        .and_then(|p| p.seed)
+        .unwrap_or(0)
+        .wrapping_add(0x9E37_79B9_7F4A_7C15)
+}
+
+/// The profile as a small graph: the left side above the axis, the right
+/// side below, over the path's length; dots at the width points.
+fn profile_graph(ui: &mut Ui, p: &WidthProfile) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(180.0, 44.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let v = ui.visuals();
+    painter.rect_filled(rect, 3.0, v.extreme_bg_color);
+    let mid = rect.center().y;
+    let top = p.max_factor().max(1.0);
+    let x = |t: f64| rect.left() + 4.0 + (rect.width() - 8.0) * t as f32;
+    let y = |f: f64, side: f32| mid - side * (rect.height() * 0.5 - 3.0) * (f / top) as f32;
+    painter.line_segment(
+        [egui::pos2(rect.left(), mid), egui::pos2(rect.right(), mid)],
+        egui::Stroke::new(1.0, v.weak_text_color()),
+    );
+    let n = 60;
+    let mut fill = Vec::with_capacity(2 * n + 2);
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        fill.push(egui::pos2(x(t), y(p.at(t).0, 1.0)));
+    }
+    for i in (0..=n).rev() {
+        let t = i as f64 / n as f64;
+        fill.push(egui::pos2(x(t), y(p.at(t).1, -1.0)));
+    }
+    painter.add(egui::Shape::closed_line(
+        fill,
+        egui::Stroke::new(1.5, v.selection.bg_fill),
+    ));
+    for w in &p.points {
+        for (f, side) in [(w.left, 1.0), (w.right, -1.0)] {
+            painter.circle_filled(egui::pos2(x(w.t), y(f, side)), 2.5, v.selection.bg_fill);
+        }
+    }
+}
 
 /// The Dashes row (design §3, #427): Solid or a preset, then the dash/gap
 /// pairs, the phase and Align to corners.
@@ -1113,6 +1232,7 @@ fn fields(ui: &mut Ui, s: Shared, layer_colour: [u8; 3]) -> StylePatch {
                 ui.end_row();
             }
 
+            profile_row(ui, &s, &mut out, &mixed);
             caps_joins(ui, &s, &mut out, &mixed);
             dashes_row(ui, &s, &mut out, &mixed);
             strokes_row(ui, &s, &mut out, &mixed);

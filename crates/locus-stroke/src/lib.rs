@@ -398,7 +398,7 @@ fn profiled_runs(
     };
     let lens: Vec<f64> = chain.segs.iter().map(Seg::length).collect();
     let total: f64 = lens.iter().sum();
-    if !(total > 0.0) {
+    if total.is_nan() || total <= 0.0 {
         return Ok(Vec::new());
     }
     Ok(dash::dash_spans(chain, d, limits)?

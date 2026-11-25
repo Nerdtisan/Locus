@@ -170,7 +170,7 @@ impl WidthProfile {
         let (Some(first), Some(last)) = (p.first(), p.last()) else {
             return (1.0, 1.0);
         };
-        if !(u > first.t) {
+        if u.is_nan() || u <= first.t {
             return (first.left, first.right);
         }
         for w in p.windows(2) {
