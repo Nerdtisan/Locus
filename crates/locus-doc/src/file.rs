@@ -1534,7 +1534,13 @@ pub fn save(doc: &Document) -> Result<String, FileError> {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
-        recipe_order: doc.recipe_order.clone(),
+        // Once the user has reordered, the file lists every feature, so a
+        // feature made after the last reorder is not left out (#514).
+        recipe_order: if doc.recipe_order.is_empty() {
+            Vec::new()
+        } else {
+            doc.recipe_order()
+        },
     };
     let mut text = ron::ser::to_string_pretty(&file, pretty())
         .map_err(|e| FileError::Unsaveable(e.to_string()))?;

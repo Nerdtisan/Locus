@@ -1128,3 +1128,78 @@ fn a_failing_feature_keeps_its_copies_and_reports_why() {
     assert_eq!(copies(&s), 3);
     assert!(s.editor().recipe_failures().is_empty());
 }
+
+/// Regression (#515): changing an offset regenerated its curves, so the
+/// region between a shape and its offset got a new key and lost its fill
+/// and gradient. The fill now follows the region, in the same undo step.
+#[test]
+fn a_fill_bounded_by_an_offset_survives_editing_it() {
+    use locus_doc::gradient::Gradient;
+    use locus_doc::region_fill::RegionFill;
+    let mut s = Sketcher::new(Document::new());
+    let (_, off) = offset_rectangle(&mut s);
+    let ring_of = |s: &Sketcher| {
+        let curves = offset_lines(s, off);
+        s.regions()
+            .iter()
+            .position(|r| {
+                r.key
+                    .bounds
+                    .iter()
+                    .any(|b| curves.iter().any(|c| c.get() == *b))
+                    && r.holes.len() == 1
+            })
+            .expect("the ring between the rectangle and its offset")
+    };
+    let ring = s.regions()[ring_of(&s)].key.clone();
+    let fill = RegionFill {
+        fill: locus_doc::Fill::Colour([200, 30, 30]),
+        opacity: 1.0,
+        gradient: Some(Box::new(Gradient::linear_from([200, 30, 30]))),
+    };
+    s.apply(&Command::SetRegionFill {
+        regions: vec![ring],
+        fill: Some(fill.clone()),
+    })
+    .unwrap();
+    let edits = [
+        RecipeKind::Offset {
+            distance: 3.0,
+            sharp: true,
+            expr: None,
+        },
+        // Round corners: new arcs, so the ring's bounding curves change.
+        RecipeKind::Offset {
+            distance: 3.0,
+            sharp: false,
+            expr: None,
+        },
+        RecipeKind::Offset {
+            distance: 4.5,
+            sharp: false,
+            expr: None,
+        },
+    ];
+    for kind in edits {
+        s.apply(&Command::EditRecipe {
+            id: off,
+            kind: kind.clone(),
+        })
+        .unwrap();
+        let i = ring_of(&s);
+        assert_eq!(
+            s.region_fills()[i].as_ref(),
+            Some(&fill),
+            "the ring keeps its fill after {kind:?}"
+        );
+        assert_eq!(
+            s.document().region_fills().len(),
+            1,
+            "one stored fill, moved, not copied"
+        );
+    }
+    // Undo puts each step back, fill included.
+    s.undo().unwrap();
+    let i = ring_of(&s);
+    assert_eq!(s.region_fills()[i].as_ref(), Some(&fill));
+}

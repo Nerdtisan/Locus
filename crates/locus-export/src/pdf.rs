@@ -84,6 +84,20 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
         format!("{r} {g} {b}")
     };
 
+    // Objects after the OCGs and opacity states: shadings, soft masks and
+    // their forms (#513), numbered in the order they are pushed.
+    let extra_base = 5 + layers.len() + alphas.len();
+    let mut extra: Vec<String> = Vec::new();
+    let mut shading_refs = String::new();
+    let mut mask_refs = String::new();
+    let page_box = format!(
+        "[{} {} {} {}]",
+        num(origin.x),
+        num(origin.y),
+        num(origin.x + w * PT_PER_MM),
+        num(origin.y + h * PT_PER_MM)
+    );
+
     let mut content = String::new();
     let mut width = DEFAULT_HAIRLINE_MM;
     let _ = writeln!(content, "{} w 1 J 1 j", num(width * PT_PER_MM));
@@ -115,8 +129,43 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
                     content.push_str("h\n");
                 }
             };
-            // A gradient (#436): the region as a clip, and the gradient's
-            // bands inside it, at the fill's opacity.
+            // A gradient (#436): the region as a clip. Linear and radial are
+            // native smooth shadings in the region's frame (#513), with a
+            // soft mask for stop opacity; conic, which PDF can't express,
+            // is bands. Both at the fill's opacity.
+            if let Some((g, frame)) = &f.gradient
+                && let Some(sh) = shading(g, frame, &map)
+            {
+                content.push_str("q\n");
+                outline(&mut content);
+                content.push_str("W* n\n");
+                let n = extra_base + extra.len();
+                let k = shading_refs.matches(" 0 R").count();
+                let _ = write!(shading_refs, "/Sh{k} {n} 0 R ");
+                extra.push(sh.colour);
+                if let Some(grey) = sh.alpha {
+                    // The mask: the same shading in grey (each stop's
+                    // opacity), drawn in a form in page space.
+                    let grey_n = extra_base + extra.len();
+                    extra.push(grey);
+                    let form = format!("q {} cm /Sh0 sh Q\n", sh.matrix);
+                    let form_n = extra_base + extra.len();
+                    extra.push(format!(
+                        "<< /Type /XObject /Subtype /Form /BBox {page_box} /Group << /S /Transparency /CS /DeviceGray >> /Resources << /Shading << /Sh0 {grey_n} 0 R >> >> /Length {} >>\nstream\n{form}endstream",
+                        form.len()
+                    ));
+                    let gs_n = extra_base + extra.len();
+                    extra.push(format!(
+                        "<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G {form_n} 0 R >> >>"
+                    ));
+                    let m = mask_refs.matches(" 0 R").count();
+                    let _ = write!(mask_refs, "/SM{m} {gs_n} 0 R ");
+                    let _ = writeln!(content, "/SM{m} gs");
+                }
+                let _ = writeln!(content, "{} cm /Sh{k} sh", sh.matrix);
+                content.push_str("Q\n");
+                continue;
+            }
             if let Some((g, frame)) = &f.gradient {
                 content.push_str("q\n");
                 outline(&mut content);
@@ -237,13 +286,18 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
         content.push_str("EMC\n");
     }
     let gs_obj = |k: usize| 5 + layers.len() + k;
-    let ext_g_state = if alphas.is_empty() {
+    let ext_g_state = if alphas.is_empty() && mask_refs.is_empty() {
         String::new()
     } else {
         let refs: String = (0..alphas.len())
             .map(|k| format!("/GS{k} {} 0 R ", gs_obj(k)))
             .collect();
-        format!("/ExtGState << {refs}>> ")
+        format!("/ExtGState << {refs}{mask_refs}>> ")
+    };
+    let shadings = if shading_refs.is_empty() {
+        String::new()
+    } else {
+        format!("/Shading << {shading_refs}>> ")
     };
 
     let ids: Vec<String> = (0..layers.len())
@@ -260,7 +314,7 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
         ),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
         format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [{} {} {} {}] /Contents 4 0 R /Resources << /Properties << {props}>> {ext_g_state}>> >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [{} {} {} {}] /Contents 4 0 R /Resources << /Properties << {props}>> {ext_g_state}{shadings}>> >>",
             num(origin.x),
             num(origin.y),
             num(origin.x + w * PT_PER_MM),
@@ -283,6 +337,7 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
             a = num(*a)
         ));
     }
+    objs.extend(extra);
 
     let mut out = b"%PDF-1.5\n%\xE2\xE3\xCF\xD3\n".to_vec();
     let mut offsets = Vec::with_capacity(objs.len());
@@ -302,6 +357,156 @@ pub fn to_pdf_model(model: &ExportModel) -> Vec<u8> {
     );
     out.extend_from_slice(tail.as_bytes());
     out
+}
+
+/// A gradient as native PDF shading (#513): the shading dictionary in
+/// colour, the same in grey for stop opacity when any stop isn't opaque
+/// (a luminosity soft mask), and the `cm` matrix from the shading's space to
+/// the page.
+struct Shading {
+    colour: String,
+    alpha: Option<String>,
+    matrix: String,
+}
+
+/// Linear as an axial shading (Type 2), radial and elliptical as a radial
+/// one (Type 3), in the region's unit frame, so Rotate with shape and every
+/// refit carry over as they do on the canvas and in SVG. `None` for conic.
+fn shading(
+    g: &locus_doc::gradient::Gradient,
+    frame: &locus_doc::gradient::Frame,
+    map: &impl Fn(Vec2) -> Vec2,
+) -> Option<Shading> {
+    use locus_doc::gradient::GradientKind;
+    let o = map(frame.origin);
+    let ax = map(frame.origin + frame.ax) - o;
+    let ay = map(frame.origin + frame.ay) - o;
+    let frame_m = [ax.x, ax.y, ay.x, ay.y, o.x, o.y];
+    let (a, d) = (g.from, g.to - g.from);
+    let (m, kind) = match g.kind {
+        GradientKind::Conic => return None,
+        GradientKind::Linear => (
+            frame_m,
+            format!(
+                "/ShadingType 2 /Coords [{} {} {} {}]",
+                num(a.x),
+                num(a.y),
+                num(g.to.x),
+                num(g.to.y)
+            ),
+        ),
+        GradientKind::Radial | GradientKind::Elliptical { .. } => {
+            let ratio = match g.kind {
+                GradientKind::Elliptical { ratio } => ratio,
+                _ => 1.0,
+            };
+            let r = d.length();
+            if r <= 0.0 {
+                return None;
+            }
+            // About `from`, turned to `to`, squashed by the ratio: the
+            // canvas's ellipse, as SVG writes it.
+            let (s, c) = (d.y / r, d.x / r);
+            let local = [c, s, -s * ratio, c * ratio, a.x, a.y];
+            (
+                concat(local, frame_m),
+                format!("/ShadingType 3 /Coords [0 0 0 0 0 {}]", num(r)),
+            )
+        }
+    };
+    let stops = full_stops(g);
+    let colour = format!(
+        "<< {kind} /ColorSpace /DeviceRGB /Extend [true true] /Function {} >>",
+        function(&stops, |s| {
+            let [r, gg, b] = s.colour.map(|v| num(f64::from(v) / 255.0));
+            format!("{r} {gg} {b}")
+        })
+    );
+    let alpha = stops.iter().any(|s| s.opacity < 1.0).then(|| {
+        format!(
+            "<< {kind} /ColorSpace /DeviceGray /Extend [true true] /Function {} >>",
+            function(&stops, |s| num(s.opacity.clamp(0.0, 1.0)))
+        )
+    });
+    Some(Shading {
+        colour,
+        alpha,
+        matrix: m.map(num).join(" "),
+    })
+}
+
+/// The product of two `cm` matrices: `a` first, then `b`.
+fn concat(a: [f64; 6], b: [f64; 6]) -> [f64; 6] {
+    [
+        a[0] * b[0] + a[1] * b[2],
+        a[0] * b[1] + a[1] * b[3],
+        a[2] * b[0] + a[3] * b[2],
+        a[2] * b[1] + a[3] * b[3],
+        a[4] * b[0] + a[5] * b[2] + b[4],
+        a[4] * b[1] + a[5] * b[3] + b[5],
+    ]
+}
+
+/// The stops from 0 to 1: the end colours held out to the ends, as the
+/// sampler holds them.
+fn full_stops(g: &locus_doc::gradient::Gradient) -> Vec<locus_doc::gradient::Stop> {
+    let mut v: Vec<_> = g.stops.clone();
+    v.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    if let Some(first) = v.first().cloned()
+        && first.pos > 0.0
+    {
+        v.insert(0, locus_doc::gradient::Stop { pos: 0.0, ..first });
+    }
+    if let Some(last) = v.last().cloned()
+        && last.pos < 1.0
+    {
+        v.push(locus_doc::gradient::Stop { pos: 1.0, ..last });
+    }
+    v
+}
+
+/// One exponential (Type 2) function for two stops, or a stitching (Type 3)
+/// function of one per pair of stops; `value` writes a stop's components.
+fn function(
+    stops: &[locus_doc::gradient::Stop],
+    value: impl Fn(&locus_doc::gradient::Stop) -> String,
+) -> String {
+    let pair = |a: &locus_doc::gradient::Stop, b: &locus_doc::gradient::Stop| {
+        format!(
+            "<< /FunctionType 2 /Domain [0 1] /C0 [{}] /C1 [{}] /N 1 >>",
+            value(a),
+            value(b)
+        )
+    };
+    match stops {
+        [] => pair(
+            &locus_doc::gradient::Stop {
+                pos: 0.0,
+                colour: [0, 0, 0],
+                opacity: 1.0,
+            },
+            &locus_doc::gradient::Stop {
+                pos: 1.0,
+                colour: [0, 0, 0],
+                opacity: 1.0,
+            },
+        ),
+        [s] => pair(s, s),
+        [a, b] => pair(a, b),
+        _ => {
+            let fns: Vec<String> = stops.windows(2).map(|w| pair(&w[0], &w[1])).collect();
+            let bounds: Vec<String> = stops[1..stops.len() - 1]
+                .iter()
+                .map(|s| num(s.pos))
+                .collect();
+            let encode = vec!["0 1"; fns.len()].join(" ");
+            format!(
+                "<< /FunctionType 3 /Domain [0 1] /Functions [{}] /Bounds [{}] /Encode [{encode}] >>",
+                fns.join(" "),
+                bounds.join(" ")
+            )
+        }
+    }
 }
 
 fn write_seg(out: &mut String, s: &PathSeg, map: &impl Fn(Vec2) -> Vec2) {
