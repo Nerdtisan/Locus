@@ -326,16 +326,7 @@ impl AppState {
                 .iter()
                 .map(|q| self.view.camera.to_screen(*q - back, rect))
                 .collect();
-            // The true width the machine makes. A kerf is a fraction of a
-            // pixel at normal zoom, so it gets at least 6 px to stay visible
-            // next to the sketch line (#224); a pen is drawn at its width.
-            if p.band > 0.0 {
-                let min = if p.kind == OperationKind::Cut {
-                    6.0
-                } else {
-                    1.0
-                };
-                let band = (p.band * pt_per_mm).max(min) as f32;
+            if let Some(band) = band_px(p, pt_per_mm, self.view.stroke_on) {
                 painter.add(egui::Shape::line(
                     pts.clone(),
                     Stroke::new(band, colour.gamma_multiply(0.3)),
@@ -359,6 +350,24 @@ impl AppState {
             painter.add(egui::Shape::line(pts, Stroke::new(w, c)));
         }
     }
+}
+
+/// The width band drawn under a preview path, in points, or `None`: the true
+/// width the machine makes, shown only while **Stroke width** is on (#511),
+/// like every other width on the canvas. A kerf is a fraction of a pixel at
+/// normal zoom, so it gets at least 6 px to stay visible next to the sketch
+/// line (#224); a pen is drawn at its width.
+pub(crate) fn band_px(p: &MachinePath, pt_per_mm: f64, stroke_on: bool) -> Option<f32> {
+    if !stroke_on || p.band <= 0.0 {
+        return None;
+    }
+    let min = if p.kind == OperationKind::Cut {
+        6.0
+    } else {
+        1.0
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    Some((p.band * pt_per_mm).max(min) as f32)
 }
 
 /// One legend line: the operation, then the layer it belongs to.
@@ -615,6 +624,30 @@ mod tests {
             "perforated and marked"
         );
         assert!(notes(Some(&lb), &model).iter().any(|n| n.contains("halo")));
+    }
+
+    /// #511: with Stroke width off the preview draws no width bands, only
+    /// the machine paths; with it on, the pen and kerf widths show.
+    #[test]
+    fn width_bands_follow_the_stroke_width_toggle() {
+        let mut ed = Editor::new(Document::new());
+        let l = Document::default_layer();
+        wide_line(
+            &mut ed,
+            l,
+            locus_doc::Style {
+                width: 3.0,
+                ..locus_doc::Style::default()
+            },
+        );
+        let ps = paths(&preview_model(ed.document(), None));
+        assert_eq!(ps.len(), 1);
+        assert!(band_px(&ps[0], 4.0, false).is_none(), "toggle off: no band");
+        assert_eq!(
+            band_px(&ps[0], 4.0, true),
+            Some(12.0),
+            "toggle on: 3 mm at 4 pt/mm"
+        );
     }
 
     /// #420: the legend lists every layer's operation in export order and
